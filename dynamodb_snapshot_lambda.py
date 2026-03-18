@@ -53,7 +53,9 @@ ROLE_TEMPLATE_PATTERN = re.compile(r"\{([a-zA-Z_][a-zA-Z0-9_]*)\}")
 FULL_EXPORT_RUN_ID_PATTERN = re.compile(r"(?:^|/)run_id=(\d{8}T\d{6}Z)(?:/|$)")
 FULL_EXPORT_COMPLETION_SUFFIXES = ("manifest-summary.json", "manifest-files.json")
 EXPORT_LAYOUT_PREFIX = "DDB"
-BUCKET_REGION_SUFFIX_PATTERN = re.compile(r"(?P<region>[a-z]{2}(?:-gov)?-[a-z0-9-]+-\d)$")
+AWS_REGION_TEXT_PATTERN = re.compile(
+    r"^[a-z]{2}(?:-(?:gov|iso|isob|isof|isofb))?-[a-z]+(?:-[a-z]+)?-\d$"
+)
 EXPORT_LAYOUT_KEY_PATTERN = re.compile(
     r"^DDB/(?P<export_date>(?:\d{8}|\d{4}-\d{2}-\d{2}))/"
     r"(?P<account_id>[^/]+)/(?P<table_name>[^/]+)/"
@@ -1531,13 +1533,8 @@ def snapshot_manager_build_bucket_name(base_bucket: str, region: Optional[str]) 
         return resolved_bucket
     # If the bucket name already has a region-like suffix, keep it as-is to
     # avoid accidentally building names such as "<bucket>-sa-east-1-us-east-1".
-    existing_region_match = BUCKET_REGION_SUFFIX_PATTERN.search(resolved_bucket)
-    if existing_region_match:
-        existing_region = _safe_str_field(
-            existing_region_match.group("region"),
-            field_name="bucket_region_suffix",
-            required=False,
-        )
+    existing_region = _extract_bucket_region_suffix(resolved_bucket)
+    if existing_region:
         _log_event(
             "snapshot.bucket.region_suffix.detected",
             bucket=resolved_bucket,
@@ -1548,6 +1545,22 @@ def snapshot_manager_build_bucket_name(base_bucket: str, region: Optional[str]) 
         )
         return resolved_bucket
     return f"{resolved_bucket}{region_suffix}"
+
+
+def _extract_bucket_region_suffix(bucket: str) -> Optional[str]:
+    bucket_name = _safe_str_field(bucket, field_name="bucket_name")
+    parts = [part for part in bucket_name.split("-") if part]
+    if len(parts) < 3:
+        return None
+
+    candidates = ["-".join(parts[-3:])]
+    if len(parts) >= 4:
+        candidates.append("-".join(parts[-4:]))
+
+    for candidate in candidates:
+        if AWS_REGION_TEXT_PATTERN.fullmatch(candidate):
+            return candidate
+    return None
 
 
 def snapshot_manager_resolve_snapshot_bucket(
@@ -8713,9 +8726,8 @@ def snapshot_manager_validate_export_request(
         )
 
     table_region_text = _resolve_optional_text(table_region)
-    region_match = BUCKET_REGION_SUFFIX_PATTERN.search(bucket)
-    if region_match and table_region_text:
-        bucket_region = _safe_str_field(region_match.group("region"), field_name="bucket_region", required=False)
+    bucket_region = _extract_bucket_region_suffix(bucket)
+    if bucket_region and table_region_text:
         if bucket_region and bucket_region != table_region_text:
             raise ValueError(
                 f"Bucket {bucket} indica região {bucket_region}, mas a tabela {table_name} está em {table_region_text}."
