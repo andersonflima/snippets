@@ -179,6 +179,26 @@ def _resolve_env_first_bool(event_value: Any, env_name: str, default: str) -> bo
     return _env_bool(event_value, default)
 
 
+def _extract_event_payload(event: Optional[Dict[str, Any]]) -> Dict[str, Any]:
+    if not isinstance(event, dict):
+        return {}
+
+    payload = dict(event)
+    raw_body = payload.get("body")
+    if isinstance(raw_body, dict):
+        payload.update(raw_body)
+    elif isinstance(raw_body, str):
+        text = raw_body.strip()
+        if text:
+            try:
+                parsed = json.loads(text)
+            except json.JSONDecodeError:
+                parsed = None
+            if isinstance(parsed, dict):
+                payload.update(parsed)
+    return payload
+
+
 def _get_default_aws_session() -> Any:
     global _DEFAULT_AWS_SESSION
     with _DEFAULT_AWS_SESSION_LOCK:
@@ -234,23 +254,35 @@ def build_snapshot_config(event: Optional[Dict[str, Any]]) -> SnapshotConfig:
     if not isinstance(event, dict):
         raise ValueError("event deve ser um objeto JSON (dict)")
 
+    payload = _extract_event_payload(event)
+
     targets = _normalize_list(
-        os.getenv("TARGET_TABLE_ARNS") or os.getenv("TARGET_TABLES") or event.get("targets") or ""
+        os.getenv("TARGET_TABLE_ARNS")
+        or os.getenv("TARGET_TABLES")
+        or payload.get("targets")
+        or payload.get("target")
+        or ""
     )
     targets_csv = (
         _resolve_optional_text(
             os.getenv("TARGETS_CSV", ""),
-            event.get("targets_csv"),
+            payload.get("targets_csv"),
+            payload.get("target_csv"),
         )
         or None
     )
     ignore = _normalize_list(
-        os.getenv("IGNORE_TARGETS") or os.getenv("IGNORE_TABLES") or event.get("ignore") or ""
+        os.getenv("IGNORE_TARGETS")
+        or os.getenv("IGNORE_TABLES")
+        or payload.get("ignore")
+        or payload.get("ignore_targets")
+        or ""
     )
     ignore_csv = (
         _resolve_optional_text(
             os.getenv("IGNORE_CSV", ""),
-            event.get("ignore_csv"),
+            payload.get("ignore_csv"),
+            payload.get("ignore_targets_csv"),
         )
         or None
     )
@@ -287,14 +319,15 @@ def build_snapshot_config(event: Optional[Dict[str, Any]]) -> SnapshotConfig:
 
     bucket = _resolve_optional_text(
         os.getenv("SNAPSHOT_BUCKET", ""),
-        event.get("snapshot_bucket"),
+        payload.get("snapshot_bucket"),
+        payload.get("snapshotBucket"),
     )
     if not bucket:
         raise ValueError("SNAPSHOT_BUCKET não definido")
     bucket_owner = _resolve_optional_text(
         os.getenv("S3_BUCKET_OWNER", ""),
-        event.get("bucket_owner"),
-        event.get("snapshot_bucket_owner"),
+        payload.get("bucket_owner"),
+        payload.get("snapshot_bucket_owner"),
     )
     if bucket_owner and not AWS_ACCOUNT_ID_PATTERN.fullmatch(bucket_owner):
         raise ValueError("S3_BUCKET_OWNER deve ser um account id AWS de 12 dígitos")
@@ -302,31 +335,36 @@ def build_snapshot_config(event: Optional[Dict[str, Any]]) -> SnapshotConfig:
     s3_prefix = (
         _resolve_optional_text(
             os.getenv("S3_PREFIX"),
-            event.get("s3_prefix"),
+            payload.get("s3_prefix"),
+            payload.get("s3Prefix"),
             "dynamodb-snapshots",
         )
         or "dynamodb-snapshots"
     ).strip("/")
     wait_for_completion = _resolve_env_first_bool(
-        event.get("wait_for_completion"),
+        payload.get("wait_for_completion"),
         "WAIT_FOR_COMPLETION",
         "false",
     )
-    event_catch_up = event.get("catch_up") if "catch_up" in event else event.get("catch-up")
+    event_catch_up = (
+        payload.get("catch_up")
+        if "catch_up" in payload
+        else payload.get("catch-up")
+    )
     catch_up = _resolve_env_first_bool(
         event_catch_up,
         "CATCH_UP",
         "false",
     )
     dry_run = _resolve_env_first_bool(
-        event.get("dry_run"),
+        payload.get("dry_run"),
         "DRY_RUN",
         "false",
     )
 
     checkpoint_dynamodb_table_arn = _resolve_optional_text(
         os.getenv("CHECKPOINT_DYNAMODB_TABLE_ARN", ""),
-        event.get("checkpoint_dynamodb_table_arn"),
+        payload.get("checkpoint_dynamodb_table_arn"),
     )
     if not checkpoint_dynamodb_table_arn:
         raise ValueError("CHECKPOINT_DYNAMODB_TABLE_ARN não definido")
@@ -336,14 +374,15 @@ def build_snapshot_config(event: Optional[Dict[str, Any]]) -> SnapshotConfig:
     )
 
     fallback_enabled = _resolve_env_first_bool(
-        event.get("scan_fallback_enabled"),
+        payload.get("scan_fallback_enabled"),
         "SCAN_FALLBACK_ENABLED",
         "true",
     )
     fallback_updated_attr = (
         _resolve_optional_text(
             os.getenv("SCAN_UPDATED_ATTR"),
-            event.get("scan_updated_attr"),
+            payload.get("scan_updated_attr"),
+            payload.get("scanUpdatedAttr"),
             "_updated_at",
         )
         or "_updated_at"
@@ -351,7 +390,8 @@ def build_snapshot_config(event: Optional[Dict[str, Any]]) -> SnapshotConfig:
     fallback_updated_attr_type = (
         _resolve_optional_text(
             os.getenv("SCAN_UPDATED_ATTR_TYPE"),
-            event.get("scan_updated_attr_type"),
+            payload.get("scan_updated_attr_type"),
+            payload.get("scanUpdatedAttrType"),
             "string",
         )
         or "string"
@@ -364,7 +404,8 @@ def build_snapshot_config(event: Optional[Dict[str, Any]]) -> SnapshotConfig:
         fallback_partition_size = int(
             _resolve_optional_text(
                 os.getenv("SCAN_PARTITION_SIZE"),
-                event.get("scan_partition_size"),
+                payload.get("scan_partition_size"),
+                payload.get("scanPartitionSize"),
                 "10000",
             )
             or "10000"
@@ -375,28 +416,28 @@ def build_snapshot_config(event: Optional[Dict[str, Any]]) -> SnapshotConfig:
         fallback_partition_size = 1000
 
     fallback_compress = _resolve_env_first_bool(
-        event.get("scan_compress"),
+        payload.get("scan_compress"),
         "SCAN_COMPRESS",
         "true",
     )
     permission_precheck_enabled = _resolve_env_first_bool(
-        event.get("permission_precheck"),
+        payload.get("permission_precheck"),
         "PERMISSION_PRECHECK",
         "true",
     )
     output_cloudwatch_enabled = _resolve_env_first_bool(
-        event.get("output_cloudwatch_enabled"),
+        payload.get("output_cloudwatch_enabled"),
         "OUTPUT_CLOUDWATCH_ENABLED",
         "false",
     )
     output_dynamodb_enabled = _resolve_env_first_bool(
-        event.get("output_dynamodb_enabled"),
+        payload.get("output_dynamodb_enabled"),
         "OUTPUT_DYNAMODB_ENABLED",
         "false",
     )
     output_dynamodb_table = _resolve_optional_text(
         os.getenv("OUTPUT_DYNAMODB_TABLE", ""),
-        event.get("output_dynamodb_table"),
+        payload.get("output_dynamodb_table"),
     )
     if output_dynamodb_enabled and not output_dynamodb_table:
         raise ValueError(
@@ -404,7 +445,8 @@ def build_snapshot_config(event: Optional[Dict[str, Any]]) -> SnapshotConfig:
         )
     output_dynamodb_region = _resolve_optional_text(
         os.getenv("OUTPUT_DYNAMODB_REGION", ""),
-        event.get("output_dynamodb_region"),
+        payload.get("output_dynamodb_region"),
+        payload.get("outputDynamodbRegion"),
         _resolve_runtime_region(),
     )
 
@@ -412,19 +454,21 @@ def build_snapshot_config(event: Optional[Dict[str, Any]]) -> SnapshotConfig:
     run_id = run_time.strftime("%Y%m%dT%H%M%SZ")
 
     assume_role_from_event = _resolve_optional_text(
-        event.get("assume_role"),
-        event.get("assume_role_arn"),
+        payload.get("assume_role"),
+        payload.get("assume_role_arn"),
     )
     assume_role_from_env = _resolve_optional_text(os.getenv("ASSUME_ROLE", ""))
     assume_role_arn = _resolve_optional_text(assume_role_from_env, assume_role_from_event)
     assume_role_external_id = _resolve_optional_text(
         os.getenv("ASSUME_ROLE_EXTERNAL_ID", ""),
-        event.get("assume_role_external_id"),
+        payload.get("assume_role_external_id"),
+        payload.get("assumeRoleExternalId"),
     )
     assume_role_session_name = _sanitize_role_session_name(
         _resolve_optional_text(
             os.getenv("ASSUME_ROLE_SESSION_NAME", ""),
-            event.get("assume_role_session_name"),
+            payload.get("assume_role_session_name"),
+            payload.get("assumeRoleSessionName"),
             f"dynamodb-snapshot-{run_id}",
         ) or f"dynamodb-snapshot-{run_id}",
         run_id,
@@ -433,7 +477,8 @@ def build_snapshot_config(event: Optional[Dict[str, Any]]) -> SnapshotConfig:
         assume_role_duration_seconds = int(
             _resolve_optional_text(
                 os.getenv("ASSUME_ROLE_DURATION_SECONDS"),
-                event.get("assume_role_duration_seconds"),
+                payload.get("assume_role_duration_seconds"),
+                payload.get("assumeRoleDurationSeconds"),
                 "3600",
             )
             or "3600"
@@ -508,7 +553,11 @@ def _normalize_list(value: Any) -> List[str]:
             if not isinstance(parsed, list):
                 raise ValueError("targets/ignore deve ser uma lista no formato JSON")
             return [str(item).strip() for item in parsed if str(item).strip()]
-        return [part.strip() for part in text.split(",") if part.strip()]
+        return [
+            part.strip()
+            for part in re.split(r"[,;\n\r]+", text)
+            if part.strip()
+        ]
     if isinstance(value, (list, tuple, set)):
         return [str(item).strip() for item in value if str(item).strip()]
     raise TypeError("targets/ignore must be list/tuple/set/string")
