@@ -146,6 +146,31 @@ CHECKPOINT_DYNAMODB_CLEAR_STATE_ATTR = "ClearState"
 CHECKPOINT_DYNAMODB_MAX_RETRIES = 5
 CHECKPOINT_DYNAMODB_TABLE_POLL_SECONDS = 2
 CHECKPOINT_DYNAMODB_TABLE_TIMEOUT_SECONDS = 60
+FULL_EXPORT_REQUEST_ALLOWED_KEYS = {
+    "TableArn",
+    "S3Bucket",
+    "S3BucketOwner",
+    "S3Prefix",
+    "ExportFormat",
+    "ExportType",
+    "ClientToken",
+}
+INCREMENTAL_EXPORT_REQUEST_ALLOWED_KEYS = {
+    *FULL_EXPORT_REQUEST_ALLOWED_KEYS,
+    "IncrementalExportSpecification",
+}
+FULL_EXPORT_REQUEST_REQUIRED_KEYS = {
+    "TableArn",
+    "S3Bucket",
+    "S3Prefix",
+    "ExportFormat",
+    "ExportType",
+    "ClientToken",
+}
+INCREMENTAL_EXPORT_REQUEST_REQUIRED_KEYS = {
+    *FULL_EXPORT_REQUEST_REQUIRED_KEYS,
+    "IncrementalExportSpecification",
+}
 
 
 SnapshotConfig = Dict[str, Any]
@@ -7863,11 +7888,38 @@ def snapshot_manager_start_full_export(
         table_account_id=execution_context.get("table_account_id"),
         table_region=execution_context.get("table_region"),
     )
+    snapshot_manager_validate_export_request(
+        params,
+        export_type="FULL_EXPORT",
+        table_name=table_name,
+        table_region=_resolve_optional_text(execution_context.get("table_region")),
+    )
+    _log_event(
+        "export.full.request",
+        table_name=table_name,
+        request=snapshot_manager_build_export_request_preview(params),
+        level=logging.DEBUG,
+    )
     try:
         response = ddb_client.export_table_to_point_in_time(**params)
     except ClientError as exc:
+        _log_event(
+            "export.full.failed",
+            table_name=table_name,
+            table_arn=table_arn,
+            error_code=_client_error_code(exc),
+            error_message=_client_error_message(exc),
+            level=logging.ERROR,
+        )
         raise _build_aws_runtime_error("DynamoDB FULL Export", exc, resource=table_name) from exc
     except Exception as exc:
+        _log_event(
+            "export.full.failed",
+            table_name=table_name,
+            table_arn=table_arn,
+            error=str(exc),
+            level=logging.ERROR,
+        )
         raise RuntimeError(f"Falha inesperada no FULL export da tabela {table_name}: {exc}") from exc
     export_desc = response.get("ExportDescription") if isinstance(response, dict) else None
     if not isinstance(export_desc, dict):
@@ -7982,6 +8034,18 @@ def snapshot_manager_start_incremental_export(
         table_account_id=execution_context.get("table_account_id"),
         table_region=execution_context.get("table_region"),
     )
+    snapshot_manager_validate_export_request(
+        params,
+        export_type="INCREMENTAL_EXPORT",
+        table_name=table_name,
+        table_region=_resolve_optional_text(execution_context.get("table_region")),
+    )
+    _log_event(
+        "export.incremental.request",
+        table_name=table_name,
+        request=snapshot_manager_build_export_request_preview(params),
+        level=logging.DEBUG,
+    )
 
     try:
         response = ddb_client.export_table_to_point_in_time(**params)
@@ -8025,6 +8089,14 @@ def snapshot_manager_start_incremental_export(
         }
 
     except ClientError as exc:
+        _log_event(
+            "export.incremental.failed",
+            table_name=table_name,
+            table_arn=table_arn,
+            error_code=_client_error_code(exc),
+            error_message=_client_error_message(exc),
+            level=logging.ERROR,
+        )
         error_msg = _client_error_message(exc)
         if fallback_enabled and snapshot_manager_should_fallback_incremental(manager, exc, error_msg):
             logger.warning(
@@ -8051,6 +8123,13 @@ def snapshot_manager_start_incremental_export(
             )
         raise _build_aws_runtime_error("DynamoDB INCREMENTAL Export", exc, resource=table_name) from exc
     except Exception as exc:
+        _log_event(
+            "export.incremental.failed",
+            table_name=table_name,
+            table_arn=table_arn,
+            error=str(exc),
+            level=logging.ERROR,
+        )
         raise RuntimeError(f"Erro inesperado no INCREMENTAL export da tabela {table_name}: {exc}") from exc
 
 def snapshot_manager_start_incremental_scan_fallback(
@@ -8544,6 +8623,94 @@ def snapshot_manager_build_export_client_token(
         token_parts.append(export_to.astimezone(timezone.utc).isoformat())
     return snapshot_manager_build_client_token(*token_parts)
 
+def _safe_iso_for_log(value: Any) -> str:
+    if isinstance(value, datetime):
+        return _dt_to_iso(value.astimezone(timezone.utc))
+    if value is None:
+        return ""
+    return _safe_str_field(value, field_name="export_value", required=False)
+
+def snapshot_manager_build_export_request_preview(params: Dict[str, Any]) -> Dict[str, Any]:
+    preview = dict(params)
+    if "ClientToken" in preview:
+        token = _safe_str_field(preview.get("ClientToken"), field_name="ClientToken", required=False)
+        preview["ClientToken"] = token[:12] + "..." if token else ""
+    incremental_spec = preview.get("IncrementalExportSpecification")
+    if isinstance(incremental_spec, dict):
+        preview["IncrementalExportSpecification"] = {
+            "ExportFromTime": _safe_iso_for_log(incremental_spec.get("ExportFromTime")),
+            "ExportToTime": _safe_iso_for_log(incremental_spec.get("ExportToTime")),
+        }
+    return preview
+
+def snapshot_manager_validate_export_request(
+    params: Dict[str, Any],
+    *,
+    export_type: str,
+    table_name: str,
+    table_region: Optional[str],
+) -> None:
+    allowed_keys = (
+        INCREMENTAL_EXPORT_REQUEST_ALLOWED_KEYS
+        if export_type == "INCREMENTAL_EXPORT"
+        else FULL_EXPORT_REQUEST_ALLOWED_KEYS
+    )
+    required_keys = (
+        INCREMENTAL_EXPORT_REQUEST_REQUIRED_KEYS
+        if export_type == "INCREMENTAL_EXPORT"
+        else FULL_EXPORT_REQUEST_REQUIRED_KEYS
+    )
+    unknown_keys = sorted(set(params.keys()) - allowed_keys)
+    if unknown_keys:
+        raise ValueError(
+            f"Parâmetros inválidos no request de export da tabela {table_name}: {', '.join(unknown_keys)}"
+        )
+
+    missing_keys = sorted(key for key in required_keys if key not in params)
+    if missing_keys:
+        raise ValueError(
+            f"Parâmetros obrigatórios ausentes no request de export da tabela {table_name}: {', '.join(missing_keys)}"
+        )
+
+    resolved_export_type = _safe_str_field(params.get("ExportType"), field_name="ExportType")
+    if resolved_export_type != export_type:
+        raise ValueError(
+            f"ExportType inválido para {table_name}: esperado {export_type}, recebido {resolved_export_type}"
+        )
+
+    bucket = _safe_str_field(params.get("S3Bucket"), field_name="S3Bucket")
+    bucket_owner = _safe_str_field(params.get("S3BucketOwner"), field_name="S3BucketOwner", required=False)
+    if bucket_owner and not AWS_ACCOUNT_ID_PATTERN.fullmatch(bucket_owner):
+        raise ValueError(
+            f"S3BucketOwner inválido para {table_name}: {bucket_owner}. Use account id AWS de 12 dígitos."
+        )
+
+    table_region_text = _resolve_optional_text(table_region)
+    region_match = BUCKET_REGION_SUFFIX_PATTERN.search(bucket)
+    if region_match and table_region_text:
+        bucket_region = _safe_str_field(region_match.group("region"), field_name="bucket_region", required=False)
+        if bucket_region and bucket_region != table_region_text:
+            raise ValueError(
+                f"Bucket {bucket} indica região {bucket_region}, mas a tabela {table_name} está em {table_region_text}."
+            )
+
+    if export_type == "INCREMENTAL_EXPORT":
+        incremental_spec = params.get("IncrementalExportSpecification")
+        if not isinstance(incremental_spec, dict):
+            raise ValueError(
+                f"IncrementalExportSpecification inválido para tabela {table_name}: deve ser objeto."
+            )
+        export_from = incremental_spec.get("ExportFromTime")
+        export_to = incremental_spec.get("ExportToTime")
+        if not isinstance(export_from, datetime) or not isinstance(export_to, datetime):
+            raise ValueError(
+                f"IncrementalExportSpecification inválido para tabela {table_name}: ExportFromTime/ExportToTime devem ser datetime."
+            )
+        if export_from >= export_to:
+            raise ValueError(
+                f"IncrementalExportSpecification inválido para tabela {table_name}: ExportFromTime deve ser menor que ExportToTime."
+            )
+
 def lambda_handler(
     event: Optional[Dict[str, Any]] = None,
     context: Any = None,
@@ -8562,28 +8729,40 @@ def lambda_handler(
     try:
         config = build_snapshot_config(event)
         manager = create_snapshot_manager(config)
+        run_result = snapshot_manager_run(manager, event)
+        run_status = _safe_str_field(run_result.get("status"), field_name="status", required=False).lower()
+        failed_count = sum(
+            _safe_str_field(item.get("status"), field_name="result.status", required=False).upper() == "FAILED"
+            for item in run_result.get("results", [])
+            if isinstance(item, dict)
+        )
+        result_ok = run_status == "ok"
         result = {
-            "ok": True,
+            "ok": result_ok,
             "snapshot_bucket": config["bucket"],
-            **snapshot_manager_run(manager, event),
+            **run_result,
         }
+        log_action = "handler.success" if result_ok else "handler.partial_failure"
+        output_source = "lambda_handler.success" if result_ok else "lambda_handler.partial_failure"
         _log_event(
-            "handler.success",
+            log_action,
             status=result.get("status"),
             run_id=result.get("run_id"),
             result_count=len(result.get("results", [])) if isinstance(result.get("results"), list) else 0,
+            failed_count=failed_count,
             checkpoint_error=result.get("checkpoint_error"),
             snapshot_bucket=result.get("snapshot_bucket"),
+            level=(logging.INFO if result_ok else logging.WARNING),
         )
         if emit_cloudwatch_output:
             _emit_output_to_cloudwatch(
-                "lambda_handler.success",
+                output_source,
                 result,
                 config=config,
                 context=context,
             )
         _emit_output_to_dynamodb(
-            "lambda_handler.success",
+            output_source,
             result,
             config=config,
             event=event,
