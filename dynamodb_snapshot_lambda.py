@@ -53,6 +53,7 @@ ROLE_TEMPLATE_PATTERN = re.compile(r"\{([a-zA-Z_][a-zA-Z0-9_]*)\}")
 FULL_EXPORT_RUN_ID_PATTERN = re.compile(r"(?:^|/)run_id=(\d{8}T\d{6}Z)(?:/|$)")
 FULL_EXPORT_COMPLETION_SUFFIXES = ("manifest-summary.json", "manifest-files.json")
 EXPORT_LAYOUT_PREFIX = "DDB"
+BUCKET_REGION_SUFFIX_PATTERN = re.compile(r"(?P<region>[a-z]{2}(?:-gov)?-[a-z0-9-]+-\d)$")
 EXPORT_LAYOUT_KEY_PATTERN = re.compile(
     r"^DDB/(?P<export_date>(?:\d{8}|\d{4}-\d{2}-\d{2}))/"
     r"(?P<account_id>[^/]+)/(?P<table_name>[^/]+)/"
@@ -295,7 +296,8 @@ def build_snapshot_config(event: Optional[Dict[str, Any]]) -> SnapshotConfig:
     mode = (
         _resolve_optional_text(
             os.getenv("SNAPSHOT_MODE"),
-            event.get("mode"),
+            payload.get("mode"),
+            payload.get("snapshot_mode"),
             "full",
         )
         or "full"
@@ -307,7 +309,8 @@ def build_snapshot_config(event: Optional[Dict[str, Any]]) -> SnapshotConfig:
         max_workers = int(
             _resolve_optional_text(
                 os.getenv("MAX_WORKERS"),
-                event.get("max_workers"),
+                payload.get("max_workers"),
+                payload.get("maxWorkers"),
                 "4",
             )
             or "4"
@@ -344,6 +347,11 @@ def build_snapshot_config(event: Optional[Dict[str, Any]]) -> SnapshotConfig:
     wait_for_completion = _resolve_env_first_bool(
         payload.get("wait_for_completion"),
         "WAIT_FOR_COMPLETION",
+        "false",
+    )
+    snapshot_bucket_exact = _resolve_env_first_bool(
+        payload.get("snapshot_bucket_exact"),
+        "SNAPSHOT_BUCKET_EXACT",
         "false",
     )
     event_catch_up = (
@@ -503,6 +511,18 @@ def build_snapshot_config(event: Optional[Dict[str, Any]]) -> SnapshotConfig:
         session_name=assume_role_session_name,
         duration_seconds=assume_role_duration_seconds,
     )
+    _log_event(
+        "config.targets.resolved",
+        targets_count=len(targets),
+        targets_csv_configured=bool(targets_csv),
+        ignore_count=len(ignore),
+        ignore_csv_configured=bool(ignore_csv),
+        mode=mode,
+        max_workers=max_workers,
+        wait_for_completion=wait_for_completion,
+        snapshot_bucket_exact=snapshot_bucket_exact,
+        permission_precheck_enabled=permission_precheck_enabled,
+    )
 
     return {
         "bucket": bucket,
@@ -514,6 +534,7 @@ def build_snapshot_config(event: Optional[Dict[str, Any]]) -> SnapshotConfig:
         "s3_prefix": s3_prefix,
         "mode": mode,
         "wait_for_completion": wait_for_completion,
+        "snapshot_bucket_exact": snapshot_bucket_exact,
         "catch_up": catch_up,
         "dry_run": dry_run,
         "max_workers": max_workers,
@@ -1456,6 +1477,24 @@ def snapshot_manager_build_bucket_name(base_bucket: str, region: Optional[str]) 
     region_suffix = f"-{resolved_region}"
     if resolved_bucket.endswith(region_suffix):
         return resolved_bucket
+    # If the bucket name already has a region-like suffix, keep it as-is to
+    # avoid accidentally building names such as "<bucket>-sa-east-1-us-east-1".
+    existing_region_match = BUCKET_REGION_SUFFIX_PATTERN.search(resolved_bucket)
+    if existing_region_match:
+        existing_region = _safe_str_field(
+            existing_region_match.group("region"),
+            field_name="bucket_region_suffix",
+            required=False,
+        )
+        _log_event(
+            "snapshot.bucket.region_suffix.detected",
+            bucket=resolved_bucket,
+            bucket_region=existing_region,
+            target_region=resolved_region,
+            mismatch=bool(existing_region and existing_region != resolved_region),
+            level=(logging.WARNING if existing_region and existing_region != resolved_region else logging.DEBUG),
+        )
+        return resolved_bucket
     return f"{resolved_bucket}{region_suffix}"
 
 
@@ -1477,16 +1516,36 @@ def snapshot_manager_resolve_snapshot_bucket(
     )
     if not base_bucket:
         return ""
+    if bool(config.get("snapshot_bucket_exact")):
+        _log_event(
+            "snapshot.bucket.resolve",
+            strategy="exact",
+            table_name=table_name,
+            table_arn=table_arn,
+            bucket=base_bucket,
+            level=logging.DEBUG,
+        )
+        return base_bucket
     storage_context = snapshot_manager_resolve_table_storage_context(
         manager,
         table_name,
         table_arn,
         execution_context=execution_context,
     )
-    return snapshot_manager_build_bucket_name(
+    resolved_bucket = snapshot_manager_build_bucket_name(
         base_bucket,
         _resolve_optional_text(storage_context.get("region")),
     )
+    _log_event(
+        "snapshot.bucket.resolve",
+        strategy="suffix_by_table_region",
+        table_name=table_name,
+        table_arn=table_arn,
+        bucket=resolved_bucket,
+        table_region=_resolve_optional_text(storage_context.get("region")),
+        level=logging.DEBUG,
+    )
+    return resolved_bucket
 
 
 def snapshot_manager_attach_snapshot_bucket_to_result(
@@ -6087,6 +6146,11 @@ def snapshot_manager_filter_entry_by_ignore(
         required=False,
     ).lower()
     if table_arn in ignore_set or table_name in ignore_set:
+        _log_event(
+            "snapshot.preflight.target.ignored",
+            table_name=values.get("table_name"),
+            table_arn=values.get("table_arn"),
+        )
         return {"entry": None, "failure": None}
     return {"entry": values, "failure": None}
 
@@ -6174,11 +6238,37 @@ def snapshot_manager_dedupe_entries(
     manager: Dict[str, Any],
     entries: List[Dict[str, str]],
 ) -> List[Dict[str, str]]:
-    deduped = {
-        snapshot_manager_entry_identity(manager, entry): entry
-        for entry in entries
-    }
+    deduped: Dict[str, Dict[str, str]] = {}
+    duplicates = 0
+    for entry in entries:
+        identity = snapshot_manager_entry_identity(manager, entry)
+        if identity in deduped:
+            duplicates += 1
+        deduped[identity] = entry
+    if duplicates:
+        _log_event(
+            "snapshot.preflight.dedupe",
+            input_count=len(entries),
+            output_count=len(deduped),
+            dropped=duplicates,
+        )
     return list(deduped.values())
+
+def snapshot_manager_log_preflight_failures(stage: str, failures: List[Dict[str, Any]]) -> None:
+    if not failures:
+        return
+    for failure in failures:
+        _log_event(
+            "snapshot.preflight.failure",
+            stage=stage,
+            table_name=_safe_str_field(failure.get("table_name"), field_name="table_name", required=False),
+            table_arn=_safe_str_field(failure.get("table_arn"), field_name="table_arn", required=False),
+            status=_safe_str_field(failure.get("status"), field_name="status", required=False),
+            error_type=_safe_str_field(failure.get("error_type"), field_name="error_type", required=False),
+            error_code=_safe_str_field(failure.get("error_code"), field_name="error_code", required=False),
+            error=_safe_str_field(failure.get("error"), field_name="error", required=False),
+            level=logging.WARNING,
+        )
 
 def snapshot_manager_partition_by_permission_precheck(
     manager: Dict[str, Any],
@@ -6510,6 +6600,7 @@ def snapshot_manager_run(manager: Dict[str, Any], event: Optional[Dict[str, Any]
         manager,
         resolved_targets,
     )
+    snapshot_manager_log_preflight_failures("target_parse", preflight_failures)
 
     _log_event(
         "snapshot.preflight.summary",
@@ -6523,6 +6614,7 @@ def snapshot_manager_run(manager: Dict[str, Any], event: Optional[Dict[str, Any]
         entries,
         resolved_ignore,
     )
+    snapshot_manager_log_preflight_failures("ignore_filter", ignore_failures)
     preflight_failures.extend(ignore_failures)
 
     manager = snapshot_manager_coalesce_manager(
@@ -6537,6 +6629,7 @@ def snapshot_manager_run(manager: Dict[str, Any], event: Optional[Dict[str, Any]
         manager,
         filtered_entries,
     )
+    snapshot_manager_log_preflight_failures("resolve_arn", arn_resolution_failures)
     preflight_failures.extend(arn_resolution_failures)
 
     # Dedup final colapsa misto nome+ARN da mesma tabela para um único disparo.
@@ -6554,6 +6647,7 @@ def snapshot_manager_run(manager: Dict[str, Any], event: Optional[Dict[str, Any]
         manager,
         filtered_entries,
     )
+    snapshot_manager_log_preflight_failures("permission_precheck", permission_failures)
     preflight_failures.extend(permission_failures)
 
     if not filtered_entries:
