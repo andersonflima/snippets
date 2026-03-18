@@ -323,6 +323,7 @@ def build_snapshot_config(event: Optional[Dict[str, Any]]) -> SnapshotConfig:
             os.getenv("SNAPSHOT_MODE"),
             payload.get("mode"),
             payload.get("snapshot_mode"),
+            payload.get("snapshotMode"),
             "full",
         )
         or "full"
@@ -370,12 +371,18 @@ def build_snapshot_config(event: Optional[Dict[str, Any]]) -> SnapshotConfig:
         or "dynamodb-snapshots"
     ).strip("/")
     wait_for_completion = _resolve_env_first_bool(
-        payload.get("wait_for_completion"),
+        _resolve_optional_text(
+            payload.get("wait_for_completion"),
+            payload.get("waitForCompletion"),
+        ),
         "WAIT_FOR_COMPLETION",
         "false",
     )
     snapshot_bucket_exact = _resolve_env_first_bool(
-        payload.get("snapshot_bucket_exact"),
+        _resolve_optional_text(
+            payload.get("snapshot_bucket_exact"),
+            payload.get("snapshotBucketExact"),
+        ),
         "SNAPSHOT_BUCKET_EXACT",
         "false",
     )
@@ -383,6 +390,8 @@ def build_snapshot_config(event: Optional[Dict[str, Any]]) -> SnapshotConfig:
         payload.get("catch_up")
         if "catch_up" in payload
         else payload.get("catch-up")
+        if "catch-up" in payload
+        else payload.get("catchUp")
     )
     catch_up = _resolve_env_first_bool(
         event_catch_up,
@@ -390,7 +399,10 @@ def build_snapshot_config(event: Optional[Dict[str, Any]]) -> SnapshotConfig:
         "false",
     )
     dry_run = _resolve_env_first_bool(
-        payload.get("dry_run"),
+        _resolve_optional_text(
+            payload.get("dry_run"),
+            payload.get("dryRun"),
+        ),
         "DRY_RUN",
         "false",
     )
@@ -407,7 +419,10 @@ def build_snapshot_config(event: Optional[Dict[str, Any]]) -> SnapshotConfig:
     )
 
     fallback_enabled = _resolve_env_first_bool(
-        payload.get("scan_fallback_enabled"),
+        _resolve_optional_text(
+            payload.get("scan_fallback_enabled"),
+            payload.get("scanFallbackEnabled"),
+        ),
         "SCAN_FALLBACK_ENABLED",
         "true",
     )
@@ -449,22 +464,34 @@ def build_snapshot_config(event: Optional[Dict[str, Any]]) -> SnapshotConfig:
         fallback_partition_size = 1000
 
     fallback_compress = _resolve_env_first_bool(
-        payload.get("scan_compress"),
+        _resolve_optional_text(
+            payload.get("scan_compress"),
+            payload.get("scanCompress"),
+        ),
         "SCAN_COMPRESS",
         "true",
     )
     permission_precheck_enabled = _resolve_env_first_bool(
-        payload.get("permission_precheck"),
+        _resolve_optional_text(
+            payload.get("permission_precheck"),
+            payload.get("permissionPrecheck"),
+        ),
         "PERMISSION_PRECHECK",
         "true",
     )
     output_cloudwatch_enabled = _resolve_env_first_bool(
-        payload.get("output_cloudwatch_enabled"),
+        _resolve_optional_text(
+            payload.get("output_cloudwatch_enabled"),
+            payload.get("outputCloudwatchEnabled"),
+        ),
         "OUTPUT_CLOUDWATCH_ENABLED",
         "false",
     )
     output_dynamodb_enabled = _resolve_env_first_bool(
-        payload.get("output_dynamodb_enabled"),
+        _resolve_optional_text(
+            payload.get("output_dynamodb_enabled"),
+            payload.get("outputDynamodbEnabled"),
+        ),
         "OUTPUT_DYNAMODB_ENABLED",
         "false",
     )
@@ -7876,7 +7903,7 @@ def snapshot_manager_start_full_export(
     )
     logger.info("Iniciando FULL export: %s", table_name)
     _log_event(
-        "export.full.start",
+        "export.full.attempt",
         table_name=table_name,
         table_arn=table_arn,
         s3_bucket=bucket,
@@ -8020,7 +8047,7 @@ def snapshot_manager_start_incremental_export(
     )
     logger.info("Iniciando INCREMENTAL export: %s (%s -> %s)", table_name, export_from, export_to)
     _log_event(
-        "export.incremental.start",
+        "export.incremental.attempt",
         table_name=table_name,
         table_arn=table_arn,
         s3_bucket=bucket,
