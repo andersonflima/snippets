@@ -296,6 +296,8 @@ def build_snapshot_config(event: Optional[Dict[str, Any]]) -> SnapshotConfig:
             os.getenv("TARGETS_CSV", ""),
             payload.get("targets_csv"),
             payload.get("target_csv"),
+            payload.get("targetsCsv"),
+            payload.get("targetCsv"),
         )
         or None
     )
@@ -311,6 +313,8 @@ def build_snapshot_config(event: Optional[Dict[str, Any]]) -> SnapshotConfig:
             os.getenv("IGNORE_CSV", ""),
             payload.get("ignore_csv"),
             payload.get("ignore_targets_csv"),
+            payload.get("ignoreCsv"),
+            payload.get("ignoreTargetsCsv"),
         )
         or None
     )
@@ -358,7 +362,9 @@ def build_snapshot_config(event: Optional[Dict[str, Any]]) -> SnapshotConfig:
     bucket_owner = _resolve_optional_text(
         os.getenv("S3_BUCKET_OWNER", ""),
         payload.get("bucket_owner"),
+        payload.get("bucketOwner"),
         payload.get("snapshot_bucket_owner"),
+        payload.get("snapshotBucketOwner"),
     )
     if bucket_owner and not AWS_ACCOUNT_ID_PATTERN.fullmatch(bucket_owner):
         raise ValueError("S3_BUCKET_OWNER deve ser um account id AWS de 12 dígitos")
@@ -390,9 +396,9 @@ def build_snapshot_config(event: Optional[Dict[str, Any]]) -> SnapshotConfig:
     )
     event_catch_up = (
         payload.get("catch_up")
-        if "catch_up" in payload
+        if payload.get("catch_up") is not None
         else payload.get("catch-up")
-        if "catch-up" in payload
+        if payload.get("catch-up") is not None
         else payload.get("catchUp")
     )
     catch_up = _resolve_env_first_bool(
@@ -412,6 +418,7 @@ def build_snapshot_config(event: Optional[Dict[str, Any]]) -> SnapshotConfig:
     checkpoint_dynamodb_table_arn = _resolve_optional_text(
         os.getenv("CHECKPOINT_DYNAMODB_TABLE_ARN", ""),
         payload.get("checkpoint_dynamodb_table_arn"),
+        payload.get("checkpointDynamodbTableArn"),
     )
     if not checkpoint_dynamodb_table_arn:
         raise ValueError("CHECKPOINT_DYNAMODB_TABLE_ARN não definido")
@@ -500,6 +507,7 @@ def build_snapshot_config(event: Optional[Dict[str, Any]]) -> SnapshotConfig:
     output_dynamodb_table = _resolve_optional_text(
         os.getenv("OUTPUT_DYNAMODB_TABLE", ""),
         payload.get("output_dynamodb_table"),
+        payload.get("outputDynamodbTable"),
     )
     if output_dynamodb_enabled and not output_dynamodb_table:
         raise ValueError(
@@ -518,6 +526,8 @@ def build_snapshot_config(event: Optional[Dict[str, Any]]) -> SnapshotConfig:
     assume_role_from_event = _resolve_optional_text(
         payload.get("assume_role"),
         payload.get("assume_role_arn"),
+        payload.get("assumeRole"),
+        payload.get("assumeRoleArn"),
     )
     assume_role_from_env = _resolve_optional_text(os.getenv("ASSUME_ROLE", ""))
     assume_role_arn = _resolve_optional_text(assume_role_from_env, assume_role_from_event)
