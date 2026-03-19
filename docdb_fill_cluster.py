@@ -7,7 +7,7 @@ import math
 import os
 import re
 import time
-from concurrent.futures import ThreadPoolExecutor
+from concurrent.futures import FIRST_COMPLETED, ThreadPoolExecutor, wait
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
@@ -39,6 +39,7 @@ class ClusterConnectionInfo:
 @dataclass(frozen=True)
 class SeedRuntime:
     parallelism: int
+    insert_threads_per_worker: int
     doc_size_bytes: int
     batch_size: int
     pool_chunks: int
@@ -158,6 +159,12 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
         help="Métrica de `dbStats` usada para decidir quando parar.",
     )
     parser.add_argument("--parallelism", type=int, default=2)
+    parser.add_argument(
+        "--insert-threads-per-worker",
+        type=int,
+        default=4,
+        help="Threads de inserção por worker/collection (usa insert_many em paralelo).",
+    )
     parser.add_argument("--doc-size-mib", type=int, default=8)
     parser.add_argument("--batch-size", type=int, default=2)
     parser.add_argument("--pool-chunks", type=int, default=48)
@@ -463,6 +470,64 @@ def insert_batch(collection: Collection[Any], batch: Sequence[dict[str, Any]], a
     return sum(insert_document(collection, document) for document in batch)
 
 
+def _batch_insert_result(collection: Collection[Any], batch: Sequence[dict[str, Any]]) -> tuple[int, int]:
+    inserted_documents = insert_batch(collection, batch)
+    inserted_payload_bytes = sum(int(item["size_bytes"]) for item in batch[:inserted_documents])
+    return inserted_documents, inserted_payload_bytes
+
+
+def _accumulate_insert_results(insert_futures: Iterable[Any]) -> tuple[int, int]:
+    inserted_documents = 0
+    inserted_payload_bytes = 0
+    for future in insert_futures:
+        batch_documents, batch_payload_bytes = future.result()
+        inserted_documents += batch_documents
+        inserted_payload_bytes += batch_payload_bytes
+    return inserted_documents, inserted_payload_bytes
+
+
+def _insert_batches_with_threads(
+    collection: Collection[Any],
+    batch_iterable: Iterable[tuple[dict[str, Any], ...]],
+    *,
+    insert_threads_per_worker: int,
+) -> tuple[int, int]:
+    if insert_threads_per_worker <= 1:
+        inserted_documents = 0
+        inserted_payload_bytes = 0
+        for batch in batch_iterable:
+            batch_documents, batch_payload_bytes = _batch_insert_result(collection, batch)
+            inserted_documents += batch_documents
+            inserted_payload_bytes += batch_payload_bytes
+        return inserted_documents, inserted_payload_bytes
+
+    in_flight_limit = max(1, insert_threads_per_worker * 2)
+    with ThreadPoolExecutor(
+        max_workers=insert_threads_per_worker,
+        thread_name_prefix="docdb-insert",
+    ) as executor:
+        in_flight: set[Any] = set()
+        inserted_documents = 0
+        inserted_payload_bytes = 0
+
+        for batch in batch_iterable:
+            in_flight.add(executor.submit(_batch_insert_result, collection, batch))
+            if len(in_flight) >= in_flight_limit:
+                done, pending = wait(in_flight, return_when=FIRST_COMPLETED)
+                done_documents, done_payload_bytes = _accumulate_insert_results(done)
+                inserted_documents += done_documents
+                inserted_payload_bytes += done_payload_bytes
+                in_flight = set(pending)
+
+        if in_flight:
+            done, _ = wait(in_flight)
+            done_documents, done_payload_bytes = _accumulate_insert_results(done)
+            inserted_documents += done_documents
+            inserted_payload_bytes += done_payload_bytes
+
+    return inserted_documents, inserted_payload_bytes
+
+
 def seed_worker(
     connection: ClusterConnectionInfo,
     collection_name: str,
@@ -486,9 +551,7 @@ def seed_worker(
             runtime.pool_chunk_size_bytes,
         )
         started_at = time.perf_counter()
-        inserted_count = 0
-        inserted_bytes = 0
-        for batch in batched(
+        batch_iterable = batched(
             build_documents_from_offset(
                 collection_name=collection_name,
                 worker_index=worker_index,
@@ -498,10 +561,12 @@ def seed_worker(
                 doc_size_bytes=runtime.doc_size_bytes,
             ),
             runtime.batch_size,
-        ):
-            inserted_documents = insert_batch(collection, batch)
-            inserted_count += inserted_documents
-            inserted_bytes += sum(int(item["size_bytes"]) for item in batch[:inserted_documents])
+        )
+        inserted_count, inserted_bytes = _insert_batches_with_threads(
+            collection,
+            batch_iterable,
+            insert_threads_per_worker=runtime.insert_threads_per_worker,
+        )
         finished_at = time.perf_counter()
         return {
             "collection": collection_name,
@@ -525,6 +590,9 @@ def build_runtime(
     target_name: str,
 ) -> SeedRuntime:
     parallelism = int(require_positive(args.parallelism, "parallelism"))
+    insert_threads_per_worker = int(
+        require_positive(args.insert_threads_per_worker, "insert-threads-per-worker")
+    )
     doc_size_mib = int(require_positive(args.doc_size_mib, "doc-size-mib"))
     batch_size = int(require_positive(args.batch_size, "batch-size"))
     pool_chunks = int(require_positive(args.pool_chunks, "pool-chunks"))
@@ -537,6 +605,7 @@ def build_runtime(
     )
     return SeedRuntime(
         parallelism=parallelism,
+        insert_threads_per_worker=insert_threads_per_worker,
         doc_size_bytes=doc_size_mib * MIB,
         batch_size=batch_size,
         pool_chunks=pool_chunks,
@@ -600,6 +669,46 @@ def format_mib(value_bytes: int) -> str:
     return f"{value_bytes / MIB:.1f} MiB"
 
 
+def format_elapsed_seconds(seconds: float) -> str:
+    safe_seconds = max(0, int(round(seconds)))
+    minutes, remaining_seconds = divmod(safe_seconds, 60)
+    hours, remaining_minutes = divmod(minutes, 60)
+    return f"{hours:02d}:{remaining_minutes:02d}:{remaining_seconds:02d}"
+
+
+def estimate_eta_seconds(
+    remaining_bytes: int,
+    inserted_payload_total_bytes: int,
+    total_elapsed_seconds: float,
+) -> float | None:
+    if remaining_bytes <= 0:
+        return 0.0
+    if inserted_payload_total_bytes <= 0 or total_elapsed_seconds <= 0:
+        return None
+    bytes_per_second = inserted_payload_total_bytes / total_elapsed_seconds
+    if bytes_per_second <= 0:
+        return None
+    return remaining_bytes / bytes_per_second
+
+
+def format_worker_progress(worker_reports: Sequence[dict[str, Any]]) -> str:
+    if not worker_reports:
+        return "-"
+    ordered_reports = sorted(
+        worker_reports,
+        key=lambda report: int(report.get("worker_index", 0)),
+    )
+    return " | ".join(
+        (
+            f"w{int(report['worker_index']):02d} "
+            f"docs={int(report['documents'])} "
+            f"bytes={format_mib(int(report['payload_bytes']))} "
+            f"rate={((int(report['payload_bytes']) / MIB) / max(float(report['elapsed_seconds']), 0.001)):.1f} MiB/s"
+        )
+        for report in ordered_reports
+    )
+
+
 def print_round_progress(
     round_number: int,
     size_metric: str,
@@ -613,21 +722,60 @@ def print_round_progress(
     inserted_payload_total_bytes: int,
     inserted_documents_total: int,
     metric_source: str,
+    round_elapsed_seconds: float,
+    total_elapsed_seconds: float,
+    worker_reports: Sequence[dict[str, Any]],
 ) -> None:
+    progress_percent = (after_bytes / target_bytes * 100.0) if target_bytes > 0 else 0.0
+    remaining_bytes = max(target_bytes - after_bytes, 0)
+    eta_seconds = estimate_eta_seconds(
+        remaining_bytes=remaining_bytes,
+        inserted_payload_total_bytes=inserted_payload_total_bytes,
+        total_elapsed_seconds=total_elapsed_seconds,
+    )
+    insert_rate_mib_per_second = (
+        (inserted_payload_bytes / MIB) / round_elapsed_seconds
+        if round_elapsed_seconds > 0
+        else 0.0
+    )
+    eta_text = format_elapsed_seconds(eta_seconds) if eta_seconds is not None else "--:--:--"
     print(
         (
-            f"[round {round_number}] "
-            f"metric={size_metric} "
-            f"source={metric_source} "
-            f"inserted_round={format_mib(inserted_payload_bytes)} "
-            f"docs_round={inserted_documents} "
-            f"inserted_total={format_gib(inserted_payload_total_bytes)} "
-            f"docs_total={inserted_documents_total} "
-            f"before={format_gib(before_bytes)} "
-            f"observed_after={format_gib(observed_after_bytes)} "
-            f"effective_after={format_gib(after_bytes)} "
-            f"target={format_gib(target_bytes)} "
-            f"planned_round={format_mib(planned_payload_bytes)}"
+            f"[round {round_number:03d}] "
+            f"{progress_percent:5.1f}% {size_metric}={format_gib(after_bytes)}/{format_gib(target_bytes)} "
+            f"remaining={format_gib(remaining_bytes)} eta={eta_text}"
+        ),
+        flush=True,
+    )
+    print(
+        (
+            f"  round: inserted={format_mib(inserted_payload_bytes)} "
+            f"planned={format_mib(planned_payload_bytes)} "
+            f"docs={inserted_documents} "
+            f"rate={insert_rate_mib_per_second:.1f} MiB/s "
+            f"elapsed={round_elapsed_seconds:.1f}s"
+        ),
+        flush=True,
+    )
+    print(
+        (
+            f"  total: inserted={format_gib(inserted_payload_total_bytes)} "
+            f"docs={inserted_documents_total} "
+            f"total_elapsed={format_elapsed_seconds(total_elapsed_seconds)}"
+        ),
+        flush=True,
+    )
+    print(
+        (
+            f"  metric: source={metric_source} "
+            f"before={format_gib(before_bytes)} observed={format_gib(observed_after_bytes)} "
+            f"effective={format_gib(after_bytes)}"
+        ),
+        flush=True,
+    )
+    print(
+        (
+            f"  workers: {format_worker_progress(worker_reports)}"
         ),
         flush=True,
     )
@@ -700,6 +848,7 @@ def seed_database_to_target(
 ) -> dict[str, Any]:
     target_bytes = math.ceil(require_positive(target_gib, "gib") * GIB)
     started_at = datetime.now(timezone.utc)
+    loop_started_at = time.perf_counter()
     start_stats = read_database_stats_from_connection(
         connection.uri,
         connection.tls_ca_file,
@@ -715,6 +864,7 @@ def seed_database_to_target(
     inserted_documents_total = 0
 
     while current_metric_bytes < target_bytes:
+        round_started_at = time.perf_counter()
         round_number += 1
         remaining_bytes = target_bytes - current_metric_bytes
         round_payload_bytes, distribution = build_round_plan(remaining_bytes, runtime)
@@ -737,6 +887,7 @@ def seed_database_to_target(
             observed_metric_bytes,
             inserted_payload_bytes,
         )
+        round_elapsed_seconds = max(0.001, time.perf_counter() - round_started_at)
         round_report = {
             "round": round_number,
             "remaining_bytes_before": remaining_bytes,
@@ -750,10 +901,12 @@ def seed_database_to_target(
             "inserted_payload_total_bytes": inserted_payload_total_bytes,
             "inserted_documents_total": inserted_documents_total,
             "metric_source": metric_source,
+            "round_elapsed_seconds": round_elapsed_seconds,
             "worker_reports": list(worker_reports),
             "db_stats": current_stats,
         }
         round_reports.append(round_report)
+        total_elapsed_seconds = max(0.001, time.perf_counter() - loop_started_at)
         print_round_progress(
             round_number=round_number,
             size_metric=runtime.size_metric,
@@ -767,6 +920,9 @@ def seed_database_to_target(
             inserted_payload_total_bytes=inserted_payload_total_bytes,
             inserted_documents_total=inserted_documents_total,
             metric_source=metric_source,
+            round_elapsed_seconds=round_elapsed_seconds,
+            total_elapsed_seconds=total_elapsed_seconds,
+            worker_reports=worker_reports,
         )
         current_metric_bytes = updated_metric_bytes
 
@@ -797,22 +953,26 @@ def main(argv: Sequence[str] | None = None) -> int:
         connection = resolve_connection_from_args(args)
         runtime = build_runtime(args, started_at, connection.target_name)
         print(
-            json.dumps(
-                {
-                    "event": "connection",
-                    "target_name": connection.target_name,
-                    "endpoint": connection.endpoint,
-                    "port": connection.port,
-                    "database": connection.database,
-                    "tls_ca_file": connection.tls_ca_file,
-                    "tls_allow_invalid_hostnames": connection.tls_allow_invalid_hostnames,
-                    "tls_allow_invalid_certificates": connection.tls_allow_invalid_certificates,
-                    "size_metric": runtime.size_metric,
-                    "target_gib": args.gib,
-                    "collection_prefix": runtime.collection_prefix,
-                },
-                ensure_ascii=False,
-            )
+            (
+                f"[connection] target={connection.target_name} "
+                f"endpoint={connection.endpoint}:{connection.port} "
+                f"database={connection.database} "
+                f"metric={runtime.size_metric} "
+                f"target={args.gib:.3f} GiB"
+            ),
+            flush=True,
+        )
+        print(
+            (
+                f"[runtime] workers={runtime.parallelism} "
+                f"insert_threads_per_worker={runtime.insert_threads_per_worker} "
+                f"batch_size={runtime.batch_size} "
+                f"doc_size={runtime.doc_size_bytes / MIB:.1f} MiB "
+                f"round_limit={runtime.round_bytes / MIB:.1f} MiB "
+                f"stats_poll={runtime.stats_poll_seconds:.1f}s "
+                f"collection_prefix={runtime.collection_prefix}"
+            ),
+            flush=True,
         )
         report = seed_database_to_target(
             connection=connection,
@@ -820,27 +980,27 @@ def main(argv: Sequence[str] | None = None) -> int:
             target_gib=args.gib,
             report_file=args.report_file,
         )
+        duration_seconds = max(float(report["duration_seconds"]), 0.001)
+        average_rate_mib_per_second = (int(report["payload_bytes_inserted"]) / MIB) / duration_seconds
         print(
-            json.dumps(
-                {
-                    "event": "completed",
-                    "target_name": report["target_name"],
-                    "database": report["database"],
-                    "size_metric": report["size_metric"],
-                    "final_metric_bytes": report["final_metric_bytes"],
-                    "final_metric_gib": round(report["final_metric_bytes"] / GIB, 3),
-                    "target_gib": report["target_gib"],
-                    "documents_inserted": report["documents_inserted"],
-                    "payload_bytes_inserted": report["payload_bytes_inserted"],
-                    "collection_prefix": report["collection_prefix"],
-                },
-                ensure_ascii=False,
-            )
+            (
+                f"[completed] target={report['target_name']} "
+                f"database={report['database']} "
+                f"metric={report['size_metric']} "
+                f"final={format_gib(int(report['final_metric_bytes']))} "
+                f"target={float(report['target_gib']):.3f} GiB "
+                f"inserted={format_gib(int(report['payload_bytes_inserted']))} "
+                f"docs={int(report['documents_inserted'])} "
+                f"duration={float(report['duration_seconds']):.1f}s "
+                f"avg_rate={average_rate_mib_per_second:.1f} MiB/s"
+            ),
+            flush=True,
         )
-        print(json.dumps(report, ensure_ascii=False))
+        if args.report_file:
+            print(f"[report] saved={args.report_file}", flush=True)
         return 0
     except ClusterSeedError as exc:
-        print(json.dumps({"event": "error", "message": str(exc)}, ensure_ascii=False))
+        print(f"[error] {str(exc)}", flush=True)
         return 1
 
 
