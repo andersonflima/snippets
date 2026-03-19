@@ -43,6 +43,7 @@ Observações:
 | `IGNORE_CSV` | vazio | Fonte CSV de ignorados: inline, caminho empacotado com a função ou `s3://` |
 | `PERMISSION_PRECHECK` | `true` | Valida resolução de contexto/sessão por tabela antes da execução |
 | `CATCH_UP` | `false` | Quando `true`, consome múltiplos chunks incrementais de até 24h na mesma invocação até aproximar o checkpoint do horário atual |
+| `INCREMENTAL_EXPORT_VIEW_TYPE` | `NEW_IMAGE` | Define o tipo de imagem no export incremental (`NEW_IMAGE` ou `NEW_AND_OLD_IMAGES`) |
 | `LOG_LEVEL` | `INFO` | Nível de log |
 | `OUTPUT_CLOUDWATCH_ENABLED` | `false` | Quando `true`, publica o payload final da execução nos logs estruturados da própria Lambda |
 | `OUTPUT_DYNAMODB_ENABLED` | `false` | Quando `true`, persiste o payload final da execução em uma tabela DynamoDB padronizada |
@@ -58,6 +59,7 @@ Observações:
 - `catch_up` também pode ser enviado no payload da Lambda. Quando `CATCH_UP=true`, a Lambda força espera por conclusão de cada chunk incremental antes de iniciar o próximo.
 - Para persistir os dados da execução em DynamoDB, configure no mínimo `OUTPUT_DYNAMODB_ENABLED=true` e `OUTPUT_DYNAMODB_TABLE=<nome-da-tabela>`.
 - A Lambda salva o estado do checkpoint por tabela em DynamoDB, usando chave composta com `PK=TableName` e `SK=RecordType`. Se a tabela não existir, a Lambda cria automaticamente com `BillingMode=PAY_PER_REQUEST`.
+- Quando `SNAPSHOT_MODE=incremental` e não existe registro da tabela no checkpoint, a Lambda dispara automaticamente um `FULL_EXPORT` de bootstrap.
 
 ### Fallback por `Scan`
 

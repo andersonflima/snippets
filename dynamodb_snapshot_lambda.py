@@ -87,6 +87,8 @@ EXPORT_WAIT_POLL_SECONDS = 5
 
 INCREMENTAL_EXPORT_MIN_WINDOW = timedelta(minutes=15)
 INCREMENTAL_EXPORT_MAX_WINDOW = timedelta(hours=24)
+INCREMENTAL_EXPORT_VIEW_TYPES = frozenset({"NEW_IMAGE", "NEW_AND_OLD_IMAGES"})
+DEFAULT_INCREMENTAL_EXPORT_VIEW_TYPE = "NEW_IMAGE"
 
 CLOUDWATCH_OUTPUT_MAX_BYTES = 240000
 
@@ -116,6 +118,16 @@ def _resolve_optional_text(*values: Any) -> Optional[str]:
         if text:
             return text
     return None
+
+
+def _resolve_incremental_export_view_type(*values: Any) -> str:
+    view_type = (_resolve_optional_text(*values, DEFAULT_INCREMENTAL_EXPORT_VIEW_TYPE) or DEFAULT_INCREMENTAL_EXPORT_VIEW_TYPE).strip().upper()
+    if view_type not in INCREMENTAL_EXPORT_VIEW_TYPES:
+        allowed_values = ", ".join(sorted(INCREMENTAL_EXPORT_VIEW_TYPES))
+        raise ValueError(
+            f"INCREMENTAL_EXPORT_VIEW_TYPE inválido: {view_type}. Valores permitidos: {allowed_values}"
+        )
+    return view_type
 
 
 def _safe_str_field(value: Any, *, field_name: str, required: bool = True) -> str:
@@ -1187,6 +1199,13 @@ def snapshot_manager_validate_export_request(
             raise ValueError(
                 f"IncrementalExportSpecification inválido para tabela {table_name}: ExportFromTime deve ser menor que ExportToTime."
             )
+        export_view_type = _safe_str_field(
+            incremental_spec.get("ExportViewType"),
+            field_name="IncrementalExportSpecification.ExportViewType",
+            required=False,
+        )
+        if export_view_type:
+            _resolve_incremental_export_view_type(export_view_type)
 
 
 def _wait_export_completion(ddb_client: Any, *, export_arn: str) -> str:
@@ -1296,6 +1315,7 @@ def _start_incremental_export(
     checkpoint_source: str,
     assume_role_arn: Optional[str],
 ) -> Dict[str, Any]:
+    export_view_type = _resolve_incremental_export_view_type(config.get("incremental_export_view_type"))
     s3_prefix = _build_export_prefix(
         config["run_time"],
         target,
@@ -1312,6 +1332,7 @@ def _start_incremental_export(
         "IncrementalExportSpecification": {
             "ExportFromTime": export_from,
             "ExportToTime": export_to,
+            "ExportViewType": export_view_type,
         },
         "ClientToken": _build_export_client_token(
             table_arn=target.table_arn,
@@ -1348,6 +1369,7 @@ def _start_incremental_export(
         s3_prefix=s3_prefix,
         export_from=_dt_to_iso(export_from),
         export_to=_dt_to_iso(export_to),
+        export_view_type=export_view_type,
         wait_for_completion=bool(config.get("wait_for_completion")),
         assume_role_arn=assume_role_arn,
         table_account_id=target.account_id,
@@ -1645,8 +1667,10 @@ def _process_table(
     ddb_client = _get_session_client(execution_session, "dynamodb", region_name=target.region)
     s3_client = _get_session_client(execution_session, "s3")
 
+    raw_checkpoint_state = checkpoint_load_table_state(checkpoint_store, target_table_name=target.table_name)
+    checkpoint_record_exists = bool(raw_checkpoint_state)
     checkpoint_state = _normalize_checkpoint_state(
-        checkpoint_load_table_state(checkpoint_store, target_table_name=target.table_name),
+        raw_checkpoint_state,
         table_name=target.table_name,
         table_arn=target.table_arn,
     )
@@ -1756,8 +1780,21 @@ def _process_table(
         result["checkpoint_state"] = checkpoint_state
         return result
 
-    last_to = _parse_iso_datetime(checkpoint_state.get("last_to"))
-    if not isinstance(last_to, datetime):
+    last_to_candidate = _parse_iso_datetime(checkpoint_state.get("last_to"))
+    bootstrap_full_reason = ""
+    if not checkpoint_record_exists:
+        bootstrap_full_reason = "checkpoint_record_missing"
+    elif not isinstance(last_to_candidate, datetime):
+        bootstrap_full_reason = "checkpoint_last_to_missing_or_invalid"
+
+    if bootstrap_full_reason:
+        _log_event(
+            "export.incremental.bootstrap_full.triggered",
+            table_name=target.table_name,
+            table_arn=target.table_arn,
+            reason=bootstrap_full_reason,
+            checkpoint_last_to=_safe_str_field(checkpoint_state.get("last_to"), field_name="checkpoint_state.last_to", required=False),
+        )
         try:
             full_result = _start_full_export(
                 config=config,
@@ -1820,8 +1857,12 @@ def _process_table(
             }
 
         full_result["checkpoint_state"] = checkpoint_state
-        full_result["checkpoint_source"] = "bootstrap_full"
+        full_result["checkpoint_source"] = bootstrap_full_reason
         return full_result
+
+    if not isinstance(last_to_candidate, datetime):
+        raise RuntimeError("checkpoint_state.last_to inválido para execução incremental")
+    last_to = last_to_candidate
 
     run_time = _safe_dict_field(config, "config").get("run_time")
     if not isinstance(run_time, datetime):
@@ -2440,6 +2481,12 @@ def build_snapshot_config(event: Optional[Dict[str, Any]]) -> Dict[str, Any]:
         True,
     )
 
+    incremental_export_view_type = _resolve_incremental_export_view_type(
+        os.getenv("INCREMENTAL_EXPORT_VIEW_TYPE"),
+        payload.get("incremental_export_view_type"),
+        payload.get("incrementalExportViewType"),
+    )
+
     checkpoint_dynamodb_table_arn = _resolve_optional_text(
         os.getenv("CHECKPOINT_DYNAMODB_TABLE_ARN", ""),
         payload.get("checkpoint_dynamodb_table_arn"),
@@ -2533,6 +2580,7 @@ def build_snapshot_config(event: Optional[Dict[str, Any]]) -> Dict[str, Any]:
         "catch_up": catch_up,
         "dry_run": dry_run,
         "scan_fallback_enabled": scan_fallback_enabled,
+        "incremental_export_view_type": incremental_export_view_type,
         "checkpoint_dynamodb_table_arn": checkpoint_dynamodb_table_arn,
         "output_cloudwatch_enabled": output_cloudwatch_enabled,
         "output_dynamodb_enabled": output_dynamodb_enabled,
@@ -2555,6 +2603,7 @@ def build_snapshot_config(event: Optional[Dict[str, Any]]) -> Dict[str, Any]:
         wait_for_completion=wait_for_completion,
         snapshot_bucket_exact=snapshot_bucket_exact,
         scan_fallback_enabled=scan_fallback_enabled,
+        incremental_export_view_type=incremental_export_view_type,
     )
     _log_event(
         "config.assume_role.resolved",
