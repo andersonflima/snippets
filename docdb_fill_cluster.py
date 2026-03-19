@@ -9,7 +9,7 @@ import os
 import re
 import time
 from concurrent.futures import FIRST_COMPLETED, ThreadPoolExecutor, wait
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Iterable, Iterator, Sequence, TypeVar
@@ -369,6 +369,29 @@ def build_mongo_client(
     return MongoClient(uri, **client_options)
 
 
+def resolve_database_case_from_cluster(connection: ClusterConnectionInfo) -> str:
+    client = build_mongo_client(
+        connection.uri,
+        connection.tls_ca_file,
+        connection.tls_allow_invalid_hostnames,
+        connection.tls_allow_invalid_certificates,
+        app_name="docdb-fill-cluster-dbcase",
+    )
+    try:
+        database_names = client.list_database_names()
+    except Exception:
+        return connection.database
+    finally:
+        client.close()
+
+    requested_database = connection.database
+    requested_database_lower = requested_database.lower()
+    for existing_database in database_names:
+        if str(existing_database).lower() == requested_database_lower:
+            return str(existing_database)
+    return requested_database
+
+
 def build_collection(
     uri: str,
     tls_ca_file: str | None,
@@ -467,6 +490,11 @@ def summarize_bulk_write_error(exc: BulkWriteError) -> str:
                 if isinstance(item, dict)
             }
         )
+        if "13297" in error_codes:
+            return (
+                "Falha no insert_many (code=13297 DatabaseDifferCase). "
+                "Use o database com o mesmo case já existente no cluster."
+            )
         return (
             "Falha no insert_many "
             f"(write_errors={len(write_errors)}, codes={','.join(error_codes) or 'unknown'})."
@@ -995,6 +1023,9 @@ def main(argv: Sequence[str] | None = None) -> int:
         args = parse_args(argv)
         started_at = datetime.now(timezone.utc)
         connection = resolve_connection_from_args(args)
+        resolved_database = resolve_database_case_from_cluster(connection)
+        if resolved_database != connection.database:
+            connection = replace(connection, database=resolved_database)
         runtime = build_runtime(args, started_at, connection.target_name)
         print(
             (
