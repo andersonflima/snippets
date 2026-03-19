@@ -21,6 +21,7 @@ import re
 import threading
 import time
 import weakref
+from urllib.parse import urlparse
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
@@ -197,6 +198,36 @@ def _build_aws_runtime_error(operation: str, exc: ClientError, *, resource: str)
     message = _client_error_message(exc)
     detail = f"{operation} falhou para {resource}. code={code} message={message}"
     return RuntimeError(detail)
+
+
+def _is_localstack_endpoint(endpoint_url: Optional[str]) -> bool:
+    url = _resolve_optional_text(endpoint_url)
+    if not url:
+        return False
+    parsed = urlparse(url)
+    host = (parsed.hostname or "").strip().lower()
+    if not host:
+        return False
+    if host in {"localhost", "127.0.0.1", "::1", "localstack", "localstack-main"}:
+        return True
+    return host.endswith(".localstack.cloud")
+
+
+def _is_export_operation_unsupported(exc: ClientError) -> bool:
+    code = _client_error_code(exc)
+    if code in {"UnknownOperationException", "NotImplementedException"}:
+        return True
+    message = _client_error_message(exc).lower()
+    return "unknown operation" in message or "not implemented" in message
+
+
+def _can_use_scan_fallback(config: Dict[str, Any], ddb_client: Any, exc: ClientError) -> bool:
+    if not bool(config.get("scan_fallback_enabled")):
+        return False
+    if not _is_export_operation_unsupported(exc):
+        return False
+    endpoint_url = _resolve_optional_text(getattr(getattr(ddb_client, "meta", None), "endpoint_url", ""))
+    return _is_localstack_endpoint(endpoint_url)
 
 
 def _resolve_runtime_region(session_region: Optional[str] = None) -> Optional[str]:
@@ -1350,6 +1381,115 @@ def _start_incremental_export(
     }
 
 
+def _run_scan_snapshot_fallback(
+    *,
+    config: Dict[str, Any],
+    target: TableTarget,
+    ddb_client: Any,
+    s3_client: Any,
+    bucket: str,
+    s3_prefix: str,
+    mode: str,
+    assume_role_arn: Optional[str],
+    fallback_error_code: str,
+    fallback_error_message: str,
+    checkpoint_from: Optional[datetime] = None,
+    checkpoint_to: Optional[datetime] = None,
+    checkpoint_source: Optional[str] = None,
+) -> Dict[str, Any]:
+    paginator = ddb_client.get_paginator("scan")
+    rows: List[str] = []
+    items_written = 0
+    pages_scanned = 0
+
+    for page in paginator.paginate(TableName=target.table_name):
+        pages_scanned += 1
+        page_items = page.get("Items")
+        if not isinstance(page_items, list):
+            continue
+        valid_items = [item for item in page_items if isinstance(item, dict)]
+        items_written += len(valid_items)
+        rows.extend(json.dumps(_to_json_safe(item), ensure_ascii=False, default=str) for item in valid_items)
+
+    file_key = f"{s3_prefix}/scan_fallback/part-00001.jsonl"
+    body_text = "\n".join(rows)
+    body_bytes = (f"{body_text}\n" if body_text else "").encode("utf-8")
+    s3_client.put_object(
+        Bucket=bucket,
+        Key=file_key,
+        Body=body_bytes,
+        ContentType="application/x-ndjson",
+    )
+
+    manifest_payload: Dict[str, Any] = {
+        "table_name": target.table_name,
+        "table_arn": target.table_arn,
+        "mode": mode,
+        "source": "scan_fallback",
+        "run_id": _safe_str_field(config.get("run_id"), field_name="run_id"),
+        "started_at": _dt_to_iso(config["run_time"]),
+        "files": [f"s3://{bucket}/{file_key}"],
+        "total_items": items_written,
+        "total_parts": 1,
+        "pages_scanned": pages_scanned,
+        "fallback_error_code": fallback_error_code,
+        "fallback_error_message": fallback_error_message,
+    }
+    if isinstance(checkpoint_from, datetime):
+        manifest_payload["from"] = _dt_to_iso(checkpoint_from)
+    if isinstance(checkpoint_to, datetime):
+        manifest_payload["to"] = _dt_to_iso(checkpoint_to)
+
+    manifest_key = f"{s3_prefix}/scan_fallback/manifest.json"
+    s3_client.put_object(
+        Bucket=bucket,
+        Key=manifest_key,
+        Body=json.dumps(_to_json_safe(manifest_payload), ensure_ascii=False, default=str).encode("utf-8"),
+        ContentType="application/json",
+    )
+
+    _log_event(
+        "export.scan_fallback.completed",
+        table_name=target.table_name,
+        table_arn=target.table_arn,
+        mode=mode,
+        s3_bucket=bucket,
+        s3_prefix=s3_prefix,
+        items_written=items_written,
+        pages_scanned=pages_scanned,
+        fallback_error_code=fallback_error_code,
+    )
+
+    result: Dict[str, Any] = {
+        "table_name": target.table_name,
+        "table_arn": target.table_arn,
+        "mode": mode,
+        "status": "COMPLETED",
+        "source": "scan_fallback",
+        "snapshot_bucket": bucket,
+        "s3_prefix": s3_prefix,
+        "started_at": _dt_to_iso(config["run_time"]),
+        "checkpoint_to": _dt_to_iso(checkpoint_to if isinstance(checkpoint_to, datetime) else config["run_time"]),
+        "assume_role_arn": assume_role_arn,
+        "table_account_id": target.account_id,
+        "table_region": target.region,
+        "files_written": 2,
+        "items_written": items_written,
+        "pages_scanned": pages_scanned,
+        "manifest": f"s3://{bucket}/{manifest_key}",
+        "message": "Export nativo indisponível no endpoint atual; fallback por Scan aplicado.",
+        "fallback_error_code": fallback_error_code,
+        "fallback_error_message": fallback_error_message,
+    }
+    if isinstance(checkpoint_from, datetime):
+        result["checkpoint_from"] = _dt_to_iso(checkpoint_from)
+    if isinstance(checkpoint_to, datetime):
+        result["checkpoint_to"] = _dt_to_iso(checkpoint_to)
+    if checkpoint_source:
+        result["checkpoint_source"] = checkpoint_source
+    return result
+
+
 def _reconcile_pending_exports(
     *,
     ddb_client: Any,
@@ -1502,7 +1642,7 @@ def _process_table(
     )
 
     ddb_client = _get_session_client(execution_session, "dynamodb", region_name=target.region)
-    _ = _get_session_client(execution_session, "s3")
+    s3_client = _get_session_client(execution_session, "s3")
 
     checkpoint_state = _normalize_checkpoint_state(
         checkpoint_load_table_state(checkpoint_store, target_table_name=target.table_name),
@@ -1538,14 +1678,40 @@ def _process_table(
     )
 
     if mode == "full":
-        result = _start_full_export(
-            config=config,
-            target=target,
-            ddb_client=ddb_client,
-            bucket=bucket,
-            bucket_owner=bucket_owner,
-            assume_role_arn=assume_role_arn,
-        )
+        try:
+            result = _start_full_export(
+                config=config,
+                target=target,
+                ddb_client=ddb_client,
+                bucket=bucket,
+                bucket_owner=bucket_owner,
+                assume_role_arn=assume_role_arn,
+            )
+        except ClientError as exc:
+            if not _can_use_scan_fallback(config, ddb_client, exc):
+                raise
+            _log_event(
+                "export.full.scan_fallback.start",
+                table_name=target.table_name,
+                table_arn=target.table_arn,
+                code=_client_error_code(exc),
+                message=_client_error_message(exc),
+                endpoint_url=_resolve_optional_text(getattr(getattr(ddb_client, "meta", None), "endpoint_url", "")),
+                level=logging.WARNING,
+            )
+            result = _run_scan_snapshot_fallback(
+                config=config,
+                target=target,
+                ddb_client=ddb_client,
+                s3_client=s3_client,
+                bucket=bucket,
+                s3_prefix=_build_export_prefix(config["run_time"], target, "FULL_EXPORT"),
+                mode="FULL",
+                assume_role_arn=assume_role_arn,
+                fallback_error_code=_client_error_code(exc),
+                fallback_error_message=_client_error_message(exc),
+                checkpoint_to=config["run_time"],
+            )
 
         if result.get("status") in EXPORT_PENDING_STATUSES:
             pending = _normalize_pending_exports(checkpoint_state.get("pending_exports"))
@@ -1563,11 +1729,12 @@ def _process_table(
                 "incremental_seq": 0,
             }
         elif result.get("status") == "COMPLETED":
+            result_source = _safe_str_field(result.get("source"), field_name="source", required=False) or "native"
             checkpoint_state = {
                 **checkpoint_state,
                 "last_to": _safe_str_field(result.get("checkpoint_to"), field_name="checkpoint_to", required=False),
                 "last_mode": "FULL",
-                "source": "native",
+                "source": result_source,
                 "pending_exports": [],
                 "incremental_seq": 0,
             }
@@ -1590,14 +1757,40 @@ def _process_table(
 
     last_to = _parse_iso_datetime(checkpoint_state.get("last_to"))
     if not isinstance(last_to, datetime):
-        full_result = _start_full_export(
-            config=config,
-            target=target,
-            ddb_client=ddb_client,
-            bucket=bucket,
-            bucket_owner=bucket_owner,
-            assume_role_arn=assume_role_arn,
-        )
+        try:
+            full_result = _start_full_export(
+                config=config,
+                target=target,
+                ddb_client=ddb_client,
+                bucket=bucket,
+                bucket_owner=bucket_owner,
+                assume_role_arn=assume_role_arn,
+            )
+        except ClientError as exc:
+            if not _can_use_scan_fallback(config, ddb_client, exc):
+                raise
+            _log_event(
+                "export.bootstrap_full.scan_fallback.start",
+                table_name=target.table_name,
+                table_arn=target.table_arn,
+                code=_client_error_code(exc),
+                message=_client_error_message(exc),
+                endpoint_url=_resolve_optional_text(getattr(getattr(ddb_client, "meta", None), "endpoint_url", "")),
+                level=logging.WARNING,
+            )
+            full_result = _run_scan_snapshot_fallback(
+                config=config,
+                target=target,
+                ddb_client=ddb_client,
+                s3_client=s3_client,
+                bucket=bucket,
+                s3_prefix=_build_export_prefix(config["run_time"], target, "FULL_EXPORT"),
+                mode="FULL",
+                assume_role_arn=assume_role_arn,
+                fallback_error_code=_client_error_code(exc),
+                fallback_error_message=_client_error_message(exc),
+                checkpoint_to=config["run_time"],
+            )
 
         if full_result.get("status") in EXPORT_PENDING_STATUSES:
             pending = _normalize_pending_exports(checkpoint_state.get("pending_exports"))
@@ -1615,11 +1808,12 @@ def _process_table(
                 "incremental_seq": 0,
             }
         elif full_result.get("status") == "COMPLETED":
+            result_source = _safe_str_field(full_result.get("source"), field_name="source", required=False) or "native"
             checkpoint_state = {
                 **checkpoint_state,
                 "last_to": _safe_str_field(full_result.get("checkpoint_to"), field_name="checkpoint_to", required=False),
                 "last_mode": "FULL",
-                "source": "native",
+                "source": result_source,
                 "pending_exports": [],
                 "incremental_seq": 0,
             }
@@ -1678,18 +1872,51 @@ def _process_table(
         )
 
     next_incremental_index = int(checkpoint_state.get("incremental_seq", 0)) + 1
-    incremental_result = _start_incremental_export(
-        config=config,
-        target=target,
-        ddb_client=ddb_client,
-        bucket=bucket,
-        bucket_owner=bucket_owner,
-        export_from=export_from,
-        export_to=export_to,
-        incremental_index=next_incremental_index,
-        checkpoint_source="checkpoint_last_to",
-        assume_role_arn=assume_role_arn,
-    )
+    try:
+        incremental_result = _start_incremental_export(
+            config=config,
+            target=target,
+            ddb_client=ddb_client,
+            bucket=bucket,
+            bucket_owner=bucket_owner,
+            export_from=export_from,
+            export_to=export_to,
+            incremental_index=next_incremental_index,
+            checkpoint_source="checkpoint_last_to",
+            assume_role_arn=assume_role_arn,
+        )
+    except ClientError as exc:
+        if not _can_use_scan_fallback(config, ddb_client, exc):
+            raise
+        _log_event(
+            "export.incremental.scan_fallback.start",
+            table_name=target.table_name,
+            table_arn=target.table_arn,
+            code=_client_error_code(exc),
+            message=_client_error_message(exc),
+            endpoint_url=_resolve_optional_text(getattr(getattr(ddb_client, "meta", None), "endpoint_url", "")),
+            level=logging.WARNING,
+        )
+        incremental_result = _run_scan_snapshot_fallback(
+            config=config,
+            target=target,
+            ddb_client=ddb_client,
+            s3_client=s3_client,
+            bucket=bucket,
+            s3_prefix=_build_export_prefix(
+                config["run_time"],
+                target,
+                "INCREMENTAL_EXPORT",
+                incremental_index=next_incremental_index,
+            ),
+            mode="INCREMENTAL",
+            assume_role_arn=assume_role_arn,
+            fallback_error_code=_client_error_code(exc),
+            fallback_error_message=_client_error_message(exc),
+            checkpoint_from=export_from,
+            checkpoint_to=export_to,
+            checkpoint_source="checkpoint_last_to",
+        )
 
     if incremental_result.get("status") in EXPORT_PENDING_STATUSES:
         pending = _normalize_pending_exports(checkpoint_state.get("pending_exports"))
@@ -1707,11 +1934,12 @@ def _process_table(
             "incremental_seq": next_incremental_index,
         }
     elif incremental_result.get("status") == "COMPLETED":
+        result_source = _safe_str_field(incremental_result.get("source"), field_name="source", required=False) or "native"
         checkpoint_state = {
             **checkpoint_state,
             "last_to": _safe_str_field(incremental_result.get("checkpoint_to"), field_name="checkpoint_to"),
             "last_mode": "INCREMENTAL",
-            "source": "native",
+            "source": result_source,
             "pending_exports": [],
             "incremental_seq": next_incremental_index,
         }
@@ -2107,6 +2335,12 @@ def build_snapshot_config(event: Optional[Dict[str, Any]]) -> Dict[str, Any]:
         False,
     )
 
+    scan_fallback_enabled = _resolve_env_first_bool(
+        _resolve_optional_text(payload.get("scan_fallback_enabled"), payload.get("scanFallbackEnabled")),
+        "SCAN_FALLBACK_ENABLED",
+        True,
+    )
+
     checkpoint_dynamodb_table_arn = _resolve_optional_text(
         os.getenv("CHECKPOINT_DYNAMODB_TABLE_ARN", ""),
         payload.get("checkpoint_dynamodb_table_arn"),
@@ -2199,6 +2433,7 @@ def build_snapshot_config(event: Optional[Dict[str, Any]]) -> Dict[str, Any]:
         "snapshot_bucket_exact": snapshot_bucket_exact,
         "catch_up": catch_up,
         "dry_run": dry_run,
+        "scan_fallback_enabled": scan_fallback_enabled,
         "checkpoint_dynamodb_table_arn": checkpoint_dynamodb_table_arn,
         "output_cloudwatch_enabled": output_cloudwatch_enabled,
         "output_dynamodb_enabled": output_dynamodb_enabled,
@@ -2220,6 +2455,7 @@ def build_snapshot_config(event: Optional[Dict[str, Any]]) -> Dict[str, Any]:
         max_workers=max_workers,
         wait_for_completion=wait_for_completion,
         snapshot_bucket_exact=snapshot_bucket_exact,
+        scan_fallback_enabled=scan_fallback_enabled,
     )
     _log_event(
         "config.assume_role.resolved",
