@@ -102,6 +102,15 @@ class SnapshotResult:
     finished_at: datetime
 
 
+@dataclass(frozen=True)
+class UploadProgressSnapshot:
+    streamed_bytes: int
+    uploaded_bytes: int
+    uploaded_parts: int
+    in_flight_parts: int
+    duration_seconds: float
+
+
 class SnapshotError(RuntimeError):
     pass
 
@@ -271,9 +280,9 @@ def default_runtime_settings(cpu_count: Optional[int] = None) -> RuntimeSettings
     available_cpus = max(1, cpu_count or os.cpu_count() or 1)
     compressor_threads = 1 if available_cpus <= 2 else min(3, available_cpus - 1)
     return RuntimeSettings(
-        upload_workers=2,
-        multipart_chunk_bytes=32 * MB,
-        queue_size=2,
+        upload_workers=4,
+        multipart_chunk_bytes=16 * MB,
+        queue_size=8,
         compressor="auto",
         compressor_threads=compressor_threads,
         compression_level=1,
@@ -594,6 +603,35 @@ def upload_part(
     )
 
 
+def build_upload_progress_snapshot(
+    *,
+    streamed_bytes: int,
+    uploaded_bytes: int,
+    uploaded_parts: int,
+    in_flight_parts: int,
+    started_monotonic: float,
+) -> UploadProgressSnapshot:
+    return UploadProgressSnapshot(
+        streamed_bytes=streamed_bytes,
+        uploaded_bytes=uploaded_bytes,
+        uploaded_parts=uploaded_parts,
+        in_flight_parts=in_flight_parts,
+        duration_seconds=max(0.0, time.monotonic() - started_monotonic),
+    )
+
+
+def log_upload_progress(target_name: str, snapshot: UploadProgressSnapshot) -> None:
+    LOGGER.info(
+        "Progresso target=%s size_mb=%.2f uploaded_mb=%.2f parts=%s in_flight=%s duration_seconds=%.2f",
+        target_name,
+        snapshot.streamed_bytes / MB,
+        snapshot.uploaded_bytes / MB,
+        snapshot.uploaded_parts,
+        snapshot.in_flight_parts,
+        snapshot.duration_seconds,
+    )
+
+
 def upload_stream_parts(
     s3_client: Any,
     upload_plan: MultipartUploadPlan,
@@ -602,54 +640,85 @@ def upload_stream_parts(
     target_name: str,
     started_monotonic: float,
 ) -> Tuple[UploadedPart, ...]:
-    def log_progress(uploaded_bytes: int, uploaded_part_count: int, force: bool = False) -> None:
-        nonlocal last_progress_log_at
-        now = time.monotonic()
-        if not force and (now - last_progress_log_at) < runtime.progress_interval_seconds:
-            return
-        duration_seconds = max(0.0, now - started_monotonic)
-        LOGGER.info(
-            "Progresso target=%s size_mb=%.2f parts=%s duration_seconds=%.2f",
-            target_name,
-            uploaded_bytes / MB,
-            uploaded_part_count,
-            duration_seconds,
-        )
-        last_progress_log_at = now
-
     backlog_limit = runtime.upload_workers + runtime.queue_size
     part_futures: deque = deque()
     uploaded_parts: List[UploadedPart] = []
     uploaded_size_bytes = 0
-    last_progress_log_at = started_monotonic
-    with ThreadPoolExecutor(
-        max_workers=runtime.upload_workers,
-        thread_name_prefix="s3-part-upload",
-    ) as executor:
-        for part_number, chunk in enumerate(
-            iter_stream_chunks(stream, runtime.multipart_chunk_bytes),
-            start=1,
-        ):
-            if part_number > MAX_MULTIPART_PARTS:
-                raise SnapshotError(
-                    "O snapshot excedeu o limite de 10.000 partes do S3. "
-                    "Aumente `multipart_chunk_mb`."
-                )
-            part_futures.append(
-                executor.submit(upload_part, s3_client, upload_plan, part_number, chunk)
+    streamed_size_bytes = 0
+    in_flight_parts = 0
+    progress_lock = threading.Lock()
+    progress_stop_event = threading.Event()
+
+    def read_progress_snapshot() -> UploadProgressSnapshot:
+        with progress_lock:
+            return build_upload_progress_snapshot(
+                streamed_bytes=streamed_size_bytes,
+                uploaded_bytes=uploaded_size_bytes,
+                uploaded_parts=len(uploaded_parts),
+                in_flight_parts=in_flight_parts,
+                started_monotonic=started_monotonic,
             )
-            if len(part_futures) >= backlog_limit:
-                uploaded_part = part_futures.popleft().result()
-                uploaded_parts.append(uploaded_part)
-                uploaded_size_bytes += uploaded_part.size_bytes
-                log_progress(uploaded_size_bytes, len(uploaded_parts))
-        while part_futures:
-            uploaded_part = part_futures.popleft().result()
+
+    def progress_heartbeat_worker() -> None:
+        while not progress_stop_event.wait(runtime.progress_interval_seconds):
+            log_upload_progress(target_name, read_progress_snapshot())
+
+    progress_thread = threading.Thread(
+        target=progress_heartbeat_worker,
+        name="docdb-snapshot-progress",
+        daemon=True,
+    )
+    progress_thread.start()
+
+    def on_part_submitted() -> None:
+        nonlocal in_flight_parts
+        with progress_lock:
+            in_flight_parts += 1
+
+    def on_streamed_bytes(chunk_size: int) -> None:
+        nonlocal streamed_size_bytes
+        if chunk_size <= 0:
+            return
+        with progress_lock:
+            streamed_size_bytes += chunk_size
+
+    def on_part_uploaded(uploaded_part: UploadedPart) -> None:
+        nonlocal uploaded_size_bytes, in_flight_parts
+        with progress_lock:
             uploaded_parts.append(uploaded_part)
             uploaded_size_bytes += uploaded_part.size_bytes
-            log_progress(uploaded_size_bytes, len(uploaded_parts))
-    log_progress(uploaded_size_bytes, len(uploaded_parts), force=True)
-    return tuple(uploaded_parts)
+            in_flight_parts = max(0, in_flight_parts - 1)
+
+    try:
+        with ThreadPoolExecutor(
+            max_workers=runtime.upload_workers,
+            thread_name_prefix="s3-part-upload",
+        ) as executor:
+            for part_number, chunk in enumerate(
+                iter_stream_chunks(stream, runtime.multipart_chunk_bytes),
+                start=1,
+            ):
+                on_streamed_bytes(len(chunk))
+                if part_number > MAX_MULTIPART_PARTS:
+                    raise SnapshotError(
+                        "O snapshot excedeu o limite de 10.000 partes do S3. "
+                        "Aumente `multipart_chunk_mb`."
+                    )
+                part_futures.append(
+                    executor.submit(upload_part, s3_client, upload_plan, part_number, chunk)
+                )
+                on_part_submitted()
+                if len(part_futures) >= backlog_limit:
+                    uploaded_part = part_futures.popleft().result()
+                    on_part_uploaded(uploaded_part)
+            while part_futures:
+                uploaded_part = part_futures.popleft().result()
+                on_part_uploaded(uploaded_part)
+        return tuple(uploaded_parts)
+    finally:
+        progress_stop_event.set()
+        progress_thread.join(timeout=2)
+        log_upload_progress(target_name, read_progress_snapshot())
 
 
 def create_multipart_upload(
