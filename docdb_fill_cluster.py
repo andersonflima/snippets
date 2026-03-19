@@ -489,7 +489,15 @@ def summarize_bulk_write_error(exc: BulkWriteError) -> str:
     return "Falha no insert_many sem detalhes de erro disponíveis."
 
 
+def insert_batch_with_single_fallback(collection: Collection[Any], batch: Sequence[dict[str, Any]]) -> int:
+    inserted_documents = 0
+    for document in batch:
+        inserted_documents += insert_document(collection, document)
+    return inserted_documents
+
+
 def insert_batch(collection: Collection[Any], batch: Sequence[dict[str, Any]], attempts: int = 3) -> int:
+    last_insert_many_error: Exception | None = None
     for attempt in range(1, attempts + 1):
         try:
             collection.insert_many(
@@ -506,12 +514,31 @@ def insert_batch(collection: Collection[Any], batch: Sequence[dict[str, Any]], a
             )
             if duplicated_only:
                 return len(batch)
-            raise ClusterSeedError(summarize_bulk_write_error(exc)) from None
+            last_insert_many_error = exc
+            break
         except AutoReconnect:
+            last_insert_many_error = AutoReconnect("AutoReconnect while calling insert_many.")
             if attempt == attempts:
                 break
             time.sleep(attempt)
-    return sum(insert_document(collection, document) for document in batch)
+        except Exception as exc:
+            last_insert_many_error = exc
+            break
+
+    try:
+        return insert_batch_with_single_fallback(collection, batch)
+    except Exception as exc:
+        insert_many_summary = (
+            summarize_bulk_write_error(last_insert_many_error)
+            if isinstance(last_insert_many_error, BulkWriteError)
+            else last_insert_many_error.__class__.__name__
+            if last_insert_many_error is not None
+            else "unknown"
+        )
+        raise ClusterSeedError(
+            "Falha de inserção no batch "
+            f"(insert_many={insert_many_summary}, insert_one={exc.__class__.__name__})."
+        ) from None
 
 
 def _batch_insert_result(collection: Collection[Any], batch: Sequence[dict[str, Any]]) -> tuple[int, int]:
