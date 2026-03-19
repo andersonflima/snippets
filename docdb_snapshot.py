@@ -721,6 +721,13 @@ def wait_process(
         stderr_thread.join(timeout=5)
     if return_code != 0:
         stderr_text = "".join(stderr_buffer).strip()
+        lowered_stderr = stderr_text.lower()
+        if "atlasproxy" in lowered_stderr and "atlasversion" in lowered_stderr:
+            raise SnapshotError(
+                "Falha de compatibilidade do mongodump com DocumentDB: "
+                "erro atlasProxy/atlasVersion. "
+                "Use MongoDB Database Tools versão 100.6.1 (recomendação AWS para DocumentDB)."
+            )
         raise SnapshotError(
             f"{label} falhou com código {return_code}. stderr: {stderr_text or 'sem detalhes'}"
         )
