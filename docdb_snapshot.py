@@ -308,11 +308,12 @@ def build_runtime_payload_from_env() -> dict[str, Any]:
         ("DOCDB_SNAPSHOT_COMPRESSOR_THREADS", "compressor_threads"),
         ("DOCDB_SNAPSHOT_COMPRESSION_LEVEL", "compression_level"),
     )
-    return {
-        payload_key: env_value
-        for env_name, payload_key in env_mapping
-        if (env_value := first_env_value((env_name,))) is not None
-    }
+    payload: dict[str, Any] = {}
+    for env_name, payload_key in env_mapping:
+        env_value = first_env_value((env_name,))
+        if env_value is not None:
+            payload[payload_key] = env_value
+    return payload
 
 
 def load_default_target_settings_from_env() -> dict[str, Any]:
