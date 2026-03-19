@@ -1,5 +1,3 @@
-from __future__ import annotations
-
 import argparse
 import contextlib
 import json
@@ -15,7 +13,7 @@ from collections import deque
 from concurrent.futures import Future, ThreadPoolExecutor
 from dataclasses import dataclass
 from datetime import datetime, timezone
-from typing import Any, BinaryIO, Iterable, Iterator, Sequence
+from typing import Any, BinaryIO, Dict, Iterable, Iterator, List, Optional, Sequence, Tuple
 
 
 LOGGER = logging.getLogger("docdb_snapshot")
@@ -39,27 +37,27 @@ class RuntimeSettings:
 class S3Settings:
     bucket: str
     prefix: str
-    region: str | None
-    endpoint_url: str | None
+    region: Optional[str]
+    endpoint_url: Optional[str]
     force_path_style: bool
-    bucket_owner: str | None
+    bucket_owner: Optional[str]
     connect_timeout_seconds: int
     read_timeout_seconds: int
-    storage_class: str | None
-    server_side_encryption: str | None
-    kms_key_id: str | None
-    tags: str | None
+    storage_class: Optional[str]
+    server_side_encryption: Optional[str]
+    kms_key_id: Optional[str]
+    tags: Optional[str]
 
 
 @dataclass(frozen=True)
 class Target:
     name: str
     uri: str
-    tls_ca_file: str | None
-    database: str | None
-    collection: str | None
+    tls_ca_file: Optional[str]
+    database: Optional[str]
+    collection: Optional[str]
     num_parallel_collections: int
-    extra_args: tuple[str, ...]
+    extra_args: Tuple[str, ...]
 
 
 @dataclass(frozen=True)
@@ -74,7 +72,7 @@ class MultipartUploadPlan:
     bucket: str
     key: str
     upload_id: str
-    expected_bucket_owner: str | None = None
+    expected_bucket_owner: Optional[str] = None
 
 
 @dataclass(frozen=True)
@@ -184,14 +182,14 @@ def configure_logging(level_name: str) -> None:
     )
 
 
-def normalize_optional_text(value: Any) -> str | None:
+def normalize_optional_text(value: Any) -> Optional[str]:
     if value is None:
         return None
     normalized = str(value).strip()
     return normalized or None
 
 
-def first_env_value(names: Sequence[str]) -> str | None:
+def first_env_value(names: Sequence[str]) -> Optional[str]:
     for name in names:
         candidate = normalize_optional_text(os.getenv(name))
         if candidate is not None:
@@ -199,7 +197,7 @@ def first_env_value(names: Sequence[str]) -> str | None:
     return None
 
 
-def parse_optional_positive_int(value: str | None, label: str) -> int | None:
+def parse_optional_positive_int(value: Optional[str], label: str) -> Optional[int]:
     if value is None:
         return None
     try:
@@ -211,7 +209,7 @@ def parse_optional_positive_int(value: str | None, label: str) -> int | None:
     return parsed
 
 
-def parse_bool_text(value: str | None, default: bool = False) -> bool:
+def parse_bool_text(value: Optional[str], default: bool = False) -> bool:
     if value is None:
         return default
     normalized = value.strip().lower()
@@ -234,7 +232,7 @@ def resolve_bucket_name(value: Any) -> str:
     return normalized
 
 
-def parse_extra_args(value: Any) -> tuple[str, ...]:
+def parse_extra_args(value: Any) -> Tuple[str, ...]:
     if value is None:
         return ()
     if isinstance(value, str):
@@ -262,7 +260,7 @@ def build_s3_key(prefix: str, target_name: str, started_at: datetime) -> str:
     return "/".join(part for part in (base_prefix, filename) if part)
 
 
-def default_runtime_settings(cpu_count: int | None = None) -> RuntimeSettings:
+def default_runtime_settings(cpu_count: Optional[int] = None) -> RuntimeSettings:
     available_cpus = max(1, cpu_count or os.cpu_count() or 1)
     compressor_threads = 1 if available_cpus <= 2 else min(3, available_cpus - 1)
     return RuntimeSettings(
@@ -275,7 +273,7 @@ def default_runtime_settings(cpu_count: int | None = None) -> RuntimeSettings:
     )
 
 
-def merge_runtime_settings(runtime_payload: dict[str, Any]) -> RuntimeSettings:
+def merge_runtime_settings(runtime_payload: Dict[str, Any]) -> RuntimeSettings:
     defaults = default_runtime_settings()
     multipart_chunk_mb = int(
         runtime_payload.get("multipart_chunk_mb", defaults.multipart_chunk_bytes // MB)
@@ -299,7 +297,7 @@ def merge_runtime_settings(runtime_payload: dict[str, Any]) -> RuntimeSettings:
     )
 
 
-def build_runtime_payload_from_env() -> dict[str, Any]:
+def build_runtime_payload_from_env() -> Dict[str, Any]:
     env_mapping = (
         ("DOCDB_SNAPSHOT_UPLOAD_WORKERS", "upload_workers"),
         ("DOCDB_SNAPSHOT_MULTIPART_CHUNK_MB", "multipart_chunk_mb"),
@@ -308,7 +306,7 @@ def build_runtime_payload_from_env() -> dict[str, Any]:
         ("DOCDB_SNAPSHOT_COMPRESSOR_THREADS", "compressor_threads"),
         ("DOCDB_SNAPSHOT_COMPRESSION_LEVEL", "compression_level"),
     )
-    payload: dict[str, Any] = {}
+    payload: Dict[str, Any] = {}
     for env_name, payload_key in env_mapping:
         env_value = first_env_value((env_name,))
         if env_value is not None:
@@ -316,7 +314,7 @@ def build_runtime_payload_from_env() -> dict[str, Any]:
     return payload
 
 
-def load_default_target_settings_from_env() -> dict[str, Any]:
+def load_default_target_settings_from_env() -> Dict[str, Any]:
     return {
         "tls_ca_file": first_env_value(("DOCDB_SNAPSHOT_TLS_CA_FILE",)),
         "database": first_env_value(("DOCDB_SNAPSHOT_DEFAULT_DATABASE",)),
@@ -331,7 +329,7 @@ def load_default_target_settings_from_env() -> dict[str, Any]:
 
 
 def resolve_timeout_value(
-    direct_value: int | None,
+    direct_value: Optional[int],
     env_names: Sequence[str],
     label: str,
     default: int,
@@ -343,7 +341,7 @@ def resolve_timeout_value(
     return parse_optional_positive_int(first_env_value(env_names), label) or default
 
 
-def resolve_region_from_env() -> str | None:
+def resolve_region_from_env() -> Optional[str]:
     return first_env_value(("DOCDB_SNAPSHOT_S3_REGION", "AWS_REGION", "AWS_DEFAULT_REGION"))
 
 
@@ -432,7 +430,7 @@ def load_app_config_from_args(args: argparse.Namespace) -> AppConfig:
     )
 
 
-def build_mongodump_command(target: Target) -> tuple[str, ...]:
+def build_mongodump_command(target: Target) -> Tuple[str, ...]:
     command = [
         "mongodump",
         "--uri",
@@ -451,7 +449,7 @@ def build_mongodump_command(target: Target) -> tuple[str, ...]:
     return tuple(command)
 
 
-def select_compressor(runtime: RuntimeSettings) -> tuple[tuple[str, ...], str]:
+def select_compressor(runtime: RuntimeSettings) -> Tuple[Tuple[str, ...], str]:
     use_pigz = runtime.compressor in {"auto", "pigz"} and shutil.which("pigz")
     if use_pigz:
         return (
@@ -479,12 +477,12 @@ def build_create_multipart_args(
     target: Target,
     key: str,
     started_at: datetime,
-) -> dict[str, Any]:
+) -> Dict[str, Any]:
     metadata = {
         "target-name": sanitize_name(target.name),
         "started-at": started_at.isoformat(),
     }
-    payload: dict[str, Any] = {
+    payload: Dict[str, Any] = {
         "Bucket": s3_settings.bucket,
         "Key": key,
         "ContentType": "application/gzip",
@@ -525,7 +523,7 @@ def create_s3_client(s3_settings: S3Settings, max_pool_connections: int) -> Any:
     )
 
 
-def read_pipe_text(pipe: BinaryIO | None, bucket: list[str]) -> None:
+def read_pipe_text(pipe: Optional[BinaryIO], bucket: List[str]) -> None:
     if pipe is None:
         return
     content = pipe.read()
@@ -535,8 +533,8 @@ def read_pipe_text(pipe: BinaryIO | None, bucket: list[str]) -> None:
     bucket.append(content)
 
 
-def spawn_stderr_collector(pipe: BinaryIO | None) -> tuple[threading.Thread | None, list[str]]:
-    buffer: list[str] = []
+def spawn_stderr_collector(pipe: Optional[BinaryIO]) -> Tuple[Optional[threading.Thread], List[str]]:
+    buffer: List[str] = []
     if pipe is None:
         return None, buffer
     thread = threading.Thread(target=read_pipe_text, args=(pipe, buffer), daemon=True)
@@ -587,10 +585,10 @@ def upload_stream_parts(
     upload_plan: MultipartUploadPlan,
     stream: BinaryIO,
     runtime: RuntimeSettings,
-) -> tuple[UploadedPart, ...]:
+) -> Tuple[UploadedPart, ...]:
     backlog_limit = runtime.upload_workers + runtime.queue_size
-    part_futures: deque[Future[UploadedPart]] = deque()
-    uploaded_parts: list[UploadedPart] = []
+    part_futures: deque = deque()
+    uploaded_parts: List[UploadedPart] = []
     with ThreadPoolExecutor(
         max_workers=runtime.upload_workers,
         thread_name_prefix="s3-part-upload",
@@ -681,7 +679,7 @@ def redact_uri(uri: str) -> str:
     return re.sub(r"//([^:@/]+):([^@/]+)@", r"//\1:***@", uri)
 
 
-def describe_plan(app_config: AppConfig, started_at: datetime) -> dict[str, Any]:
+def describe_plan(app_config: AppConfig, started_at: datetime) -> Dict[str, Any]:
     command = build_mongodump_command(app_config.target)
     compressor_command, compressor_name = select_compressor(app_config.runtime)
     key = build_s3_key(app_config.s3.prefix, app_config.target.name, started_at)
@@ -701,7 +699,7 @@ def describe_plan(app_config: AppConfig, started_at: datetime) -> dict[str, Any]
     }
 
 
-def terminate_process(process: subprocess.Popen[bytes] | None) -> None:
+def terminate_process(process: Optional[subprocess.Popen]) -> None:
     if process is None or process.poll() is not None:
         return
     process.terminate()
@@ -713,9 +711,9 @@ def terminate_process(process: subprocess.Popen[bytes] | None) -> None:
 
 
 def wait_process(
-    process: subprocess.Popen[bytes],
-    stderr_thread: threading.Thread | None,
-    stderr_buffer: list[str],
+    process: subprocess.Popen,
+    stderr_thread: Optional[threading.Thread],
+    stderr_buffer: List[str],
     label: str,
 ) -> None:
     return_code = process.wait()
@@ -831,7 +829,7 @@ def format_result_line(result: SnapshotResult) -> str:
     )
 
 
-def main(argv: Sequence[str] | None = None) -> int:
+def main(argv: Optional[Sequence[str]] = None) -> int:
     args = parse_args(argv or sys.argv[1:])
     configure_logging(args.log_level)
     try:
