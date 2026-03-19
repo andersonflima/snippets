@@ -17,7 +17,7 @@ from typing import Any, Iterable, Iterator, Sequence, TypeVar
 
 from pymongo import MongoClient
 from pymongo.collection import Collection
-from pymongo.errors import AutoReconnect, BulkWriteError, DuplicateKeyError
+from pymongo.errors import AutoReconnect, BulkWriteError, DuplicateKeyError, OperationFailure, WriteError
 from pymongo.write_concern import WriteConcern
 
 GIB = 1024 ** 3
@@ -25,6 +25,18 @@ MIB = 1024 ** 2
 T = TypeVar("T")
 _PAYLOAD_VARIANT_CACHE: dict[tuple[int, int, int, int, int], tuple[bytes, ...]] = {}
 _PAYLOAD_VARIANT_CACHE_LOCK = Lock()
+MAX_SAFE_DOC_SIZE_BYTES = 12 * MIB
+RETRYABLE_WRITE_ERROR_CODES = {
+    6,      # HostUnreachable
+    7,      # HostNotFound
+    89,     # NetworkTimeout
+    91,     # ShutdownInProgress
+    11600,  # InterruptedAtShutdown
+    11602,  # InterruptedDueToReplStateChange
+    13435,  # NotPrimaryNoSecondaryOk / node state changes
+    13436,  # NotPrimaryOrSecondary
+    16500,  # TooManyRequests / throttling-like conditions in managed services
+}
 
 
 @dataclass(frozen=True)
@@ -475,6 +487,35 @@ def chunk_count_per_document(doc_size_bytes: int, chunk_size_bytes: int) -> int:
     return chunk_count
 
 
+def extract_error_code(exc: Exception) -> int | None:
+    raw_code = getattr(exc, "code", None)
+    if isinstance(raw_code, int):
+        return raw_code
+    details = getattr(exc, "details", None)
+    if isinstance(details, dict):
+        details_code = details.get("code")
+        if isinstance(details_code, int):
+            return details_code
+    return None
+
+
+def is_retryable_write_error_code(code: int | None) -> bool:
+    return code in RETRYABLE_WRITE_ERROR_CODES
+
+
+def summarize_write_exception(prefix: str, exc: Exception) -> str:
+    code = extract_error_code(exc)
+    if code is None:
+        return f"{prefix} ({exc.__class__.__name__})."
+    return f"{prefix} (code={code}, type={exc.__class__.__name__})."
+
+
+def clamp_doc_size_bytes(requested_doc_size_bytes: int) -> tuple[int, bool]:
+    if requested_doc_size_bytes <= MAX_SAFE_DOC_SIZE_BYTES:
+        return requested_doc_size_bytes, False
+    return MAX_SAFE_DOC_SIZE_BYTES, True
+
+
 def build_payload_variants(
     pool: Sequence[bytes],
     worker_index: int,
@@ -553,6 +594,16 @@ def insert_document(collection: Collection[Any], document: dict[str, Any], attem
             if attempt == attempts:
                 raise
             time.sleep(attempt)
+        except (WriteError, OperationFailure) as exc:
+            code = extract_error_code(exc)
+            if code == 11000:
+                return 1
+            if attempt < attempts and is_retryable_write_error_code(code):
+                time.sleep(attempt)
+                continue
+            raise ClusterSeedError(
+                summarize_write_exception("Falha no insert_one", exc)
+            ) from None
     return 0
 
 
@@ -622,6 +673,15 @@ def insert_batch(collection: Collection[Any], batch: Sequence[dict[str, Any]], a
             if duplicated_only:
                 return len(batch)
             last_insert_many_error = exc
+            break
+        except (WriteError, OperationFailure) as exc:
+            code = extract_error_code(exc)
+            if code == 11000:
+                return len(batch)
+            last_insert_many_error = exc
+            if attempt < attempts and is_retryable_write_error_code(code):
+                time.sleep(attempt)
+                continue
             break
         except AutoReconnect:
             last_insert_many_error = AutoReconnect("AutoReconnect while calling insert_many.")
@@ -783,6 +843,8 @@ def build_runtime(
         require_positive(args.payload_variants_per_worker, "payload-variants-per-worker")
     )
     doc_size_mib = int(require_positive(args.doc_size_mib, "doc-size-mib"))
+    requested_doc_size_bytes = doc_size_mib * MIB
+    doc_size_bytes, _ = clamp_doc_size_bytes(requested_doc_size_bytes)
     batch_size = int(require_positive(args.batch_size, "batch-size"))
     max_batch_payload_mib = int(require_positive(args.max_batch_payload_mib, "max-batch-payload-mib"))
     pool_chunks = int(require_positive(args.pool_chunks, "pool-chunks"))
@@ -797,7 +859,7 @@ def build_runtime(
         parallelism=parallelism,
         insert_threads_per_worker=insert_threads_per_worker,
         payload_variants_per_worker=payload_variants_per_worker,
-        doc_size_bytes=doc_size_mib * MIB,
+        doc_size_bytes=doc_size_bytes,
         batch_size=batch_size,
         max_batch_payload_bytes=max_batch_payload_mib * MIB,
         pool_chunks=pool_chunks,
@@ -1113,6 +1175,8 @@ def main(argv: Sequence[str] | None = None) -> int:
         if resolved_database != connection.database:
             connection = replace(connection, database=resolved_database)
         runtime = build_runtime(args, started_at, connection.target_name)
+        requested_doc_size_bytes = int(require_positive(args.doc_size_mib, "doc-size-mib")) * MIB
+        _, doc_size_was_clamped = clamp_doc_size_bytes(requested_doc_size_bytes)
         adjusted_batch_size = effective_batch_size(runtime)
         print(
             (
@@ -1133,6 +1197,7 @@ def main(argv: Sequence[str] | None = None) -> int:
                 f"effective_batch_size={adjusted_batch_size} "
                 f"max_batch_payload={runtime.max_batch_payload_bytes / MIB:.1f} MiB "
                 f"doc_size={runtime.doc_size_bytes / MIB:.1f} MiB "
+                f"doc_size_clamped={'yes' if doc_size_was_clamped else 'no'} "
                 f"round_limit={runtime.round_bytes / MIB:.1f} MiB "
                 f"stats_poll={runtime.stats_poll_seconds:.1f}s "
                 f"collection_prefix={runtime.collection_prefix}"
