@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import argparse
+import hashlib
 import itertools
 import json
 import math
@@ -77,8 +78,8 @@ def batched(values: Iterable[T], batch_size: int) -> Iterator[tuple[T, ...]]:
 def _build_chunk(seed: str, size_bytes: int) -> bytes:
     if size_bytes <= 0:
         raise ClusterSeedError("size_bytes precisa ser maior que zero.")
-    pattern = f"{seed}|".encode("utf-8")
-    repeated = (pattern * ((size_bytes // len(pattern)) + 1))[:size_bytes]
+    seed_digest = hashlib.sha256(seed.encode("utf-8")).digest()
+    repeated = (seed_digest * ((size_bytes // len(seed_digest)) + 1))[:size_bytes]
     return repeated
 
 
@@ -447,6 +448,35 @@ def insert_document(collection: Collection[Any], document: dict[str, Any], attem
     return 0
 
 
+def summarize_bulk_write_error(exc: BulkWriteError) -> str:
+    details = exc.details if isinstance(exc.details, dict) else {}
+    write_errors = details.get("writeErrors", [])
+    if isinstance(write_errors, list) and write_errors:
+        first_error = write_errors[0] if isinstance(write_errors[0], dict) else {}
+        error_code = first_error.get("code", "unknown")
+        message = normalize_optional_text(
+            first_error.get("errmsg") or first_error.get("message")
+        ) or "erro de escrita sem mensagem."
+        compact_message = " ".join(message.split())[:280]
+        return f"Falha no insert_many (code={error_code}): {compact_message}"
+
+    write_concern_errors = details.get("writeConcernErrors", [])
+    if isinstance(write_concern_errors, list) and write_concern_errors:
+        first_wc_error = (
+            write_concern_errors[0]
+            if isinstance(write_concern_errors[0], dict)
+            else {}
+        )
+        wc_code = first_wc_error.get("code", "unknown")
+        wc_message = normalize_optional_text(
+            first_wc_error.get("errmsg") or first_wc_error.get("message")
+        ) or "erro de writeConcern sem mensagem."
+        compact_wc_message = " ".join(wc_message.split())[:280]
+        return f"Falha no writeConcern (code={wc_code}): {compact_wc_message}"
+
+    return "Falha no insert_many sem detalhes de erro disponíveis."
+
+
 def insert_batch(collection: Collection[Any], batch: Sequence[dict[str, Any]], attempts: int = 3) -> int:
     for attempt in range(1, attempts + 1):
         try:
@@ -457,12 +487,14 @@ def insert_batch(collection: Collection[Any], batch: Sequence[dict[str, Any]], a
             )
             return len(batch)
         except BulkWriteError as exc:
-            duplicated_only = all(
-                item.get("code") == 11000 for item in exc.details.get("writeErrors", [])
+            write_errors = exc.details.get("writeErrors", [])
+            duplicated_only = bool(write_errors) and all(
+                isinstance(item, dict) and item.get("code") == 11000
+                for item in write_errors
             )
             if duplicated_only:
                 return len(batch)
-            raise
+            raise ClusterSeedError(summarize_bulk_write_error(exc)) from None
         except AutoReconnect:
             if attempt == attempts:
                 break
@@ -1001,6 +1033,13 @@ def main(argv: Sequence[str] | None = None) -> int:
         return 0
     except ClusterSeedError as exc:
         print(f"[error] {str(exc)}", flush=True)
+        return 1
+    except Exception as exc:
+        compact_message = " ".join(str(exc).split())[:320]
+        print(
+            f"[error] falha inesperada ({exc.__class__.__name__}): {compact_message}",
+            flush=True,
+        )
         return 1
 
 
