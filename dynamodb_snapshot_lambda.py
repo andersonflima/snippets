@@ -816,28 +816,81 @@ def create_checkpoint_store(*, session: Any, checkpoint_dynamodb_table_arn: str)
     }
 
 
-def checkpoint_load_table_state(store: Dict[str, Any], *, target_table_name: str) -> Dict[str, Any]:
-    table_name = _safe_str_field(store.get("table_name"), field_name="checkpoint_store.table_name")
-    ddb_client = store.get("ddb")
-    if ddb_client is None:
-        raise RuntimeError("checkpoint_store.ddb ausente")
-
+def _checkpoint_get_current_item(
+    ddb_client: Any,
+    *,
+    table_name: str,
+    partition_value: str,
+) -> Dict[str, Any]:
     response = ddb_client.get_item(
         TableName=table_name,
         Key={
-            CHECKPOINT_DYNAMODB_PARTITION_KEY: {"S": _safe_str_field(target_table_name, field_name="target_table_name")},
+            CHECKPOINT_DYNAMODB_PARTITION_KEY: {"S": partition_value},
             CHECKPOINT_DYNAMODB_SORT_KEY: {"S": CHECKPOINT_DYNAMODB_CURRENT_RECORD},
         },
         ConsistentRead=True,
     )
     item = response.get("Item") if isinstance(response, dict) else None
-    if not isinstance(item, dict) or not item:
+    return item if isinstance(item, dict) else {}
+
+
+def checkpoint_load_table_state(
+    store: Dict[str, Any],
+    *,
+    target_table_name: str,
+    target_table_arn: Optional[str] = None,
+) -> Dict[str, Any]:
+    table_name = _safe_str_field(store.get("table_name"), field_name="checkpoint_store.table_name")
+    ddb_client = store.get("ddb")
+    if ddb_client is None:
+        raise RuntimeError("checkpoint_store.ddb ausente")
+
+    requested_table_name = _safe_str_field(target_table_name, field_name="target_table_name")
+    requested_table_arn = _safe_str_field(target_table_arn, field_name="target_table_arn", required=False)
+
+    item: Dict[str, Any] = {}
+    decoded: Optional[Dict[str, Any]] = None
+    if requested_table_arn:
+        item = _checkpoint_get_current_item(
+            ddb_client,
+            table_name=table_name,
+            partition_value=requested_table_arn,
+        )
+        if item:
+            decoded = _ddb_decode_item(item)
+
+    if not item:
+        item = _checkpoint_get_current_item(
+            ddb_client,
+            table_name=table_name,
+            partition_value=requested_table_name,
+        )
+        if item and requested_table_arn:
+            decoded_legacy = _ddb_decode_item(item)
+            legacy_table_arn = _safe_str_field(decoded_legacy.get("TableArn"), field_name="checkpoint.TableArn", required=False)
+            if legacy_table_arn != requested_table_arn:
+                _log_event(
+                    "checkpoint.load.legacy_partition_mismatch",
+                    requested_table_name=requested_table_name,
+                    requested_table_arn=requested_table_arn,
+                    legacy_table_arn=legacy_table_arn,
+                    level=logging.WARNING,
+                )
+                return {}
+            decoded = decoded_legacy
+
+    if not item:
         return {}
 
-    decoded = _ddb_decode_item(item)
+    if decoded is None:
+        decoded = _ddb_decode_item(item)
     pending_exports = _normalize_pending_exports(decoded.get("PendingExports"))
     state = {
-        "table_name": _safe_str_field(decoded.get("TableName"), field_name="checkpoint.TableName", required=False),
+        "table_name": _safe_str_field(
+            decoded.get("TargetTableName"),
+            field_name="checkpoint.TargetTableName",
+            required=False,
+        ) or _safe_str_field(decoded.get("TableName"), field_name="checkpoint.TableName", required=False),
         "table_arn": _safe_str_field(decoded.get("TableArn"), field_name="checkpoint.TableArn", required=False),
         "last_to": _safe_str_field(decoded.get("LastTo"), field_name="checkpoint.LastTo", required=False),
         "last_mode": _safe_str_field(decoded.get("LastMode"), field_name="checkpoint.LastMode", required=False),
@@ -845,7 +898,11 @@ def checkpoint_load_table_state(store: Dict[str, Any], *, target_table_name: str
         "pending_exports": pending_exports,
         "incremental_seq": int(str(decoded.get("IncrementalSeq", 0)).strip() or "0"),
     }
-    return {key: value for key, value in state.items() if value not in (None, "") or key in {"pending_exports", "incremental_seq"}}
+    return {
+        key: value
+        for key, value in state.items()
+        if value not in (None, "") or key in {"pending_exports", "incremental_seq"}
+    }
 
 
 def checkpoint_save(store: Dict[str, Any], payload: Dict[str, Any]) -> None:
@@ -869,9 +926,14 @@ def checkpoint_save(store: Dict[str, Any], payload: Dict[str, Any]) -> None:
             table_name=_safe_str_field(raw_state.get("table_name"), field_name="state.table_name"),
             table_arn=_safe_str_field(raw_state.get("table_arn"), field_name="state.table_arn"),
         )
+        partition_value = _safe_str_field(state.get("table_arn"), field_name="state.table_arn", required=False) or _safe_str_field(
+            state.get("table_name"),
+            field_name="state.table_name",
+        )
         item = {
-            CHECKPOINT_DYNAMODB_PARTITION_KEY: state["table_name"],
+            CHECKPOINT_DYNAMODB_PARTITION_KEY: partition_value,
             CHECKPOINT_DYNAMODB_SORT_KEY: CHECKPOINT_DYNAMODB_CURRENT_RECORD,
+            "TargetTableName": state["table_name"],
             "TableArn": state["table_arn"],
             "LastTo": state.get("last_to"),
             "LastMode": state.get("last_mode"),
@@ -1667,7 +1729,11 @@ def _process_table(
     ddb_client = _get_session_client(execution_session, "dynamodb", region_name=target.region)
     s3_client = _get_session_client(execution_session, "s3")
 
-    raw_checkpoint_state = checkpoint_load_table_state(checkpoint_store, target_table_name=target.table_name)
+    raw_checkpoint_state = checkpoint_load_table_state(
+        checkpoint_store,
+        target_table_name=target.table_name,
+        target_table_arn=target.table_arn,
+    )
     checkpoint_record_exists = bool(raw_checkpoint_state)
     checkpoint_state = _normalize_checkpoint_state(
         raw_checkpoint_state,
