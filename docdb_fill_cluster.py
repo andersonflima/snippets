@@ -217,6 +217,14 @@ def parse_bool_text(value: str | None, default: bool = False) -> bool:
     raise ClusterSeedError(f"Valor booleano inválido: {value!r}")
 
 
+def error_details_enabled() -> bool:
+    raw_value = normalize_optional_text(os.getenv("DOCDB_FILL_CLUSTER_DEBUG_ERRORS"))
+    if raw_value is None:
+        return False
+    lowered = raw_value.lower()
+    return lowered in {"1", "true", "yes", "y", "on"}
+
+
 def require_positive(value: int | float, label: str) -> int | float:
     if value <= 0:
         raise ClusterSeedError(f"{label} precisa ser maior que zero.")
@@ -452,27 +460,31 @@ def summarize_bulk_write_error(exc: BulkWriteError) -> str:
     details = exc.details if isinstance(exc.details, dict) else {}
     write_errors = details.get("writeErrors", [])
     if isinstance(write_errors, list) and write_errors:
-        first_error = write_errors[0] if isinstance(write_errors[0], dict) else {}
-        error_code = first_error.get("code", "unknown")
-        message = normalize_optional_text(
-            first_error.get("errmsg") or first_error.get("message")
-        ) or "erro de escrita sem mensagem."
-        compact_message = " ".join(message.split())[:280]
-        return f"Falha no insert_many (code={error_code}): {compact_message}"
+        error_codes = sorted(
+            {
+                str(item.get("code", "unknown"))
+                for item in write_errors
+                if isinstance(item, dict)
+            }
+        )
+        return (
+            "Falha no insert_many "
+            f"(write_errors={len(write_errors)}, codes={','.join(error_codes) or 'unknown'})."
+        )
 
     write_concern_errors = details.get("writeConcernErrors", [])
     if isinstance(write_concern_errors, list) and write_concern_errors:
-        first_wc_error = (
-            write_concern_errors[0]
-            if isinstance(write_concern_errors[0], dict)
-            else {}
+        wc_codes = sorted(
+            {
+                str(item.get("code", "unknown"))
+                for item in write_concern_errors
+                if isinstance(item, dict)
+            }
         )
-        wc_code = first_wc_error.get("code", "unknown")
-        wc_message = normalize_optional_text(
-            first_wc_error.get("errmsg") or first_wc_error.get("message")
-        ) or "erro de writeConcern sem mensagem."
-        compact_wc_message = " ".join(wc_message.split())[:280]
-        return f"Falha no writeConcern (code={wc_code}): {compact_wc_message}"
+        return (
+            "Falha de writeConcern "
+            f"(errors={len(write_concern_errors)}, codes={','.join(wc_codes) or 'unknown'})."
+        )
 
     return "Falha no insert_many sem detalhes de erro disponíveis."
 
@@ -503,9 +515,16 @@ def insert_batch(collection: Collection[Any], batch: Sequence[dict[str, Any]], a
 
 
 def _batch_insert_result(collection: Collection[Any], batch: Sequence[dict[str, Any]]) -> tuple[int, int]:
-    inserted_documents = insert_batch(collection, batch)
-    inserted_payload_bytes = sum(int(item["size_bytes"]) for item in batch[:inserted_documents])
-    return inserted_documents, inserted_payload_bytes
+    try:
+        inserted_documents = insert_batch(collection, batch)
+        inserted_payload_bytes = sum(int(item["size_bytes"]) for item in batch[:inserted_documents])
+        return inserted_documents, inserted_payload_bytes
+    except ClusterSeedError:
+        raise
+    except Exception as exc:
+        raise ClusterSeedError(
+            f"Falha de inserção no batch ({exc.__class__.__name__})."
+        ) from None
 
 
 def _accumulate_insert_results(insert_futures: Iterable[Any]) -> tuple[int, int]:
@@ -741,6 +760,10 @@ def format_worker_progress(worker_reports: Sequence[dict[str, Any]]) -> str:
     )
 
 
+def growth_status(before_bytes: int, after_bytes: int) -> str:
+    return "growing" if after_bytes > before_bytes else "no-growth"
+
+
 def print_round_progress(
     round_number: int,
     size_metric: str,
@@ -760,54 +783,16 @@ def print_round_progress(
 ) -> None:
     progress_percent = (after_bytes / target_bytes * 100.0) if target_bytes > 0 else 0.0
     remaining_bytes = max(target_bytes - after_bytes, 0)
-    eta_seconds = estimate_eta_seconds(
-        remaining_bytes=remaining_bytes,
-        inserted_payload_total_bytes=inserted_payload_total_bytes,
-        total_elapsed_seconds=total_elapsed_seconds,
-    )
-    insert_rate_mib_per_second = (
-        (inserted_payload_bytes / MIB) / round_elapsed_seconds
-        if round_elapsed_seconds > 0
-        else 0.0
-    )
-    eta_text = format_elapsed_seconds(eta_seconds) if eta_seconds is not None else "--:--:--"
+    database_growth_bytes = max(0, after_bytes - before_bytes)
     print(
         (
             f"[round {round_number:03d}] "
             f"{progress_percent:5.1f}% {size_metric}={format_gib(after_bytes)}/{format_gib(target_bytes)} "
-            f"remaining={format_gib(remaining_bytes)} eta={eta_text}"
-        ),
-        flush=True,
-    )
-    print(
-        (
-            f"  round: inserted={format_mib(inserted_payload_bytes)} "
-            f"planned={format_mib(planned_payload_bytes)} "
-            f"docs={inserted_documents} "
-            f"rate={insert_rate_mib_per_second:.1f} MiB/s "
-            f"elapsed={round_elapsed_seconds:.1f}s"
-        ),
-        flush=True,
-    )
-    print(
-        (
-            f"  total: inserted={format_gib(inserted_payload_total_bytes)} "
-            f"docs={inserted_documents_total} "
-            f"total_elapsed={format_elapsed_seconds(total_elapsed_seconds)}"
-        ),
-        flush=True,
-    )
-    print(
-        (
-            f"  metric: source={metric_source} "
-            f"before={format_gib(before_bytes)} observed={format_gib(observed_after_bytes)} "
-            f"effective={format_gib(after_bytes)}"
-        ),
-        flush=True,
-    )
-    print(
-        (
-            f"  workers: {format_worker_progress(worker_reports)}"
+            f"db_growth={format_gib(database_growth_bytes)} "
+            f"payload_round={format_gib(inserted_payload_bytes)} "
+            f"payload_total={format_gib(inserted_payload_total_bytes)} "
+            f"remaining={format_gib(remaining_bytes)} "
+            f"status={growth_status(before_bytes, after_bytes)}"
         ),
         flush=True,
     )
@@ -1032,14 +1017,26 @@ def main(argv: Sequence[str] | None = None) -> int:
             print(f"[report] saved={args.report_file}", flush=True)
         return 0
     except ClusterSeedError as exc:
-        print(f"[error] {str(exc)}", flush=True)
+        if error_details_enabled():
+            print(f"[error] {str(exc)}", flush=True)
+        else:
+            print(
+                "[error] falha durante a carga. Defina DOCDB_FILL_CLUSTER_DEBUG_ERRORS=1 para detalhes.",
+                flush=True,
+            )
         return 1
     except Exception as exc:
-        compact_message = " ".join(str(exc).split())[:320]
-        print(
-            f"[error] falha inesperada ({exc.__class__.__name__}): {compact_message}",
-            flush=True,
-        )
+        if error_details_enabled():
+            compact_message = " ".join(str(exc).split())[:320]
+            print(
+                f"[error] falha inesperada ({exc.__class__.__name__}): {compact_message}",
+                flush=True,
+            )
+        else:
+            print(
+                "[error] falha inesperada durante a carga. Defina DOCDB_FILL_CLUSTER_DEBUG_ERRORS=1 para detalhes.",
+                flush=True,
+            )
         return 1
 
 
