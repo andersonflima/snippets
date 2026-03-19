@@ -29,6 +29,7 @@ MAX_SAFE_DOC_SIZE_BYTES = 12 * MIB
 RETRYABLE_WRITE_ERROR_CODES = {
     6,      # HostUnreachable
     7,      # HostNotFound
+    39,     # FileStreamFailed (pode ocorrer de forma transitória sob pressão de IO)
     89,     # NetworkTimeout
     91,     # ShutdownInProgress
     11600,  # InterruptedAtShutdown
@@ -503,13 +504,6 @@ def is_retryable_write_error_code(code: int | None) -> bool:
     return code in RETRYABLE_WRITE_ERROR_CODES
 
 
-def summarize_write_exception(prefix: str, exc: Exception) -> str:
-    code = extract_error_code(exc)
-    if code is None:
-        return f"{prefix} ({exc.__class__.__name__})."
-    return f"{prefix} (code={code}, type={exc.__class__.__name__})."
-
-
 def clamp_doc_size_bytes(requested_doc_size_bytes: int) -> tuple[int, bool]:
     if requested_doc_size_bytes <= MAX_SAFE_DOC_SIZE_BYTES:
         return requested_doc_size_bytes, False
@@ -592,7 +586,7 @@ def insert_document(collection: Collection[Any], document: dict[str, Any], attem
             return 1
         except AutoReconnect:
             if attempt == attempts:
-                raise
+                return 0
             time.sleep(attempt)
         except (WriteError, OperationFailure) as exc:
             code = extract_error_code(exc)
@@ -601,9 +595,7 @@ def insert_document(collection: Collection[Any], document: dict[str, Any], attem
             if attempt < attempts and is_retryable_write_error_code(code):
                 time.sleep(attempt)
                 continue
-            raise ClusterSeedError(
-                summarize_write_exception("Falha no insert_one", exc)
-            ) from None
+            return 0
     return 0
 
 
@@ -1082,6 +1074,7 @@ def seed_database_to_target(
     round_reports: list[dict[str, Any]] = []
     inserted_payload_total_bytes = 0
     inserted_documents_total = 0
+    consecutive_no_progress_rounds = 0
 
     while current_metric_bytes < target_bytes:
         round_started_at = time.perf_counter()
@@ -1144,6 +1137,16 @@ def seed_database_to_target(
             total_elapsed_seconds=total_elapsed_seconds,
             worker_reports=worker_reports,
         )
+        database_growth_bytes = max(0, updated_metric_bytes - current_metric_bytes)
+        if inserted_documents <= 0 and database_growth_bytes <= 0:
+            consecutive_no_progress_rounds += 1
+        else:
+            consecutive_no_progress_rounds = 0
+        if consecutive_no_progress_rounds >= 3:
+            raise ClusterSeedError(
+                "Sem progresso por 3 rodadas (nenhum documento inserido e GiB não aumentou). "
+                "Reduza concorrência (parallelism/insert-threads), doc-size ou verifique limites do cluster."
+            )
         current_metric_bytes = updated_metric_bytes
 
     finished_at = datetime.now(timezone.utc)
