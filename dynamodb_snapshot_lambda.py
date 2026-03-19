@@ -78,6 +78,7 @@ CHECKPOINT_DYNAMODB_TABLE_TIMEOUT_SECONDS = 60
 OUTPUT_DYNAMODB_PARTITION_KEY = "Export ARN"
 OUTPUT_DYNAMODB_TABLE_POLL_SECONDS = 2
 OUTPUT_DYNAMODB_TABLE_TIMEOUT_SECONDS = 60
+OUTPUT_DYNAMODB_LOCAL_TIMEZONE = timezone(timedelta(hours=-3))
 
 PITR_ENABLE_POLL_SECONDS = 5
 PITR_ENABLE_TIMEOUT_SECONDS = 300
@@ -2154,6 +2155,118 @@ def _emit_output_to_cloudwatch(
     logger.info("%s", text)
 
 
+def _resolve_output_row_export_arn(row: Dict[str, Any]) -> str:
+    direct_export_arn = _safe_str_field(
+        row.get("export_arn"),
+        field_name="result.export_arn",
+        required=False,
+    )
+    if direct_export_arn:
+        return direct_export_arn
+
+    pending_exports = row.get("pending_exports")
+    if not isinstance(pending_exports, list):
+        return ""
+
+    for item in pending_exports:
+        if not isinstance(item, dict):
+            continue
+        pending_export_arn = _safe_str_field(
+            item.get("export_arn"),
+            field_name="pending.export_arn",
+            required=False,
+        )
+        if pending_export_arn:
+            return pending_export_arn
+    return ""
+
+
+def _resolve_output_row_started_at(row: Dict[str, Any]) -> str:
+    direct_started_at = _safe_str_field(
+        row.get("started_at"),
+        field_name="result.started_at",
+        required=False,
+    )
+    if direct_started_at:
+        return direct_started_at
+
+    pending_exports = row.get("pending_exports")
+    if not isinstance(pending_exports, list):
+        return ""
+
+    for item in pending_exports:
+        if not isinstance(item, dict):
+            continue
+        pending_started_at = _safe_str_field(
+            item.get("started_at"),
+            field_name="pending.started_at",
+            required=False,
+        )
+        if pending_started_at:
+            return pending_started_at
+    return ""
+
+
+def _format_output_status_label(status: str) -> str:
+    normalized = _safe_str_field(status, field_name="result.status", required=False).upper()
+    if normalized in {"STARTED", "IN_PROGRESS", "PENDING"}:
+        return "In progress"
+    if normalized == "COMPLETED":
+        return "Completed"
+    if normalized == "FAILED":
+        return "Failed"
+    if normalized == "CANCELLED":
+        return "Cancelled"
+    if not normalized:
+        return "Unknown"
+    return normalized.replace("_", " ").capitalize()
+
+
+def _format_output_export_type_label(mode: str) -> str:
+    normalized = _safe_str_field(mode, field_name="result.mode", required=False).upper()
+    if normalized == "FULL":
+        return "Full export"
+    if normalized == "INCREMENTAL":
+        return "Incremental export"
+    return "Unknown"
+
+
+def _format_output_started_at_local(started_at: str) -> str:
+    parsed = _parse_iso_datetime(started_at)
+    if not isinstance(parsed, datetime):
+        return ""
+    return parsed.astimezone(OUTPUT_DYNAMODB_LOCAL_TIMEZONE).isoformat(timespec="seconds")
+
+
+def _resolve_output_destination_uri(row: Dict[str, Any], *, payload: Dict[str, Any]) -> str:
+    bucket = _resolve_optional_text(
+        row.get("snapshot_bucket"),
+        payload.get("snapshot_bucket"),
+    )
+    s3_prefix = _safe_str_field(row.get("s3_prefix"), field_name="result.s3_prefix", required=False).lstrip("/")
+    if bucket and s3_prefix:
+        return f"s3://{bucket}/{s3_prefix}"
+    if bucket:
+        return f"s3://{bucket}"
+    return ""
+
+
+def _build_output_dynamodb_item(row: Dict[str, Any], *, payload: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+    export_arn = _resolve_output_row_export_arn(row)
+    if not export_arn:
+        return None
+
+    started_at = _resolve_output_row_started_at(row)
+    return {
+        OUTPUT_DYNAMODB_PARTITION_KEY: export_arn,
+        "Table name": _safe_str_field(row.get("table_name"), field_name="result.table_name", required=False),
+        "Destination S3 Bucket": _resolve_output_destination_uri(row, payload=payload),
+        "Status": _format_output_status_label(_safe_str_field(row.get("status"), field_name="result.status", required=False)),
+        "Export job start time (utc-03:00)": _format_output_started_at_local(started_at),
+        "Export Type": _format_output_export_type_label(_safe_str_field(row.get("mode"), field_name="result.mode", required=False)),
+    }
+
+
 def _emit_output_to_dynamodb(
     source: str,
     payload: Dict[str, Any],
@@ -2163,7 +2276,7 @@ def _emit_output_to_dynamodb(
     context: Any,
     session: Any,
 ) -> None:
-    _ = event
+    _ = (event, source, context)
     if not bool(config.get("output_dynamodb_enabled")):
         return
 
@@ -2180,34 +2293,20 @@ def _emit_output_to_dynamodb(
     try:
         _ensure_output_dynamodb_table_exists(ddb_client, table_name=table_name)
         results = payload.get("results") if isinstance(payload.get("results"), list) else []
-        observed_at = _dt_to_iso(_now_utc())
-        for index, row in enumerate(results):
+        written_rows = 0
+        for row in results:
             if not isinstance(row, dict):
                 continue
-            export_arn = _safe_str_field(row.get("export_arn"), field_name="result.export_arn", required=False)
-            if not export_arn:
-                run_id = _safe_str_field(payload.get("run_id"), field_name="run_id", required=False) or "unknown"
-                export_arn = f"{run_id}#{index}"
-            item = {
-                OUTPUT_DYNAMODB_PARTITION_KEY: export_arn,
-                "RunId": _safe_str_field(payload.get("run_id"), field_name="run_id", required=False),
-                "RunStatus": _safe_str_field(payload.get("status"), field_name="status", required=False),
-                "Mode": _safe_str_field(row.get("mode"), field_name="mode", required=False),
-                "TableName": _safe_str_field(row.get("table_name"), field_name="table_name", required=False),
-                "TableArn": _safe_str_field(row.get("table_arn"), field_name="table_arn", required=False),
-                "Status": _safe_str_field(row.get("status"), field_name="result.status", required=False),
-                "Source": source,
-                "ObservedAt": observed_at,
-                "Payload": json.dumps(_to_json_safe(row), ensure_ascii=False, default=str),
-                "AwsRequestId": _safe_str_field(getattr(context, "aws_request_id", None), field_name="aws_request_id", required=False),
-            }
+            item = _build_output_dynamodb_item(row, payload=payload)
+            if not isinstance(item, dict):
+                continue
             ddb_client.put_item(TableName=table_name, Item=_ddb_encode_item(item))
+            written_rows += 1
         _log_event(
             "output.dynamodb.write.success",
             table_name=table_name,
             region=region,
-            source=source,
-            rows=len(results),
+            rows=written_rows,
         )
     except Exception as exc:
         logger.warning("Falha ao emitir output para DynamoDB: %s", exc)
