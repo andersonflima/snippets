@@ -47,6 +47,7 @@ class SeedRuntime:
     payload_variants_per_worker: int
     doc_size_bytes: int
     batch_size: int
+    max_batch_payload_bytes: int
     pool_chunks: int
     pool_chunk_size_bytes: int
     round_bytes: int
@@ -178,6 +179,12 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
     )
     parser.add_argument("--doc-size-mib", type=int, default=8)
     parser.add_argument("--batch-size", type=int, default=4)
+    parser.add_argument(
+        "--max-batch-payload-mib",
+        type=int,
+        default=12,
+        help="Limite de payload por insert_many para evitar code 39 (batch é ajustado automaticamente).",
+    )
     parser.add_argument("--pool-chunks", type=int, default=16)
     parser.add_argument("--pool-chunk-size-mib", type=int, default=1)
     parser.add_argument(
@@ -595,6 +602,8 @@ def insert_batch_with_single_fallback(collection: Collection[Any], batch: Sequen
 
 
 def insert_batch(collection: Collection[Any], batch: Sequence[dict[str, Any]], attempts: int = 3) -> int:
+    if len(batch) == 1:
+        return insert_document(collection, batch[0])
     last_insert_many_error: Exception | None = None
     for attempt in range(1, attempts + 1):
         try:
@@ -712,6 +721,7 @@ def seed_worker(
     document_count: int,
     runtime: SeedRuntime,
 ) -> dict[str, Any]:
+    computed_batch_size = effective_batch_size(runtime)
     client, collection = build_collection(
         connection.uri,
         connection.tls_ca_file,
@@ -731,7 +741,7 @@ def seed_worker(
                 document_count=document_count,
                 payload_variants=payload_variants,
             ),
-            runtime.batch_size,
+            computed_batch_size,
         )
         inserted_count, inserted_bytes = _insert_batches_with_threads(
             collection,
@@ -755,6 +765,11 @@ def planned_round_bytes(remaining_bytes: int, runtime: SeedRuntime) -> int:
     return max(runtime.doc_size_bytes, min(remaining_bytes, runtime.round_bytes))
 
 
+def effective_batch_size(runtime: SeedRuntime) -> int:
+    payload_limited_batch_size = max(1, runtime.max_batch_payload_bytes // runtime.doc_size_bytes)
+    return max(1, min(runtime.batch_size, payload_limited_batch_size))
+
+
 def build_runtime(
     args: argparse.Namespace,
     started_at: datetime,
@@ -769,6 +784,7 @@ def build_runtime(
     )
     doc_size_mib = int(require_positive(args.doc_size_mib, "doc-size-mib"))
     batch_size = int(require_positive(args.batch_size, "batch-size"))
+    max_batch_payload_mib = int(require_positive(args.max_batch_payload_mib, "max-batch-payload-mib"))
     pool_chunks = int(require_positive(args.pool_chunks, "pool-chunks"))
     pool_chunk_size_mib = int(require_positive(args.pool_chunk_size_mib, "pool-chunk-size-mib"))
     round_mib = int(require_positive(args.round_mib, "round-mib"))
@@ -783,6 +799,7 @@ def build_runtime(
         payload_variants_per_worker=payload_variants_per_worker,
         doc_size_bytes=doc_size_mib * MIB,
         batch_size=batch_size,
+        max_batch_payload_bytes=max_batch_payload_mib * MIB,
         pool_chunks=pool_chunks,
         pool_chunk_size_bytes=pool_chunk_size_mib * MIB,
         round_bytes=round_mib * MIB,
@@ -1096,6 +1113,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         if resolved_database != connection.database:
             connection = replace(connection, database=resolved_database)
         runtime = build_runtime(args, started_at, connection.target_name)
+        adjusted_batch_size = effective_batch_size(runtime)
         print(
             (
                 f"[connection] target={connection.target_name} "
@@ -1112,6 +1130,8 @@ def main(argv: Sequence[str] | None = None) -> int:
                 f"insert_threads_per_worker={runtime.insert_threads_per_worker} "
                 f"payload_variants_per_worker={runtime.payload_variants_per_worker} "
                 f"batch_size={runtime.batch_size} "
+                f"effective_batch_size={adjusted_batch_size} "
+                f"max_batch_payload={runtime.max_batch_payload_bytes / MIB:.1f} MiB "
                 f"doc_size={runtime.doc_size_bytes / MIB:.1f} MiB "
                 f"round_limit={runtime.round_bytes / MIB:.1f} MiB "
                 f"stats_poll={runtime.stats_poll_seconds:.1f}s "
