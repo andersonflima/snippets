@@ -12,6 +12,7 @@ from concurrent.futures import FIRST_COMPLETED, ThreadPoolExecutor, wait
 from dataclasses import dataclass, replace
 from datetime import datetime, timezone
 from pathlib import Path
+from threading import Lock
 from typing import Any, Iterable, Iterator, Sequence, TypeVar
 
 from pymongo import MongoClient
@@ -22,6 +23,8 @@ from pymongo.write_concern import WriteConcern
 GIB = 1024 ** 3
 MIB = 1024 ** 2
 T = TypeVar("T")
+_PAYLOAD_VARIANT_CACHE: dict[tuple[int, int, int, int, int], tuple[bytes, ...]] = {}
+_PAYLOAD_VARIANT_CACHE_LOCK = Lock()
 
 
 @dataclass(frozen=True)
@@ -41,6 +44,7 @@ class ClusterConnectionInfo:
 class SeedRuntime:
     parallelism: int
     insert_threads_per_worker: int
+    payload_variants_per_worker: int
     doc_size_bytes: int
     batch_size: int
     pool_chunks: int
@@ -159,16 +163,22 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
         default="dataSize",
         help="Métrica de `dbStats` usada para decidir quando parar.",
     )
-    parser.add_argument("--parallelism", type=int, default=2)
+    parser.add_argument("--parallelism", type=int, default=4)
     parser.add_argument(
         "--insert-threads-per-worker",
         type=int,
-        default=4,
+        default=8,
         help="Threads de inserção por worker/collection (usa insert_many em paralelo).",
     )
+    parser.add_argument(
+        "--payload-variants-per-worker",
+        type=int,
+        default=4,
+        help="Quantidade de payloads pré-montados por worker para reduzir custo de CPU.",
+    )
     parser.add_argument("--doc-size-mib", type=int, default=8)
-    parser.add_argument("--batch-size", type=int, default=2)
-    parser.add_argument("--pool-chunks", type=int, default=48)
+    parser.add_argument("--batch-size", type=int, default=4)
+    parser.add_argument("--pool-chunks", type=int, default=16)
     parser.add_argument("--pool-chunk-size-mib", type=int, default=1)
     parser.add_argument(
         "--round-mib",
@@ -447,21 +457,81 @@ def metric_bytes(stats: dict[str, Any], size_metric: str) -> int:
     return int(stats.get(size_metric, 0))
 
 
+def chunk_count_per_document(doc_size_bytes: int, chunk_size_bytes: int) -> int:
+    if doc_size_bytes < chunk_size_bytes:
+        raise ClusterSeedError("doc_size_mib precisa ser maior ou igual ao tamanho do chunk.")
+    chunk_count, remainder = divmod(doc_size_bytes, chunk_size_bytes)
+    if remainder != 0:
+        raise ClusterSeedError("doc_size_mib precisa ser múltiplo de pool-chunk-size-mib.")
+    if chunk_count <= 0:
+        raise ClusterSeedError("chunk_count_per_doc precisa ser maior que zero.")
+    return chunk_count
+
+
+def build_payload_variants(
+    pool: Sequence[bytes],
+    worker_index: int,
+    chunk_count_per_doc: int,
+    payload_variants_per_worker: int,
+) -> tuple[bytes, ...]:
+    if payload_variants_per_worker <= 0:
+        raise ClusterSeedError("payload-variants-per-worker precisa ser maior que zero.")
+    return tuple(
+        build_payload(pool, chunk_count_per_doc, worker_index, sequence)
+        for sequence in range(payload_variants_per_worker)
+    )
+
+
+def resolve_payload_variants(worker_index: int, runtime: SeedRuntime) -> tuple[bytes, ...]:
+    cache_key = (
+        worker_index,
+        runtime.pool_chunks,
+        runtime.pool_chunk_size_bytes,
+        runtime.doc_size_bytes,
+        runtime.payload_variants_per_worker,
+    )
+    with _PAYLOAD_VARIANT_CACHE_LOCK:
+        cached_payloads = _PAYLOAD_VARIANT_CACHE.get(cache_key)
+    if cached_payloads is not None:
+        return cached_payloads
+
+    pool = build_chunk_pool(
+        worker_index,
+        runtime.pool_chunks,
+        runtime.pool_chunk_size_bytes,
+    )
+    chunk_count = chunk_count_per_document(
+        runtime.doc_size_bytes,
+        runtime.pool_chunk_size_bytes,
+    )
+    payload_variants = build_payload_variants(
+        pool=pool,
+        worker_index=worker_index,
+        chunk_count_per_doc=chunk_count,
+        payload_variants_per_worker=runtime.payload_variants_per_worker,
+    )
+
+    with _PAYLOAD_VARIANT_CACHE_LOCK:
+        existing_payloads = _PAYLOAD_VARIANT_CACHE.get(cache_key)
+        if existing_payloads is not None:
+            return existing_payloads
+        _PAYLOAD_VARIANT_CACHE[cache_key] = payload_variants
+    return payload_variants
+
+
 def build_documents_from_offset(
     collection_name: str,
     worker_index: int,
     start_sequence: int,
     document_count: int,
-    pool: Sequence[bytes],
-    doc_size_bytes: int,
+    payload_variants: Sequence[bytes],
 ):
-    chunk_size_bytes = len(pool[0])
-    chunk_count_per_doc = doc_size_bytes // chunk_size_bytes
-    if chunk_count_per_doc <= 0:
-        raise ClusterSeedError("doc_size_mib precisa ser maior ou igual ao tamanho do chunk.")
+    if not payload_variants:
+        raise ClusterSeedError("payload_variants não pode estar vazio.")
+    payload_variants_count = len(payload_variants)
     for sequence_offset in range(document_count):
         sequence = start_sequence + sequence_offset
-        payload = build_payload(pool, chunk_count_per_doc, worker_index, sequence)
+        payload = payload_variants[sequence % payload_variants_count]
         yield build_document(collection_name, worker_index, sequence, payload)
 
 
@@ -651,11 +721,7 @@ def seed_worker(
         collection_name,
     )
     try:
-        pool = build_chunk_pool(
-            worker_index,
-            runtime.pool_chunks,
-            runtime.pool_chunk_size_bytes,
-        )
+        payload_variants = resolve_payload_variants(worker_index, runtime)
         started_at = time.perf_counter()
         batch_iterable = batched(
             build_documents_from_offset(
@@ -663,8 +729,7 @@ def seed_worker(
                 worker_index=worker_index,
                 start_sequence=start_sequence,
                 document_count=document_count,
-                pool=pool,
-                doc_size_bytes=runtime.doc_size_bytes,
+                payload_variants=payload_variants,
             ),
             runtime.batch_size,
         )
@@ -699,6 +764,9 @@ def build_runtime(
     insert_threads_per_worker = int(
         require_positive(args.insert_threads_per_worker, "insert-threads-per-worker")
     )
+    payload_variants_per_worker = int(
+        require_positive(args.payload_variants_per_worker, "payload-variants-per-worker")
+    )
     doc_size_mib = int(require_positive(args.doc_size_mib, "doc-size-mib"))
     batch_size = int(require_positive(args.batch_size, "batch-size"))
     pool_chunks = int(require_positive(args.pool_chunks, "pool-chunks"))
@@ -712,6 +780,7 @@ def build_runtime(
     return SeedRuntime(
         parallelism=parallelism,
         insert_threads_per_worker=insert_threads_per_worker,
+        payload_variants_per_worker=payload_variants_per_worker,
         doc_size_bytes=doc_size_mib * MIB,
         batch_size=batch_size,
         pool_chunks=pool_chunks,
@@ -1041,6 +1110,7 @@ def main(argv: Sequence[str] | None = None) -> int:
             (
                 f"[runtime] workers={runtime.parallelism} "
                 f"insert_threads_per_worker={runtime.insert_threads_per_worker} "
+                f"payload_variants_per_worker={runtime.payload_variants_per_worker} "
                 f"batch_size={runtime.batch_size} "
                 f"doc_size={runtime.doc_size_bytes / MIB:.1f} MiB "
                 f"round_limit={runtime.round_bytes / MIB:.1f} MiB "
