@@ -592,6 +592,14 @@ def next_sequence_offsets(
     return tuple(current_offsets[index] + updates.get(index, 0) for index in range(len(current_offsets)))
 
 
+def format_gib(value_bytes: int) -> str:
+    return f"{value_bytes / GIB:.3f} GiB"
+
+
+def format_mib(value_bytes: int) -> str:
+    return f"{value_bytes / MIB:.1f} MiB"
+
+
 def print_round_progress(
     round_number: int,
     size_metric: str,
@@ -602,29 +610,26 @@ def print_round_progress(
     observed_after_bytes: int,
     inserted_payload_bytes: int,
     inserted_documents: int,
+    inserted_payload_total_bytes: int,
+    inserted_documents_total: int,
     metric_source: str,
 ) -> None:
     print(
-        json.dumps(
-            {
-                "event": "round",
-                "round": round_number,
-                "metric": size_metric,
-                "before_bytes": before_bytes,
-                "after_bytes": after_bytes,
-                "observed_after_bytes": observed_after_bytes,
-                "target_bytes": target_bytes,
-                "planned_payload_bytes": planned_payload_bytes,
-                "inserted_payload_bytes": inserted_payload_bytes,
-                "inserted_documents": inserted_documents,
-                "metric_source": metric_source,
-                "before_gib": round(before_bytes / GIB, 3),
-                "after_gib": round(after_bytes / GIB, 3),
-                "observed_after_gib": round(observed_after_bytes / GIB, 3),
-                "target_gib": round(target_bytes / GIB, 3),
-            },
-            ensure_ascii=False,
-        )
+        (
+            f"[round {round_number}] "
+            f"metric={size_metric} "
+            f"source={metric_source} "
+            f"inserted_round={format_mib(inserted_payload_bytes)} "
+            f"docs_round={inserted_documents} "
+            f"inserted_total={format_gib(inserted_payload_total_bytes)} "
+            f"docs_total={inserted_documents_total} "
+            f"before={format_gib(before_bytes)} "
+            f"observed_after={format_gib(observed_after_bytes)} "
+            f"effective_after={format_gib(after_bytes)} "
+            f"target={format_gib(target_bytes)} "
+            f"planned_round={format_mib(planned_payload_bytes)}"
+        ),
+        flush=True,
     )
 
 
@@ -706,6 +711,8 @@ def seed_database_to_target(
     next_sequences = tuple(0 for _ in range(runtime.parallelism))
     round_number = 0
     round_reports: list[dict[str, Any]] = []
+    inserted_payload_total_bytes = 0
+    inserted_documents_total = 0
 
     while current_metric_bytes < target_bytes:
         round_number += 1
@@ -714,6 +721,8 @@ def seed_database_to_target(
         worker_reports = run_seed_round(connection, runtime, next_sequences, distribution)
         next_sequences = next_sequence_offsets(next_sequences, worker_reports)
         inserted_documents, inserted_payload_bytes = summarize_worker_reports(worker_reports)
+        inserted_payload_total_bytes += inserted_payload_bytes
+        inserted_documents_total += inserted_documents
         time.sleep(runtime.stats_poll_seconds)
         current_stats = read_database_stats_from_connection(
             connection.uri,
@@ -738,6 +747,8 @@ def seed_database_to_target(
             "metric_bytes_observed_after": observed_metric_bytes,
             "inserted_payload_bytes": inserted_payload_bytes,
             "inserted_documents": inserted_documents,
+            "inserted_payload_total_bytes": inserted_payload_total_bytes,
+            "inserted_documents_total": inserted_documents_total,
             "metric_source": metric_source,
             "worker_reports": list(worker_reports),
             "db_stats": current_stats,
@@ -753,6 +764,8 @@ def seed_database_to_target(
             observed_after_bytes=observed_metric_bytes,
             inserted_payload_bytes=inserted_payload_bytes,
             inserted_documents=inserted_documents,
+            inserted_payload_total_bytes=inserted_payload_total_bytes,
+            inserted_documents_total=inserted_documents_total,
             metric_source=metric_source,
         )
         current_metric_bytes = updated_metric_bytes
