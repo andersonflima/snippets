@@ -693,6 +693,7 @@ def _normalize_checkpoint_state(state: Dict[str, Any], *, table_name: str, table
     return {
         "table_name": _safe_str_field(state.get("table_name"), field_name="state.table_name", required=False) or table_name,
         "table_arn": _safe_str_field(state.get("table_arn"), field_name="state.table_arn", required=False) or table_arn,
+        "table_created_at": _safe_str_field(state.get("table_created_at"), field_name="state.table_created_at", required=False),
         "last_to": _safe_str_field(state.get("last_to"), field_name="state.last_to", required=False),
         "last_mode": _safe_str_field(state.get("last_mode"), field_name="state.last_mode", required=False),
         "source": _safe_str_field(state.get("source"), field_name="state.source", required=False),
@@ -892,6 +893,7 @@ def checkpoint_load_table_state(
             required=False,
         ) or _safe_str_field(decoded.get("TableName"), field_name="checkpoint.TableName", required=False),
         "table_arn": _safe_str_field(decoded.get("TableArn"), field_name="checkpoint.TableArn", required=False),
+        "table_created_at": _safe_str_field(decoded.get("TableCreatedAt"), field_name="checkpoint.TableCreatedAt", required=False),
         "last_to": _safe_str_field(decoded.get("LastTo"), field_name="checkpoint.LastTo", required=False),
         "last_mode": _safe_str_field(decoded.get("LastMode"), field_name="checkpoint.LastMode", required=False),
         "source": _safe_str_field(decoded.get("Source"), field_name="checkpoint.Source", required=False),
@@ -935,6 +937,7 @@ def checkpoint_save(store: Dict[str, Any], payload: Dict[str, Any]) -> None:
             CHECKPOINT_DYNAMODB_SORT_KEY: CHECKPOINT_DYNAMODB_CURRENT_RECORD,
             "TargetTableName": state["table_name"],
             "TableArn": state["table_arn"],
+            "TableCreatedAt": state.get("table_created_at"),
             "LastTo": state.get("last_to"),
             "LastMode": state.get("last_mode"),
             "Source": state.get("source"),
@@ -1285,6 +1288,29 @@ def _wait_export_completion(ddb_client: Any, *, export_arn: str) -> str:
     raise TimeoutError(f"Timeout aguardando export {export_arn}")
 
 
+def _read_table_created_at_iso(ddb_client: Any, *, table_name: str, table_arn: str) -> str:
+    try:
+        response = ddb_client.describe_table(TableName=table_name)
+    except ClientError as exc:
+        _log_event(
+            "table.describe.failed",
+            table_name=table_name,
+            table_arn=table_arn,
+            code=_client_error_code(exc),
+            message=_client_error_message(exc),
+            level=logging.WARNING,
+        )
+        return ""
+    table = _safe_dict_field(response.get("Table"), "DescribeTable.Table")
+    created_at = table.get("CreationDateTime")
+    if isinstance(created_at, datetime):
+        return _dt_to_iso(created_at)
+    parsed = _parse_iso_datetime(created_at)
+    if isinstance(parsed, datetime):
+        return _dt_to_iso(parsed)
+    return ""
+
+
 def _start_full_export(
     *,
     config: Dict[str, Any],
@@ -1342,6 +1368,17 @@ def _start_full_export(
     response = ddb_client.export_table_to_point_in_time(**params)
     description = _safe_dict_field(response.get("ExportDescription"), "ExportDescription")
     export_arn = _safe_str_field(description.get("ExportArn"), field_name="ExportArn")
+    export_status = _safe_str_field(description.get("ExportStatus"), field_name="ExportStatus", required=False)
+    response_metadata = response.get("ResponseMetadata") if isinstance(response.get("ResponseMetadata"), dict) else {}
+    request_id = _safe_str_field(response_metadata.get("RequestId"), field_name="ResponseMetadata.RequestId", required=False)
+    _log_event(
+        "export.full.started",
+        table_name=target.table_name,
+        table_arn=target.table_arn,
+        export_arn=export_arn,
+        export_status=export_status,
+        request_id=request_id,
+    )
     status = "STARTED"
     if bool(config.get("wait_for_completion")):
         status = _wait_export_completion(ddb_client, export_arn=export_arn)
@@ -1360,6 +1397,7 @@ def _start_full_export(
         "assume_role_arn": assume_role_arn,
         "table_account_id": target.account_id,
         "table_region": target.region,
+        "export_request_id": request_id,
         **export_fields,
     }
 
@@ -1441,6 +1479,17 @@ def _start_incremental_export(
     response = ddb_client.export_table_to_point_in_time(**params)
     description = _safe_dict_field(response.get("ExportDescription"), "ExportDescription")
     export_arn = _safe_str_field(description.get("ExportArn"), field_name="ExportArn")
+    export_status = _safe_str_field(description.get("ExportStatus"), field_name="ExportStatus", required=False)
+    response_metadata = response.get("ResponseMetadata") if isinstance(response.get("ResponseMetadata"), dict) else {}
+    request_id = _safe_str_field(response_metadata.get("RequestId"), field_name="ResponseMetadata.RequestId", required=False)
+    _log_event(
+        "export.incremental.started",
+        table_name=target.table_name,
+        table_arn=target.table_arn,
+        export_arn=export_arn,
+        export_status=export_status,
+        request_id=request_id,
+    )
 
     status = "STARTED"
     if bool(config.get("wait_for_completion")):
@@ -1462,6 +1511,7 @@ def _start_incremental_export(
         "assume_role_arn": assume_role_arn,
         "table_account_id": target.account_id,
         "table_region": target.region,
+        "export_request_id": request_id,
         **export_fields,
     }
 
@@ -1740,6 +1790,36 @@ def _process_table(
         table_name=target.table_name,
         table_arn=target.table_arn,
     )
+    table_created_at = _read_table_created_at_iso(
+        ddb_client,
+        table_name=target.table_name,
+        table_arn=target.table_arn,
+    )
+    checkpoint_created_at = _safe_str_field(
+        checkpoint_state.get("table_created_at"),
+        field_name="checkpoint_state.table_created_at",
+        required=False,
+    )
+    if checkpoint_record_exists and table_created_at and checkpoint_created_at and checkpoint_created_at != table_created_at:
+        _log_event(
+            "checkpoint.table_recreated.detected",
+            table_name=target.table_name,
+            table_arn=target.table_arn,
+            checkpoint_table_created_at=checkpoint_created_at,
+            runtime_table_created_at=table_created_at,
+            level=logging.WARNING,
+        )
+        checkpoint_record_exists = False
+        checkpoint_state = _normalize_checkpoint_state(
+            {},
+            table_name=target.table_name,
+            table_arn=target.table_arn,
+        )
+    if table_created_at:
+        checkpoint_state = {
+            **checkpoint_state,
+            "table_created_at": table_created_at,
+        }
 
     if bool(config.get("dry_run")):
         mode_upper = _safe_str_field(config.get("mode"), field_name="mode").upper()

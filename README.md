@@ -59,6 +59,7 @@ Observações:
 - `catch_up` também pode ser enviado no payload da Lambda. Quando `CATCH_UP=true`, a Lambda força espera por conclusão de cada chunk incremental antes de iniciar o próximo.
 - Para persistir os dados da execução em DynamoDB, configure no mínimo `OUTPUT_DYNAMODB_ENABLED=true` e `OUTPUT_DYNAMODB_TABLE=<nome-da-tabela>`.
 - A Lambda salva o estado do checkpoint por tabela em DynamoDB, usando chave composta com `PK=TableName` e `SK=RecordType`. O valor de `TableName` é o `TableArn` para evitar colisão entre tabelas homônimas de contas/regiões diferentes, e `TargetTableName` mantém o nome legível da tabela. Se a tabela não existir, a Lambda cria automaticamente com `BillingMode=PAY_PER_REQUEST`.
+- A Lambda também registra `TableCreatedAt` no checkpoint para detectar recriação de tabela; se o timestamp atual divergir do checkpoint, o estado antigo é invalidado e o bootstrap `FULL_EXPORT` é reexecutado.
 - Quando `SNAPSHOT_MODE=incremental` e não existe registro da tabela no checkpoint, a Lambda dispara automaticamente um `FULL_EXPORT` de bootstrap.
 
 ### Fallback por `Scan`
