@@ -9,6 +9,7 @@ import shutil
 import subprocess
 import sys
 import threading
+import time
 from collections import deque
 from concurrent.futures import Future, ThreadPoolExecutor
 from dataclasses import dataclass
@@ -31,6 +32,7 @@ class RuntimeSettings:
     compressor: str
     compressor_threads: int
     compression_level: int
+    progress_interval_seconds: int
 
 
 @dataclass(frozen=True)
@@ -162,6 +164,11 @@ def parse_args(argv: Sequence[str]) -> argparse.Namespace:
     parser.add_argument("--compressor-threads", type=int, help="Threads do compressor.")
     parser.add_argument("--compression-level", type=int, help="Nível de compressão entre 1 e 9.")
     parser.add_argument(
+        "--progress-interval-seconds",
+        type=int,
+        help="Intervalo de log de progresso (size_mb/duration_seconds).",
+    )
+    parser.add_argument(
         "--dry-run",
         action="store_true",
         help="Valida parâmetros e dependências sem executar o snapshot.",
@@ -270,6 +277,7 @@ def default_runtime_settings(cpu_count: Optional[int] = None) -> RuntimeSettings
         compressor="auto",
         compressor_threads=compressor_threads,
         compression_level=1,
+        progress_interval_seconds=5,
     )
 
 
@@ -294,6 +302,10 @@ def merge_runtime_settings(runtime_payload: Dict[str, Any]) -> RuntimeSettings:
             9,
             max(1, int(runtime_payload.get("compression_level", defaults.compression_level))),
         ),
+        progress_interval_seconds=max(
+            1,
+            int(runtime_payload.get("progress_interval_seconds", defaults.progress_interval_seconds)),
+        ),
     )
 
 
@@ -305,6 +317,7 @@ def build_runtime_payload_from_env() -> Dict[str, Any]:
         ("DOCDB_SNAPSHOT_COMPRESSOR", "compressor"),
         ("DOCDB_SNAPSHOT_COMPRESSOR_THREADS", "compressor_threads"),
         ("DOCDB_SNAPSHOT_COMPRESSION_LEVEL", "compression_level"),
+        ("DOCDB_SNAPSHOT_PROGRESS_INTERVAL_SECONDS", "progress_interval_seconds"),
     )
     payload: Dict[str, Any] = {}
     for env_name, payload_key in env_mapping:
@@ -354,6 +367,7 @@ def build_runtime_settings_from_args(args: argparse.Namespace) -> RuntimeSetting
         "compressor": args.compressor,
         "compressor_threads": args.compressor_threads,
         "compression_level": args.compression_level,
+        "progress_interval_seconds": args.progress_interval_seconds,
     }
     runtime_payload.update(
         {
@@ -585,10 +599,29 @@ def upload_stream_parts(
     upload_plan: MultipartUploadPlan,
     stream: BinaryIO,
     runtime: RuntimeSettings,
+    target_name: str,
+    started_monotonic: float,
 ) -> Tuple[UploadedPart, ...]:
+    def log_progress(uploaded_bytes: int, uploaded_part_count: int, force: bool = False) -> None:
+        nonlocal last_progress_log_at
+        now = time.monotonic()
+        if not force and (now - last_progress_log_at) < runtime.progress_interval_seconds:
+            return
+        duration_seconds = max(0.0, now - started_monotonic)
+        LOGGER.info(
+            "Progresso target=%s size_mb=%.2f parts=%s duration_seconds=%.2f",
+            target_name,
+            uploaded_bytes / MB,
+            uploaded_part_count,
+            duration_seconds,
+        )
+        last_progress_log_at = now
+
     backlog_limit = runtime.upload_workers + runtime.queue_size
     part_futures: deque = deque()
     uploaded_parts: List[UploadedPart] = []
+    uploaded_size_bytes = 0
+    last_progress_log_at = started_monotonic
     with ThreadPoolExecutor(
         max_workers=runtime.upload_workers,
         thread_name_prefix="s3-part-upload",
@@ -606,9 +639,16 @@ def upload_stream_parts(
                 executor.submit(upload_part, s3_client, upload_plan, part_number, chunk)
             )
             if len(part_futures) >= backlog_limit:
-                uploaded_parts.append(part_futures.popleft().result())
+                uploaded_part = part_futures.popleft().result()
+                uploaded_parts.append(uploaded_part)
+                uploaded_size_bytes += uploaded_part.size_bytes
+                log_progress(uploaded_size_bytes, len(uploaded_parts))
         while part_futures:
-            uploaded_parts.append(part_futures.popleft().result())
+            uploaded_part = part_futures.popleft().result()
+            uploaded_parts.append(uploaded_part)
+            uploaded_size_bytes += uploaded_part.size_bytes
+            log_progress(uploaded_size_bytes, len(uploaded_parts))
+    log_progress(uploaded_size_bytes, len(uploaded_parts), force=True)
     return tuple(uploaded_parts)
 
 
@@ -696,6 +736,7 @@ def describe_plan(app_config: AppConfig, started_at: datetime) -> Dict[str, Any]
         "multipart_chunk_mb": app_config.runtime.multipart_chunk_bytes // MB,
         "upload_workers": app_config.runtime.upload_workers,
         "queue_size": app_config.runtime.queue_size,
+        "progress_interval_seconds": app_config.runtime.progress_interval_seconds,
     }
 
 
@@ -735,6 +776,7 @@ def wait_process(
 
 def backup_target(app_config: AppConfig) -> SnapshotResult:
     started_at = datetime.now(timezone.utc)
+    started_monotonic = time.monotonic()
     key = build_s3_key(app_config.s3.prefix, app_config.target.name, started_at)
     mongodump_command = build_mongodump_command(app_config.target)
     compressor_command, compressor_name = select_compressor(app_config.runtime)
@@ -786,6 +828,8 @@ def backup_target(app_config: AppConfig) -> SnapshotResult:
             upload_plan=upload_plan,
             stream=compressor_process.stdout,
             runtime=app_config.runtime,
+            target_name=app_config.target.name,
+            started_monotonic=started_monotonic,
         )
         compressor_process.stdout.close()
         wait_process(
