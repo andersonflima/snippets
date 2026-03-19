@@ -630,6 +630,7 @@ def _build_export_client_token(
     export_type: str,
     export_from: Optional[datetime] = None,
     export_to: Optional[datetime] = None,
+    token_salt: Optional[str] = None,
 ) -> str:
     parts = [
         table_arn,
@@ -638,6 +639,7 @@ def _build_export_client_token(
         s3_prefix,
         export_type,
         "DYNAMODB_JSON",
+        _resolve_optional_text(token_salt, "") or "",
     ]
     if isinstance(export_from, datetime):
         parts.append(_dt_to_iso(export_from))
@@ -1321,6 +1323,11 @@ def _start_full_export(
     assume_role_arn: Optional[str],
 ) -> Dict[str, Any]:
     run_time = config["run_time"]
+    run_token_salt = (
+        run_time.astimezone(timezone.utc).strftime("%Y-%m-%dT%H:%M:%S.%fZ")
+        if isinstance(run_time, datetime)
+        else _safe_str_field(config.get("run_id"), field_name="run_id", required=False)
+    )
     s3_prefix = _build_export_prefix(run_time, target, "FULL_EXPORT")
 
     params: Dict[str, Any] = {
@@ -1335,6 +1342,7 @@ def _start_full_export(
             bucket_owner=bucket_owner,
             s3_prefix=s3_prefix,
             export_type="FULL_EXPORT",
+            token_salt=run_token_salt,
         ),
     }
     if bucket_owner:
@@ -1364,6 +1372,7 @@ def _start_full_export(
         assume_role_arn=assume_role_arn,
         table_account_id=target.account_id,
         table_region=target.region,
+        client_token=params.get("ClientToken"),
     )
     response = ddb_client.export_table_to_point_in_time(**params)
     description = _safe_dict_field(response.get("ExportDescription"), "ExportDescription")
@@ -1416,8 +1425,14 @@ def _start_incremental_export(
     assume_role_arn: Optional[str],
 ) -> Dict[str, Any]:
     export_view_type = _resolve_incremental_export_view_type(config.get("incremental_export_view_type"))
+    run_time = config["run_time"]
+    run_token_salt = (
+        run_time.astimezone(timezone.utc).strftime("%Y-%m-%dT%H:%M:%S.%fZ")
+        if isinstance(run_time, datetime)
+        else _safe_str_field(config.get("run_id"), field_name="run_id", required=False)
+    )
     s3_prefix = _build_export_prefix(
-        config["run_time"],
+        run_time,
         target,
         "INCREMENTAL_EXPORT",
         incremental_index=incremental_index,
@@ -1442,6 +1457,7 @@ def _start_incremental_export(
             export_type="INCREMENTAL_EXPORT",
             export_from=export_from,
             export_to=export_to,
+            token_salt=run_token_salt,
         ),
     }
     if bucket_owner:
@@ -1474,6 +1490,7 @@ def _start_incremental_export(
         assume_role_arn=assume_role_arn,
         table_account_id=target.account_id,
         table_region=target.region,
+        client_token=params.get("ClientToken"),
     )
 
     response = ddb_client.export_table_to_point_in_time(**params)
