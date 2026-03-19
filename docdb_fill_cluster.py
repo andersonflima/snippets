@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import argparse
+import itertools
 import json
 import math
 import os
@@ -10,22 +11,16 @@ from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Sequence
+from typing import Any, Iterable, Iterator, Sequence, TypeVar
 
 from pymongo import MongoClient
 from pymongo.collection import Collection
 from pymongo.errors import AutoReconnect, BulkWriteError, DuplicateKeyError
 from pymongo.write_concern import WriteConcern
 
-from benchmark.seed_docdb import (
-    GIB,
-    MIB,
-    batched,
-    build_chunk_pool,
-    build_document,
-    build_payload,
-    split_counts,
-)
+GIB = 1024 ** 3
+MIB = 1024 ** 2
+T = TypeVar("T")
 
 
 @dataclass(frozen=True)
@@ -54,6 +49,82 @@ class SeedRuntime:
 
 class ClusterSeedError(RuntimeError):
     pass
+
+
+def split_counts(total: int, parts: int) -> tuple[int, ...]:
+    if parts <= 0:
+        raise ClusterSeedError("parts precisa ser maior que zero.")
+    if total <= 0:
+        return tuple(0 for _ in range(parts))
+    base, remainder = divmod(total, parts)
+    return tuple(base + (1 if index < remainder else 0) for index in range(parts))
+
+
+def batched(values: Iterable[T], batch_size: int) -> Iterator[tuple[T, ...]]:
+    if batch_size <= 0:
+        raise ClusterSeedError("batch_size precisa ser maior que zero.")
+    iterator = iter(values)
+    while True:
+        batch = tuple(itertools.islice(iterator, batch_size))
+        if not batch:
+            return
+        yield batch
+
+
+def _build_chunk(seed: str, size_bytes: int) -> bytes:
+    if size_bytes <= 0:
+        raise ClusterSeedError("size_bytes precisa ser maior que zero.")
+    pattern = f"{seed}|".encode("utf-8")
+    repeated = (pattern * ((size_bytes // len(pattern)) + 1))[:size_bytes]
+    return repeated
+
+
+def build_chunk_pool(worker_index: int, pool_chunks: int, chunk_size_bytes: int) -> tuple[bytes, ...]:
+    if pool_chunks <= 0:
+        raise ClusterSeedError("pool_chunks precisa ser maior que zero.")
+    return tuple(
+        _build_chunk(
+            f"wk:{worker_index}:chunk:{chunk_index}",
+            chunk_size_bytes,
+        )
+        for chunk_index in range(pool_chunks)
+    )
+
+
+def build_payload(
+    pool: Sequence[bytes],
+    chunk_count_per_doc: int,
+    worker_index: int,
+    sequence: int,
+) -> bytes:
+    if not pool:
+        raise ClusterSeedError("pool não pode estar vazio.")
+    if chunk_count_per_doc <= 0:
+        raise ClusterSeedError("chunk_count_per_doc precisa ser maior que zero.")
+    pool_size = len(pool)
+    first_index = ((worker_index + 1) * 131 + sequence * 17) % pool_size
+    ordered_chunks = (
+        pool[(first_index + offset) % pool_size]
+        for offset in range(chunk_count_per_doc)
+    )
+    return b"".join(ordered_chunks)
+
+
+def build_document(
+    collection_name: str,
+    worker_index: int,
+    sequence: int,
+    payload: bytes,
+) -> dict[str, Any]:
+    payload_size = len(payload)
+    return {
+        "_id": f"{collection_name}:{worker_index}:{sequence}",
+        "collection": collection_name,
+        "worker": worker_index,
+        "sequence": sequence,
+        "size_bytes": payload_size,
+        "payload": payload,
+    }
 
 
 def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
