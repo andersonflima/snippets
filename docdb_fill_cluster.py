@@ -31,6 +31,8 @@ class ClusterConnectionInfo:
     username: str
     database: str
     tls_ca_file: str | None
+    tls_allow_invalid_hostnames: bool
+    tls_allow_invalid_certificates: bool
     uri: str
 
 
@@ -140,6 +142,16 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
     )
     parser.add_argument("--tls-ca-file", help="Arquivo CA para conexão TLS com DocumentDB.")
     parser.add_argument(
+        "--tls-allow-invalid-hostnames",
+        action="store_true",
+        help="Define tlsAllowInvalidHostnames=true no MongoClient (útil em túnel SSH).",
+    )
+    parser.add_argument(
+        "--tls-allow-invalid-certificates",
+        action="store_true",
+        help="Define tlsAllowInvalidCertificates=true no MongoClient (apenas troubleshooting).",
+    )
+    parser.add_argument(
         "--size-metric",
         choices=("dataSize", "storageSize"),
         default="dataSize",
@@ -183,6 +195,18 @@ def first_env_value(names: Sequence[str]) -> str | None:
         if candidate is not None:
             return candidate
     return None
+
+
+def parse_bool_text(value: str | None, default: bool = False) -> bool:
+    normalized = normalize_optional_text(value)
+    if normalized is None:
+        return default
+    lowered = normalized.lower()
+    if lowered in {"1", "true", "yes", "y", "on"}:
+        return True
+    if lowered in {"0", "false", "no", "n", "off"}:
+        return False
+    raise ClusterSeedError(f"Valor booleano inválido: {value!r}")
 
 
 def require_positive(value: int | float, label: str) -> int | float:
@@ -243,8 +267,42 @@ def resolve_database(explicit_database: str | None, uri: str) -> str:
 
 
 def resolve_tls_ca_file(explicit_tls_ca_file: str | None) -> str | None:
-    return normalize_optional_text(explicit_tls_ca_file) or first_env_value(
+    tls_ca_file = normalize_optional_text(explicit_tls_ca_file) or first_env_value(
         ("DOCDB_FILL_CLUSTER_TLS_CA_FILE", "DOCDB_SNAPSHOT_TLS_CA_FILE")
+    )
+    if tls_ca_file is None:
+        return None
+    resolved_path = str(Path(tls_ca_file).expanduser().resolve())
+    if not Path(resolved_path).is_file():
+        raise ClusterSeedError(f"Arquivo de certificado TLS não encontrado: {resolved_path}")
+    return resolved_path
+
+
+def resolve_tls_allow_invalid_hostnames(args: argparse.Namespace) -> bool:
+    if bool(args.tls_allow_invalid_hostnames):
+        return True
+    return parse_bool_text(
+        first_env_value(
+            (
+                "DOCDB_FILL_CLUSTER_TLS_ALLOW_INVALID_HOSTNAMES",
+                "DOCDB_SNAPSHOT_TLS_ALLOW_INVALID_HOSTNAMES",
+            )
+        ),
+        False,
+    )
+
+
+def resolve_tls_allow_invalid_certificates(args: argparse.Namespace) -> bool:
+    if bool(args.tls_allow_invalid_certificates):
+        return True
+    return parse_bool_text(
+        first_env_value(
+            (
+                "DOCDB_FILL_CLUSTER_TLS_ALLOW_INVALID_CERTIFICATES",
+                "DOCDB_SNAPSHOT_TLS_ALLOW_INVALID_CERTIFICATES",
+            )
+        ),
+        False,
     )
 
 
@@ -264,11 +322,19 @@ def resolve_connection_from_args(args: argparse.Namespace) -> ClusterConnectionI
         username=extract_uri_username(uri) or "direct-user",
         database=resolve_database(args.database, uri),
         tls_ca_file=resolve_tls_ca_file(args.tls_ca_file),
+        tls_allow_invalid_hostnames=resolve_tls_allow_invalid_hostnames(args),
+        tls_allow_invalid_certificates=resolve_tls_allow_invalid_certificates(args),
         uri=uri,
     )
 
 
-def build_mongo_client(uri: str, tls_ca_file: str | None, app_name: str) -> MongoClient[Any]:
+def build_mongo_client(
+    uri: str,
+    tls_ca_file: str | None,
+    tls_allow_invalid_hostnames: bool,
+    tls_allow_invalid_certificates: bool,
+    app_name: str,
+) -> MongoClient[Any]:
     client_options: dict[str, Any] = {
         "appname": app_name,
         "retryWrites": False,
@@ -276,19 +342,32 @@ def build_mongo_client(uri: str, tls_ca_file: str | None, app_name: str) -> Mong
         "serverSelectionTimeoutMS": 10_000,
         "socketTimeoutMS": 300_000,
     }
-    if tls_ca_file:
+    if tls_ca_file or tls_allow_invalid_hostnames or tls_allow_invalid_certificates:
         client_options["tls"] = True
+    if tls_ca_file:
         client_options["tlsCAFile"] = tls_ca_file
+    if tls_allow_invalid_hostnames:
+        client_options["tlsAllowInvalidHostnames"] = True
+    if tls_allow_invalid_certificates:
+        client_options["tlsAllowInvalidCertificates"] = True
     return MongoClient(uri, **client_options)
 
 
 def build_collection(
     uri: str,
     tls_ca_file: str | None,
+    tls_allow_invalid_hostnames: bool,
+    tls_allow_invalid_certificates: bool,
     database_name: str,
     collection_name: str,
 ) -> tuple[MongoClient[Any], Collection[Any]]:
-    client = build_mongo_client(uri, tls_ca_file, app_name="docdb-fill-cluster")
+    client = build_mongo_client(
+        uri,
+        tls_ca_file,
+        tls_allow_invalid_hostnames,
+        tls_allow_invalid_certificates,
+        app_name="docdb-fill-cluster",
+    )
     collection = client.get_database(database_name).get_collection(
         collection_name,
         write_concern=WriteConcern(w=1, j=False),
@@ -299,9 +378,17 @@ def build_collection(
 def read_database_stats_from_connection(
     uri: str,
     tls_ca_file: str | None,
+    tls_allow_invalid_hostnames: bool,
+    tls_allow_invalid_certificates: bool,
     database_name: str,
 ) -> dict[str, Any]:
-    client = build_mongo_client(uri, tls_ca_file, app_name="docdb-fill-cluster-stats")
+    client = build_mongo_client(
+        uri,
+        tls_ca_file,
+        tls_allow_invalid_hostnames,
+        tls_allow_invalid_certificates,
+        app_name="docdb-fill-cluster-stats",
+    )
     try:
         database = client.get_database(database_name)
         stats = database.command("dbStats")
@@ -387,6 +474,8 @@ def seed_worker(
     client, collection = build_collection(
         connection.uri,
         connection.tls_ca_file,
+        connection.tls_allow_invalid_hostnames,
+        connection.tls_allow_invalid_certificates,
         connection.database,
         collection_name,
     )
@@ -510,6 +599,10 @@ def print_round_progress(
     after_bytes: int,
     target_bytes: int,
     planned_payload_bytes: int,
+    observed_after_bytes: int,
+    inserted_payload_bytes: int,
+    inserted_documents: int,
+    metric_source: str,
 ) -> None:
     print(
         json.dumps(
@@ -519,15 +612,37 @@ def print_round_progress(
                 "metric": size_metric,
                 "before_bytes": before_bytes,
                 "after_bytes": after_bytes,
+                "observed_after_bytes": observed_after_bytes,
                 "target_bytes": target_bytes,
                 "planned_payload_bytes": planned_payload_bytes,
+                "inserted_payload_bytes": inserted_payload_bytes,
+                "inserted_documents": inserted_documents,
+                "metric_source": metric_source,
                 "before_gib": round(before_bytes / GIB, 3),
                 "after_gib": round(after_bytes / GIB, 3),
+                "observed_after_gib": round(observed_after_bytes / GIB, 3),
                 "target_gib": round(target_bytes / GIB, 3),
             },
             ensure_ascii=False,
         )
     )
+
+
+def summarize_worker_reports(worker_reports: Sequence[dict[str, Any]]) -> tuple[int, int]:
+    inserted_documents = sum(int(report.get("documents", 0)) for report in worker_reports)
+    inserted_payload_bytes = sum(int(report.get("payload_bytes", 0)) for report in worker_reports)
+    return inserted_documents, inserted_payload_bytes
+
+
+def resolve_effective_after_bytes(
+    before_bytes: int,
+    observed_after_bytes: int,
+    inserted_payload_bytes: int,
+) -> tuple[int, str]:
+    estimated_after_bytes = before_bytes + max(0, inserted_payload_bytes)
+    if observed_after_bytes >= estimated_after_bytes:
+        return observed_after_bytes, "observed_dbstats"
+    return estimated_after_bytes, "estimated_from_inserted_payload"
 
 
 def build_report(
@@ -583,6 +698,8 @@ def seed_database_to_target(
     start_stats = read_database_stats_from_connection(
         connection.uri,
         connection.tls_ca_file,
+        connection.tls_allow_invalid_hostnames,
+        connection.tls_allow_invalid_certificates,
         connection.database,
     )
     current_metric_bytes = metric_bytes(start_stats, runtime.size_metric)
@@ -596,13 +713,21 @@ def seed_database_to_target(
         round_payload_bytes, distribution = build_round_plan(remaining_bytes, runtime)
         worker_reports = run_seed_round(connection, runtime, next_sequences, distribution)
         next_sequences = next_sequence_offsets(next_sequences, worker_reports)
+        inserted_documents, inserted_payload_bytes = summarize_worker_reports(worker_reports)
         time.sleep(runtime.stats_poll_seconds)
         current_stats = read_database_stats_from_connection(
             connection.uri,
             connection.tls_ca_file,
+            connection.tls_allow_invalid_hostnames,
+            connection.tls_allow_invalid_certificates,
             connection.database,
         )
-        updated_metric_bytes = metric_bytes(current_stats, runtime.size_metric)
+        observed_metric_bytes = metric_bytes(current_stats, runtime.size_metric)
+        updated_metric_bytes, metric_source = resolve_effective_after_bytes(
+            current_metric_bytes,
+            observed_metric_bytes,
+            inserted_payload_bytes,
+        )
         round_report = {
             "round": round_number,
             "remaining_bytes_before": remaining_bytes,
@@ -610,6 +735,10 @@ def seed_database_to_target(
             "distribution": list(distribution),
             "metric_bytes_before": current_metric_bytes,
             "metric_bytes_after": updated_metric_bytes,
+            "metric_bytes_observed_after": observed_metric_bytes,
+            "inserted_payload_bytes": inserted_payload_bytes,
+            "inserted_documents": inserted_documents,
+            "metric_source": metric_source,
             "worker_reports": list(worker_reports),
             "db_stats": current_stats,
         }
@@ -621,6 +750,10 @@ def seed_database_to_target(
             after_bytes=updated_metric_bytes,
             target_bytes=target_bytes,
             planned_payload_bytes=round_payload_bytes,
+            observed_after_bytes=observed_metric_bytes,
+            inserted_payload_bytes=inserted_payload_bytes,
+            inserted_documents=inserted_documents,
+            metric_source=metric_source,
         )
         current_metric_bytes = updated_metric_bytes
 
@@ -658,6 +791,9 @@ def main(argv: Sequence[str] | None = None) -> int:
                     "endpoint": connection.endpoint,
                     "port": connection.port,
                     "database": connection.database,
+                    "tls_ca_file": connection.tls_ca_file,
+                    "tls_allow_invalid_hostnames": connection.tls_allow_invalid_hostnames,
+                    "tls_allow_invalid_certificates": connection.tls_allow_invalid_certificates,
                     "size_metric": runtime.size_metric,
                     "target_gib": args.gib,
                     "collection_prefix": runtime.collection_prefix,
