@@ -87,6 +87,7 @@ EXPORT_WAIT_POLL_SECONDS = 5
 
 INCREMENTAL_EXPORT_MIN_WINDOW = timedelta(minutes=15)
 INCREMENTAL_EXPORT_MAX_WINDOW = timedelta(hours=24)
+MAX_INCREMENTAL_EXPORTS_PER_CYCLE = 6
 INCREMENTAL_EXPORT_VIEW_TYPES = frozenset({"NEW_IMAGE", "NEW_AND_OLD_IMAGES"})
 DEFAULT_INCREMENTAL_EXPORT_VIEW_TYPE = "NEW_IMAGE"
 
@@ -170,6 +171,32 @@ def _parse_iso_datetime(value: Any) -> Optional[datetime]:
     if parsed.tzinfo is None:
         return parsed.replace(tzinfo=timezone.utc)
     return parsed.astimezone(timezone.utc)
+
+
+def _coerce_non_negative_int(value: Any, *, field_name: str, default: int = 0) -> int:
+    if value is None:
+        return default
+    text = str(value).strip()
+    if not text:
+        return default
+    try:
+        parsed = int(text)
+    except (TypeError, ValueError) as exc:
+        raise ValueError(f"{field_name} deve ser um inteiro válido") from exc
+    return parsed if parsed >= 0 else 0
+
+
+def _coerce_optional_non_negative_int(value: Any, *, field_name: str) -> Optional[int]:
+    if value is None:
+        return None
+    text = str(value).strip()
+    if not text:
+        return None
+    try:
+        parsed = int(text)
+    except (TypeError, ValueError) as exc:
+        raise ValueError(f"{field_name} deve ser um inteiro válido") from exc
+    return parsed if parsed >= 0 else 0
 
 
 def _to_json_safe(value: Any) -> Any:
@@ -656,6 +683,31 @@ def _extract_export_fields(export_arn: str) -> Dict[str, str]:
     }
 
 
+def _describe_export_description(ddb_client: Any, *, export_arn: str) -> Dict[str, Any]:
+    response = ddb_client.describe_export(ExportArn=export_arn)
+    return _safe_dict_field(response.get("ExportDescription"), "ExportDescription")
+
+
+def _extract_export_item_count(export_description: Dict[str, Any]) -> Optional[int]:
+    return _coerce_optional_non_negative_int(
+        export_description.get("ItemCount"),
+        field_name="ExportDescription.ItemCount",
+    )
+
+
+def _resolve_completed_result_item_count(result: Dict[str, Any]) -> Optional[int]:
+    direct_item_count = _coerce_optional_non_negative_int(
+        result.get("item_count"),
+        field_name="result.item_count",
+    )
+    if direct_item_count is not None:
+        return direct_item_count
+    return _coerce_optional_non_negative_int(
+        result.get("items_written"),
+        field_name="result.items_written",
+    )
+
+
 def _normalize_pending_exports(raw_pending: Any) -> List[Dict[str, str]]:
     if isinstance(raw_pending, str):
         text = raw_pending.strip()
@@ -692,15 +744,28 @@ def _normalize_pending_exports(raw_pending: Any) -> List[Dict[str, str]]:
 
 
 def _normalize_checkpoint_state(state: Dict[str, Any], *, table_name: str, table_arn: str) -> Dict[str, Any]:
+    last_mode = _safe_str_field(state.get("last_mode"), field_name="state.last_mode", required=False).upper()
+    incremental_seq = _coerce_non_negative_int(
+        state.get("incremental_seq"),
+        field_name="state.incremental_seq",
+        default=0,
+    )
+    if last_mode == "FULL":
+        incremental_seq = 0
     return {
         "table_name": _safe_str_field(state.get("table_name"), field_name="state.table_name", required=False) or table_name,
         "table_arn": _safe_str_field(state.get("table_arn"), field_name="state.table_arn", required=False) or table_arn,
         "table_created_at": _safe_str_field(state.get("table_created_at"), field_name="state.table_created_at", required=False),
         "last_to": _safe_str_field(state.get("last_to"), field_name="state.last_to", required=False),
-        "last_mode": _safe_str_field(state.get("last_mode"), field_name="state.last_mode", required=False),
+        "last_mode": last_mode,
         "source": _safe_str_field(state.get("source"), field_name="state.source", required=False),
+        "last_export_arn": _safe_str_field(state.get("last_export_arn"), field_name="state.last_export_arn", required=False),
+        "last_export_item_count": _coerce_optional_non_negative_int(
+            state.get("last_export_item_count"),
+            field_name="state.last_export_item_count",
+        ),
         "pending_exports": _normalize_pending_exports(state.get("pending_exports")),
-        "incremental_seq": int(str(state.get("incremental_seq", 0)).strip() or "0"),
+        "incremental_seq": incremental_seq,
     }
 
 
@@ -899,8 +964,17 @@ def checkpoint_load_table_state(
         "last_to": _safe_str_field(decoded.get("LastTo"), field_name="checkpoint.LastTo", required=False),
         "last_mode": _safe_str_field(decoded.get("LastMode"), field_name="checkpoint.LastMode", required=False),
         "source": _safe_str_field(decoded.get("Source"), field_name="checkpoint.Source", required=False),
+        "last_export_arn": _safe_str_field(decoded.get("LastExportArn"), field_name="checkpoint.LastExportArn", required=False),
+        "last_export_item_count": _coerce_optional_non_negative_int(
+            decoded.get("LastExportItemCount"),
+            field_name="checkpoint.LastExportItemCount",
+        ),
         "pending_exports": pending_exports,
-        "incremental_seq": int(str(decoded.get("IncrementalSeq", 0)).strip() or "0"),
+        "incremental_seq": _coerce_non_negative_int(
+            decoded.get("IncrementalSeq"),
+            field_name="checkpoint.IncrementalSeq",
+            default=0,
+        ),
     }
     return {
         key: value
@@ -943,8 +1017,14 @@ def checkpoint_save(store: Dict[str, Any], payload: Dict[str, Any]) -> None:
             "LastTo": state.get("last_to"),
             "LastMode": state.get("last_mode"),
             "Source": state.get("source"),
+            "LastExportArn": state.get("last_export_arn"),
+            "LastExportItemCount": state.get("last_export_item_count"),
             "PendingExports": state.get("pending_exports", []),
-            "IncrementalSeq": int(state.get("incremental_seq", 0)),
+            "IncrementalSeq": _coerce_non_negative_int(
+                state.get("incremental_seq"),
+                field_name="state.incremental_seq",
+                default=0,
+            ),
             "UpdatedAt": observed_at,
         }
         ddb_client.put_item(TableName=table_name, Item=_ddb_encode_item(item))
@@ -1278,8 +1358,7 @@ def snapshot_manager_validate_export_request(
 def _wait_export_completion(ddb_client: Any, *, export_arn: str) -> str:
     elapsed = 0
     while elapsed < EXPORT_WAIT_TIMEOUT_SECONDS:
-        response = ddb_client.describe_export(ExportArn=export_arn)
-        description = _safe_dict_field(response.get("ExportDescription"), "ExportDescription")
+        description = _describe_export_description(ddb_client, export_arn=export_arn)
         status = _safe_str_field(description.get("ExportStatus"), field_name="ExportStatus")
         if status == "COMPLETED":
             return status
@@ -1389,11 +1468,16 @@ def _start_full_export(
         request_id=request_id,
     )
     status = "STARTED"
+    export_item_count: Optional[int] = None
     if bool(config.get("wait_for_completion")):
         status = _wait_export_completion(ddb_client, export_arn=export_arn)
+        if status == "COMPLETED":
+            export_item_count = _extract_export_item_count(
+                _describe_export_description(ddb_client, export_arn=export_arn)
+            )
 
     export_fields = _extract_export_fields(export_arn)
-    return {
+    result = {
         "table_name": target.table_name,
         "table_arn": target.table_arn,
         "mode": "FULL",
@@ -1409,6 +1493,9 @@ def _start_full_export(
         "export_request_id": request_id,
         **export_fields,
     }
+    if export_item_count is not None:
+        result["item_count"] = export_item_count
+    return result
 
 
 def _start_incremental_export(
@@ -1509,11 +1596,16 @@ def _start_incremental_export(
     )
 
     status = "STARTED"
+    export_item_count: Optional[int] = None
     if bool(config.get("wait_for_completion")):
         status = _wait_export_completion(ddb_client, export_arn=export_arn)
+        if status == "COMPLETED":
+            export_item_count = _extract_export_item_count(
+                _describe_export_description(ddb_client, export_arn=export_arn)
+            )
 
     export_fields = _extract_export_fields(export_arn)
-    return {
+    result = {
         "table_name": target.table_name,
         "table_arn": target.table_arn,
         "mode": "INCREMENTAL",
@@ -1531,6 +1623,9 @@ def _start_incremental_export(
         "export_request_id": request_id,
         **export_fields,
     }
+    if export_item_count is not None:
+        result["item_count"] = export_item_count
+    return result
 
 
 def _run_scan_snapshot_fallback(
@@ -1659,8 +1754,7 @@ def _reconcile_pending_exports(
     for pending_export in pending:
         export_arn = _safe_str_field(pending_export.get("export_arn"), field_name="pending.export_arn")
         try:
-            response = ddb_client.describe_export(ExportArn=export_arn)
-            desc = _safe_dict_field(response.get("ExportDescription"), "ExportDescription")
+            desc = _describe_export_description(ddb_client, export_arn=export_arn)
             status = _safe_str_field(desc.get("ExportStatus"), field_name="ExportStatus")
         except ClientError as exc:
             _log_event(
@@ -1693,6 +1787,8 @@ def _reconcile_pending_exports(
                 field_name="pending.source",
                 required=False,
             ) or "native"
+            next_state["last_export_arn"] = export_arn
+            next_state["last_export_item_count"] = _extract_export_item_count(desc)
             _log_event(
                 "checkpoint.pending.completed",
                 table_name=table_name,
@@ -1700,6 +1796,7 @@ def _reconcile_pending_exports(
                 export_arn=export_arn,
                 status=status,
                 checkpoint_to=checkpoint_to,
+                item_count=next_state.get("last_export_item_count"),
             )
             continue
 
@@ -1726,6 +1823,133 @@ def _reconcile_pending_exports(
 
     next_state["pending_exports"] = next_pending
     return next_state
+
+
+def _refresh_last_incremental_export_metadata(
+    *,
+    ddb_client: Any,
+    checkpoint_state: Dict[str, Any],
+    table_name: str,
+    table_arn: str,
+) -> Dict[str, Any]:
+    incremental_seq = _coerce_non_negative_int(
+        checkpoint_state.get("incremental_seq"),
+        field_name="checkpoint_state.incremental_seq",
+        default=0,
+    )
+    last_mode = _safe_str_field(
+        checkpoint_state.get("last_mode"),
+        field_name="checkpoint_state.last_mode",
+        required=False,
+    ).upper()
+    if incremental_seq <= 0 or last_mode != "INCREMENTAL":
+        return checkpoint_state
+
+    last_export_arn = _safe_str_field(
+        checkpoint_state.get("last_export_arn"),
+        field_name="checkpoint_state.last_export_arn",
+        required=False,
+    )
+    if not last_export_arn:
+        _log_event(
+            "checkpoint.incremental.previous_export_missing",
+            table_name=table_name,
+            table_arn=table_arn,
+            incremental_seq=incremental_seq,
+            level=logging.WARNING,
+        )
+        return checkpoint_state
+
+    current_item_count = checkpoint_state.get("last_export_item_count")
+    if current_item_count is not None:
+        return checkpoint_state
+
+    try:
+        export_description = _describe_export_description(ddb_client, export_arn=last_export_arn)
+    except ClientError as exc:
+        _log_event(
+            "checkpoint.incremental.previous_export_describe_error",
+            table_name=table_name,
+            table_arn=table_arn,
+            export_arn=last_export_arn,
+            code=_client_error_code(exc),
+            message=_client_error_message(exc),
+            level=logging.WARNING,
+        )
+        return checkpoint_state
+
+    refreshed_item_count = _extract_export_item_count(export_description)
+    return {
+        **checkpoint_state,
+        "last_export_item_count": refreshed_item_count,
+    }
+
+
+def _resolve_automatic_export_plan(
+    *,
+    checkpoint_record_exists: bool,
+    checkpoint_state: Dict[str, Any],
+    ddb_client: Any,
+    table_name: str,
+    table_arn: str,
+) -> Dict[str, Any]:
+    refreshed_checkpoint_state = _refresh_last_incremental_export_metadata(
+        ddb_client=ddb_client,
+        checkpoint_state=checkpoint_state,
+        table_name=table_name,
+        table_arn=table_arn,
+    )
+    last_to_candidate = _parse_iso_datetime(refreshed_checkpoint_state.get("last_to"))
+    if not checkpoint_record_exists:
+        return {
+            "mode": "FULL",
+            "reason": "checkpoint_record_missing",
+            "checkpoint_state": refreshed_checkpoint_state,
+            "last_to": last_to_candidate,
+        }
+    if not isinstance(last_to_candidate, datetime):
+        return {
+            "mode": "FULL",
+            "reason": "checkpoint_last_to_missing_or_invalid",
+            "checkpoint_state": refreshed_checkpoint_state,
+            "last_to": last_to_candidate,
+        }
+
+    current_incremental_seq = _coerce_non_negative_int(
+        refreshed_checkpoint_state.get("incremental_seq"),
+        field_name="checkpoint_state.incremental_seq",
+        default=0,
+    )
+    if current_incremental_seq >= MAX_INCREMENTAL_EXPORTS_PER_CYCLE:
+        return {
+            "mode": "FULL",
+            "reason": "incremental_cycle_limit_reached",
+            "checkpoint_state": refreshed_checkpoint_state,
+            "last_to": last_to_candidate,
+        }
+
+    if current_incremental_seq <= 0:
+        next_incremental_index = 1
+        reason = "initial_incremental_after_full"
+    else:
+        previous_item_count = refreshed_checkpoint_state.get("last_export_item_count")
+        if previous_item_count is None:
+            next_incremental_index = current_incremental_seq
+            reason = "previous_incremental_item_count_unknown"
+        elif previous_item_count > 0:
+            next_incremental_index = current_incremental_seq + 1
+            reason = "previous_incremental_had_items"
+        else:
+            next_incremental_index = current_incremental_seq
+            reason = "previous_incremental_without_items"
+
+    return {
+        "mode": "INCREMENTAL",
+        "reason": reason,
+        "next_incremental_index": next_incremental_index,
+        "checkpoint_state": refreshed_checkpoint_state,
+        "last_to": last_to_candidate,
+    }
 
 
 def _build_pending_result(
@@ -1838,23 +2062,6 @@ def _process_table(
             "table_created_at": table_created_at,
         }
 
-    if bool(config.get("dry_run")):
-        mode_upper = _safe_str_field(config.get("mode"), field_name="mode").upper()
-        return {
-            "table_name": target.table_name,
-            "table_arn": target.table_arn,
-            "mode": mode_upper,
-            "status": "PLANNED",
-            "source": "dry_run",
-            "snapshot_bucket": _resolve_snapshot_bucket(config, target),
-            "checkpoint_state": checkpoint_state,
-            "assume_role_arn": assume_role_arn,
-            "table_account_id": target.account_id,
-            "table_region": target.region,
-            "message": "Execução em dry_run: nenhum export foi iniciado.",
-        }
-
-    mode = _safe_str_field(config.get("mode"), field_name="mode")
     bucket = _resolve_snapshot_bucket(config, target)
     bucket_owner = _resolve_optional_text(config.get("bucket_owner"))
 
@@ -1865,7 +2072,49 @@ def _process_table(
         table_arn=target.table_arn,
     )
 
-    if mode == "full":
+    automatic_plan = _resolve_automatic_export_plan(
+        checkpoint_record_exists=checkpoint_record_exists,
+        checkpoint_state=checkpoint_state,
+        ddb_client=ddb_client,
+        table_name=target.table_name,
+        table_arn=target.table_arn,
+    )
+    checkpoint_state = automatic_plan["checkpoint_state"]
+
+    if bool(config.get("dry_run")):
+        planned_mode = _safe_str_field(automatic_plan.get("mode"), field_name="automatic_plan.mode").upper()
+        return {
+            "table_name": target.table_name,
+            "table_arn": target.table_arn,
+            "mode": planned_mode,
+            "status": "PLANNED",
+            "source": "dry_run",
+            "snapshot_bucket": bucket,
+            "checkpoint_state": checkpoint_state,
+            "assume_role_arn": assume_role_arn,
+            "table_account_id": target.account_id,
+            "table_region": target.region,
+            "mode_selection_reason": automatic_plan.get("reason"),
+            "message": "Execução em dry_run: nenhum export foi iniciado.",
+        }
+
+    if _normalize_pending_exports(checkpoint_state.get("pending_exports")):
+        result = _build_pending_result(
+            target=target,
+            mode="INCREMENTAL",
+            source="pending_export_tracking",
+            message="Já existe export em andamento para esta tabela.",
+            bucket=bucket,
+            assume_role_arn=assume_role_arn,
+            checkpoint_state=checkpoint_state,
+        )
+        result["checkpoint_state"] = checkpoint_state
+        result["mode_selection_reason"] = "pending_export_tracking"
+        return result
+
+    selected_mode = _safe_str_field(automatic_plan.get("mode"), field_name="automatic_plan.mode")
+
+    if selected_mode == "FULL":
         try:
             result = _start_full_export(
                 config=config,
@@ -1923,106 +2172,17 @@ def _process_table(
                 "last_to": _safe_str_field(result.get("checkpoint_to"), field_name="checkpoint_to", required=False),
                 "last_mode": "FULL",
                 "source": result_source,
+                "last_export_arn": _safe_str_field(result.get("export_arn"), field_name="export_arn", required=False),
+                "last_export_item_count": _resolve_completed_result_item_count(result),
                 "pending_exports": [],
                 "incremental_seq": 0,
             }
 
         result["checkpoint_state"] = checkpoint_state
+        result["mode_selection_reason"] = automatic_plan.get("reason")
         return result
 
-    if _normalize_pending_exports(checkpoint_state.get("pending_exports")):
-        result = _build_pending_result(
-            target=target,
-            mode="INCREMENTAL",
-            source="pending_export_tracking",
-            message="Já existe export em andamento para esta tabela.",
-            bucket=bucket,
-            assume_role_arn=assume_role_arn,
-            checkpoint_state=checkpoint_state,
-        )
-        result["checkpoint_state"] = checkpoint_state
-        return result
-
-    last_to_candidate = _parse_iso_datetime(checkpoint_state.get("last_to"))
-    bootstrap_full_reason = ""
-    if not checkpoint_record_exists:
-        bootstrap_full_reason = "checkpoint_record_missing"
-    elif not isinstance(last_to_candidate, datetime):
-        bootstrap_full_reason = "checkpoint_last_to_missing_or_invalid"
-
-    if bootstrap_full_reason:
-        _log_event(
-            "export.incremental.bootstrap_full.triggered",
-            table_name=target.table_name,
-            table_arn=target.table_arn,
-            reason=bootstrap_full_reason,
-            checkpoint_last_to=_safe_str_field(checkpoint_state.get("last_to"), field_name="checkpoint_state.last_to", required=False),
-        )
-        try:
-            full_result = _start_full_export(
-                config=config,
-                target=target,
-                ddb_client=ddb_client,
-                bucket=bucket,
-                bucket_owner=bucket_owner,
-                assume_role_arn=assume_role_arn,
-            )
-        except ClientError as exc:
-            if not _can_use_scan_fallback(config, ddb_client, exc):
-                raise
-            _log_event(
-                "export.bootstrap_full.scan_fallback.start",
-                table_name=target.table_name,
-                table_arn=target.table_arn,
-                code=_client_error_code(exc),
-                message=_client_error_message(exc),
-                endpoint_url=_resolve_optional_text(getattr(getattr(ddb_client, "meta", None), "endpoint_url", "")),
-                level=logging.WARNING,
-            )
-            full_result = _run_scan_snapshot_fallback(
-                config=config,
-                target=target,
-                ddb_client=ddb_client,
-                s3_client=s3_client,
-                bucket=bucket,
-                s3_prefix=_build_export_prefix(config["run_time"], target, "FULL_EXPORT"),
-                mode="FULL",
-                assume_role_arn=assume_role_arn,
-                fallback_error_code=_client_error_code(exc),
-                fallback_error_message=_client_error_message(exc),
-                checkpoint_to=config["run_time"],
-            )
-
-        if full_result.get("status") in EXPORT_PENDING_STATUSES:
-            pending = _normalize_pending_exports(checkpoint_state.get("pending_exports"))
-            pending.append(
-                {
-                    "export_arn": _safe_str_field(full_result.get("export_arn"), field_name="export_arn"),
-                    "checkpoint_to": _safe_str_field(full_result.get("checkpoint_to"), field_name="checkpoint_to", required=False),
-                    "mode": "FULL",
-                    "source": "native",
-                }
-            )
-            checkpoint_state = {
-                **checkpoint_state,
-                "pending_exports": _dedupe_pending_exports(pending),
-                "incremental_seq": 0,
-            }
-        elif full_result.get("status") == "COMPLETED":
-            result_source = _safe_str_field(full_result.get("source"), field_name="source", required=False) or "native"
-            checkpoint_state = {
-                **checkpoint_state,
-                "last_to": _safe_str_field(full_result.get("checkpoint_to"), field_name="checkpoint_to", required=False),
-                "last_mode": "FULL",
-                "source": result_source,
-                "pending_exports": [],
-                "incremental_seq": 0,
-            }
-
-        full_result["checkpoint_state"] = checkpoint_state
-        full_result["checkpoint_source"] = bootstrap_full_reason
-        return full_result
-
+    last_to_candidate = automatic_plan.get("last_to")
     if not isinstance(last_to_candidate, datetime):
         raise RuntimeError("checkpoint_state.last_to inválido para execução incremental")
     last_to = last_to_candidate
@@ -2076,7 +2236,11 @@ def _process_table(
             max_window_seconds=int(INCREMENTAL_EXPORT_MAX_WINDOW.total_seconds()),
         )
 
-    next_incremental_index = int(checkpoint_state.get("incremental_seq", 0)) + 1
+    next_incremental_index = _coerce_non_negative_int(
+        automatic_plan.get("next_incremental_index"),
+        field_name="automatic_plan.next_incremental_index",
+        default=1,
+    )
     try:
         incremental_result = _start_incremental_export(
             config=config,
@@ -2145,11 +2309,14 @@ def _process_table(
             "last_to": _safe_str_field(incremental_result.get("checkpoint_to"), field_name="checkpoint_to"),
             "last_mode": "INCREMENTAL",
             "source": result_source,
+            "last_export_arn": _safe_str_field(incremental_result.get("export_arn"), field_name="export_arn", required=False),
+            "last_export_item_count": _resolve_completed_result_item_count(incremental_result),
             "pending_exports": [],
             "incremental_seq": next_incremental_index,
         }
 
     incremental_result["checkpoint_state"] = checkpoint_state
+    incremental_result["mode_selection_reason"] = automatic_plan.get("reason")
     return incremental_result
 
 
@@ -2560,15 +2727,7 @@ def build_snapshot_config(event: Optional[Dict[str, Any]]) -> Dict[str, Any]:
     if not targets and not targets_csv:
         raise ValueError("Informe ao menos um target em 'targets', TARGET_TABLE_ARNS ou targets_csv/TARGETS_CSV")
 
-    mode = (_resolve_optional_text(
-        os.getenv("SNAPSHOT_MODE"),
-        payload.get("mode"),
-        payload.get("snapshot_mode"),
-        payload.get("snapshotMode"),
-        "full",
-    ) or "full").strip().lower()
-    if mode not in {"full", "incremental"}:
-        raise ValueError("SNAPSHOT_MODE deve ser 'full' ou 'incremental'")
+    mode = "automatic"
 
     try:
         max_workers = int(

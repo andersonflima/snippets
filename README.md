@@ -32,7 +32,6 @@ Observações:
 
 | Variável | Padrão | Descrição |
 | --- | --- | --- |
-| `SNAPSHOT_MODE` | `full` | `full` ou `incremental` |
 | `S3_PREFIX` | `dynamodb-snapshots` | Prefixo base dos exports e do lookup legado de baseline |
 | `IGNORE_TARGETS` ou `IGNORE_TABLES` | vazio | Lista CSV inline com ARNs/nomes para ignorar |
 | `DRY_RUN` | `false` | Faz preflight e gera plano sem exportar |
@@ -60,7 +59,7 @@ Observações:
 - Para persistir os dados da execução em DynamoDB, configure no mínimo `OUTPUT_DYNAMODB_ENABLED=true` e `OUTPUT_DYNAMODB_TABLE=<nome-da-tabela>`.
 - A Lambda salva o estado do checkpoint por tabela em DynamoDB, usando chave composta com `PK=TableName` e `SK=RecordType`. O valor de `TableName` é o `TableArn` para evitar colisão entre tabelas homônimas de contas/regiões diferentes, e `TargetTableName` mantém o nome legível da tabela. Se a tabela não existir, a Lambda cria automaticamente com `BillingMode=PAY_PER_REQUEST`.
 - A Lambda também registra `TableCreatedAt` no checkpoint para detectar recriação de tabela; se o timestamp atual divergir do checkpoint, o estado antigo é invalidado e o bootstrap `FULL_EXPORT` é reexecutado.
-- Quando `SNAPSHOT_MODE=incremental` e não existe registro da tabela no checkpoint, a Lambda dispara automaticamente um `FULL_EXPORT` de bootstrap.
+- A escolha entre `FULL_EXPORT` e `INCREMENTAL_EXPORT` agora é automática por tabela. Não é mais necessário enviar `mode` no evento nem configurar `SNAPSHOT_MODE`.
 - O `ClientToken` do export é gerado com um salt único por execução da Lambda para evitar deduplicação idempotente indesejada entre execuções diferentes no mesmo dia.
 
 ### Fallback por `Scan`
@@ -97,7 +96,6 @@ Observações:
   "ignore": [
     "orders_tmp"
   ],
-  "mode": "incremental",
   "max_workers": 4,
   "wait_for_completion": false,
   "dry_run": false,
@@ -142,13 +140,16 @@ Destino S3 por tabela:
 
 ### Incremental
 
-Quando `mode=incremental`, a decisão segue esta ordem:
+Sem receber `mode`, a Lambda decide automaticamente assim:
 
 1. reconcilia exports pendentes via `DescribeExport`;
 2. se ainda houver export pendente, não dispara novo export para a tabela;
-3. usa `last_to` do checkpoint quando existir;
-4. se não existir checkpoint, tenta bootstrap pelo último `FULL` concluído no S3;
-5. se não encontrar baseline algum, executa `FULL`.
+3. se não existir checkpoint válido com `last_to`, executa `FULL`;
+4. após existir um `FULL`, passa a executar incrementais automaticamente;
+5. a contagem incremental vai até `6`; ao atingir esse limite, a próxima execução volta para `FULL` e zera a contagem;
+6. quando a contagem incremental já saiu de `0`, a Lambda valida o `ItemCount` do export incremental anterior;
+7. se o export anterior teve `ItemCount > 0`, a contagem avança para o próximo incremental;
+8. se o export anterior não exportou itens, a contagem não avança e o próximo export reutiliza o mesmo índice incremental.
 
 Regras da janela incremental nativa:
 
@@ -164,6 +165,13 @@ Se o incremental nativo não puder ser usado e `SCAN_FALLBACK_ENABLED=true`, a L
 - `DDB/YYYYMMDD/<account_id>/<table_name>/INCR`
 - `DDB/YYYYMMDD/<account_id>/<table_name>/INCR2`
 - `DDB/YYYYMMDD/<account_id>/<table_name>/INCR3`
+- `DDB/YYYYMMDD/<account_id>/<table_name>/INCR4`
+- `DDB/YYYYMMDD/<account_id>/<table_name>/INCR5`
+- `DDB/YYYYMMDD/<account_id>/<table_name>/INCR6`
+
+Observação:
+
+- Quando o incremental anterior termina sem itens exportados, a Lambda reutiliza o mesmo índice incremental na próxima execução em vez de avançar para o próximo sufixo.
 
 No fallback por `Scan`, além das partições `.jsonl` ou `.jsonl.gz`, a Lambda grava `manifest.json` com `files`, `total_items`, `total_parts`, `from` e `to`.
 
@@ -291,7 +299,7 @@ Mapeamento aplicado no item do DynamoDB:
   "status": "ok",
   "snapshot_bucket": "meu-bucket-snapshots",
   "run_id": "20260309T153000Z",
-  "mode": "incremental",
+  "mode": "automatic",
   "dry_run": false,
   "checkpoint_error": null,
   "updated_checkpoint": "arn:aws:dynamodb:sa-east-1:111111111111:table/snapshot-checkpoints",
