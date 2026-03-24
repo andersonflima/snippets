@@ -149,11 +149,44 @@ download_github_archive() {
 
   local url
   for url in "${candidate_urls[@]}"; do
-    if curl -fsSL "${url}" -o "${archive_path}"; then
+    if download_url_with_retries "${url}" "${archive_path}"; then
       printf '%s\n' "${url}"
       return 0
     fi
   done
+  return 1
+}
+
+download_url_with_retries() {
+  local url archive_path
+  url="$1"
+  archive_path="$2"
+
+  local mode attempt mode_label
+  for mode in "" "--http1.1"; do
+    mode_label="default"
+    if [[ -n "${mode}" ]]; then
+      mode_label="${mode}"
+    fi
+    for attempt in 1 2 3; do
+      if curl -fsSL --connect-timeout 20 --max-time 300 ${mode} "${url}" -o "${archive_path}"; then
+        return 0
+      fi
+      log "download falhou (tentativa ${attempt}/3, modo ${mode_label}): ${url}"
+      sleep 2
+    done
+  done
+  return 1
+}
+
+is_truthy() {
+  local value
+  value="$(printf '%s' "${1:-}" | tr '[:upper:]' '[:lower:]')"
+  case "${value}" in
+    1|true|yes|on)
+      return 0
+      ;;
+  esac
   return 1
 }
 
@@ -218,7 +251,11 @@ main() {
   trap 'rm -rf "${temp_dir}"' EXIT
 
   if ! source_url="$(download_github_archive "${slug}" "${branch}" "${archive_path}")"; then
-    die "falha ao baixar zip para ${repo_url} (branch/tag: ${branch:-HEAD})"
+    if is_truthy "${GIT_ZIP_WRAPPER_STRICT:-0}"; then
+      die "falha ao baixar zip para ${repo_url} (branch/tag: ${branch:-HEAD})"
+    fi
+    log "falha ao baixar zip para ${repo_url}; fallback para git clone normal."
+    exec "${real_git}" "$@"
   fi
 
   extract_archive_to_destination "${archive_path}" "${destination}"
