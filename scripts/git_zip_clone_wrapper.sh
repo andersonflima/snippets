@@ -80,8 +80,26 @@ parse_clone_arguments() {
         CLONE_BRANCH="${args[index + 1]}"
         index=$((index + 2))
         ;;
+      -c|--config)
+        (( index + 1 < ${#args[@]} )) || die "faltou valor para ${arg}"
+        index=$((index + 2))
+        ;;
+      -c*)
+        index=$((index + 1))
+        ;;
+      -o|--origin|-u|--upload-pack)
+        (( index + 1 < ${#args[@]} )) || die "faltou valor para ${arg}"
+        index=$((index + 2))
+        ;;
+      -j|--jobs)
+        (( index + 1 < ${#args[@]} )) || die "faltou valor para ${arg}"
+        index=$((index + 2))
+        ;;
       --branch=*)
         CLONE_BRANCH="${arg#--branch=}"
+        index=$((index + 1))
+        ;;
+      --config=*|--jobs=*)
         index=$((index + 1))
         ;;
       --depth|--filter|--origin|--config|--upload-pack|--template|--reference|--reference-if-able|--server-option|--separate-git-dir)
@@ -89,6 +107,9 @@ parse_clone_arguments() {
         index=$((index + 2))
         ;;
       --depth=*|--filter=*|--origin=*|--config=*|--upload-pack=*|--template=*|--reference=*|--reference-if-able=*|--server-option=*|--separate-git-dir=*)
+        index=$((index + 1))
+        ;;
+      --single-branch|--no-single-branch|--recurse-submodules|--shallow-submodules|--no-shallow-submodules|--no-tags|--tags|--quiet|--verbose|--progress|--no-checkout)
         index=$((index + 1))
         ;;
       --)
