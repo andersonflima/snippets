@@ -93,6 +93,44 @@ class FakeDescribeExportClient:
         return {"ExportDescription": description}
 
 
+class FakeIncrementalPitrClient(FakeDescribeExportClient):
+    def __init__(
+        self,
+        *,
+        earliest_restorable: datetime,
+        latest_restorable: datetime,
+        item_count_by_arn: dict[str, int | None] | None = None,
+    ) -> None:
+        super().__init__(item_count_by_arn=item_count_by_arn)
+        self.earliest_restorable = earliest_restorable
+        self.latest_restorable = latest_restorable
+        self.describe_continuous_backups_calls: list[str] = []
+        self.export_calls: list[dict[str, Any]] = []
+
+    def describe_continuous_backups(self, TableName: str) -> dict:
+        self.describe_continuous_backups_calls.append(TableName)
+        return {
+            "ContinuousBackupsDescription": {
+                "ContinuousBackupsStatus": "ENABLED",
+                "PointInTimeRecoveryDescription": {
+                    "PointInTimeRecoveryStatus": "ENABLED",
+                    "EarliestRestorableDateTime": self.earliest_restorable,
+                    "LatestRestorableDateTime": self.latest_restorable,
+                },
+            }
+        }
+
+    def export_table_to_point_in_time(self, **params: Any) -> dict:
+        self.export_calls.append(params)
+        return {
+            "ExportDescription": {
+                "ExportArn": f"{TABLE_ARN}/export/099",
+                "ExportStatus": "IN_PROGRESS",
+            },
+            "ResponseMetadata": {"RequestId": "req-099"},
+        }
+
+
 class SnapshotAutomaticModeTests(unittest.TestCase):
     def build_config(self) -> dict:
         return {
@@ -338,6 +376,67 @@ class SnapshotAutomaticModeTests(unittest.TestCase):
         self.assertEqual(result["mode_selection_reason"], "previous_incremental_had_items")
         self.assertEqual(result["checkpoint_state"]["last_export_item_count"], 5)
         self.assertEqual(result["checkpoint_state"]["incremental_seq"], 3)
+
+    def test_incremental_export_clamps_checkpoint_from_to_pitr_earliest(self) -> None:
+        ddb_client = FakeIncrementalPitrClient(
+            earliest_restorable=datetime(2026, 3, 22, tzinfo=timezone.utc),
+            latest_restorable=datetime(2026, 3, 23, tzinfo=timezone.utc),
+        )
+
+        result = self.run_process_table(
+            previous_state={
+                "table_name": "orders",
+                "table_arn": TABLE_ARN,
+                "last_to": "2026-03-01T00:00:00Z",
+                "last_mode": "FULL",
+                "incremental_seq": 0,
+            },
+            ddb_client=ddb_client,
+        )
+
+        self.assertEqual(result["status"], "STARTED")
+        self.assertEqual(result["mode"], "INCREMENTAL")
+        self.assertEqual(result["checkpoint_from"], "2026-03-22T00:00:00Z")
+        self.assertEqual(result["checkpoint_to"], "2026-03-23T00:00:00Z")
+        self.assertEqual(result["mode_selection_reason"], "initial_incremental_after_full")
+        self.assertEqual(result["checkpoint_state"]["incremental_seq"], 1)
+        self.assertEqual(ddb_client.describe_continuous_backups_calls, ["orders"])
+        self.assertEqual(len(ddb_client.export_calls), 1)
+        self.assertEqual(
+            ddb_client.export_calls[0]["IncrementalExportSpecification"]["ExportFromTime"],
+            datetime(2026, 3, 22, tzinfo=timezone.utc),
+        )
+        self.assertEqual(
+            ddb_client.export_calls[0]["IncrementalExportSpecification"]["ExportToTime"],
+            datetime(2026, 3, 23, tzinfo=timezone.utc),
+        )
+
+    def test_incremental_export_returns_pending_when_pitr_adjusted_window_is_below_15_minutes(self) -> None:
+        ddb_client = FakeIncrementalPitrClient(
+            earliest_restorable=datetime(2026, 3, 22, 23, 50, tzinfo=timezone.utc),
+            latest_restorable=datetime(2026, 3, 23, 0, 0, tzinfo=timezone.utc),
+        )
+
+        result = self.run_process_table(
+            previous_state={
+                "table_name": "orders",
+                "table_arn": TABLE_ARN,
+                "last_to": "2026-03-22T23:40:00Z",
+                "last_mode": "FULL",
+                "incremental_seq": 0,
+            },
+            ddb_client=ddb_client,
+        )
+
+        self.assertEqual(result["status"], "PENDING")
+        self.assertEqual(result["mode"], "INCREMENTAL")
+        self.assertEqual(result["source"], "window_outside_pitr")
+        self.assertIn("15 minutos", result["message"])
+        self.assertEqual(result["checkpoint_from"], "2026-03-22T23:50:00Z")
+        self.assertEqual(result["checkpoint_to"], "2026-03-23T00:00:00Z")
+        self.assertEqual(result["mode_selection_reason"], "initial_incremental_after_full")
+        self.assertEqual(ddb_client.describe_continuous_backups_calls, ["orders"])
+        self.assertEqual(ddb_client.export_calls, [])
 
     def test_reaches_six_incrementals_and_starts_new_full(self) -> None:
         captured: dict[str, Any] = {"full_calls": 0}

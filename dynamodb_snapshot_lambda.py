@@ -173,6 +173,50 @@ def _parse_iso_datetime(value: Any) -> Optional[datetime]:
     return parsed.astimezone(timezone.utc)
 
 
+def _coerce_datetime_utc(value: Any) -> Optional[datetime]:
+    if isinstance(value, datetime):
+        if value.tzinfo is None:
+            return value.replace(tzinfo=timezone.utc)
+        return value.astimezone(timezone.utc)
+    return _parse_iso_datetime(value)
+
+
+def _extract_pitr_window(pitr_desc: Dict[str, Any]) -> Dict[str, Optional[datetime]]:
+    return {
+        "earliest_restorable": _coerce_datetime_utc(pitr_desc.get("EarliestRestorableDateTime")),
+        "latest_restorable": _coerce_datetime_utc(pitr_desc.get("LatestRestorableDateTime")),
+    }
+
+
+def _clamp_incremental_export_window_to_pitr(
+    *,
+    export_from: datetime,
+    export_to: datetime,
+    pitr_window: Dict[str, Optional[datetime]],
+    table_name: str,
+    table_arn: str,
+) -> Tuple[datetime, datetime]:
+    earliest = pitr_window.get("earliest_restorable")
+    latest = pitr_window.get("latest_restorable")
+    resolved_export_from = max(export_from, earliest) if isinstance(earliest, datetime) else export_from
+    resolved_export_to = min(export_to, latest) if isinstance(latest, datetime) else export_to
+
+    if resolved_export_from != export_from or resolved_export_to != export_to:
+        _log_event(
+            "export.incremental.window.adjusted_to_pitr",
+            table_name=table_name,
+            table_arn=table_arn,
+            requested_export_from=_dt_to_iso(export_from),
+            requested_export_to=_dt_to_iso(export_to),
+            export_from=_dt_to_iso(resolved_export_from),
+            export_to=_dt_to_iso(resolved_export_to),
+            earliest_restorable=_dt_to_iso(earliest) if isinstance(earliest, datetime) else None,
+            latest_restorable=_dt_to_iso(latest) if isinstance(latest, datetime) else None,
+        )
+
+    return resolved_export_from, resolved_export_to
+
+
 def _coerce_non_negative_int(value: Any, *, field_name: str, default: int = 0) -> int:
     if value is None:
         return default
@@ -1255,14 +1299,14 @@ def _ensure_point_in_time_recovery(
     *,
     table_name: str,
     table_arn: str,
-) -> None:
+) -> Dict[str, Optional[datetime]]:
     response = ddb_client.describe_continuous_backups(TableName=table_name)
     desc = _safe_dict_field(response.get("ContinuousBackupsDescription"), "ContinuousBackupsDescription")
     pitr_desc = _safe_dict_field(desc.get("PointInTimeRecoveryDescription"), "PointInTimeRecoveryDescription")
     pitr_status = _safe_str_field(pitr_desc.get("PointInTimeRecoveryStatus"), field_name="PointInTimeRecoveryStatus", required=False)
 
     if pitr_status == "ENABLED":
-        return
+        return _extract_pitr_window(pitr_desc)
 
     _log_event(
         "table.pitr.enable.start",
@@ -1290,7 +1334,7 @@ def _ensure_point_in_time_recovery(
                 point_in_time_recovery_status=status,
                 changed=True,
             )
-            return
+            return _extract_pitr_window(pitr_desc)
         time.sleep(PITR_ENABLE_POLL_SECONDS)
         elapsed += PITR_ENABLE_POLL_SECONDS
 
@@ -1525,6 +1569,82 @@ def _start_incremental_export(
         incremental_index=incremental_index,
     )
 
+    pitr_window = _ensure_point_in_time_recovery(
+        ddb_client,
+        table_name=target.table_name,
+        table_arn=target.table_arn,
+    )
+    resolved_export_from, resolved_export_to = _clamp_incremental_export_window_to_pitr(
+        export_from=export_from,
+        export_to=export_to,
+        pitr_window=pitr_window,
+        table_name=target.table_name,
+        table_arn=target.table_arn,
+    )
+    latest_restorable = pitr_window.get("latest_restorable")
+    if resolved_export_to <= resolved_export_from and resolved_export_from > export_from:
+        max_allowed_export_to = run_time if isinstance(run_time, datetime) else resolved_export_to
+        if isinstance(latest_restorable, datetime):
+            max_allowed_export_to = min(max_allowed_export_to, latest_restorable)
+        recomputed_export_to = min(resolved_export_from + INCREMENTAL_EXPORT_MAX_WINDOW, max_allowed_export_to)
+        if recomputed_export_to > resolved_export_from:
+            _log_event(
+                "export.incremental.window.recomputed_after_pitr_adjustment",
+                table_name=target.table_name,
+                table_arn=target.table_arn,
+                requested_export_from=_dt_to_iso(export_from),
+                requested_export_to=_dt_to_iso(export_to),
+                export_from=_dt_to_iso(resolved_export_from),
+                previous_export_to=_dt_to_iso(resolved_export_to),
+                export_to=_dt_to_iso(recomputed_export_to),
+                latest_restorable=_dt_to_iso(latest_restorable) if isinstance(latest_restorable, datetime) else None,
+                max_window_seconds=int(INCREMENTAL_EXPORT_MAX_WINDOW.total_seconds()),
+            )
+            resolved_export_to = recomputed_export_to
+
+    if resolved_export_from >= resolved_export_to:
+        return {
+            "table_name": target.table_name,
+            "table_arn": target.table_arn,
+            "mode": "INCREMENTAL",
+            "status": "PENDING",
+            "source": "window_outside_pitr",
+            "message": (
+                f"Janela incremental inválida após ajuste ao PITR para tabela {target.table_name}: "
+                f"checkpoint_from={_dt_to_iso(resolved_export_from)} "
+                f"checkpoint_to={_dt_to_iso(resolved_export_to)}."
+            ),
+            "snapshot_bucket": bucket,
+            "s3_prefix": s3_prefix,
+            "checkpoint_from": _dt_to_iso(resolved_export_from),
+            "checkpoint_to": _dt_to_iso(resolved_export_to),
+            "checkpoint_source": checkpoint_source,
+            "assume_role_arn": assume_role_arn,
+            "table_account_id": target.account_id,
+            "table_region": target.region,
+        }
+    if (resolved_export_to - resolved_export_from) < INCREMENTAL_EXPORT_MIN_WINDOW:
+        return {
+            "table_name": target.table_name,
+            "table_arn": target.table_arn,
+            "mode": "INCREMENTAL",
+            "status": "PENDING",
+            "source": "window_outside_pitr",
+            "message": (
+                f"Janela incremental ajustada ao PITR ficou menor que 15 minutos para tabela {target.table_name}: "
+                f"checkpoint_from={_dt_to_iso(resolved_export_from)} "
+                f"checkpoint_to={_dt_to_iso(resolved_export_to)}."
+            ),
+            "snapshot_bucket": bucket,
+            "s3_prefix": s3_prefix,
+            "checkpoint_from": _dt_to_iso(resolved_export_from),
+            "checkpoint_to": _dt_to_iso(resolved_export_to),
+            "checkpoint_source": checkpoint_source,
+            "assume_role_arn": assume_role_arn,
+            "table_account_id": target.account_id,
+            "table_region": target.region,
+        }
+
     params: Dict[str, Any] = {
         "TableArn": target.table_arn,
         "S3Bucket": bucket,
@@ -1532,8 +1652,8 @@ def _start_incremental_export(
         "ExportFormat": "DYNAMODB_JSON",
         "ExportType": "INCREMENTAL_EXPORT",
         "IncrementalExportSpecification": {
-            "ExportFromTime": export_from,
-            "ExportToTime": export_to,
+            "ExportFromTime": resolved_export_from,
+            "ExportToTime": resolved_export_to,
             "ExportViewType": export_view_type,
         },
         "ClientToken": _build_export_client_token(
@@ -1542,8 +1662,8 @@ def _start_incremental_export(
             bucket_owner=bucket_owner,
             s3_prefix=s3_prefix,
             export_type="INCREMENTAL_EXPORT",
-            export_from=export_from,
-            export_to=export_to,
+            export_from=resolved_export_from,
+            export_to=resolved_export_to,
             token_salt=run_token_salt,
         ),
     }
@@ -1557,12 +1677,6 @@ def _start_incremental_export(
         table_region=target.region,
     )
 
-    _ensure_point_in_time_recovery(
-        ddb_client,
-        table_name=target.table_name,
-        table_arn=target.table_arn,
-    )
-
     _log_event(
         "export.incremental.attempt",
         table_name=target.table_name,
@@ -1570,8 +1684,8 @@ def _start_incremental_export(
         s3_bucket=bucket,
         s3_bucket_owner=bucket_owner,
         s3_prefix=s3_prefix,
-        export_from=_dt_to_iso(export_from),
-        export_to=_dt_to_iso(export_to),
+        export_from=_dt_to_iso(resolved_export_from),
+        export_to=_dt_to_iso(resolved_export_to),
         export_view_type=export_view_type,
         wait_for_completion=bool(config.get("wait_for_completion")),
         assume_role_arn=assume_role_arn,
@@ -1613,9 +1727,9 @@ def _start_incremental_export(
         "source": "native",
         "snapshot_bucket": bucket,
         "s3_prefix": s3_prefix,
-        "started_at": _dt_to_iso(export_to),
-        "checkpoint_from": _dt_to_iso(export_from),
-        "checkpoint_to": _dt_to_iso(export_to),
+        "started_at": _dt_to_iso(resolved_export_to),
+        "checkpoint_from": _dt_to_iso(resolved_export_from),
+        "checkpoint_to": _dt_to_iso(resolved_export_to),
         "checkpoint_source": checkpoint_source,
         "assume_role_arn": assume_role_arn,
         "table_account_id": target.account_id,
@@ -2288,20 +2402,27 @@ def _process_table(
         )
 
     if incremental_result.get("status") in EXPORT_PENDING_STATUSES:
-        pending = _normalize_pending_exports(checkpoint_state.get("pending_exports"))
-        pending.append(
-            {
-                "export_arn": _safe_str_field(incremental_result.get("export_arn"), field_name="export_arn"),
-                "checkpoint_to": _safe_str_field(incremental_result.get("checkpoint_to"), field_name="checkpoint_to"),
-                "mode": "INCREMENTAL",
-                "source": "native",
-            }
+        export_arn = _safe_str_field(incremental_result.get("export_arn"), field_name="export_arn", required=False)
+        checkpoint_to = _safe_str_field(
+            incremental_result.get("checkpoint_to"),
+            field_name="checkpoint_to",
+            required=False,
         )
-        checkpoint_state = {
-            **checkpoint_state,
-            "pending_exports": _dedupe_pending_exports(pending),
-            "incremental_seq": next_incremental_index,
-        }
+        if export_arn and checkpoint_to:
+            pending = _normalize_pending_exports(checkpoint_state.get("pending_exports"))
+            pending.append(
+                {
+                    "export_arn": export_arn,
+                    "checkpoint_to": checkpoint_to,
+                    "mode": "INCREMENTAL",
+                    "source": "native",
+                }
+            )
+            checkpoint_state = {
+                **checkpoint_state,
+                "pending_exports": _dedupe_pending_exports(pending),
+                "incremental_seq": next_incremental_index,
+            }
     elif incremental_result.get("status") == "COMPLETED":
         result_source = _safe_str_field(incremental_result.get("source"), field_name="source", required=False) or "native"
         checkpoint_state = {

@@ -153,6 +153,8 @@ Regras da janela incremental nativa:
 
 - a Lambda só dispara export nativo quando a janela entre `checkpoint_from` e `run_time` tiver pelo menos `15 minutos`
 - quando o atraso acumulado ultrapassa `24 horas`, a Lambda corta a janela no limite de `24 horas` e avança em fatias por execução até alcançar o horário atual
+- antes de iniciar `INCREMENTAL_EXPORT`, a Lambda ajusta `checkpoint_from/checkpoint_to` para a janela PITR retornada por `DescribeContinuousBackups` (`EarliestRestorableDateTime` e `LatestRestorableDateTime`)
+- se a janela ajustada ao PITR ficar inválida ou menor que `15 minutos`, a Lambda retorna `PENDING` para a tabela e não chama `ExportTableToPointInTime`
 Se o incremental nativo não puder ser usado e `SCAN_FALLBACK_ENABLED=true`, a Lambda pode cair no fallback por `Scan`.
 
 ## Layout no S3
