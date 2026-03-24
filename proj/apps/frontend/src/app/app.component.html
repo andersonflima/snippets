@@ -6,34 +6,40 @@
       <p class="small">Role: {{ user()?.role }}</p>
     </div>
 
-    <section class="view-switch">
-      <button
-        class="category-item"
-        [class.active]="workspaceView() === 'resources'"
-        (click)="switchView('resources')"
-      >
-        Operacao Cloud
-      </button>
-      <button
-        class="category-item"
-        *ngIf="isAdmin()"
-        [class.active]="workspaceView() === 'admin'"
-        (click)="switchView('admin')"
-      >
-        Administracao
-      </button>
+    <section class="menu-block">
+      <p class="menu-title">Navegacao</p>
+      <div class="view-switch">
+        <button
+          class="category-item"
+          [class.active]="workspaceView() === 'resources'"
+          (click)="switchView('resources')"
+        >
+          Gerenciar Recursos
+        </button>
+        <button
+          class="category-item"
+          *ngIf="isAdmin()"
+          [class.active]="workspaceView() === 'admin'"
+          (click)="switchView('admin')"
+        >
+          Admin
+        </button>
+      </div>
     </section>
 
-    <nav class="category-list" *ngIf="workspaceView() === 'resources'">
-      <button
-        *ngFor="let category of categories"
-        class="category-item"
-        [class.active]="selectedCategory() === category.id"
-        (click)="onCategoryChange(category.id)"
-      >
-        <span>{{ category.label }}</span>
-      </button>
-    </nav>
+    <section class="menu-block" *ngIf="workspaceView() === 'resources'">
+      <p class="menu-title">Categorias AWS</p>
+      <nav class="category-list">
+        <button
+          *ngFor="let category of categories"
+          class="category-item"
+          [class.active]="selectedCategory() === category.id"
+          (click)="onCategoryChange(category.id)"
+        >
+          <span>{{ category.label }}</span>
+        </button>
+      </nav>
+    </section>
 
     <button class="logout" (click)="logout()">Sair</button>
   </aside>
@@ -46,55 +52,74 @@
     </section>
 
     <ng-container *ngIf="workspaceView() === 'resources'; else adminWorkspace">
-      <header class="toolbar panel">
-        <label>
-          Conta
-          <select [ngModel]="selectedAccountId()" (ngModelChange)="onAccountChange($event)">
-            <option *ngFor="let account of availableAccounts()" [value]="account.accountId">
-              {{ account.name }} ({{ account.accountId }})
-            </option>
-          </select>
-        </label>
-
-        <label>
-          Regiao
-          <select [ngModel]="selectedRegion()" (ngModelChange)="onRegionChange($event)">
-            <option *ngFor="let region of availableRegions()" [value]="region">{{ region }}</option>
-          </select>
-        </label>
-
-        <label>
-          Recurso
-          <select
-            [ngModel]="selectedResourceType()"
-            (ngModelChange)="onResourceTypeChange($event)"
-            [disabled]="resourceTypes().length === 0"
-          >
-            <option value="" *ngIf="resourceTypes().length === 0" disabled>
-              Sem tipos disponiveis
-            </option>
-            <option *ngFor="let typeName of resourceTypes()" [value]="typeName">{{ typeName }}</option>
-          </select>
-        </label>
-
-        <button (click)="refreshResources()">Atualizar</button>
-      </header>
-
-      <section class="panel context-summary">
-        <p>
-          Categoria ativa: <strong>{{ selectedCategoryLabel() }}</strong>
-        </p>
-        <p class="small" *ngIf="resourceTypes().length === 0">
-          Nenhum tipo disponivel para esta categoria no contexto atual (conta/regiao/ACL).
-        </p>
+      <section class="panel workspace-title">
+        <div class="title-row">
+          <div>
+            <h2>Gerenciamento de Recursos</h2>
+            <p>{{ user()?.name }}</p>
+          </div>
+          <div class="title-meta">
+            <span class="chip">{{ selectedCategoryLabel() }}</span>
+            <span class="chip">{{ resources().length }} recurso(s)</span>
+            <span class="chip">{{ selectedRegion() || 'regiao padrao' }}</span>
+          </div>
+        </div>
       </section>
 
-      <section class="panel discovery-meta" *ngIf="resourceDiscoveryRegions().length > 0">
-        <p>
-          Descoberta automatica por tipo em todas as regioes autorizadas da conta.
-          <strong>{{ discoveryHealthyRegionCount() }}</strong> regioes com sucesso,
-          <strong>{{ discoveryFailureCount() }}</strong> com falha.
-        </p>
+      <section class="panel context-module">
+        <h3>Contexto da Descoberta</h3>
+        <header class="toolbar">
+          <label>
+            Conta
+            <select [ngModel]="selectedAccountId()" (ngModelChange)="onAccountChange($event)">
+              <option *ngFor="let account of availableAccounts()" [value]="account.accountId">
+                {{ account.name }} ({{ account.accountId }})
+              </option>
+            </select>
+          </label>
+
+          <label>
+            Regiao
+            <select [ngModel]="selectedRegion()" (ngModelChange)="onRegionChange($event)">
+              <option *ngFor="let region of availableRegions()" [value]="region">{{ region }}</option>
+            </select>
+          </label>
+
+          <label>
+            Recurso
+            <select
+              [ngModel]="selectedResourceType()"
+              (ngModelChange)="onResourceTypeChange($event)"
+              [disabled]="resourceTypes().length === 0"
+            >
+              <option value="" *ngIf="resourceTypes().length === 0" disabled>
+                Sem tipos disponiveis
+              </option>
+              <option *ngFor="let typeName of resourceTypes()" [value]="typeName">{{ typeName }}</option>
+            </select>
+          </label>
+
+          <button (click)="refreshResources()">Atualizar</button>
+        </header>
+
+        <section class="mini-panels">
+          <article class="context-summary">
+            <p>
+              Categoria ativa: <strong>{{ selectedCategoryLabel() }}</strong>
+            </p>
+            <p class="small" *ngIf="resourceTypes().length === 0">
+              Nenhum tipo disponivel para esta categoria no contexto atual (conta/regiao/ACL).
+            </p>
+          </article>
+
+          <article class="discovery-meta" *ngIf="resourceDiscoveryRegions().length > 0">
+            <p>
+              Descoberta automatica por tipo em todas as regioes autorizadas da conta.
+              <strong>{{ discoveryHealthyRegionCount() }}</strong> regioes com sucesso,
+              <strong>{{ discoveryFailureCount() }}</strong> com falha.
+            </p>
+          </article>
+        </section>
       </section>
 
       <section class="panel checkup-grid">
@@ -118,103 +143,526 @@
         </article>
       </section>
 
-      <section class="panel resource-list">
-        <table>
-          <thead>
-            <tr>
-              <th>Nome</th>
-              <th>Identifier</th>
-              <th>Tipo</th>
-              <th>Regiao</th>
-              <th>Acoes</th>
-            </tr>
-          </thead>
-          <tbody>
-            <tr *ngFor="let resource of resources()">
-              <td>{{ resource.displayName }}</td>
-              <td class="mono">{{ resource.identifier }}</td>
-              <td class="mono">{{ resource.typeName }}</td>
-              <td class="mono">{{ resource.region }}</td>
-              <td class="actions">
-                <button (click)="loadResourceDetails(resource)">Detalhes</button>
-                <button class="danger" (click)="openDeleteFlow(resource)">Delete</button>
-              </td>
-            </tr>
-            <tr *ngIf="resources().length === 0">
-              <td colspan="5" class="empty">Nenhum recurso retornado para o filtro atual.</td>
-            </tr>
-          </tbody>
-        </table>
-      </section>
+      <section class="resource-panel-grid">
+        <section class="panel action-module">
+        <h3>Operacoes de Recurso</h3>
+        <nav class="action-tabs" role="tablist" aria-label="Acoes de recurso">
+          <button
+            type="button"
+            class="action-tab"
+            role="tab"
+            aria-selected="{{ activeResourceActionTab() === 'create' }}"
+            [disabled]="isMobileResourceActions() && deleteCandidate() !== null"
+            (click)="setResourceActionTab('create')"
+          >
+            Create
+          </button>
+          <button
+            type="button"
+            class="action-tab"
+            role="tab"
+            aria-selected="{{ activeResourceActionTab() === 'update' }}"
+            [disabled]="isMobileResourceActions() && deleteCandidate() !== null"
+            (click)="setResourceActionTab('update')"
+          >
+            Update
+          </button>
+          <button
+            type="button"
+            class="action-tab action-tab--delete"
+            role="tab"
+            aria-selected="{{ activeResourceActionTab() === 'delete' }}"
+            (click)="setResourceActionTab('delete')"
+          >
+            Delete
+          </button>
+        </nav>
 
-      <section class="form-grid">
-        <article class="panel form-card">
-          <h2>Create Resource</h2>
-          <textarea
-            [ngModel]="createPayloadText()"
-            (ngModelChange)="createPayloadText.set($event)"
-            rows="8"
-          ></textarea>
-          <button (click)="createResource()">Criar</button>
-        </article>
+        <section class="operation-panel-stack">
+          <section class="operation-panel" [class.is-active]="activeResourceActionTab() === 'create'">
+            <article class="form-card">
+              <h3>Create Resource</h3>
+              <p class="small">
+                <button class="ghost" (click)="toggleCreatePayloadMode()">
+                  {{ useJsonCreatePayload() ? 'Usar formulario' : 'Usar JSON livre' }}
+                </button>
+              </p>
 
-        <article class="panel form-card">
-          <h2>Update Resource</h2>
-          <input
-            type="text"
-            placeholder="Identifier"
-            [ngModel]="updateIdentifier()"
-            (ngModelChange)="updateIdentifier.set($event)"
-          />
-          <textarea
-            [ngModel]="updateDesiredStateText()"
-            (ngModelChange)="updateDesiredStateText.set($event)"
-            rows="5"
-          ></textarea>
-          <textarea
-            [ngModel]="updatePatchText()"
-            (ngModelChange)="updatePatchText.set($event)"
-            rows="5"
-          ></textarea>
-          <button (click)="updateResource()">Atualizar</button>
-        </article>
+              <div class="form-row-grid" *ngIf="!useJsonCreatePayload()">
+                <article class="form-row-item">
+                  <label>
+                    DesiredState por chaves
+                    <div class="small">(use JSON interno nos campos que precisarem de estrutura)</div>
+                  </label>
+                </article>
+                <article class="form-row-item form-row-item--kv" *ngFor="let field of createPayloadRows(); let i = index">
+                  <label class="field-label">
+                    {{ isTemplateFieldRow(field) ? asTemplateLabel(field) : field.key }}
+                    <span class="field-key" *ngIf="field.key.length > 0">({{ field.key }})</span>
+                    <span class="field-required" *ngIf="field.required">obrigatorio</span>
+                    <p class="small" *ngIf="field.description">{{ field.description }}</p>
+                  </label>
+                  <label>
+                    Nome da propriedade
+                    <input
+                      [disabled]="isTemplateFieldRow(field)"
+                      [readOnly]="isTemplateFieldRow(field)"
+                      [ngModel]="field.key"
+                      (ngModelChange)="updateCreatePayloadFieldRow(i, { key: $event })"
+                    />
+                  </label>
+                  <label>
+                    Tipo
+                    <select
+                      *ngIf="!isTemplateFieldRow(field)"
+                      [ngModel]="field.valueMode"
+                      (ngModelChange)="updateCreatePayloadFieldRow(i, { valueMode: $event })"
+                    >
+                      <option *ngFor="let mode of resourceFieldValueModes" [value]="mode">{{ mode }}</option>
+                    </select>
+                    <input
+                      *ngIf="isTemplateFieldRow(field) && !isTemplateFieldEnum(field)"
+                      [ngModel]="field.valueMode"
+                      disabled
+                    />
+                    <input
+                      *ngIf="isTemplateFieldRow(field) && isTemplateFieldEnum(field)"
+                      [ngModel]="field.valueMode"
+                      disabled
+                    />
+                  </label>
+                  <label>
+                    Valor
+                    <select
+                      *ngIf="isTemplateFieldRow(field) && isTemplateFieldEnum(field)"
+                      [ngModel]="field.value"
+                      (ngModelChange)="updateCreatePayloadFieldRow(i, { value: $event })"
+                    >
+                      <option value="">Selecione uma opcao</option>
+                      <option *ngFor="let option of field.enumValues" [value]="option">{{ option }}</option>
+                    </select>
+                    <input
+                      *ngIf="field.valueMode === 'text' && !(isTemplateFieldRow(field) && isTemplateFieldEnum(field))"
+                      type="text"
+                      [ngModel]="field.value"
+                      (ngModelChange)="updateCreatePayloadFieldRow(i, { value: $event })"
+                      [placeholder]="field.placeholder"
+                    />
+                    <input
+                      *ngIf="field.valueMode === 'number'"
+                      type="number"
+                      [ngModel]="field.value"
+                      (ngModelChange)="updateCreatePayloadFieldRow(i, { value: $event })"
+                    />
+                    <select
+                      *ngIf="field.valueMode === 'boolean'"
+                      [ngModel]="field.value"
+                      (ngModelChange)="updateCreatePayloadFieldRow(i, { value: $event })"
+                    >
+                      <option value="true">true</option>
+                      <option value="false">false</option>
+                    </select>
+                    <textarea
+                      *ngIf="field.valueMode === 'json'"
+                      class="form-json-input"
+                      rows="4"
+                      [ngModel]="field.value"
+                      (ngModelChange)="updateCreatePayloadFieldRow(i, { value: $event })"
+                    ></textarea>
+                    <input
+                      *ngIf="field.valueMode === 'null'"
+                      type="text"
+                      [ngModel]="field.value"
+                      (ngModelChange)="updateCreatePayloadFieldRow(i, { value: $event })"
+                      readonly
+                    />
+                  </label>
+                  <button class="ghost" (click)="removeCreatePayloadFieldRow(i)" *ngIf="!isTemplateFieldRow(field) || !field.required">
+                    Remover campo
+                  </button>
+                </article>
+              </div>
 
-        <article class="panel form-card" *ngIf="deleteCandidate() as candidate">
-          <h2>Delete Com Dupla Confirmacao</h2>
-          <p>
-            Recurso: <strong>{{ candidate.displayName }}</strong>
-          </p>
-          <p class="mono">{{ candidate.identifier }}</p>
-          <p class="small">Regiao alvo: {{ candidate.region }}</p>
-          <input
-            type="text"
-            placeholder="Digite DELETE"
-            [ngModel]="deleteConfirmationText()"
-            (ngModelChange)="deleteConfirmationText.set($event)"
-          />
-          <div class="delete-actions">
-            <button (click)="requestDeleteIntent()">Gerar Segunda Confirmacao</button>
-            <button class="danger" (click)="executeDelete()">Delete Definitivo</button>
-            <button class="ghost" (click)="cancelDeleteFlow()">Cancelar</button>
-          </div>
-        </article>
-      </section>
+              <div *ngIf="useJsonCreatePayload()">
+                <textarea
+                  [ngModel]="createPayloadText()"
+                  (ngModelChange)="createPayloadText.set($event)"
+                  rows="8"
+                ></textarea>
+              </div>
 
-      <section class="panel details" *ngIf="resourceDetails() as details">
-        <h2>Detalhes do Recurso</h2>
-        <pre>{{ details | json }}</pre>
+              <div class="delete-actions" *ngIf="!useJsonCreatePayload()">
+                <button class="ghost" (click)="addCreatePayloadFieldRow()">+ Adicionar campo</button>
+              </div>
+              <button (click)="createResource()">Criar</button>
+            </article>
+          </section>
+
+          <section class="operation-panel" [class.is-active]="activeResourceActionTab() === 'update'">
+            <article class="form-card">
+              <h3>Update Resource</h3>
+              <input
+                type="text"
+                placeholder="Identifier"
+                [ngModel]="updateIdentifier()"
+                (ngModelChange)="updateIdentifier.set($event)"
+              />
+              <p class="small">
+                <button class="ghost" (click)="toggleUpdateDesiredStateMode()">
+                  {{ useJsonUpdateDesiredState() ? 'Usar formulario' : 'Usar JSON livre' }}
+                </button>
+              </p>
+              <div class="form-row-grid" *ngIf="!useJsonUpdateDesiredState()">
+                <article class="form-row-item">
+                  <label>
+                    DesiredState por chaves
+                  </label>
+                </article>
+                <article class="form-row-item form-row-item--kv" *ngFor="let field of updateDesiredStateRows(); let i = index">
+                  <label>
+                    {{ isTemplateFieldRow(field) ? asTemplateLabel(field) : field.key }}
+                    <span class="field-key" *ngIf="field.key.length > 0">({{ field.key }})</span>
+                    <span class="field-required" *ngIf="field.required">obrigatorio</span>
+                    <p class="small" *ngIf="field.description">{{ field.description }}</p>
+                  </label>
+                  <label>
+                    Nome da propriedade
+                    <input
+                      [disabled]="isTemplateFieldRow(field)"
+                      [readOnly]="isTemplateFieldRow(field)"
+                      [ngModel]="field.key"
+                      (ngModelChange)="updateUpdateDesiredStateFieldRow(i, { key: $event })"
+                    />
+                  </label>
+                  <label>
+                    Tipo
+                    <select
+                      *ngIf="!isTemplateFieldRow(field)"
+                      [ngModel]="field.valueMode"
+                      (ngModelChange)="updateUpdateDesiredStateFieldRow(i, { valueMode: $event })"
+                    >
+                      <option *ngFor="let mode of resourceFieldValueModes" [value]="mode">{{ mode }}</option>
+                    </select>
+                    <input
+                      *ngIf="isTemplateFieldRow(field) && !isTemplateFieldEnum(field)"
+                      [ngModel]="field.valueMode"
+                      disabled
+                    />
+                    <input
+                      *ngIf="isTemplateFieldRow(field) && isTemplateFieldEnum(field)"
+                      [ngModel]="field.valueMode"
+                      disabled
+                    />
+                  </label>
+                  <label>
+                    Valor
+                    <select
+                      *ngIf="isTemplateFieldRow(field) && isTemplateFieldEnum(field)"
+                      [ngModel]="field.value"
+                      (ngModelChange)="updateUpdateDesiredStateFieldRow(i, { value: $event })"
+                    >
+                      <option value="">Selecione uma opcao</option>
+                      <option *ngFor="let option of field.enumValues" [value]="option">{{ option }}</option>
+                    </select>
+                    <input
+                      *ngIf="
+                        field.valueMode === 'text' &&
+                        !(isTemplateFieldRow(field) && isTemplateFieldEnum(field))
+                      "
+                      type="text"
+                      [ngModel]="field.value"
+                      (ngModelChange)="updateUpdateDesiredStateFieldRow(i, { value: $event })"
+                      [placeholder]="field.placeholder"
+                    />
+                    <input
+                      *ngIf="field.valueMode === 'number'"
+                      type="number"
+                      [ngModel]="field.value"
+                      (ngModelChange)="updateUpdateDesiredStateFieldRow(i, { value: $event })"
+                    />
+                    <select
+                      *ngIf="field.valueMode === 'boolean'"
+                      [ngModel]="field.value"
+                      (ngModelChange)="updateUpdateDesiredStateFieldRow(i, { value: $event })"
+                    >
+                      <option value="true">true</option>
+                      <option value="false">false</option>
+                    </select>
+                    <textarea
+                      *ngIf="field.valueMode === 'json'"
+                      class="form-json-input"
+                      rows="4"
+                      [ngModel]="field.value"
+                      (ngModelChange)="updateUpdateDesiredStateFieldRow(i, { value: $event })"
+                    ></textarea>
+                    <input
+                      *ngIf="field.valueMode === 'null'"
+                      type="text"
+                      [ngModel]="field.value"
+                      (ngModelChange)="updateUpdateDesiredStateFieldRow(i, { value: $event })"
+                      readonly
+                    />
+                  </label>
+                  <button class="ghost" (click)="removeUpdateDesiredStateFieldRow(i)">Remover campo</button>
+                </article>
+              </div>
+              <div *ngIf="useJsonUpdateDesiredState()">
+                <textarea
+                  [ngModel]="updateDesiredStateText()"
+                  (ngModelChange)="updateDesiredStateText.set($event)"
+                  rows="5"
+                ></textarea>
+              </div>
+
+              <p class="small">
+                <button class="ghost" (click)="toggleUpdatePatchMode()">
+                  {{ useJsonPatchPayload() ? 'Usar formulario' : 'Usar JSON livre' }}
+                </button>
+              </p>
+              <div class="form-row-grid" *ngIf="!useJsonPatchPayload()">
+                <article class="form-row-item">
+                  <label>
+                    Patch por operacoes
+                  </label>
+                </article>
+                <article class="form-row-item form-row-item--kv" *ngFor="let patch of updatePatchRows(); let i = index">
+                  <label>
+                    Op
+                    <select
+                      [ngModel]="patch.op"
+                      (ngModelChange)="updatePatchRow(i, { op: $event })"
+                    >
+                      <option *ngFor="let patchOp of patchOperationOptions" [value]="patchOp">{{ patchOp }}</option>
+                    </select>
+                  </label>
+                  <label>
+                    Path
+                    <input
+                      [ngModel]="patch.path"
+                      (ngModelChange)="updatePatchRow(i, { path: $event })"
+                    />
+                  </label>
+                  <label>
+                    From
+                    <input
+                      *ngIf="patch.op === 'move' || patch.op === 'copy'"
+                      [ngModel]="patch.from"
+                      (ngModelChange)="updatePatchRow(i, { from: $event })"
+                    />
+                    <input
+                      *ngIf="patch.op !== 'move' && patch.op !== 'copy'"
+                      value=""
+                      readonly
+                      disabled
+                    />
+                  </label>
+                  <label>
+                    Tipo de Valor
+                    <select
+                      [ngModel]="patch.valueMode"
+                      (ngModelChange)="updatePatchRow(i, { valueMode: $event })"
+                    >
+                      <option *ngFor="let mode of resourceFieldValueModes" [value]="mode">{{ mode }}</option>
+                    </select>
+                  </label>
+                  <label>
+                    Valor
+                    <input
+                      *ngIf="patch.valueMode === 'text'"
+                      type="text"
+                      [ngModel]="patch.value"
+                      (ngModelChange)="updatePatchRow(i, { value: $event })"
+                    />
+                    <input
+                      *ngIf="patch.valueMode === 'number'"
+                      type="number"
+                      [ngModel]="patch.value"
+                      (ngModelChange)="updatePatchRow(i, { value: $event })"
+                    />
+                    <select
+                      *ngIf="patch.valueMode === 'boolean'"
+                      [ngModel]="patch.value"
+                      (ngModelChange)="updatePatchRow(i, { value: $event })"
+                    >
+                      <option value="true">true</option>
+                      <option value="false">false</option>
+                    </select>
+                    <textarea
+                      *ngIf="patch.valueMode === 'json'"
+                      class="form-json-input"
+                      rows="4"
+                      [ngModel]="patch.value"
+                      (ngModelChange)="updatePatchRow(i, { value: $event })"
+                    ></textarea>
+                    <input
+                      *ngIf="patch.valueMode === 'null'"
+                      type="text"
+                      [ngModel]="patch.value"
+                      (ngModelChange)="updatePatchRow(i, { value: $event })"
+                      readonly
+                    />
+                  </label>
+                  <button class="ghost" (click)="removeUpdatePatchRow(i)">Remover operacao</button>
+                </article>
+              </div>
+              <div *ngIf="useJsonPatchPayload()">
+                <textarea
+                  [ngModel]="updatePatchText()"
+                  (ngModelChange)="updatePatchText.set($event)"
+                  rows="5"
+                ></textarea>
+              </div>
+
+              <div class="delete-actions" *ngIf="!useJsonPatchPayload() || !useJsonUpdateDesiredState()">
+                <button class="ghost" (click)="addUpdateDesiredStateFieldRow()" *ngIf="!useJsonUpdateDesiredState()">
+                  + Adicionar campo
+                </button>
+                <button class="ghost" (click)="addUpdatePatchRow()" *ngIf="!useJsonPatchPayload()">
+                  + Adicionar operação
+                </button>
+              </div>
+              <button (click)="updateResource()">Atualizar</button>
+            </article>
+          </section>
+
+          <section class="operation-panel" [class.is-active]="activeResourceActionTab() === 'delete'">
+            <article class="form-card">
+              <h3>Delete com Dupla Confirmacao</h3>
+              <ng-container *ngIf="deleteCandidate() as candidate; else noDeleteCandidate">
+                <p>
+                  Recurso: <strong>{{ candidate.displayName }}</strong>
+                </p>
+                <p class="mono">{{ candidate.identifier }}</p>
+                <p class="small">Regiao alvo: {{ candidate.region }}</p>
+                <input
+                  type="text"
+                  placeholder="Digite DELETE"
+                  [ngModel]="deleteConfirmationText()"
+                  (ngModelChange)="deleteConfirmationText.set($event)"
+                />
+                <div class="delete-actions">
+                  <button (click)="requestDeleteIntent()">Gerar Segunda Confirmacao</button>
+                  <button class="danger" (click)="executeDelete()">Delete Definitivo</button>
+                  <button class="ghost" (click)="cancelDeleteFlow()">Cancelar</button>
+                </div>
+              </ng-container>
+              <ng-template #noDeleteCandidate>
+                <section class="empty-details">
+                  <p class="small">
+                    Nenhum recurso selecionado para exclusao.
+                    Clique em Delete na grade de inventario para abrir esta aba.
+                  </p>
+                </section>
+              </ng-template>
+            </article>
+          </section>
+        </section>
+        </section>
+
+        <section class="panel details-shell">
+          <h3>Consulta e Inventario</h3>
+          <header class="list-header">
+            <h4>Resultado</h4>
+            <span class="chip">{{ resources().length }} item(ns)</span>
+          </header>
+          <section class="panel resource-list">
+            <p class="empty" *ngIf="resources().length === 0">
+              Nenhum recurso retornado para o filtro atual.
+            </p>
+
+            <table *ngIf="resources().length > 0">
+              <thead>
+                <tr>
+                  <th>Nome</th>
+                  <th>Identifier</th>
+                  <th>Tipo</th>
+                  <th>Regiao</th>
+                  <th>Acoes</th>
+                </tr>
+              </thead>
+              <tbody>
+                <tr *ngFor="let resource of resources()">
+                  <td>{{ resource.displayName }}</td>
+                  <td class="mono">{{ resource.identifier }}</td>
+                  <td class="mono">{{ resource.typeName }}</td>
+                  <td class="mono">{{ resource.region }}</td>
+                  <td class="actions">
+                    <button (click)="loadResourceDetails(resource)">Detalhes</button>
+                    <button class="danger" (click)="openDeleteFlow(resource)">Delete</button>
+                  </td>
+                </tr>
+              </tbody>
+            </table>
+          </section>
+
+          <section class="panel details" *ngIf="resourceDetails() as details">
+            <h2>Detalhes do Recurso</h2>
+            <div class="details-grid">
+              <article class="details-card">
+                <h3>Detalhes Brutos</h3>
+                <pre>{{ details | json }}</pre>
+              </article>
+              <article class="details-card">
+                <h3>Estado da Plataforma</h3>
+                <pre *ngIf="details.platformState">{{ details.platformState | json }}</pre>
+                <p class="small" *ngIf="!details.platformState">Estado atual ainda nao sincronizado.</p>
+              </article>
+            </div>
+          </section>
+          <section class="panel details empty-details" *ngIf="!resourceDetails()">
+            <h2>Detalhes do Recurso</h2>
+            <p class="small">Selecione um recurso da lista para visualizar os detalhes.</p>
+          </section>
+          <section class="panel details">
+            <h3>Historico de Operacoes (State)</h3>
+            <p class="small" *ngIf="resourceStateHistory().length === 0">
+              Nenhum registro de state para o contexto/filtro atual.
+            </p>
+            <div class="state-grid" *ngIf="resourceStateHistory().length > 0">
+              <article class="state-card" *ngFor="let record of resourceStateHistory()">
+                <p class="small">{{ formatStateDate(record.createdAt) }}</p>
+                <p>
+                  <strong>{{ record.operation }}</strong> - {{ record.typeName }} / {{ record.identifier }}
+                </p>
+                <p class="small">Conta {{ record.accountId }} · Regiao {{ record.region }}</p>
+                <p
+                  class="small"
+                  [class.success]="record.status === 'applied'"
+                  [class.warning]="record.status === 'submitted'"
+                  [class.error]="record.status === 'failed'"
+                >
+                  {{ record.status }}
+                </p>
+              </article>
+            </div>
+          </section>
+        </section>
       </section>
     </ng-container>
 
     <ng-template #adminWorkspace>
+      <section class="panel workspace-title">
+        <div class="title-row">
+          <div>
+            <h2>Área Administrativa</h2>
+            <p>Gestão de contas, permissões e usuários da plataforma.</p>
+          </div>
+          <div class="title-meta">
+            <span class="chip">{{ adminUsers().length }} usuario(s)</span>
+            <span class="chip">Perfil {{ user()?.role }}</span>
+          </div>
+        </div>
+      </section>
+
       <section class="panel admin-toolbar">
         <h2>Gestao de Usuarios e ACL</h2>
         <button (click)="loadAdminUsers()">Recarregar Usuarios</button>
       </section>
 
-      <section class="admin-grid">
+      <section class="panel admin-ops-grid">
         <article class="panel admin-card">
           <h3>Usuarios</h3>
+          <p class="small">Selecione um usuário para editar contas, permissões e segurança.</p>
           <table>
             <thead>
               <tr>
@@ -239,7 +687,8 @@
         </article>
 
         <article class="panel admin-card">
-          <h3>Criar Usuario</h3>
+          <h3>Acoes de Criacao</h3>
+          <p class="small">Cria novo usuário com papel e contas iniciais.</p>
           <label>
             Nome
             <input [ngModel]="adminCreateName()" (ngModelChange)="adminCreateName.set($event)" />
@@ -267,82 +716,206 @@
               (ngModelChange)="adminCreatePassword.set($event)"
             />
           </label>
-          <label>
-            Accounts (JSON)
-            <textarea
-              [ngModel]="adminCreateAccountsText()"
-              (ngModelChange)="adminCreateAccountsText.set($event)"
-              rows="8"
-            ></textarea>
-          </label>
-          <button (click)="createAdminUser()">Criar Usuario</button>
+          <section class="admin-section">
+            <h4>Contas AWS</h4>
+            <p class="small">Informe conta, nome e regioes por seleção.</p>
+
+            <div class="form-row-grid">
+              <article class="form-row-item" *ngFor="let account of adminCreateAccountsRows(); let i = index">
+                <label>
+                  ID da Conta
+                  <input
+                    [ngModel]="account.accountId"
+                    (ngModelChange)="updateAdminCreateAccountRow(i, { accountId: $event })"
+                  />
+                </label>
+                <label>
+                  Nome da Conta
+                  <input
+                    [ngModel]="account.name"
+                    (ngModelChange)="updateAdminCreateAccountRow(i, { name: $event })"
+                  />
+                </label>
+                <label>
+                  Regiões Permitidas
+                  <select
+                    multiple
+                    size="6"
+                    [ngModel]="account.allowedRegions"
+                    (ngModelChange)="updateAdminCreateAccountRegions(i, $event)"
+                  >
+                    <option *ngFor="let region of awsRegionOptions" [value]="region">{{ region }}</option>
+                  </select>
+                </label>
+                <button class="ghost" (click)="removeAdminCreateAccountRow(i)">Remover Conta</button>
+              </article>
+            </div>
+
+            <p class="small" *ngIf="adminCreateAccountsRows().length === 0">Nenhuma conta informada.</p>
+
+            <div class="delete-actions">
+              <button class="ghost" (click)="addAdminCreateAccountRow()">+ Adicionar Conta</button>
+              <button (click)="createAdminUser()">Criar Usuario</button>
+            </div>
+          </section>
         </article>
 
         <article class="panel admin-card" *ngIf="selectedAdminUser() as selectedUser">
           <h3>Editar Usuario</h3>
           <p class="mono">{{ selectedUser.id }}</p>
-          <label>
-            Nome
-            <input [ngModel]="adminEditName()" (ngModelChange)="adminEditName.set($event)" />
-          </label>
-          <label>
-            Email
-            <input [ngModel]="adminEditEmail()" (ngModelChange)="adminEditEmail.set($event)" />
-          </label>
-          <label>
-            Role
-            <select [ngModel]="adminEditRole()" (ngModelChange)="adminEditRole.set($event)">
-              <option value="admin">admin</option>
-              <option value="operator">operator</option>
-              <option value="viewer">viewer</option>
-            </select>
-          </label>
-          <label>
-            Nova Senha (opcional)
-            <input
-              type="password"
-              [ngModel]="adminEditPassword()"
-              (ngModelChange)="adminEditPassword.set($event)"
-            />
-          </label>
-          <button (click)="updateAdminUser()">Salvar Dados Basicos</button>
 
-          <label>
-            Accounts (JSON)
-            <textarea
-              [ngModel]="adminAccountsText()"
-              (ngModelChange)="adminAccountsText.set($event)"
-              rows="8"
-            ></textarea>
-          </label>
-          <button (click)="saveAdminAccounts()">Salvar Accounts</button>
+          <section class="admin-section">
+            <h4>Dados Basicos</h4>
+            <label>
+              Nome
+              <input [ngModel]="adminEditName()" (ngModelChange)="adminEditName.set($event)" />
+            </label>
+            <label>
+              Email
+              <input [ngModel]="adminEditEmail()" (ngModelChange)="adminEditEmail.set($event)" />
+            </label>
+            <label>
+              Role
+              <select [ngModel]="adminEditRole()" (ngModelChange)="adminEditRole.set($event)">
+                <option value="admin">admin</option>
+                <option value="operator">operator</option>
+                <option value="viewer">viewer</option>
+              </select>
+            </label>
+            <label>
+              Nova Senha (opcional)
+              <input
+                type="password"
+                [ngModel]="adminEditPassword()"
+                (ngModelChange)="adminEditPassword.set($event)"
+              />
+            </label>
+            <button (click)="updateAdminUser()">Salvar Dados Basicos</button>
+          </section>
 
-          <label>
-            Permissions (JSON)
-            <textarea
-              [ngModel]="adminPermissionsText()"
-              (ngModelChange)="adminPermissionsText.set($event)"
-              rows="10"
-            ></textarea>
-          </label>
-          <div class="delete-actions">
-            <button (click)="saveAdminPermissions()">Salvar Permissoes</button>
-            <button (click)="resetAdminPermissions()">Resetar Permissoes</button>
-          </div>
+          <section class="admin-section">
+            <h4>Contas</h4>
+            <div class="form-row-grid">
+              <article class="form-row-item" *ngFor="let account of adminAccountsRows(); let i = index">
+                <label>
+                  ID da Conta
+                  <input
+                    [ngModel]="account.accountId"
+                    (ngModelChange)="updateAdminAccountRow(i, { accountId: $event })"
+                  />
+                </label>
+                <label>
+                  Nome da Conta
+                  <input
+                    [ngModel]="account.name"
+                    (ngModelChange)="updateAdminAccountRow(i, { name: $event })"
+                  />
+                </label>
+                <label>
+                  Regiões Permitidas
+                  <select
+                    multiple
+                    size="6"
+                    [ngModel]="account.allowedRegions"
+                    (ngModelChange)="updateAdminAccountRegions(i, $event)"
+                  >
+                    <option *ngFor="let region of awsRegionOptions" [value]="region">{{ region }}</option>
+                  </select>
+                </label>
+                <button class="ghost" (click)="removeAdminAccountRow(i)">Remover Conta</button>
+              </article>
+            </div>
 
-          <label>
-            Confirmacao de Remocao
-            <input
-              type="text"
-              placeholder="Digite DELETE"
-              [ngModel]="adminDeleteConfirmationText()"
-              (ngModelChange)="adminDeleteConfirmationText.set($event)"
-            />
-          </label>
-          <div class="delete-actions">
-            <button (click)="requestAdminDeleteIntent()">Gerar Segunda Confirmacao</button>
-            <button class="danger" (click)="deleteAdminUser()">Remover Usuario</button>
-          </div>
+            <p class="small" *ngIf="adminAccountsRows().length === 0">Nenhuma conta informada.</p>
+
+            <div class="delete-actions">
+              <button class="ghost" (click)="addAdminAccountRow()">+ Adicionar Conta</button>
+              <button (click)="saveAdminAccounts()">Salvar Accounts</button>
+            </div>
+          </section>
+
+          <section class="admin-section">
+            <h4>Permissoes</h4>
+            <div class="form-row-grid">
+              <article class="form-row-item form-row-item--permission" *ngFor="let permission of adminPermissionsRows(); let i = index">
+                <label>
+                  Conta
+                  <select
+                    [ngModel]="permission.accountId"
+                    (ngModelChange)="updateAdminPermissionRow(i, { accountId: $event })"
+                  >
+                    <option value="" *ngIf="adminEditAccountIds().length === 0" disabled>Selecione uma conta</option>
+                    <option *ngFor="let accountId of adminEditAccountIds()" [value]="accountId">
+                      {{ accountId }}
+                    </option>
+                  </select>
+                </label>
+                <label>
+                  Categoria
+                  <select
+                    [ngModel]="permission.category"
+                    (ngModelChange)="updateAdminPermissionRow(i, { category: $event })"
+                  >
+                    <option *ngFor="let category of permissionCategoryOptions" [value]="category">{{ category }}</option>
+                  </select>
+                </label>
+                <label>
+                  Tipo de Recurso
+                  <select
+                    [ngModel]="permission.resourceType"
+                    (ngModelChange)="updateAdminPermissionRow(i, { resourceType: $event })"
+                  >
+                    <option value="" disabled>Selecione um tipo</option>
+                    <option *ngFor="let typeName of adminPermissionResourceTypes()" [value]="typeName">
+                      {{ typeName }}
+                    </option>
+                  </select>
+                </label>
+                <label>
+                  Acao
+                  <select
+                    [ngModel]="permission.action"
+                    (ngModelChange)="updateAdminPermissionRow(i, { action: $event })"
+                  >
+                    <option *ngFor="let action of actionOptions" [value]="action">{{ action }}</option>
+                  </select>
+                </label>
+                <button class="ghost" (click)="removeAdminPermissionRow(i)">Remover Permissao</button>
+              </article>
+            </div>
+
+            <p class="small" *ngIf="adminPermissionsRows().length === 0">Nenhuma permissao informada.</p>
+            <div class="delete-actions">
+              <button class="ghost" (click)="addAdminPermissionRow()">+ Adicionar Permissao</button>
+              <button (click)="saveAdminPermissions()">Salvar Permissoes</button>
+              <button (click)="resetAdminPermissions()">Resetar Permissoes</button>
+            </div>
+          </section>
+
+          <section class="admin-section">
+            <h4>Seguranca de Remocao</h4>
+            <label>
+              Confirmacao de Remocao
+              <input
+                type="text"
+                placeholder="Digite DELETE"
+                [ngModel]="adminDeleteConfirmationText()"
+                (ngModelChange)="adminDeleteConfirmationText.set($event)"
+              />
+            </label>
+            <div class="delete-actions">
+              <button (click)="requestAdminDeleteIntent()">Gerar Segunda Confirmacao</button>
+              <button class="danger" (click)="deleteAdminUser()">Remover Usuario</button>
+            </div>
+          </section>
+        </article>
+
+        <article class="panel admin-empty-state" *ngIf="!selectedAdminUser()">
+          <h3>Editar Usuario</h3>
+          <p class="small">
+            Selecione um usuário no card "Usuarios" para editar dados, contas e permissoes.
+          </p>
+          <button class="ghost" (click)="loadAdminUsers()">Recarregar Usuarios</button>
         </article>
       </section>
     </ng-template>
@@ -351,30 +924,101 @@
 
 <ng-template #loginView>
   <main class="login-page">
-    <section class="login-card panel">
-      <h1>AWS Resource Control</h1>
-      <p>Monorepo Angular + TypeScript funcional com ACL, JWT e Assume Role.</p>
+    <section class="login-shell">
+      <section class="login-brand panel">
+        <p class="eyebrow">AWS Control Platform</p>
+        <h1>Console de Governanca</h1>
+        <p>
+          Plataforma para descoberta e operação de recursos AWS com autenticação por JWT, ACL e
+          troca de conta/região por contexto.
+        </p>
+        <p class="hint">
+          Seeds: admin&#64;platform.local, operator&#64;platform.local, viewer&#64;platform.local
+        </p>
+        <p class="hint">Senha padrão: change-me-please</p>
+        <p class="error" *ngIf="errorMessage().length > 0">{{ errorMessage() }}</p>
+      </section>
 
-      <label>
-        Email
-        <input type="email" [ngModel]="loginEmail()" (ngModelChange)="loginEmail.set($event)" />
-      </label>
+      <div class="login-grid">
+        <section class="panel auth-card">
+          <h2>Entrar</h2>
+          <label>
+            Email
+            <input type="email" [ngModel]="loginEmail()" (ngModelChange)="loginEmail.set($event)" />
+          </label>
 
-      <label>
-        Senha
-        <input
-          type="password"
-          [ngModel]="loginPassword()"
-          (ngModelChange)="loginPassword.set($event)"
-        />
-      </label>
+          <label>
+            Senha
+            <input
+              type="password"
+              [ngModel]="loginPassword()"
+              (ngModelChange)="loginPassword.set($event)"
+            />
+          </label>
 
-      <button (click)="onLogin()">Entrar</button>
-      <p class="hint">
-        Usuarios seed: admin&#64;platform.local, operator&#64;platform.local, viewer&#64;platform.local
-      </p>
-      <p class="hint">Senha seed: change-me-please</p>
-      <p class="error" *ngIf="errorMessage().length > 0">{{ errorMessage() }}</p>
+          <button (click)="onLogin()">Entrar</button>
+        </section>
+
+        <section class="panel auth-card">
+          <h2>Cadastrar Novo Usuario</h2>
+          <label>
+            Nome
+            <input [ngModel]="registerName()" (ngModelChange)="registerName.set($event)" />
+          </label>
+          <label>
+            Email
+            <input type="email" [ngModel]="registerEmail()" (ngModelChange)="registerEmail.set($event)" />
+          </label>
+          <label>
+            Senha
+            <input
+              type="password"
+              [ngModel]="registerPassword()"
+              (ngModelChange)="registerPassword.set($event)"
+            />
+          </label>
+          <section class="admin-section">
+            <h4>Contas AWS</h4>
+            <p class="small">Informe pelo menos uma conta para acesso inicial.</p>
+            <div class="form-row-grid">
+              <article class="form-row-item" *ngFor="let account of registerAccountsRows(); let i = index">
+                <label>
+                  ID da Conta
+                  <input
+                    [ngModel]="account.accountId"
+                    (ngModelChange)="updateRegisterAccountRow(i, { accountId: $event })"
+                  />
+                </label>
+                <label>
+                  Nome da Conta
+                  <input
+                    [ngModel]="account.name"
+                    (ngModelChange)="updateRegisterAccountRow(i, { name: $event })"
+                  />
+                </label>
+                <label>
+                  Regiões Permitidas
+                  <select
+                    multiple
+                    size="6"
+                    [ngModel]="account.allowedRegions"
+                    (ngModelChange)="updateRegisterAccountRegions(i, $event)"
+                  >
+                    <option *ngFor="let region of awsRegionOptions" [value]="region">{{ region }}</option>
+                  </select>
+                </label>
+                <button class="ghost" (click)="removeRegisterAccountRow(i)">Remover Conta</button>
+              </article>
+            </div>
+            <p class="small" *ngIf="registerAccountsRows().length === 0">Nenhuma conta informada.</p>
+            <div class="delete-actions">
+              <button class="ghost" (click)="addRegisterAccountRow()">+ Adicionar Conta</button>
+            </div>
+          </section>
+
+          <button (click)="onRegister()">Cadastrar e Entrar</button>
+          </section>
+      </div>
     </section>
   </main>
 </ng-template>

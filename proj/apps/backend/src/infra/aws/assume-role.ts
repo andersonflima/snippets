@@ -1,5 +1,5 @@
 import { Agent } from 'node:https';
-import { AssumeRoleCommand, GetCallerIdentityCommand, STSClient } from '@aws-sdk/client-sts';
+import { AssumeRoleCommand, STSClient } from '@aws-sdk/client-sts';
 import type { AwsAccount } from '@platform/shared';
 import { NodeHttpHandler } from '@smithy/node-http-handler';
 import { createAppError } from '../../domain/errors.js';
@@ -21,6 +21,7 @@ export type AssumeRoleFn = (input: AssumeRoleInput) => Promise<AwsTemporaryCrede
 type CreateStsClientInput = {
   region: string;
   credentials?: AwsTemporaryCredentials;
+  endpoint?: string;
   tlsInsecure: boolean;
 };
 
@@ -28,7 +29,9 @@ type CreateAssumeRoleDependencies = {
   externalId?: string;
   roleArnTemplate?: string;
   baseCredentials?: AwsTemporaryCredentials;
+  endpoint?: string;
   tlsInsecure?: boolean;
+  useAccountIdForLocalstack?: boolean;
   createStsClient?: (input: CreateStsClientInput) => STSClient;
 };
 
@@ -41,11 +44,13 @@ const sanitizeSessionPart = (rawValue: string): string =>
 const defaultCreateStsClient = ({
   region,
   credentials,
+  endpoint,
   tlsInsecure
 }: CreateStsClientInput): STSClient =>
   new STSClient({
     region,
     credentials,
+    endpoint,
     requestHandler: tlsInsecure
       ? new NodeHttpHandler({
           httpsAgent: new Agent({
@@ -55,107 +60,61 @@ const defaultCreateStsClient = ({
       : undefined
   });
 
-const toMessageFromUnknownError = (error: unknown, fallback: string): string => {
-  if (typeof error === 'object' && error !== null && 'message' in error) {
-    const candidate = error as { message?: unknown };
-    if (typeof candidate.message === 'string' && candidate.message.trim().length > 0) {
-      return candidate.message;
-    }
-  }
-
-  return fallback;
-};
+const createLocalstackAccountCredentials = (accountId: string): AwsTemporaryCredentials => ({
+  accessKeyId: accountId,
+  secretAccessKey: accountId
+});
 
 export const createAssumeRole = ({
   externalId,
   roleArnTemplate,
   baseCredentials,
+  endpoint,
   tlsInsecure = false,
+  useAccountIdForLocalstack = false,
   createStsClient = defaultCreateStsClient
 }: CreateAssumeRoleDependencies): AssumeRoleFn =>
-  {
-    let cachedCallerAccountId: string | undefined;
+  async ({ account, region, userId }: AssumeRoleInput) => {
+    if (!roleArnTemplate) {
+      return baseCredentials;
+    }
 
-    const resolveCallerAccountId = async (region: string): Promise<string | undefined> => {
-      if (cachedCallerAccountId) {
-        return cachedCallerAccountId;
-      }
+    const sessionName = `platform-${sanitizeSessionPart(userId)}-${Date.now()}`.slice(0, 64);
+    const sourceCredentials =
+      useAccountIdForLocalstack && endpoint
+        ? createLocalstackAccountCredentials(account.accountId)
+        : baseCredentials;
+    const stsClient = createStsClient({
+      region,
+      credentials: sourceCredentials,
+      endpoint,
+      tlsInsecure
+    });
+    const roleArn = roleArnTemplate.replaceAll('{account_id}', account.accountId);
 
-      const stsClient = createStsClient({
-        region,
-        credentials: baseCredentials,
-        tlsInsecure
-      });
+    const assumeRoleOutput = await stsClient.send(
+      new AssumeRoleCommand({
+        RoleArn: roleArn,
+        RoleSessionName: sessionName,
+        DurationSeconds: 3600,
+        ExternalId: externalId
+      })
+    );
 
-      try {
-        const identity = await stsClient.send(new GetCallerIdentityCommand({}));
-        const resolvedAccountId = identity.Account?.trim();
-        cachedCallerAccountId = resolvedAccountId && resolvedAccountId.length > 0 ? resolvedAccountId : undefined;
-        return cachedCallerAccountId;
-      } catch (error: unknown) {
-        throw createAppError(
-          'AWS_IDENTITY_CHECK_FAILED',
-          toMessageFromUnknownError(
-            error,
-            'Nao foi possivel validar a conta AWS ativa com GetCallerIdentity.'
-          ),
-          502,
-          error
-        );
-      }
-    };
+    const credentials = assumeRoleOutput.Credentials;
 
-    return async ({ account, region, userId }: AssumeRoleInput) => {
-      if (!roleArnTemplate) {
-        const callerAccountId = await resolveCallerAccountId(region);
-
-        if (callerAccountId && callerAccountId !== account.accountId) {
-          throw createAppError(
-            'AWS_ACCOUNT_MISMATCH',
-            `Conta selecionada (${account.accountId}) difere da conta ativa nas credenciais AWS (${callerAccountId}). Configure o contexto para a conta correta ou habilite assume role.`,
-            403,
-            {
-              selectedAccountId: account.accountId,
-              resolvedAccountId: callerAccountId
-            }
-          );
-        }
-
-        return baseCredentials;
-      }
-
-      const sessionName = `platform-${sanitizeSessionPart(userId)}-${Date.now()}`.slice(0, 64);
-      const stsClient = createStsClient({
-        region,
-        credentials: baseCredentials,
-        tlsInsecure
-      });
-      const roleArn = roleArnTemplate.replaceAll('{account_id}', account.accountId);
-
-      const assumeRoleOutput = await stsClient.send(
-        new AssumeRoleCommand({
-          RoleArn: roleArn,
-          RoleSessionName: sessionName,
-          DurationSeconds: 3600,
-          ExternalId: externalId
-        })
+    if (!credentials || !credentials.AccessKeyId || !credentials.SecretAccessKey) {
+      throw createAppError(
+        'ASSUME_ROLE_FAILED',
+        `Nao foi possivel assumir a role da conta ${account.accountId}.`,
+        502,
+        assumeRoleOutput
       );
+    }
 
-      const credentials = assumeRoleOutput.Credentials;
-
-      if (!credentials || !credentials.AccessKeyId || !credentials.SecretAccessKey) {
-        throw createAppError(
-          'ASSUME_ROLE_FAILED',
-          `Nao foi possivel assumir a role da conta ${account.accountId}.`,
-          502,
-          assumeRoleOutput
-        );
-      }
-
-      return {
-        accessKeyId: credentials.AccessKeyId,
-        secretAccessKey: credentials.SecretAccessKey,
-        sessionToken: credentials.SessionToken
-      };
+    return {
+      accessKeyId: credentials.AccessKeyId,
+      secretAccessKey: credentials.SecretAccessKey,
+      sessionToken: credentials.SessionToken
     };
   };

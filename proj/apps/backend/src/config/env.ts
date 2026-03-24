@@ -46,9 +46,11 @@ export const env = Object.freeze({
   jwtSecret: required(process.env.JWT_SECRET, 'JWT_SECRET'),
   awsExternalId: optional(process.env.AWS_EXTERNAL_ID),
   awsAssumeRoleArnTemplate: toAssumeRoleArnTemplate(process.env.AWS_ASSUME_ROLE_ARN_TEMPLATE),
+  awsEndpointUrl: optional(process.env.AWS_ENDPOINT_URL),
   awsAccessKeyId,
   awsSecretAccessKey,
   awsSessionToken,
+  awsUseAccountIdForLocalstack: toBoolean(process.env.AWS_USE_ACCOUNT_ID_FOR_LOCALSTACK),
   awsTlsInsecure: toBoolean(process.env.AWS_TLS_INSECURE),
   databaseUrl: required(process.env.DATABASE_URL, 'DATABASE_URL'),
   databaseSsl: toBoolean(process.env.DATABASE_SSL)

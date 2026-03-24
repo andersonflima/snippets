@@ -51,6 +51,16 @@ const getResourceSchema = z.object({
   identifier: z.string().min(1)
 });
 
+const getTemplateSchema = z.object({
+  typeName: z.string().min(3)
+});
+
+const listResourceStateSchema = z.object({
+  typeName: z.string().min(3).optional(),
+  identifier: z.string().min(1).optional(),
+  limit: z.coerce.number().int().min(1).max(250).optional()
+});
+
 const createResourceSchema = z.object({
   typeName: z.string().min(3),
   desiredState: z.record(z.string(), z.unknown())
@@ -89,6 +99,13 @@ const awsAccountSchema = z.object({
   accountId: z.string().regex(/^\d{12}$/),
   name: z.string().min(1),
   allowedRegions: z.array(z.string().min(4)).min(1)
+});
+
+const registerSchema = z.object({
+  name: z.string().min(2),
+  email: z.string().email(),
+  password: z.string().min(8),
+  accounts: z.array(awsAccountSchema).min(1)
 });
 
 const permissionScopeSchema = z.custom<PermissionScope>((value) => {
@@ -203,6 +220,32 @@ export const registerRoutes = async (
     });
   });
 
+  app.post('/api/auth/register', async (request, reply) => {
+    const payload = parseWithSchema(registerSchema, request.body);
+
+    const registeredUser = await container.authService.register({
+      name: payload.name,
+      email: payload.email,
+      password: payload.password,
+      accounts: payload.accounts
+    });
+
+    const claims: JwtClaims = {
+      sub: registeredUser.id,
+      email: registeredUser.email,
+      role: registeredUser.role
+    };
+
+    const token = app.jwt.sign(claims, {
+      expiresIn: '8h'
+    });
+
+    return reply.code(201).send({
+      token,
+      user: container.authService.toPublicUser(registeredUser)
+    });
+  });
+
   app.get('/api/auth/me', { preHandler: app.authenticate }, async (request) => {
     const userId = withAuthUserId(request.user as JwtClaims);
     const user = await container.authService.getById(userId);
@@ -283,6 +326,42 @@ export const registerRoutes = async (
     return reply.code(201).send({
       operation: result
     });
+  });
+
+  app.get('/api/resources/templates', { preHandler: app.authenticate }, async (request) => {
+    return {
+      templates: await container.resourceService.listTemplates()
+    };
+  });
+
+  app.get('/api/resources/templates/:typeName', { preHandler: app.authenticate }, async (request) => {
+    const { typeName } = parseWithSchema(
+      getTemplateSchema,
+      request.params
+    );
+
+    const template = await container.resourceService.getTemplateByType(typeName);
+
+    if (!template) {
+      throw createAppError(
+        'RESOURCE_TEMPLATE_NOT_FOUND',
+        `Template para tipo ${typeName} nao foi encontrado.`,
+        404
+      );
+    }
+
+    return {
+      template
+    };
+  });
+
+  app.get('/api/resources/state', { preHandler: app.authenticate }, async (request) => {
+    const query = parseWithSchema(listResourceStateSchema, request.query);
+    const userId = withAuthUserId(request.user as JwtClaims);
+
+    return {
+      history: await container.resourceService.getResourceStateHistory(userId, query)
+    };
   });
 
   app.put('/api/resources', { preHandler: app.authenticate }, async (request) => {

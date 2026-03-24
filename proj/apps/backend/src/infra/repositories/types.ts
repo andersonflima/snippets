@@ -2,6 +2,8 @@ import type {
   AwsAccount,
   AwsCategory,
   DeleteIntent,
+  ResourceStateRecord,
+  ResourceStateAction,
   PermissionRule,
   PermissionScope,
   PlatformUser,
@@ -65,4 +67,35 @@ export type PermissionRepository = {
   listByUserId: (userId: string) => Promise<readonly PermissionRule[]>;
   replaceByUserId: (userId: string, scopes: readonly PermissionScope[]) => Promise<readonly PermissionRule[]>;
   isAllowed: (query: PermissionQuery) => Promise<boolean>;
+};
+
+export type ResourceStateRepository = {
+  create: (input: {
+    userId: string;
+    accountId: string;
+    region: string;
+    category: AwsCategory;
+    typeName: string;
+    identifier: string;
+    operation: ResourceStateAction;
+    status: 'planned' | 'submitted' | 'applied' | 'failed';
+    desiredState: Record<string, unknown>;
+    patchDocument?: readonly Record<string, unknown>[];
+    createdBy: string;
+  }) => Promise<ResourceStateRecord>;
+  listByContext: (input: {
+    accountId: string;
+    region: string;
+    category: AwsCategory;
+    typeName?: string;
+    identifier?: string;
+    limit?: number;
+  }) => Promise<readonly ResourceStateRecord[]>;
+  getLatestByResource: (input: {
+    accountId: string;
+    region: string;
+    category: AwsCategory;
+    typeName: string;
+    identifier: string;
+  }) => Promise<ResourceStateRecord | undefined>;
 };

@@ -11,6 +11,7 @@ import {
   createContextRepository,
   createDeleteIntentRepository,
   createPermissionRepository,
+  createResourceStateRepository,
   createUserRepository
 } from './infra/repositories/postgres.js';
 
@@ -26,6 +27,7 @@ export const createContainer = async () => {
   const contextRepository = createContextRepository(databaseClient);
   const deleteIntentRepository = createDeleteIntentRepository(databaseClient);
   const permissionRepository = createPermissionRepository(databaseClient);
+  const resourceStateRepository = createResourceStateRepository(databaseClient);
 
   const awsBaseCredentials =
     env.awsAccessKeyId && env.awsSecretAccessKey
@@ -40,16 +42,20 @@ export const createContainer = async () => {
     externalId: env.awsExternalId,
     roleArnTemplate: env.awsAssumeRoleArnTemplate,
     baseCredentials: awsBaseCredentials,
-    tlsInsecure: env.awsTlsInsecure
+    endpoint: env.awsEndpointUrl,
+    tlsInsecure: env.awsTlsInsecure,
+    useAccountIdForLocalstack: env.awsUseAccountIdForLocalstack
   });
 
   const resourceGateway = createCloudControlGateway({
     assumeRole,
+    endpoint: env.awsEndpointUrl,
     tlsInsecure: env.awsTlsInsecure
   });
 
   const authService = createAuthService({
-    userRepository
+    userRepository,
+    permissionRepository
   });
 
   const adminService = createAdminService({
@@ -69,6 +75,7 @@ export const createContainer = async () => {
     contextRepository,
     deleteIntentRepository,
     permissionRepository,
+    resourceStateRepository,
     resourceGateway
   });
 

@@ -10,6 +10,13 @@ import {
   type ProgressEvent,
   type ResourceDescription
 } from '@aws-sdk/client-cloudcontrol';
+import {
+  DescribeDBClustersCommand,
+  DescribeDBInstancesCommand,
+  RDSClient,
+  type DBCluster,
+  type DBInstance
+} from '@aws-sdk/client-rds';
 import type {
   AwsAccount,
   AwsCategory,
@@ -73,17 +80,43 @@ type CreateGatewayDependencies = {
     region: string,
     credentials?: AwsTemporaryCredentials
   ) => CloudControlClient;
+  createRdsClient?: (
+    region: string,
+    credentials?: AwsTemporaryCredentials
+  ) => RDSClient;
+  endpoint?: string;
   tlsInsecure?: boolean;
 };
 
 const buildCloudControlClient = (
   region: string,
   tlsInsecure: boolean,
+  endpoint: string | undefined,
   credentials?: AwsTemporaryCredentials
 ): CloudControlClient =>
   new CloudControlClient({
     region,
     credentials,
+    endpoint,
+    requestHandler: tlsInsecure
+      ? new NodeHttpHandler({
+          httpsAgent: new Agent({
+            rejectUnauthorized: false
+          })
+        })
+      : undefined
+  });
+
+const buildRdsClient = (
+  region: string,
+  tlsInsecure: boolean,
+  endpoint: string | undefined,
+  credentials?: AwsTemporaryCredentials
+): RDSClient =>
+  new RDSClient({
+    region,
+    credentials,
+    endpoint,
     requestHandler: tlsInsecure
       ? new NodeHttpHandler({
           httpsAgent: new Agent({
@@ -195,6 +228,20 @@ const asResourceSummary = (
   };
 };
 
+const asResourceSummaryFromProperties = (
+  accountId: string,
+  region: string,
+  typeName: string,
+  identifier: string,
+  properties: Record<string, unknown>
+): ResourceSummary => ({
+  accountId,
+  region,
+  typeName,
+  identifier,
+  displayName: pickDisplayName(properties, identifier, typeName)
+});
+
 const isTerminalStatus = (status: string | undefined): boolean =>
   status === 'SUCCESS' || status === 'FAILED' || status === 'CANCEL_COMPLETE';
 
@@ -248,10 +295,28 @@ const getGatewayErrorMessage = (error: unknown, fallbackMessage: string): string
   return fallbackMessage;
 };
 
-const resolveClient = async (
+const isUnsupportedLocalstackListOperation = (error: unknown): boolean => {
+  if (typeof error !== 'object' || error === null) {
+    return false;
+  }
+
+  const candidate = error as { message?: unknown };
+  return (
+    typeof candidate.message === 'string' &&
+    candidate.message.includes("The 'List' operation for the CloudFormation resource type") &&
+    candidate.message.includes('CloudControl service in LocalStack')
+  );
+};
+
+type ResolvedAwsClients = {
+  cloudControlClient: CloudControlClient;
+  credentials?: AwsTemporaryCredentials;
+};
+
+const resolveClients = async (
   dependencies: CreateGatewayDependencies,
   execution: AwsExecutionContext
-): Promise<CloudControlClient> => {
+): Promise<ResolvedAwsClients> => {
   const credentials = await dependencies.assumeRole({
     account: execution.account,
     region: execution.region,
@@ -261,9 +326,17 @@ const resolveClient = async (
   const factory =
     dependencies.createCloudControlClient ??
     ((region: string, nextCredentials?: AwsTemporaryCredentials) =>
-      buildCloudControlClient(region, dependencies.tlsInsecure ?? false, nextCredentials));
+      buildCloudControlClient(
+        region,
+        dependencies.tlsInsecure ?? false,
+        dependencies.endpoint,
+        nextCredentials
+      ));
 
-  return factory(execution.region, credentials);
+  return {
+    cloudControlClient: factory(execution.region, credentials),
+    credentials
+  };
 };
 
 const waitForProgressEvent = async (
@@ -340,35 +413,153 @@ const waitForProgressEvent = async (
   );
 };
 
+const listRdsDbInstances = async (
+  accountId: string,
+  region: string,
+  client: RDSClient
+): Promise<readonly ResourceSummary[]> => {
+  const resources: ResourceSummary[] = [];
+  let marker: string | undefined;
+  let pageCount = 0;
+
+  do {
+    const output = await client.send(
+      new DescribeDBInstancesCommand({
+        Marker: marker,
+        MaxRecords: 100
+      })
+    );
+
+    const normalizedResources = (output.DBInstances ?? []).map((instance: DBInstance) => {
+      const identifier = instance.DBInstanceIdentifier?.trim() || instance.DBInstanceArn?.trim() || 'unknown';
+
+      return asResourceSummaryFromProperties(accountId, region, 'AWS::RDS::DBInstance', identifier, {
+        DBInstanceIdentifier: instance.DBInstanceIdentifier,
+        Arn: instance.DBInstanceArn,
+        Engine: instance.Engine,
+        Status: instance.DBInstanceStatus
+      });
+    });
+
+    resources.push(...normalizedResources);
+
+    marker = output.Marker;
+    pageCount += 1;
+  } while (marker && pageCount < 10);
+
+  return resources;
+};
+
+const listRdsDbClusters = async (
+  accountId: string,
+  region: string,
+  client: RDSClient
+): Promise<readonly ResourceSummary[]> => {
+  const resources: ResourceSummary[] = [];
+  let marker: string | undefined;
+  let pageCount = 0;
+
+  do {
+    const output = await client.send(
+      new DescribeDBClustersCommand({
+        Marker: marker,
+        MaxRecords: 100
+      })
+    );
+
+    const normalizedResources = (output.DBClusters ?? []).map((cluster: DBCluster) => {
+      const identifier = cluster.DBClusterIdentifier?.trim() || cluster.DBClusterArn?.trim() || 'unknown';
+
+      return asResourceSummaryFromProperties(accountId, region, 'AWS::RDS::DBCluster', identifier, {
+        DBClusterIdentifier: cluster.DBClusterIdentifier,
+        Arn: cluster.DBClusterArn,
+        Engine: cluster.Engine,
+        Status: cluster.Status
+      });
+    });
+
+    resources.push(...normalizedResources);
+
+    marker = output.Marker;
+    pageCount += 1;
+  } while (marker && pageCount < 10);
+
+  return resources;
+};
+
+const listResourcesByNativeFallback = async (
+  dependencies: CreateGatewayDependencies,
+  accountId: string,
+  region: string,
+  typeName: string,
+  credentials?: AwsTemporaryCredentials
+): Promise<readonly ResourceSummary[] | undefined> => {
+  const createRdsClient =
+    dependencies.createRdsClient ??
+    ((nextRegion: string, nextCredentials?: AwsTemporaryCredentials) =>
+      buildRdsClient(nextRegion, dependencies.tlsInsecure ?? false, dependencies.endpoint, nextCredentials));
+
+  switch (typeName) {
+    case 'AWS::RDS::DBInstance':
+      return listRdsDbInstances(accountId, region, createRdsClient(region, credentials));
+    case 'AWS::RDS::DBCluster':
+      return listRdsDbClusters(accountId, region, createRdsClient(region, credentials));
+    default:
+      return undefined;
+  }
+};
+
 const listResourcesByType = async (
+  dependencies: CreateGatewayDependencies,
   client: CloudControlClient,
   accountId: string,
   region: string,
-  typeName: string
+  typeName: string,
+  credentials?: AwsTemporaryCredentials
 ): Promise<readonly ResourceSummary[]> => {
   const resources: ResourceSummary[] = [];
   let nextToken: string | undefined;
   let pageCount = 0;
 
-  do {
-    const listOutput = await client.send(
-      new ListResourcesCommand({
-        TypeName: typeName,
-        MaxResults: 50,
-        NextToken: nextToken
-      })
+  try {
+    do {
+      const listOutput = await client.send(
+        new ListResourcesCommand({
+          TypeName: typeName,
+          MaxResults: 50,
+          NextToken: nextToken
+        })
+      );
+
+      const descriptions = listOutput.ResourceDescriptions ?? [];
+      const normalizedResources = descriptions.map((description: ResourceDescription) =>
+        asResourceSummary(accountId, region, typeName, description)
+      );
+
+      resources.push(...normalizedResources);
+
+      nextToken = listOutput.NextToken;
+      pageCount += 1;
+    } while (nextToken && pageCount < 10);
+  } catch (error: unknown) {
+    if (!isUnsupportedLocalstackListOperation(error)) {
+      throw error;
+    }
+
+    const fallbackResources = await listResourcesByNativeFallback(
+      dependencies,
+      accountId,
+      region,
+      typeName,
+      credentials
     );
 
-    const descriptions = listOutput.ResourceDescriptions ?? [];
-    const normalizedResources = descriptions.map((description) =>
-      asResourceSummary(accountId, region, typeName, description)
-    );
+    if (fallbackResources) {
+      return fallbackResources;
+    }
 
-    resources.push(...normalizedResources);
-
-    nextToken = listOutput.NextToken;
-    pageCount += 1;
-  } while (nextToken && pageCount < 10);
+    throw error;
+  }
 
   return resources;
 };
@@ -377,7 +568,7 @@ export const createCloudControlGateway = (
   dependencies: CreateGatewayDependencies
 ): ResourceGateway => ({
   listResources: async ({ execution, typeName }) => {
-    const client = await resolveClient(dependencies, execution);
+    const { cloudControlClient, credentials } = await resolveClients(dependencies, execution);
     const targetResourceTypes = typeName
       ? [typeName]
       : [...getCategoryResourceTypes(execution.category)];
@@ -385,7 +576,14 @@ export const createCloudControlGateway = (
     try {
       const groupedResources = await Promise.all(
         targetResourceTypes.map((currentTypeName) =>
-          listResourcesByType(client, execution.account.accountId, execution.region, currentTypeName)
+          listResourcesByType(
+            dependencies,
+            cloudControlClient,
+            execution.account.accountId,
+            execution.region,
+            currentTypeName,
+            credentials
+          )
         )
       );
 
@@ -405,16 +603,18 @@ export const createCloudControlGateway = (
 
     const regionDiscovery = await mapWithConcurrency(orderedRegions, 4, async (region) => {
       try {
-        const client = await resolveClient(dependencies, {
+        const { cloudControlClient, credentials } = await resolveClients(dependencies, {
           ...execution,
           region
         });
 
         const resources = await listResourcesByType(
-          client,
+          dependencies,
+          cloudControlClient,
           execution.account.accountId,
           region,
-          typeName
+          typeName,
+          credentials
         );
 
         return {
@@ -436,10 +636,10 @@ export const createCloudControlGateway = (
   },
 
   getResourceDetails: async ({ execution, typeName, identifier }) => {
-    const client = await resolveClient(dependencies, execution);
+    const { cloudControlClient } = await resolveClients(dependencies, execution);
 
     try {
-      const response = await client.send(
+      const response = await cloudControlClient.send(
         new GetResourceCommand({
           TypeName: typeName,
           Identifier: identifier
@@ -461,17 +661,17 @@ export const createCloudControlGateway = (
   },
 
   createResource: async ({ execution, payload }) => {
-    const client = await resolveClient(dependencies, execution);
+    const { cloudControlClient } = await resolveClients(dependencies, execution);
 
     try {
-      const response = await client.send(
+      const response = await cloudControlClient.send(
         new CreateResourceCommand({
           TypeName: payload.typeName,
           DesiredState: JSON.stringify(payload.desiredState)
         })
       );
 
-      return waitForProgressEvent(client, response.ProgressEvent, 'create');
+      return waitForProgressEvent(cloudControlClient, response.ProgressEvent, 'create');
     } catch (error: unknown) {
       return normalizeGatewayError(error, 'Falha ao criar recurso.');
     }
@@ -482,10 +682,10 @@ export const createCloudControlGateway = (
       throw createAppError('MISSING_IDENTIFIER', 'Identifier obrigatorio para update.', 422);
     }
 
-    const client = await resolveClient(dependencies, execution);
+    const { cloudControlClient } = await resolveClients(dependencies, execution);
 
     try {
-      const response = await client.send(
+      const response = await cloudControlClient.send(
         new UpdateResourceCommand({
           TypeName: payload.typeName,
           Identifier: payload.identifier,
@@ -493,41 +693,43 @@ export const createCloudControlGateway = (
         })
       );
 
-      return waitForProgressEvent(client, response.ProgressEvent, 'update');
+      return waitForProgressEvent(cloudControlClient, response.ProgressEvent, 'update');
     } catch (error: unknown) {
       return normalizeGatewayError(error, 'Falha ao atualizar recurso.');
     }
   },
 
   deleteResource: async ({ execution, typeName, identifier }) => {
-    const client = await resolveClient(dependencies, execution);
+    const { cloudControlClient } = await resolveClients(dependencies, execution);
 
     try {
-      const response = await client.send(
+      const response = await cloudControlClient.send(
         new DeleteResourceCommand({
           TypeName: typeName,
           Identifier: identifier
         })
       );
 
-      return waitForProgressEvent(client, response.ProgressEvent, 'delete');
+      return waitForProgressEvent(cloudControlClient, response.ProgressEvent, 'delete');
     } catch (error: unknown) {
       return normalizeGatewayError(error, 'Falha ao remover recurso.');
     }
   },
 
   runCategoryCheckup: async (execution) => {
-    const client = await resolveClient(dependencies, execution);
+    const { cloudControlClient, credentials } = await resolveClients(dependencies, execution);
     const resourceTypes = getCategoryResourceTypes(execution.category);
 
     const counts = await Promise.all(
       resourceTypes.map(async (typeName) => {
         try {
           const resources = await listResourcesByType(
-            client,
+            dependencies,
+            cloudControlClient,
             execution.account.accountId,
             execution.region,
-            typeName
+            typeName,
+            credentials
           );
 
           return [typeName, resources.length] as const;

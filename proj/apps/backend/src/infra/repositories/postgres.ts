@@ -3,6 +3,7 @@ import type {
   AwsAccount,
   AwsCategory,
   DeleteIntent,
+  ResourceStateRecord,
   PermissionCategory,
   PermissionRule,
   PermissionScope,
@@ -15,6 +16,7 @@ import type { DatabaseClient } from '../db/postgres.js';
 import type {
   ContextRepository,
   DeleteIntentRepository,
+  ResourceStateRepository,
   PermissionQuery,
   PermissionRepository,
   UserRepository,
@@ -67,6 +69,23 @@ type PermissionRow = {
 
 type PermissionAllowedRow = {
   allowed: boolean;
+};
+
+type ResourceStateRow = {
+  id: string;
+  user_id: string;
+  account_id: string;
+  region: string;
+  category: AwsCategory;
+  type_name: string;
+  identifier: string;
+  operation: string;
+  status: string;
+  version: number;
+  desired_state: unknown;
+  patch_document: unknown;
+  created_at: Date;
+  created_by: string;
 };
 
 const normalizeEmail = (email: string): string => email.trim().toLowerCase();
@@ -137,6 +156,44 @@ const mapPermissionRule = (row: PermissionRow): PermissionRule => ({
   category: row.category,
   resourceType: row.resource_type,
   action: row.action
+});
+
+const normalizeResourceStateStatus = (
+  value: unknown
+): 'planned' | 'submitted' | 'applied' | 'failed' => {
+  if (value === 'submitted' || value === 'applied' || value === 'failed') {
+    return value;
+  }
+
+  return 'planned';
+};
+
+const normalizeResourceStateOperation = (value: unknown): ResourceStateRecord['operation'] => {
+  if (value === 'create' || value === 'update' || value === 'delete') {
+    return value;
+  }
+
+  return 'create';
+};
+
+const parseResourceStateRecord = (row: ResourceStateRow): ResourceStateRecord => ({
+  id: row.id,
+  userId: row.user_id,
+  accountId: row.account_id,
+  region: row.region,
+  category: row.category,
+  typeName: row.type_name,
+  identifier: row.identifier,
+  operation: normalizeResourceStateOperation(row.operation),
+  status: normalizeResourceStateStatus(row.status),
+  version: row.version,
+  desiredState:
+    typeof row.desired_state === 'object' && row.desired_state !== null
+      ? (row.desired_state as Record<string, unknown>)
+      : {},
+  patchDocument: Array.isArray(row.patch_document) ? row.patch_document : null,
+  createdAt: row.created_at.getTime(),
+  createdBy: row.created_by
 });
 
 const userQuery = `
@@ -585,5 +642,158 @@ export const createPermissionRepository = (
 
     const row = result.rows[0];
     return row?.allowed ?? false;
+  }
+});
+
+export const createResourceStateRepository = (
+  databaseClient: DatabaseClient
+): ResourceStateRepository => ({
+  create: async (input) => {
+    const identifier = input.identifier.trim().length > 0 ? input.identifier.trim() : '__unknown__';
+    const id = randomUUID();
+
+    const nextVersionResult = await databaseClient.query<{ next_version: number }>(
+      `
+        SELECT
+          COALESCE(MAX(version), 0) + 1 AS next_version
+        FROM resource_states
+        WHERE
+          account_id = $1
+          AND region = $2
+          AND category = $3
+          AND type_name = $4
+          AND identifier = $5;
+      `,
+      [input.accountId, input.region, input.category, input.typeName, identifier]
+    );
+
+    const result = await databaseClient.query<ResourceStateRow>(
+      `
+        INSERT INTO resource_states (
+          id,
+          user_id,
+          account_id,
+          region,
+          category,
+          type_name,
+          identifier,
+          version,
+          operation,
+          status,
+          desired_state,
+          patch_document,
+          created_by
+        )
+        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)
+        RETURNING
+          id,
+          user_id,
+          account_id,
+          region,
+          category,
+          type_name,
+          identifier,
+          version,
+          operation,
+          status,
+          desired_state,
+          patch_document,
+          created_at,
+          created_by;
+      `,
+      [
+        id,
+        input.userId,
+        input.accountId,
+        input.region,
+        input.category,
+        input.typeName,
+        identifier,
+        nextVersionResult.rows[0]?.next_version ?? 1,
+        input.operation,
+        input.status,
+        input.desiredState,
+        input.patchDocument ?? null,
+        input.createdBy
+      ]
+    );
+
+    return parseResourceStateRecord(result.rows[0]);
+  },
+
+  listByContext: async (input) => {
+    const rows = await databaseClient.query<ResourceStateRow>(
+      `
+        SELECT
+          id,
+          user_id,
+          account_id,
+          region,
+          category,
+          type_name,
+          identifier,
+          version,
+          operation,
+          status,
+          desired_state,
+          patch_document,
+          created_at,
+          created_by
+        FROM resource_states
+        WHERE
+          account_id = $1
+          AND region = $2
+          AND category = $3
+          AND ($4::text IS NULL OR type_name = $4)
+          AND ($5::text IS NULL OR identifier = $5)
+        ORDER BY created_at DESC
+        LIMIT $6;
+      `,
+      [
+        input.accountId,
+        input.region,
+        input.category,
+        input.typeName ?? null,
+        input.identifier ?? null,
+        input.limit ?? 25
+      ]
+    );
+
+    return rows.rows.map(parseResourceStateRecord);
+  },
+
+  getLatestByResource: async (input) => {
+    const rows = await databaseClient.query<ResourceStateRow>(
+      `
+        SELECT
+          id,
+          user_id,
+          account_id,
+          region,
+          category,
+          type_name,
+          identifier,
+          version,
+          operation,
+          status,
+          desired_state,
+          patch_document,
+          created_at,
+          created_by
+        FROM resource_states
+        WHERE
+          account_id = $1
+          AND region = $2
+          AND category = $3
+          AND type_name = $4
+          AND identifier = $5
+        ORDER BY version DESC, created_at DESC
+        LIMIT 1;
+      `,
+      [input.accountId, input.region, input.category, input.typeName, input.identifier]
+    );
+
+    const row = rows.rows[0];
+    return row ? parseResourceStateRecord(row) : undefined;
   }
 });
