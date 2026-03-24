@@ -140,10 +140,13 @@ download_github_archive() {
 
   local candidate_urls=()
   if [[ -n "${branch}" ]]; then
+    candidate_urls+=("https://github.com/${slug}/archive/refs/heads/${branch}.zip")
+    candidate_urls+=("https://github.com/${slug}/archive/refs/tags/${branch}.zip")
     candidate_urls+=("https://codeload.github.com/${slug}/zip/refs/heads/${branch}")
     candidate_urls+=("https://codeload.github.com/${slug}/zip/refs/tags/${branch}")
     candidate_urls+=("https://codeload.github.com/${slug}/zip/${branch}")
   else
+    candidate_urls+=("https://github.com/${slug}/archive/HEAD.zip")
     candidate_urls+=("https://codeload.github.com/${slug}/zip/HEAD")
   fi
 
@@ -163,13 +166,27 @@ download_url_with_retries() {
   archive_path="$2"
 
   local mode attempt mode_label
-  for mode in "" "--http1.1"; do
+  local -a curl_modes=("" "--http1.1" "-4" "-4 --http1.1")
+  local user_agent
+  user_agent="Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36"
+  for mode in "${curl_modes[@]}"; do
     mode_label="default"
     if [[ -n "${mode}" ]]; then
       mode_label="${mode}"
     fi
     for attempt in 1 2 3; do
-      if curl -fsSL --connect-timeout 20 --max-time 300 ${mode} "${url}" -o "${archive_path}"; then
+      if curl -fsSL \
+        --connect-timeout 20 \
+        --max-time 300 \
+        --retry 3 \
+        --retry-delay 2 \
+        --retry-all-errors \
+        --tlsv1.2 \
+        -A "${user_agent}" \
+        -H "Accept: application/zip,application/octet-stream,*/*" \
+        ${mode} \
+        "${url}" \
+        -o "${archive_path}"; then
         return 0
       fi
       log "download falhou (tentativa ${attempt}/3, modo ${mode_label}): ${url}"
