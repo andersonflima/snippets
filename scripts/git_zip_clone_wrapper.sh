@@ -10,6 +10,18 @@ die() {
   exit 1
 }
 
+GIT_ZIP_WRAPPER_TMP_DIR=""
+
+cleanup_temp_dir() {
+  local dir
+  dir="${GIT_ZIP_WRAPPER_TMP_DIR:-}"
+  if [[ -n "${dir}" && -d "${dir}" ]]; then
+    rm -rf "${dir}"
+  fi
+}
+
+trap cleanup_temp_dir EXIT
+
 resolve_real_git() {
   if [[ -n "${GIT_ZIP_WRAPPER_REAL_GIT:-}" ]]; then
     [[ -x "${GIT_ZIP_WRAPPER_REAL_GIT}" ]] || die "GIT_ZIP_WRAPPER_REAL_GIT inválido: ${GIT_ZIP_WRAPPER_REAL_GIT}"
@@ -262,10 +274,9 @@ main() {
 
   validate_clone_destination "${destination}"
 
-  local temp_dir archive_path source_url
-  temp_dir="$(mktemp -d -t git-zip-clone-XXXXXX)"
-  archive_path="${temp_dir}/repo.zip"
-  trap 'rm -rf "${temp_dir}"' EXIT
+  local archive_path source_url
+  GIT_ZIP_WRAPPER_TMP_DIR="$(mktemp -d -t git-zip-clone-XXXXXX)"
+  archive_path="${GIT_ZIP_WRAPPER_TMP_DIR}/repo.zip"
 
   if ! source_url="$(download_github_archive "${slug}" "${branch}" "${archive_path}")"; then
     if is_truthy "${GIT_ZIP_WRAPPER_STRICT:-0}"; then
