@@ -157,6 +157,14 @@ Regras da janela incremental nativa:
 - se a janela ajustada ao PITR ficar inválida ou menor que `15 minutos`, a Lambda retorna `PENDING` para a tabela e não chama `ExportTableToPointInTime`
 Se o incremental nativo não puder ser usado e `SCAN_FALLBACK_ENABLED=true`, a Lambda pode cair no fallback por `Scan`.
 
+Regras de progressão `INCR` -> `INCR2` -> `INCR3`:
+
+- após um `FULL`, o primeiro incremental sempre usa `INCR`
+- a Lambda só avança para o próximo índice (`INCR2`, `INCR3`, ...) quando o incremental anterior estiver `COMPLETED` e com `ItemCount > 0`
+- se o incremental anterior tiver `ItemCount = 0`, o índice é reutilizado na execução seguinte
+- se o incremental anterior ainda estiver `STARTED/IN_PROGRESS/PENDING`, a Lambda não inicia um novo export para a tabela (retorna `PENDING`)
+- se o `ItemCount` ainda não estiver disponível (`null`/ausente), a Lambda mantém o mesmo índice até conseguir confirmar o resultado anterior
+
 ## Layout no S3
 
 - `DDB/YYYYMMDD/<account_id>/<table_name>/FULL/run_id=YYYYMMDDThhmmssZ`
