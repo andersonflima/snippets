@@ -1,0 +1,28 @@
+@import url('https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;700&family=IBM+Plex+Mono:wght@400;600&display=swap');
+
+:root {
+  --bg-canvas: #0f1b2b;
+  --bg-layer: #15243a;
+  --bg-soft: #20344f;
+  --text-primary: #f7fbff;
+  --text-secondary: #b8c8db;
+  --accent-main: #ff9f1c;
+  --accent-strong: #f45d01;
+  --success: #3ddc97;
+  --danger: #ff4d6d;
+  --border: rgba(255, 255, 255, 0.12);
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body {
+  width: 100%;
+  min-height: 100%;
+  margin: 0;
+  font-family: 'Space Grotesk', 'Segoe UI', sans-serif;
+  color: var(--text-primary);
+  background: radial-gradient(circle at 0% 0%, #264b72 0%, #0f1b2b 52%, #0c1623 100%);
+}

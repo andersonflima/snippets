@@ -1,0 +1,364 @@
+<div class="shell" *ngIf="isAuthenticated(); else loginView">
+  <aside class="sidebar">
+    <div class="brand-block">
+      <p class="eyebrow">AWS Control Platform</p>
+      <h1>{{ user()?.name }}</h1>
+      <p class="small">Role: {{ user()?.role }}</p>
+    </div>
+
+    <section class="view-switch">
+      <button
+        class="category-item"
+        [class.active]="workspaceView() === 'resources'"
+        (click)="switchView('resources')"
+      >
+        Operacao Cloud
+      </button>
+      <button
+        class="category-item"
+        *ngIf="isAdmin()"
+        [class.active]="workspaceView() === 'admin'"
+        (click)="switchView('admin')"
+      >
+        Administracao
+      </button>
+    </section>
+
+    <nav class="category-list" *ngIf="workspaceView() === 'resources'">
+      <button
+        *ngFor="let category of categories"
+        class="category-item"
+        [class.active]="selectedCategory() === category.id"
+        (click)="onCategoryChange(category.id)"
+      >
+        <span>{{ category.label }}</span>
+      </button>
+    </nav>
+
+    <button class="logout" (click)="logout()">Sair</button>
+  </aside>
+
+  <main class="workspace">
+    <section class="status-line">
+      <p class="loading" *ngIf="loading()">Processando...</p>
+      <p class="error" *ngIf="errorMessage().length > 0">{{ errorMessage() }}</p>
+      <p class="info" *ngIf="infoMessage().length > 0">{{ infoMessage() }}</p>
+    </section>
+
+    <ng-container *ngIf="workspaceView() === 'resources'; else adminWorkspace">
+      <header class="toolbar panel">
+        <label>
+          Conta
+          <select [ngModel]="selectedAccountId()" (ngModelChange)="onAccountChange($event)">
+            <option *ngFor="let account of availableAccounts()" [value]="account.accountId">
+              {{ account.name }} ({{ account.accountId }})
+            </option>
+          </select>
+        </label>
+
+        <label>
+          Regiao
+          <select [ngModel]="selectedRegion()" (ngModelChange)="onRegionChange($event)">
+            <option *ngFor="let region of availableRegions()" [value]="region">{{ region }}</option>
+          </select>
+        </label>
+
+        <label>
+          Recurso
+          <select [ngModel]="selectedResourceType()" (ngModelChange)="onResourceTypeChange($event)">
+            <option *ngFor="let typeName of resourceTypes()" [value]="typeName">{{ typeName }}</option>
+          </select>
+        </label>
+
+        <button (click)="refreshResources()">Atualizar</button>
+      </header>
+
+      <section class="panel discovery-meta" *ngIf="resourceDiscoveryRegions().length > 0">
+        <p>
+          Descoberta automatica por tipo em todas as regioes autorizadas da conta.
+          <strong>{{ discoveryHealthyRegionCount() }}</strong> regioes com sucesso,
+          <strong>{{ discoveryFailureCount() }}</strong> com falha.
+        </p>
+      </section>
+
+      <section class="panel checkup-grid">
+        <article class="checkup-card" *ngFor="let item of checkupCounts() | keyvalue">
+          <h3>{{ item.key }}</h3>
+          <p>{{ item.value }} recursos</p>
+        </article>
+      </section>
+
+      <section class="panel discovery-grid" *ngIf="resourceDiscoveryRegions().length > 0">
+        <article
+          class="discovery-card"
+          *ngFor="let summary of resourceDiscoveryRegions()"
+          [class.error]="summary.status === 'error'"
+        >
+          <h3>{{ summary.region }}</h3>
+          <p>{{ summary.total }} recursos</p>
+          <p *ngIf="summary.status === 'error' && summary.message" class="discovery-error">
+            {{ summary.message }}
+          </p>
+        </article>
+      </section>
+
+      <section class="panel resource-list">
+        <table>
+          <thead>
+            <tr>
+              <th>Nome</th>
+              <th>Identifier</th>
+              <th>Tipo</th>
+              <th>Regiao</th>
+              <th>Acoes</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr *ngFor="let resource of resources()">
+              <td>{{ resource.displayName }}</td>
+              <td class="mono">{{ resource.identifier }}</td>
+              <td class="mono">{{ resource.typeName }}</td>
+              <td class="mono">{{ resource.region }}</td>
+              <td class="actions">
+                <button (click)="loadResourceDetails(resource)">Detalhes</button>
+                <button class="danger" (click)="openDeleteFlow(resource)">Delete</button>
+              </td>
+            </tr>
+            <tr *ngIf="resources().length === 0">
+              <td colspan="5" class="empty">Nenhum recurso retornado para o filtro atual.</td>
+            </tr>
+          </tbody>
+        </table>
+      </section>
+
+      <section class="form-grid">
+        <article class="panel form-card">
+          <h2>Create Resource</h2>
+          <textarea
+            [ngModel]="createPayloadText()"
+            (ngModelChange)="createPayloadText.set($event)"
+            rows="8"
+          ></textarea>
+          <button (click)="createResource()">Criar</button>
+        </article>
+
+        <article class="panel form-card">
+          <h2>Update Resource</h2>
+          <input
+            type="text"
+            placeholder="Identifier"
+            [ngModel]="updateIdentifier()"
+            (ngModelChange)="updateIdentifier.set($event)"
+          />
+          <textarea
+            [ngModel]="updateDesiredStateText()"
+            (ngModelChange)="updateDesiredStateText.set($event)"
+            rows="5"
+          ></textarea>
+          <textarea
+            [ngModel]="updatePatchText()"
+            (ngModelChange)="updatePatchText.set($event)"
+            rows="5"
+          ></textarea>
+          <button (click)="updateResource()">Atualizar</button>
+        </article>
+
+        <article class="panel form-card" *ngIf="deleteCandidate() as candidate">
+          <h2>Delete Com Dupla Confirmacao</h2>
+          <p>
+            Recurso: <strong>{{ candidate.displayName }}</strong>
+          </p>
+          <p class="mono">{{ candidate.identifier }}</p>
+          <p class="small">Regiao alvo: {{ candidate.region }}</p>
+          <input
+            type="text"
+            placeholder="Digite DELETE"
+            [ngModel]="deleteConfirmationText()"
+            (ngModelChange)="deleteConfirmationText.set($event)"
+          />
+          <div class="delete-actions">
+            <button (click)="requestDeleteIntent()">Gerar Segunda Confirmacao</button>
+            <button class="danger" (click)="executeDelete()">Delete Definitivo</button>
+            <button class="ghost" (click)="cancelDeleteFlow()">Cancelar</button>
+          </div>
+        </article>
+      </section>
+
+      <section class="panel details" *ngIf="resourceDetails() as details">
+        <h2>Detalhes do Recurso</h2>
+        <pre>{{ details | json }}</pre>
+      </section>
+    </ng-container>
+
+    <ng-template #adminWorkspace>
+      <section class="panel admin-toolbar">
+        <h2>Gestao de Usuarios e ACL</h2>
+        <button (click)="loadAdminUsers()">Recarregar Usuarios</button>
+      </section>
+
+      <section class="admin-grid">
+        <article class="panel admin-card">
+          <h3>Usuarios</h3>
+          <table>
+            <thead>
+              <tr>
+                <th>Email</th>
+                <th>Role</th>
+                <th>Acoes</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr *ngFor="let adminUser of adminUsers()">
+                <td>{{ adminUser.email }}</td>
+                <td>{{ adminUser.role }}</td>
+                <td class="actions">
+                  <button (click)="setAdminSelection(adminUser.id)">Selecionar</button>
+                </td>
+              </tr>
+              <tr *ngIf="adminUsers().length === 0">
+                <td colspan="3" class="empty">Nenhum usuario encontrado.</td>
+              </tr>
+            </tbody>
+          </table>
+        </article>
+
+        <article class="panel admin-card">
+          <h3>Criar Usuario</h3>
+          <label>
+            Nome
+            <input [ngModel]="adminCreateName()" (ngModelChange)="adminCreateName.set($event)" />
+          </label>
+          <label>
+            Email
+            <input [ngModel]="adminCreateEmail()" (ngModelChange)="adminCreateEmail.set($event)" />
+          </label>
+          <label>
+            Role
+            <select
+              [ngModel]="adminCreateRole()"
+              (ngModelChange)="adminCreateRole.set($event)"
+            >
+              <option value="admin">admin</option>
+              <option value="operator">operator</option>
+              <option value="viewer">viewer</option>
+            </select>
+          </label>
+          <label>
+            Senha
+            <input
+              type="password"
+              [ngModel]="adminCreatePassword()"
+              (ngModelChange)="adminCreatePassword.set($event)"
+            />
+          </label>
+          <label>
+            Accounts (JSON)
+            <textarea
+              [ngModel]="adminCreateAccountsText()"
+              (ngModelChange)="adminCreateAccountsText.set($event)"
+              rows="8"
+            ></textarea>
+          </label>
+          <button (click)="createAdminUser()">Criar Usuario</button>
+        </article>
+
+        <article class="panel admin-card" *ngIf="selectedAdminUser() as selectedUser">
+          <h3>Editar Usuario</h3>
+          <p class="mono">{{ selectedUser.id }}</p>
+          <label>
+            Nome
+            <input [ngModel]="adminEditName()" (ngModelChange)="adminEditName.set($event)" />
+          </label>
+          <label>
+            Email
+            <input [ngModel]="adminEditEmail()" (ngModelChange)="adminEditEmail.set($event)" />
+          </label>
+          <label>
+            Role
+            <select [ngModel]="adminEditRole()" (ngModelChange)="adminEditRole.set($event)">
+              <option value="admin">admin</option>
+              <option value="operator">operator</option>
+              <option value="viewer">viewer</option>
+            </select>
+          </label>
+          <label>
+            Nova Senha (opcional)
+            <input
+              type="password"
+              [ngModel]="adminEditPassword()"
+              (ngModelChange)="adminEditPassword.set($event)"
+            />
+          </label>
+          <button (click)="updateAdminUser()">Salvar Dados Basicos</button>
+
+          <label>
+            Accounts (JSON)
+            <textarea
+              [ngModel]="adminAccountsText()"
+              (ngModelChange)="adminAccountsText.set($event)"
+              rows="8"
+            ></textarea>
+          </label>
+          <button (click)="saveAdminAccounts()">Salvar Accounts</button>
+
+          <label>
+            Permissions (JSON)
+            <textarea
+              [ngModel]="adminPermissionsText()"
+              (ngModelChange)="adminPermissionsText.set($event)"
+              rows="10"
+            ></textarea>
+          </label>
+          <div class="delete-actions">
+            <button (click)="saveAdminPermissions()">Salvar Permissoes</button>
+            <button (click)="resetAdminPermissions()">Resetar Permissoes</button>
+          </div>
+
+          <label>
+            Confirmacao de Remocao
+            <input
+              type="text"
+              placeholder="Digite DELETE"
+              [ngModel]="adminDeleteConfirmationText()"
+              (ngModelChange)="adminDeleteConfirmationText.set($event)"
+            />
+          </label>
+          <div class="delete-actions">
+            <button (click)="requestAdminDeleteIntent()">Gerar Segunda Confirmacao</button>
+            <button class="danger" (click)="deleteAdminUser()">Remover Usuario</button>
+          </div>
+        </article>
+      </section>
+    </ng-template>
+  </main>
+</div>
+
+<ng-template #loginView>
+  <main class="login-page">
+    <section class="login-card panel">
+      <h1>AWS Resource Control</h1>
+      <p>Monorepo Angular + TypeScript funcional com ACL, JWT e Assume Role.</p>
+
+      <label>
+        Email
+        <input type="email" [ngModel]="loginEmail()" (ngModelChange)="loginEmail.set($event)" />
+      </label>
+
+      <label>
+        Senha
+        <input
+          type="password"
+          [ngModel]="loginPassword()"
+          (ngModelChange)="loginPassword.set($event)"
+        />
+      </label>
+
+      <button (click)="onLogin()">Entrar</button>
+      <p class="hint">
+        Usuarios seed: admin&#64;platform.local, operator&#64;platform.local, viewer&#64;platform.local
+      </p>
+      <p class="hint">Senha seed: change-me-please</p>
+      <p class="error" *ngIf="errorMessage().length > 0">{{ errorMessage() }}</p>
+    </section>
+  </main>
+</ng-template>

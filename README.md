@@ -42,6 +42,7 @@ Observações:
 | `IGNORE_CSV` | vazio | Fonte CSV de ignorados: inline, caminho empacotado com a função ou `s3://` |
 | `PERMISSION_PRECHECK` | `true` | Valida resolução de contexto/sessão por tabela antes da execução |
 | `INCREMENTAL_EXPORT_VIEW_TYPE` | `NEW_IMAGE` | Define o tipo de imagem no export incremental (`NEW_IMAGE` ou `NEW_AND_OLD_IMAGES`) |
+| `MAX_INCREMENTAL_EXPORTS_PER_CYCLE` | `6` | Limite de incrementais consecutivos antes de forçar novo `FULL` |
 | `LOG_LEVEL` | `INFO` | Nível de log |
 | `OUTPUT_CLOUDWATCH_ENABLED` | `false` | Quando `true`, publica o payload final da execução nos logs estruturados da própria Lambda |
 | `OUTPUT_DYNAMODB_ENABLED` | `false` | Quando `true`, persiste o payload final da execução em uma tabela DynamoDB padronizada |
@@ -144,7 +145,7 @@ Sem receber `mode`, a Lambda decide automaticamente assim:
 2. se ainda houver export pendente, não dispara novo export para a tabela;
 3. se não existir checkpoint válido com `last_to`, executa `FULL`;
 4. após existir um `FULL`, passa a executar incrementais automaticamente;
-5. a contagem incremental vai até `6`; ao atingir esse limite, a próxima execução volta para `FULL` e zera a contagem;
+5. a contagem incremental vai até o limite configurado em `MAX_INCREMENTAL_EXPORTS_PER_CYCLE` (padrão `6`); ao atingir esse limite, a próxima execução volta para `FULL` e zera a contagem;
 6. quando a contagem incremental já saiu de `0`, a Lambda valida o `ItemCount` do export incremental anterior;
 7. se o export anterior teve `ItemCount > 0`, a contagem avança para o próximo incremental;
 8. se o export anterior não exportou itens, a contagem não avança e o próximo export reutiliza o mesmo índice incremental.
@@ -173,12 +174,13 @@ Regras de progressão `INCR` -> `INCR2` -> `INCR3`:
 - `DDB/YYYYMMDD/<account_id>/<table_name>/INCR3/run_id=YYYYMMDDThhmmssZ`
 - `DDB/YYYYMMDD/<account_id>/<table_name>/INCR4/run_id=YYYYMMDDThhmmssZ`
 - `DDB/YYYYMMDD/<account_id>/<table_name>/INCR5/run_id=YYYYMMDDThhmmssZ`
-- `DDB/YYYYMMDD/<account_id>/<table_name>/INCR6/run_id=YYYYMMDDThhmmssZ`
+- `DDB/YYYYMMDD/<account_id>/<table_name>/INCR6/run_id=YYYYMMDDThhmmssZ` (quando o limite padrão `6` estiver em uso)
 
 Observação:
 
 - O sufixo `run_id=...` garante prefixo único por execução, inclusive quando há múltiplos incrementais no mesmo dia.
 - Quando o incremental anterior termina sem itens exportados, a Lambda reutiliza o mesmo índice incremental na próxima execução em vez de avançar para o próximo sufixo.
+- O maior sufixo incremental (`INCR<N>`) depende de `MAX_INCREMENTAL_EXPORTS_PER_CYCLE`.
 
 Explicação do `run_id`:
 

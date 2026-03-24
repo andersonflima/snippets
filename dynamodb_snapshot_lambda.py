@@ -131,6 +131,17 @@ def _resolve_incremental_export_view_type(*values: Any) -> str:
     return view_type
 
 
+def _resolve_max_incremental_exports_per_cycle(*values: Any) -> int:
+    resolved_text = _resolve_optional_text(*values, str(MAX_INCREMENTAL_EXPORTS_PER_CYCLE)) or str(MAX_INCREMENTAL_EXPORTS_PER_CYCLE)
+    try:
+        resolved_value = int(resolved_text)
+    except (TypeError, ValueError) as exc:
+        raise ValueError("MAX_INCREMENTAL_EXPORTS_PER_CYCLE deve ser um inteiro válido") from exc
+    if resolved_value <= 0:
+        raise ValueError("MAX_INCREMENTAL_EXPORTS_PER_CYCLE deve ser maior que zero")
+    return resolved_value
+
+
 def _safe_str_field(value: Any, *, field_name: str, required: bool = True) -> str:
     if value is None:
         if required:
@@ -2007,7 +2018,9 @@ def _resolve_automatic_export_plan(
     ddb_client: Any,
     table_name: str,
     table_arn: str,
+    max_incremental_exports_per_cycle: Any = MAX_INCREMENTAL_EXPORTS_PER_CYCLE,
 ) -> Dict[str, Any]:
+    incremental_cycle_limit = _resolve_max_incremental_exports_per_cycle(max_incremental_exports_per_cycle)
     refreshed_checkpoint_state = _refresh_last_incremental_export_metadata(
         ddb_client=ddb_client,
         checkpoint_state=checkpoint_state,
@@ -2035,7 +2048,7 @@ def _resolve_automatic_export_plan(
         field_name="checkpoint_state.incremental_seq",
         default=0,
     )
-    if current_incremental_seq >= MAX_INCREMENTAL_EXPORTS_PER_CYCLE:
+    if current_incremental_seq >= incremental_cycle_limit:
         return {
             "mode": "FULL",
             "reason": "incremental_cycle_limit_reached",
@@ -2193,6 +2206,7 @@ def _process_table(
         ddb_client=ddb_client,
         table_name=target.table_name,
         table_arn=target.table_arn,
+        max_incremental_exports_per_cycle=config.get("max_incremental_exports_per_cycle"),
     )
     checkpoint_state = automatic_plan["checkpoint_state"]
 
@@ -2921,6 +2935,11 @@ def build_snapshot_config(event: Optional[Dict[str, Any]]) -> Dict[str, Any]:
         payload.get("incremental_export_view_type"),
         payload.get("incrementalExportViewType"),
     )
+    max_incremental_exports_per_cycle = _resolve_max_incremental_exports_per_cycle(
+        os.getenv("MAX_INCREMENTAL_EXPORTS_PER_CYCLE"),
+        payload.get("max_incremental_exports_per_cycle"),
+        payload.get("maxIncrementalExportsPerCycle"),
+    )
 
     checkpoint_dynamodb_table_arn = _resolve_optional_text(
         os.getenv("CHECKPOINT_DYNAMODB_TABLE_ARN", ""),
@@ -3015,6 +3034,7 @@ def build_snapshot_config(event: Optional[Dict[str, Any]]) -> Dict[str, Any]:
         "dry_run": dry_run,
         "scan_fallback_enabled": scan_fallback_enabled,
         "incremental_export_view_type": incremental_export_view_type,
+        "max_incremental_exports_per_cycle": max_incremental_exports_per_cycle,
         "checkpoint_dynamodb_table_arn": checkpoint_dynamodb_table_arn,
         "output_cloudwatch_enabled": output_cloudwatch_enabled,
         "output_dynamodb_enabled": output_dynamodb_enabled,
@@ -3038,6 +3058,7 @@ def build_snapshot_config(event: Optional[Dict[str, Any]]) -> Dict[str, Any]:
         snapshot_bucket_exact=snapshot_bucket_exact,
         scan_fallback_enabled=scan_fallback_enabled,
         incremental_export_view_type=incremental_export_view_type,
+        max_incremental_exports_per_cycle=max_incremental_exports_per_cycle,
     )
     _log_event(
         "config.assume_role.resolved",

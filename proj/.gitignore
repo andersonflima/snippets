@@ -1,0 +1,9 @@
+node_modules
+dist
+.angular
+**/.angular
+coverage
+.env
+.DS_Store
+npm-debug.log*
+*.tsbuildinfo

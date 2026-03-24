@@ -183,10 +183,14 @@ class SnapshotAutomaticModeTests(unittest.TestCase):
         ddb_client: Any,
         start_incremental_export: Any | None = None,
         start_full_export: Any | None = None,
+        config_override: dict | None = None,
     ) -> dict:
         base_session = types.SimpleNamespace(region_name="us-east-1")
         target = self.build_target()
         fake_s3_client = object()
+        config = self.build_config()
+        if isinstance(config_override, dict):
+            config = {**config, **config_override}
 
         with ExitStack() as stack:
             stack.enter_context(
@@ -234,7 +238,7 @@ class SnapshotAutomaticModeTests(unittest.TestCase):
                 )
 
             return snapshot_lambda._process_table(
-                config=self.build_config(),
+                config=config,
                 base_session=base_session,
                 checkpoint_store={},
                 raw_target_ref="orders",
@@ -271,6 +275,38 @@ class SnapshotAutomaticModeTests(unittest.TestCase):
             config = snapshot_lambda.build_snapshot_config({"catch_up": True})
 
         self.assertNotIn("catch_up", config)
+
+    def test_build_snapshot_config_reads_incremental_cycle_limit_from_env(self) -> None:
+        with patch.dict(
+            "os.environ",
+            {
+                "SNAPSHOT_BUCKET": "snapshot-bucket",
+                "TARGET_TABLES": "orders",
+                "CHECKPOINT_DYNAMODB_TABLE_ARN": "arn:aws:dynamodb:us-east-1:111111111111:table/checkpoints",
+                "MAX_INCREMENTAL_EXPORTS_PER_CYCLE": "8",
+            },
+            clear=True,
+        ):
+            config = snapshot_lambda.build_snapshot_config({})
+
+        self.assertEqual(config["max_incremental_exports_per_cycle"], 8)
+
+    def test_build_snapshot_config_rejects_invalid_incremental_cycle_limit(self) -> None:
+        with patch.dict(
+            "os.environ",
+            {
+                "SNAPSHOT_BUCKET": "snapshot-bucket",
+                "TARGET_TABLES": "orders",
+                "CHECKPOINT_DYNAMODB_TABLE_ARN": "arn:aws:dynamodb:us-east-1:111111111111:table/checkpoints",
+                "MAX_INCREMENTAL_EXPORTS_PER_CYCLE": "0",
+            },
+            clear=True,
+        ):
+            with self.assertRaisesRegex(
+                ValueError,
+                "MAX_INCREMENTAL_EXPORTS_PER_CYCLE deve ser maior que zero",
+            ):
+                snapshot_lambda.build_snapshot_config({})
 
     def test_reconcile_pending_exports_persists_item_count_from_completed_export(self) -> None:
         reconciled = snapshot_lambda._reconcile_pending_exports(
@@ -488,6 +524,43 @@ class SnapshotAutomaticModeTests(unittest.TestCase):
             },
             ddb_client=FakeDescribeExportClient(),
             start_full_export=fake_start_full_export,
+        )
+
+        self.assertEqual(captured["full_calls"], 1)
+        self.assertEqual(result["mode"], "FULL")
+        self.assertEqual(result["mode_selection_reason"], "incremental_cycle_limit_reached")
+        self.assertEqual(result["checkpoint_state"]["incremental_seq"], 0)
+        self.assertEqual(result["checkpoint_state"]["last_mode"], "FULL")
+
+    def test_reaches_configured_incremental_limit_and_starts_new_full(self) -> None:
+        captured: dict[str, Any] = {"full_calls": 0}
+
+        def fake_start_full_export(**kwargs: Any) -> dict:
+            captured["full_calls"] += 1
+            return {
+                "table_name": "orders",
+                "table_arn": TABLE_ARN,
+                "mode": "FULL",
+                "status": "COMPLETED",
+                "source": "native",
+                "export_arn": f"{TABLE_ARN}/export/full-002",
+                "checkpoint_to": "2026-03-23T00:00:00Z",
+                "item_count": 13,
+            }
+
+        result = self.run_process_table(
+            previous_state={
+                "table_name": "orders",
+                "table_arn": TABLE_ARN,
+                "last_to": "2026-03-22T00:00:00Z",
+                "last_mode": "INCREMENTAL",
+                "last_export_arn": f"{TABLE_ARN}/export/040",
+                "last_export_item_count": 2,
+                "incremental_seq": 3,
+            },
+            ddb_client=FakeDescribeExportClient(),
+            start_full_export=fake_start_full_export,
+            config_override={"max_incremental_exports_per_cycle": 3},
         )
 
         self.assertEqual(captured["full_calls"], 1)
