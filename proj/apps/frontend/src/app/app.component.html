@@ -195,7 +195,7 @@
                     <div class="small">(use JSON interno nos campos que precisarem de estrutura)</div>
                   </label>
                 </article>
-                <article class="form-row-item form-row-item--kv" *ngFor="let field of createPayloadRows(); let i = index">
+                <article class="form-row-item form-row-item--kv" *ngFor="let field of createPayloadRows(); let i = index; trackBy: trackByIndex">
                   <label class="field-label">
                     {{ isTemplateFieldRow(field) ? asTemplateLabel(field) : field.key }}
                     <span class="field-key" *ngIf="field.key.length > 0">({{ field.key }})</span>
@@ -318,7 +318,7 @@
                     DesiredState por chaves
                   </label>
                 </article>
-                <article class="form-row-item form-row-item--kv" *ngFor="let field of updateDesiredStateRows(); let i = index">
+                <article class="form-row-item form-row-item--kv" *ngFor="let field of updateDesiredStateRows(); let i = index; trackBy: trackByIndex">
                   <label>
                     {{ isTemplateFieldRow(field) ? asTemplateLabel(field) : field.key }}
                     <span class="field-key" *ngIf="field.key.length > 0">({{ field.key }})</span>
@@ -425,7 +425,7 @@
                     Patch por operacoes
                   </label>
                 </article>
-                <article class="form-row-item form-row-item--kv" *ngFor="let patch of updatePatchRows(); let i = index">
+                <article class="form-row-item form-row-item--kv" *ngFor="let patch of updatePatchRows(); let i = index; trackBy: trackByIndex">
                   <label>
                     Op
                     <select
@@ -721,7 +721,7 @@
             <p class="small">Informe conta, nome e regioes por seleção.</p>
 
             <div class="form-row-grid">
-              <article class="form-row-item" *ngFor="let account of adminCreateAccountsRows(); let i = index">
+              <article class="form-row-item" *ngFor="let account of adminCreateAccountsRows(); let i = index; trackBy: trackByIndex">
                 <label>
                   ID da Conta
                   <input
@@ -796,7 +796,7 @@
           <section class="admin-section">
             <h4>Contas</h4>
             <div class="form-row-grid">
-              <article class="form-row-item" *ngFor="let account of adminAccountsRows(); let i = index">
+              <article class="form-row-item" *ngFor="let account of adminAccountsRows(); let i = index; trackBy: trackByIndex">
                 <label>
                   ID da Conta
                   <input
@@ -837,7 +837,7 @@
           <section class="admin-section">
             <h4>Permissoes</h4>
             <div class="form-row-grid">
-              <article class="form-row-item form-row-item--permission" *ngFor="let permission of adminPermissionsRows(); let i = index">
+              <article class="form-row-item form-row-item--permission" *ngFor="let permission of adminPermissionsRows(); let i = index; trackBy: trackByIndex">
                 <label>
                   Conta
                   <select
@@ -981,7 +981,7 @@
             <h4>Contas AWS</h4>
             <p class="small">Informe pelo menos uma conta para acesso inicial.</p>
             <div class="form-row-grid">
-              <article class="form-row-item" *ngFor="let account of registerAccountsRows(); let i = index">
+              <article class="form-row-item" *ngFor="let account of registerAccountsRows(); let i = index; trackBy: trackByIndex">
                 <label>
                   ID da Conta
                   <input

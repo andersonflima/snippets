@@ -1974,6 +1974,8 @@ export class AppComponent implements OnDestroy {
     );
   }
 
+  trackByIndex = (_index: number): number => _index;
+
   private saveSession(token: string, user: PublicUser): void {
     this.token.set(token);
     this.user.set(user);
