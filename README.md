@@ -180,6 +180,13 @@ Observação:
 - O sufixo `run_id=...` garante prefixo único por execução, inclusive quando há múltiplos incrementais no mesmo dia.
 - Quando o incremental anterior termina sem itens exportados, a Lambda reutiliza o mesmo índice incremental na próxima execução em vez de avançar para o próximo sufixo.
 
+Explicação do `run_id`:
+
+- `run_id` é o identificador da execução (`YYYYMMDDThhmmssZ`) e representa o timestamp UTC em que a Lambda iniciou aquele ciclo.
+- O `run_id` não substitui o índice incremental; ele só cria um namespace único dentro de `INCR`, `INCR2`, `INCR3`, etc.
+- Exemplo sem avanço de índice (`ItemCount = 0` no export anterior): execução 10:00 -> `.../INCR/run_id=20260324T100000Z`; execução 11:00 -> `.../INCR/run_id=20260324T110000Z`.
+- Exemplo com avanço de índice (`ItemCount > 0` no export anterior): execução 10:00 -> `.../INCR/run_id=20260324T100000Z`; execução 11:00 -> `.../INCR2/run_id=20260324T110000Z`.
+
 No fallback por `Scan`, além das partições `.jsonl` ou `.jsonl.gz`, a Lambda grava `manifest.json` com `files`, `total_items`, `total_parts`, `from` e `to`.
 
 ## Checkpoint em DynamoDB
