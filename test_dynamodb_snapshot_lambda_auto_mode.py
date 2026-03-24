@@ -154,6 +154,28 @@ class SnapshotAutomaticModeTests(unittest.TestCase):
             region="us-east-1",
         )
 
+    def test_build_export_prefix_is_unique_for_multiple_runs_same_day(self) -> None:
+        target = self.build_target()
+        first_run = datetime(2026, 3, 23, 10, 0, 0, tzinfo=timezone.utc)
+        second_run = datetime(2026, 3, 23, 11, 0, 0, tzinfo=timezone.utc)
+
+        first_prefix = snapshot_lambda._build_export_prefix(
+            first_run,
+            target,
+            "INCREMENTAL_EXPORT",
+            incremental_index=1,
+        )
+        second_prefix = snapshot_lambda._build_export_prefix(
+            second_run,
+            target,
+            "INCREMENTAL_EXPORT",
+            incremental_index=1,
+        )
+
+        self.assertNotEqual(first_prefix, second_prefix)
+        self.assertTrue(first_prefix.endswith("/INCR/run_id=20260323T100000Z"))
+        self.assertTrue(second_prefix.endswith("/INCR/run_id=20260323T110000Z"))
+
     def run_process_table(
         self,
         *,

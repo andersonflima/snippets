@@ -159,16 +159,17 @@ Se o incremental nativo não puder ser usado e `SCAN_FALLBACK_ENABLED=true`, a L
 
 ## Layout no S3
 
-- `DDB/YYYYMMDD/<account_id>/<table_name>/FULL`
-- `DDB/YYYYMMDD/<account_id>/<table_name>/INCR`
-- `DDB/YYYYMMDD/<account_id>/<table_name>/INCR2`
-- `DDB/YYYYMMDD/<account_id>/<table_name>/INCR3`
-- `DDB/YYYYMMDD/<account_id>/<table_name>/INCR4`
-- `DDB/YYYYMMDD/<account_id>/<table_name>/INCR5`
-- `DDB/YYYYMMDD/<account_id>/<table_name>/INCR6`
+- `DDB/YYYYMMDD/<account_id>/<table_name>/FULL/run_id=YYYYMMDDThhmmssZ`
+- `DDB/YYYYMMDD/<account_id>/<table_name>/INCR/run_id=YYYYMMDDThhmmssZ`
+- `DDB/YYYYMMDD/<account_id>/<table_name>/INCR2/run_id=YYYYMMDDThhmmssZ`
+- `DDB/YYYYMMDD/<account_id>/<table_name>/INCR3/run_id=YYYYMMDDThhmmssZ`
+- `DDB/YYYYMMDD/<account_id>/<table_name>/INCR4/run_id=YYYYMMDDThhmmssZ`
+- `DDB/YYYYMMDD/<account_id>/<table_name>/INCR5/run_id=YYYYMMDDThhmmssZ`
+- `DDB/YYYYMMDD/<account_id>/<table_name>/INCR6/run_id=YYYYMMDDThhmmssZ`
 
 Observação:
 
+- O sufixo `run_id=...` garante prefixo único por execução, inclusive quando há múltiplos incrementais no mesmo dia.
 - Quando o incremental anterior termina sem itens exportados, a Lambda reutiliza o mesmo índice incremental na próxima execução em vez de avançar para o próximo sufixo.
 
 No fallback por `Scan`, além das partições `.jsonl` ou `.jsonl.gz`, a Lambda grava `manifest.json` com `files`, `total_items`, `total_parts`, `from` e `to`.
@@ -284,7 +285,7 @@ Campos relevantes:
 
 Mapeamento aplicado no item do DynamoDB:
 
-- `Destination S3 Bucket` salva a URL do prefix do export no S3 até `FULL` ou `INCR`, por exemplo `s3://meu-bucket/DDB/20260309/111111111111/orders/INCR`
+- `Destination S3 Bucket` salva a URL completa do prefix do export no S3, por exemplo `s3://meu-bucket/DDB/20260309/111111111111/orders/INCR/run_id=20260309T153000Z`
 - `Status` é salvo em formato de leitura do console, por exemplo `In progress` e `Completed`
 - `Export Type` é salvo como `Full export` ou `Incremental export`
 - `Export job start time (utc-03:00)` é convertido para `UTC-03:00` em ISO-8601, por exemplo `2026-03-08T21:00:00-03:00`
@@ -310,7 +311,7 @@ Mapeamento aplicado no item do DynamoDB:
       "status": "STARTED",
       "source": "native",
       "export_job_id": "016...",
-      "s3_prefix": "DDB/20260309/111111111111/orders/INCR",
+      "s3_prefix": "DDB/20260309/111111111111/orders/INCR/run_id=20260309T153000Z",
       "checkpoint_from": "2026-03-08T00:00:00Z",
       "checkpoint_source": "checkpoint",
       "checkpoint_to": "2026-03-09T15:30:00Z",

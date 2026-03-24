@@ -683,8 +683,9 @@ def snapshot_manager_build_bucket_name(base_bucket: str, region: Optional[str], 
 
 def _build_export_prefix(run_time: datetime, target: TableTarget, export_type: str, *, incremental_index: int = 1) -> str:
     date_part = run_time.astimezone(timezone.utc).strftime("%Y%m%d")
+    run_id_part = run_time.astimezone(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
     export_segment = "FULL" if export_type == "FULL_EXPORT" else ("INCR" if incremental_index <= 1 else f"INCR{incremental_index}")
-    return f"DDB/{date_part}/{target.account_id}/{target.table_name}/{export_segment}"
+    return f"DDB/{date_part}/{target.account_id}/{target.table_name}/{export_segment}/run_id={run_id_part}"
 
 
 def _build_client_token(*parts: str) -> str:
