@@ -104,8 +104,9 @@ cp apps/backend/.env.example apps/backend/.env
 
 - `JWT_SECRET`
 - `DATABASE_URL`
-- `AWS_ASSUME_ROLE_ARN_TEMPLATE` (ex.: `arn:aws:iam::{account_id}:role/PlatformAssumeRole`)
-- credenciais AWS da conta central (variaveis padrao AWS)
+- `AWS_ASSUME_ROLE_ARN_TEMPLATE` (opcional, ex.: `arn:aws:iam::{account_id}:role/PlatformAssumeRole`)
+- credenciais AWS (opcional, variaveis padrao AWS; se nao informar, usa cadeia padrao do SDK)
+- `AWS_TLS_INSECURE=true` apenas para troubleshooting local de certificado TLS
 - opcional `AWS_EXTERNAL_ID`
 
 3. Suba a stack completa com Docker Compose:

@@ -65,13 +65,29 @@
 
         <label>
           Recurso
-          <select [ngModel]="selectedResourceType()" (ngModelChange)="onResourceTypeChange($event)">
+          <select
+            [ngModel]="selectedResourceType()"
+            (ngModelChange)="onResourceTypeChange($event)"
+            [disabled]="resourceTypes().length === 0"
+          >
+            <option value="" *ngIf="resourceTypes().length === 0" disabled>
+              Sem tipos disponiveis
+            </option>
             <option *ngFor="let typeName of resourceTypes()" [value]="typeName">{{ typeName }}</option>
           </select>
         </label>
 
         <button (click)="refreshResources()">Atualizar</button>
       </header>
+
+      <section class="panel context-summary">
+        <p>
+          Categoria ativa: <strong>{{ selectedCategoryLabel() }}</strong>
+        </p>
+        <p class="small" *ngIf="resourceTypes().length === 0">
+          Nenhum tipo disponivel para esta categoria no contexto atual (conta/regiao/ACL).
+        </p>
+      </section>
 
       <section class="panel discovery-meta" *ngIf="resourceDiscoveryRegions().length > 0">
         <p>

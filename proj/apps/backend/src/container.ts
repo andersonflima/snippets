@@ -27,13 +27,25 @@ export const createContainer = async () => {
   const deleteIntentRepository = createDeleteIntentRepository(databaseClient);
   const permissionRepository = createPermissionRepository(databaseClient);
 
+  const awsBaseCredentials =
+    env.awsAccessKeyId && env.awsSecretAccessKey
+      ? {
+          accessKeyId: env.awsAccessKeyId,
+          secretAccessKey: env.awsSecretAccessKey,
+          sessionToken: env.awsSessionToken
+        }
+      : undefined;
+
   const assumeRole = createAssumeRole({
     externalId: env.awsExternalId,
-    roleArnTemplate: env.awsAssumeRoleArnTemplate
+    roleArnTemplate: env.awsAssumeRoleArnTemplate,
+    baseCredentials: awsBaseCredentials,
+    tlsInsecure: env.awsTlsInsecure
   });
 
   const resourceGateway = createCloudControlGateway({
-    assumeRole
+    assumeRole,
+    tlsInsecure: env.awsTlsInsecure
   });
 
   const authService = createAuthService({

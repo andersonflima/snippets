@@ -37,6 +37,7 @@ type ContextSwitchResponse = {
   checkup: {
     resourceCounts: Record<string, number>;
   };
+  checkupWarning?: string;
 };
 
 type DiscoveryRegionSummary = {
@@ -308,6 +309,9 @@ export class AppComponent {
   readonly discoveryFailureCount = computed(
     () => this.resourceDiscoveryRegions().filter((entry) => entry.status === 'error').length
   );
+  readonly selectedCategoryLabel = computed(
+    () => this.categories.find((entry) => entry.id === this.selectedCategory())?.label ?? this.selectedCategory()
+  );
 
   constructor() {
     void this.restoreSession();
@@ -354,23 +358,40 @@ export class AppComponent {
 
   async onCategoryChange(category: AwsCategory): Promise<void> {
     this.selectedCategory.set(category);
-    await this.switchContext();
+    this.resetResourcePanelsForContextChange();
+
+    try {
+      await this.switchContext();
+    } catch (error) {
+      this.errorMessage.set(error instanceof Error ? error.message : 'Erro ao trocar categoria.');
+    }
   }
 
   async onAccountChange(accountId: string): Promise<void> {
     this.selectedAccountId.set(accountId);
+    this.resetResourcePanelsForContextChange();
 
     const regions = this.availableRegions();
     if (regions.length > 0) {
       this.selectedRegion.set(regions[0]);
     }
 
-    await this.switchContext();
+    try {
+      await this.switchContext();
+    } catch (error) {
+      this.errorMessage.set(error instanceof Error ? error.message : 'Erro ao trocar conta.');
+    }
   }
 
   async onRegionChange(region: string): Promise<void> {
     this.selectedRegion.set(region);
-    await this.switchContext();
+    this.resetResourcePanelsForContextChange();
+
+    try {
+      await this.switchContext();
+    } catch (error) {
+      this.errorMessage.set(error instanceof Error ? error.message : 'Erro ao trocar regiao.');
+    }
   }
 
   async onResourceTypeChange(resourceType: string): Promise<void> {
@@ -939,7 +960,23 @@ export class AppComponent {
     const typeStillAvailable = response.resourceTypes.includes(currentType);
 
     this.selectedResourceType.set(typeStillAvailable ? currentType : fallbackType);
-    await this.loadResources();
+
+    if (response.resourceTypes.length === 0) {
+      this.resources.set([]);
+      this.resourceDiscoveryRegions.set([]);
+      this.resourceDetails.set(null);
+      this.infoMessage.set(
+        `Categoria ${this.selectedCategoryLabel()} sem tipos de recurso disponiveis para a conta/regiao atual.`
+      );
+    } else {
+      await this.loadResources();
+    }
+
+    if (response.checkupWarning && response.checkupWarning.length > 0) {
+      this.errorMessage.set(
+        `Contexto atualizado com alerta no check-up: ${response.checkupWarning}`
+      );
+    }
   }
 
   private async loadResources(): Promise<void> {
@@ -975,6 +1012,15 @@ export class AppComponent {
     } finally {
       this.setLoading(false);
     }
+  }
+
+  private resetResourcePanelsForContextChange(): void {
+    this.resourceTypes.set([]);
+    this.selectedResourceType.set('');
+    this.resources.set([]);
+    this.resourceDiscoveryRegions.set([]);
+    this.resourceDetails.set(null);
+    this.checkupCounts.set({});
   }
 
   private setDefaultContextFromUser(user: PublicUser): void {

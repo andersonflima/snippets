@@ -46,6 +46,17 @@ const assertRegionAllowed = (account: AwsAccount, region: string): void => {
   }
 };
 
+const toErrorMessage = (error: unknown, fallbackMessage: string): string => {
+  if (typeof error === 'object' && error !== null && 'message' in error) {
+    const candidate = error as { message?: unknown };
+    if (typeof candidate.message === 'string' && candidate.message.trim().length > 0) {
+      return candidate.message;
+    }
+  }
+
+  return fallbackMessage;
+};
+
 export const createContextService = ({
   userRepository,
   contextRepository,
@@ -72,17 +83,36 @@ export const createContextService = ({
 
     await contextRepository.save(user.id, nextContext);
 
-    const checkup = await resourceGateway.runCategoryCheckup({
-      userId: user.id,
-      account: targetAccount,
+    const resourceTypes = getCategoryResourceTypes(input.category);
+
+    const fallbackCheckup = {
+      accountId: input.accountId,
       region: input.region,
-      category: input.category
-    });
+      category: input.category,
+      resourceCounts: resourceTypes.reduce<Record<string, number>>((accumulator, currentTypeName) => {
+        accumulator[currentTypeName] = 0;
+        return accumulator;
+      }, {})
+    };
+
+    const [checkup, checkupWarning] = await resourceGateway
+      .runCategoryCheckup({
+        userId: user.id,
+        account: targetAccount,
+        region: input.region,
+        category: input.category
+      })
+      .then((result) => [result, undefined] as const)
+      .catch((error: unknown) => [
+        fallbackCheckup,
+        toErrorMessage(error, 'Falha ao executar check-up AWS para o contexto selecionado.')
+      ] as const);
 
     return {
       context: nextContext,
-      resourceTypes: getCategoryResourceTypes(input.category),
-      checkup
+      resourceTypes,
+      checkup,
+      checkupWarning
     };
   }
 });

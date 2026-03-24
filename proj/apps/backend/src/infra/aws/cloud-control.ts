@@ -1,3 +1,4 @@
+import { Agent } from 'node:https';
 import {
   CloudControlClient,
   CreateResourceCommand,
@@ -16,6 +17,7 @@ import type {
   ResourceSummary,
   UpsertResourcePayload
 } from '@platform/shared';
+import { NodeHttpHandler } from '@smithy/node-http-handler';
 import { getCategoryResourceTypes } from '../../domain/categories.js';
 import { createAppError } from '../../domain/errors.js';
 import type { AssumeRoleFn, AwsTemporaryCredentials } from './assume-role.js';
@@ -69,17 +71,26 @@ type CreateGatewayDependencies = {
   assumeRole: AssumeRoleFn;
   createCloudControlClient?: (
     region: string,
-    credentials: AwsTemporaryCredentials
+    credentials?: AwsTemporaryCredentials
   ) => CloudControlClient;
+  tlsInsecure?: boolean;
 };
 
 const buildCloudControlClient = (
   region: string,
-  credentials: AwsTemporaryCredentials
+  tlsInsecure: boolean,
+  credentials?: AwsTemporaryCredentials
 ): CloudControlClient =>
   new CloudControlClient({
     region,
-    credentials
+    credentials,
+    requestHandler: tlsInsecure
+      ? new NodeHttpHandler({
+          httpsAgent: new Agent({
+            rejectUnauthorized: false
+          })
+        })
+      : undefined
   });
 
 const delay = (milliseconds: number): Promise<void> =>
@@ -247,7 +258,11 @@ const resolveClient = async (
     userId: execution.userId
   });
 
-  const factory = dependencies.createCloudControlClient ?? buildCloudControlClient;
+  const factory =
+    dependencies.createCloudControlClient ??
+    ((region: string, nextCredentials?: AwsTemporaryCredentials) =>
+      buildCloudControlClient(region, dependencies.tlsInsecure ?? false, nextCredentials));
+
   return factory(execution.region, credentials);
 };
 

@@ -184,6 +184,18 @@ button.ghost {
   padding: 12px 14px;
 }
 
+.context-summary {
+  padding: 12px 14px;
+}
+
+.context-summary p {
+  margin: 0;
+}
+
+.context-summary p + p {
+  margin-top: 8px;
+}
+
 .discovery-meta p {
   margin: 0;
   color: var(--text-secondary);

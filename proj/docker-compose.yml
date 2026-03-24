@@ -29,8 +29,9 @@ services:
       JWT_SECRET: change-me-please
       DATABASE_URL: postgres://platform:platform@postgres:5432/platform
       DATABASE_SSL: 'false'
-      AWS_ASSUME_ROLE_ARN_TEMPLATE: arn:aws:iam::{account_id}:role/PlatformAssumeRole
+      AWS_ASSUME_ROLE_ARN_TEMPLATE: ${AWS_ASSUME_ROLE_ARN_TEMPLATE:-}
       AWS_EXTERNAL_ID: ${AWS_EXTERNAL_ID:-}
+      AWS_TLS_INSECURE: ${AWS_TLS_INSECURE:-false}
       AWS_ACCESS_KEY_ID: ${AWS_ACCESS_KEY_ID:-}
       AWS_SECRET_ACCESS_KEY: ${AWS_SECRET_ACCESS_KEY:-}
       AWS_SESSION_TOKEN: ${AWS_SESSION_TOKEN:-}
