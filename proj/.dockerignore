@@ -1,0 +1,13 @@
+node_modules
+**/node_modules
+dist
+**/dist
+*.tsbuildinfo
+**/*.tsbuildinfo
+.angular
+**/.angular
+coverage
+**/coverage
+.env
+apps/backend/.env
+npm-debug.log*

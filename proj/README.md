@@ -108,10 +108,10 @@ cp apps/backend/.env.example apps/backend/.env
 - credenciais AWS da conta central (variaveis padrao AWS)
 - opcional `AWS_EXTERNAL_ID`
 
-3. Suba o PostgreSQL local:
+3. Suba a stack completa com Docker Compose:
 
 ```bash
-docker compose up -d
+docker compose up --build -d
 ```
 
 4. Configure as roles alvo nas contas AWS para permitir `AssumeRole`.
@@ -121,6 +121,15 @@ docker compose up -d
 ```bash
 npm install
 npm run dev
+```
+
+Backend: `http://localhost:3000`  
+Frontend: `http://localhost:4200`
+
+## Rodando com Docker Compose
+
+```bash
+docker compose up --build -d
 ```
 
 Backend: `http://localhost:3000`  
