@@ -75,7 +75,10 @@ export PATH="${INSTALL_DIR}:\$PATH"
 vim.env.CURL_WRAPPER_REAL_CURL = "${REAL_CURL_BIN}"
 vim.env.PATH = "${INSTALL_DIR}:" .. vim.env.PATH
 
-3) Teste:
+3) Pré-requisitos de fallback:
+- opcional: gh CLI autenticado para assets de release do GitHub (`gh auth status`)
+- python3 (usa requests quando disponível; sem requests cai para urllib nativo)
+
+4) Teste:
 curl -fsSL https://github.com/neovim/neovim/archive/HEAD.zip -o /tmp/neovim.zip
 EOF
-

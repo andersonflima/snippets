@@ -56,6 +56,10 @@ CURL_FALLBACK_MAX_TIME="300"
 CURL_FALLBACK_HEADERS=""
 CURL_FALLBACK_ALLOW_REDIRECTS="1"
 CURL_FALLBACK_CAN_HANDLE="1"
+CURL_FALLBACK_REMOTE_NAME="0"
+CURL_FALLBACK_OUTPUT_DIR=""
+CURL_FALLBACK_CREATE_DIRS="0"
+CURL_FALLBACK_INSECURE="0"
 
 parse_curl_arguments_for_python_fallback() {
   CURL_FALLBACK_URL=""
@@ -66,6 +70,10 @@ parse_curl_arguments_for_python_fallback() {
   CURL_FALLBACK_HEADERS=""
   CURL_FALLBACK_ALLOW_REDIRECTS="1"
   CURL_FALLBACK_CAN_HANDLE="1"
+  CURL_FALLBACK_REMOTE_NAME="0"
+  CURL_FALLBACK_OUTPUT_DIR=""
+  CURL_FALLBACK_CREATE_DIRS="0"
+  CURL_FALLBACK_INSECURE="0"
 
   local args=("$@")
   local index=0
@@ -92,6 +100,23 @@ parse_curl_arguments_for_python_fallback() {
         CURL_FALLBACK_OUTPUT="${arg#--output=}"
         index=$((index + 1))
         ;;
+      -O|--remote-name|--remote-name-all)
+        CURL_FALLBACK_REMOTE_NAME="1"
+        index=$((index + 1))
+        ;;
+      --output-dir)
+        (( index + 1 < ${#args[@]} )) || return 1
+        CURL_FALLBACK_OUTPUT_DIR="${args[index + 1]}"
+        index=$((index + 2))
+        ;;
+      --output-dir=*)
+        CURL_FALLBACK_OUTPUT_DIR="${arg#--output-dir=}"
+        index=$((index + 1))
+        ;;
+      --create-dirs)
+        CURL_FALLBACK_CREATE_DIRS="1"
+        index=$((index + 1))
+        ;;
       -A|--user-agent)
         (( index + 1 < ${#args[@]} )) || return 1
         CURL_FALLBACK_USER_AGENT="${args[index + 1]}"
@@ -114,6 +139,10 @@ parse_curl_arguments_for_python_fallback() {
         CURL_FALLBACK_ALLOW_REDIRECTS="1"
         index=$((index + 1))
         ;;
+      -k|--insecure)
+        CURL_FALLBACK_INSECURE="1"
+        index=$((index + 1))
+        ;;
       --connect-timeout)
         (( index + 1 < ${#args[@]} )) || return 1
         CURL_FALLBACK_CONNECT_TIMEOUT="${args[index + 1]}"
@@ -132,7 +161,7 @@ parse_curl_arguments_for_python_fallback() {
         CURL_FALLBACK_MAX_TIME="${arg#--max-time=}"
         index=$((index + 1))
         ;;
-      -f|-s|-S|-k|-4|--http1.1|--retry|--retry-delay|--retry-all-errors|--tlsv1.2)
+      -f|-s|-S|-4|--http1.1|--retry|--retry-delay|--retry-all-errors|--tlsv1.2)
         if [[ "${arg}" == "--retry" || "${arg}" == "--retry-delay" ]]; then
           (( index + 1 < ${#args[@]} )) || return 1
           index=$((index + 2))
@@ -156,7 +185,8 @@ parse_curl_arguments_for_python_fallback() {
         done
         ;;
       -*)
-        index=$((index + 1))
+        CURL_FALLBACK_CAN_HANDLE="0"
+        return 0
         ;;
       *)
         positional+=("${arg}")
@@ -169,6 +199,22 @@ parse_curl_arguments_for_python_fallback() {
     CURL_FALLBACK_URL="${positional[${#positional[@]}-1]}"
   fi
   [[ -n "${CURL_FALLBACK_URL}" ]] || return 1
+
+  if [[ -z "${CURL_FALLBACK_OUTPUT}" && "${CURL_FALLBACK_REMOTE_NAME}" == "1" ]]; then
+    local basename_url
+    basename_url="${CURL_FALLBACK_URL%%\?*}"
+    basename_url="${basename_url##*/}"
+    [[ -n "${basename_url}" ]] || basename_url="download.bin"
+    CURL_FALLBACK_OUTPUT="${basename_url}"
+  fi
+
+  if [[ -n "${CURL_FALLBACK_OUTPUT_DIR}" && -n "${CURL_FALLBACK_OUTPUT}" ]]; then
+    CURL_FALLBACK_OUTPUT="${CURL_FALLBACK_OUTPUT_DIR%/}/${CURL_FALLBACK_OUTPUT}"
+  fi
+
+  if [[ -z "${CURL_FALLBACK_OUTPUT}" ]]; then
+    CURL_FALLBACK_CAN_HANDLE="0"
+  fi
   return 0
 }
 
@@ -182,6 +228,46 @@ append_header_for_python() {
   CURL_FALLBACK_HEADERS="${CURL_FALLBACK_HEADERS}"$'\n'"${header}"
 }
 
+is_github_release_asset_url() {
+  local url
+  url="${1%%\?*}"
+  [[ "${url}" =~ ^https://github\.com/[^/]+/[^/]+/releases/download/[^/]+/.+ ]]
+}
+
+download_with_gh_release() {
+  command -v gh >/dev/null 2>&1 || return 1
+
+  local url owner repo tag asset target_dir
+  url="${CURL_FALLBACK_URL%%\?*}"
+  if [[ "${url}" =~ ^https://github\.com/([^/]+)/([^/]+)/releases/download/([^/]+)/(.+)$ ]]; then
+    owner="${BASH_REMATCH[1]}"
+    repo="${BASH_REMATCH[2]}"
+    tag="${BASH_REMATCH[3]}"
+    asset="${BASH_REMATCH[4]}"
+  else
+    return 1
+  fi
+
+  if [[ -n "${CURL_FALLBACK_OUTPUT}" ]]; then
+    target_dir="$(dirname "${CURL_FALLBACK_OUTPUT}")"
+    if [[ "${CURL_FALLBACK_CREATE_DIRS}" == "1" ]]; then
+      mkdir -p "${target_dir}"
+    fi
+
+    gh release download "${tag}" \
+      -R "${owner}/${repo}" \
+      -p "${asset}" \
+      -O "${CURL_FALLBACK_OUTPUT}" \
+      --clobber >/dev/null 2>&1
+    return $?
+  fi
+
+  gh release download "${tag}" \
+    -R "${owner}/${repo}" \
+    -p "${asset}" \
+    --clobber >/dev/null 2>&1
+}
+
 download_with_python_requests() {
   command -v python3 >/dev/null 2>&1 || return 1
 
@@ -192,16 +278,19 @@ download_with_python_requests() {
   PYTHON_CURL_WRAPPER_MAX_TIME="${CURL_FALLBACK_MAX_TIME}" \
   PYTHON_CURL_WRAPPER_HEADERS="${CURL_FALLBACK_HEADERS}" \
   PYTHON_CURL_WRAPPER_ALLOW_REDIRECTS="${CURL_FALLBACK_ALLOW_REDIRECTS}" \
+  PYTHON_CURL_WRAPPER_CREATE_DIRS="${CURL_FALLBACK_CREATE_DIRS}" \
+  PYTHON_CURL_WRAPPER_INSECURE="${CURL_FALLBACK_INSECURE}" \
   python3 - <<'PY'
 import os
 import sys
 from typing import Dict
+from urllib import request as urllib_request
+from urllib.error import HTTPError, URLError
 
 try:
     import requests
-except Exception as exc:
-    print(f"[curl-python-wrapper] requests indisponível: {exc}", file=sys.stderr)
-    raise SystemExit(1)
+except Exception:
+    requests = None
 
 
 def parse_headers(raw: str) -> Dict[str, str]:
@@ -225,6 +314,8 @@ user_agent = os.environ.get("PYTHON_CURL_WRAPPER_USER_AGENT", "").strip()
 connect_timeout = float(os.environ.get("PYTHON_CURL_WRAPPER_CONNECT_TIMEOUT", "20") or "20")
 max_time = float(os.environ.get("PYTHON_CURL_WRAPPER_MAX_TIME", "300") or "300")
 allow_redirects = os.environ.get("PYTHON_CURL_WRAPPER_ALLOW_REDIRECTS", "1").strip().lower() in {"1", "true", "yes", "on"}
+create_dirs = os.environ.get("PYTHON_CURL_WRAPPER_CREATE_DIRS", "0").strip().lower() in {"1", "true", "yes", "on"}
+insecure = os.environ.get("PYTHON_CURL_WRAPPER_INSECURE", "0").strip().lower() in {"1", "true", "yes", "on"}
 
 if not url:
     raise SystemExit(1)
@@ -235,19 +326,60 @@ if user_agent and "User-Agent" not in headers:
 if "Accept" not in headers:
     headers["Accept"] = "*/*"
 
-timeout = (connect_timeout, max_time)
-with requests.get(url, stream=True, allow_redirects=allow_redirects, headers=headers, timeout=timeout) as response:
-    response.raise_for_status()
-    if output_path:
-        with open(output_path, "wb") as handle:
+if output_path and create_dirs:
+    output_dir = os.path.dirname(output_path)
+    if output_dir:
+        os.makedirs(output_dir, exist_ok=True)
+
+if requests is not None:
+    timeout = (connect_timeout, max_time)
+    request_kwargs = {
+        "stream": True,
+        "allow_redirects": allow_redirects,
+        "headers": headers,
+        "timeout": timeout,
+    }
+    if insecure:
+        request_kwargs["verify"] = False
+
+    with requests.get(url, **request_kwargs) as response:
+        response.raise_for_status()
+        if output_path:
+            with open(output_path, "wb") as handle:
+                for chunk in response.iter_content(chunk_size=1024 * 64):
+                    if chunk:
+                        handle.write(chunk)
+        else:
+            out = sys.stdout.buffer
             for chunk in response.iter_content(chunk_size=1024 * 64):
                 if chunk:
-                    handle.write(chunk)
-    else:
-        out = sys.stdout.buffer
-        for chunk in response.iter_content(chunk_size=1024 * 64):
-            if chunk:
-                out.write(chunk)
+                    out.write(chunk)
+else:
+    import ssl
+
+    context = ssl.create_default_context()
+    if insecure:
+        context = ssl._create_unverified_context()
+
+    req = urllib_request.Request(url, headers=headers, method="GET")
+    try:
+        with urllib_request.urlopen(req, timeout=max_time, context=context) as response:
+            if output_path:
+                with open(output_path, "wb") as handle:
+                    while True:
+                        chunk = response.read(1024 * 64)
+                        if not chunk:
+                            break
+                        handle.write(chunk)
+            else:
+                out = sys.stdout.buffer
+                while True:
+                    chunk = response.read(1024 * 64)
+                    if not chunk:
+                        break
+                    out.write(chunk)
+    except (HTTPError, URLError):
+        raise
 PY
 }
 
@@ -259,10 +391,14 @@ main() {
     exec "${real_curl}"
   fi
 
-  if "${real_curl}" "$@"; then
+  local curl_exit
+  set +e
+  "${real_curl}" "$@"
+  curl_exit=$?
+  set -e
+  if [[ "${curl_exit}" -eq 0 ]]; then
     exit 0
   fi
-  local curl_exit=$?
 
   if is_truthy "${CURL_WRAPPER_STRICT:-0}"; then
     exit "${curl_exit}"
@@ -275,9 +411,25 @@ main() {
     exit "${curl_exit}"
   fi
 
-  log "curl falhou com exit=${curl_exit}; tentando fallback com python requests para ${CURL_FALLBACK_URL}"
+  if is_github_release_asset_url "${CURL_FALLBACK_URL}"; then
+    log "curl falhou com exit=${curl_exit}; tentando fallback com gh release para ${CURL_FALLBACK_URL}"
+    if download_with_gh_release; then
+      if [[ -n "${CURL_FALLBACK_OUTPUT}" && ! -f "${CURL_FALLBACK_OUTPUT}" ]]; then
+        log "fallback gh não gerou arquivo esperado: ${CURL_FALLBACK_OUTPUT}"
+      else
+        log "fallback gh release concluído com sucesso."
+        exit 0
+      fi
+    fi
+  fi
+
+  log "curl falhou com exit=${curl_exit}; tentando fallback python para ${CURL_FALLBACK_URL}"
   if download_with_python_requests; then
-    log "fallback python requests concluído com sucesso."
+    if [[ -n "${CURL_FALLBACK_OUTPUT}" && ! -f "${CURL_FALLBACK_OUTPUT}" ]]; then
+      log "fallback não gerou arquivo esperado: ${CURL_FALLBACK_OUTPUT}"
+      exit "${curl_exit}"
+    fi
+    log "fallback python concluído com sucesso."
     exit 0
   fi
 
