@@ -516,6 +516,47 @@ td.empty {
   pointer-events: auto;
 }
 
+.operation-hero {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  padding-bottom: 6px;
+  border-bottom: 1px solid var(--border);
+}
+
+.operation-hero h4 {
+  margin: 0;
+  font-size: 1rem;
+}
+
+.operation-hero .small {
+  margin: 0;
+  color: var(--text-secondary);
+}
+
+.operation-section {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.operation-section + .operation-section {
+  border-top: 1px dashed rgba(255, 255, 255, 0.16);
+  padding-top: 12px;
+}
+
+.operation-section-header {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+}
+
+.operation-section h5 {
+  margin: 0;
+  font-size: 0.84rem;
+  color: var(--text-primary);
+}
+
 .operation-panel .form-card {
   padding: 0;
   display: flex;
@@ -533,6 +574,36 @@ td.empty {
   display: flex;
   flex-direction: column;
   gap: 10px;
+}
+
+.operation-actions {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.mode-switch {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  flex-wrap: wrap;
+}
+
+.mode-chip {
+  border-radius: 999px;
+  border: 1px solid var(--border);
+  background: transparent;
+  color: var(--text-primary);
+  padding: 6px 12px;
+  line-height: 1;
+  transition:
+    background-color 0.15s ease,
+    border-color 0.15s ease;
+}
+
+.mode-chip.is-active {
+  border-color: rgba(255, 159, 28, 0.75);
+  background: rgba(255, 159, 28, 0.2);
 }
 
 .operation-panel:not(.is-active) .form-card {

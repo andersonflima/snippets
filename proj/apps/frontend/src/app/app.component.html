@@ -145,418 +145,579 @@
 
       <section class="resource-panel-grid">
         <section class="panel action-module">
-        <h3>Operacoes de Recurso</h3>
-        <nav class="action-tabs" role="tablist" aria-label="Acoes de recurso">
-          <button
-            type="button"
-            class="action-tab"
-            role="tab"
-            aria-selected="{{ activeResourceActionTab() === 'create' }}"
-            [disabled]="isMobileResourceActions() && deleteCandidate() !== null"
-            (click)="setResourceActionTab('create')"
-          >
-            Create
-          </button>
-          <button
-            type="button"
-            class="action-tab"
-            role="tab"
-            aria-selected="{{ activeResourceActionTab() === 'update' }}"
-            [disabled]="isMobileResourceActions() && deleteCandidate() !== null"
-            (click)="setResourceActionTab('update')"
-          >
-            Update
-          </button>
-          <button
-            type="button"
-            class="action-tab action-tab--delete"
-            role="tab"
-            aria-selected="{{ activeResourceActionTab() === 'delete' }}"
-            (click)="setResourceActionTab('delete')"
-          >
-            Delete
-          </button>
-        </nav>
+          <h3>Operacoes de Recurso</h3>
+          <p class="small">
+            Modo guiado por etapa: escolha a ação, ajuste apenas os parâmetros da operação e execute.
+          </p>
+          <nav class="action-tabs" role="tablist" aria-label="Acoes de recurso">
+            <button
+              type="button"
+              class="action-tab"
+              role="tab"
+              aria-selected="{{ activeResourceActionTab() === 'create' }}"
+              [disabled]="isMobileResourceActions() && deleteCandidate() !== null"
+              (click)="setResourceActionTab('create')"
+            >
+              Criar
+            </button>
+            <button
+              type="button"
+              class="action-tab"
+              role="tab"
+              aria-selected="{{ activeResourceActionTab() === 'update' }}"
+              [disabled]="isMobileResourceActions() && deleteCandidate() !== null"
+              (click)="setResourceActionTab('update')"
+            >
+              Atualizar
+            </button>
+            <button
+              type="button"
+              class="action-tab action-tab--delete"
+              role="tab"
+              aria-selected="{{ activeResourceActionTab() === 'delete' }}"
+              (click)="setResourceActionTab('delete')"
+            >
+              Excluir
+            </button>
+          </nav>
 
-        <section class="operation-panel-stack">
-          <section class="operation-panel" [class.is-active]="activeResourceActionTab() === 'create'">
-            <article class="form-card">
-              <h3>Create Resource</h3>
-              <p class="small">
-                <button class="ghost" (click)="toggleCreatePayloadMode()">
-                  {{ useJsonCreatePayload() ? 'Usar formulario' : 'Usar JSON livre' }}
-                </button>
-              </p>
-
-              <div class="form-row-grid" *ngIf="!useJsonCreatePayload()">
-                <article class="form-row-item">
-                  <label>
-                    DesiredState por chaves
-                    <div class="small">(use JSON interno nos campos que precisarem de estrutura)</div>
-                  </label>
-                </article>
-                <article class="form-row-item form-row-item--kv" *ngFor="let field of createPayloadRows(); let i = index; trackBy: trackByIndex">
-                  <label class="field-label">
-                    {{ isTemplateFieldRow(field) ? asTemplateLabel(field) : field.key }}
-                    <span class="field-key" *ngIf="field.key.length > 0">({{ field.key }})</span>
-                    <span class="field-required" *ngIf="field.required">obrigatorio</span>
-                    <p class="small" *ngIf="field.description">{{ field.description }}</p>
-                  </label>
-                  <label>
-                    Nome da propriedade
-                    <input
-                      [disabled]="isTemplateFieldRow(field)"
-                      [readOnly]="isTemplateFieldRow(field)"
-                      [ngModel]="field.key"
-                      (ngModelChange)="updateCreatePayloadFieldRow(i, { key: $event })"
-                    />
-                  </label>
-                  <label>
-                    Tipo
-                    <select
-                      *ngIf="!isTemplateFieldRow(field)"
-                      [ngModel]="field.valueMode"
-                      (ngModelChange)="updateCreatePayloadFieldRow(i, { valueMode: $event })"
-                    >
-                      <option *ngFor="let mode of resourceFieldValueModes" [value]="mode">{{ mode }}</option>
-                    </select>
-                    <input
-                      *ngIf="isTemplateFieldRow(field) && !isTemplateFieldEnum(field)"
-                      [ngModel]="field.valueMode"
-                      disabled
-                    />
-                    <input
-                      *ngIf="isTemplateFieldRow(field) && isTemplateFieldEnum(field)"
-                      [ngModel]="field.valueMode"
-                      disabled
-                    />
-                  </label>
-                  <label>
-                    Valor
-                    <select
-                      *ngIf="isTemplateFieldRow(field) && isTemplateFieldEnum(field)"
-                      [ngModel]="field.value"
-                      (ngModelChange)="updateCreatePayloadFieldRow(i, { value: $event })"
-                    >
-                      <option value="">Selecione uma opcao</option>
-                      <option *ngFor="let option of field.enumValues" [value]="option">{{ option }}</option>
-                    </select>
-                    <input
-                      *ngIf="field.valueMode === 'text' && !(isTemplateFieldRow(field) && isTemplateFieldEnum(field))"
-                      type="text"
-                      [ngModel]="field.value"
-                      (ngModelChange)="updateCreatePayloadFieldRow(i, { value: $event })"
-                      [placeholder]="field.placeholder"
-                    />
-                    <input
-                      *ngIf="field.valueMode === 'number'"
-                      type="number"
-                      [ngModel]="field.value"
-                      (ngModelChange)="updateCreatePayloadFieldRow(i, { value: $event })"
-                    />
-                    <select
-                      *ngIf="field.valueMode === 'boolean'"
-                      [ngModel]="field.value"
-                      (ngModelChange)="updateCreatePayloadFieldRow(i, { value: $event })"
-                    >
-                      <option value="true">true</option>
-                      <option value="false">false</option>
-                    </select>
-                    <textarea
-                      *ngIf="field.valueMode === 'json'"
-                      class="form-json-input"
-                      rows="4"
-                      [ngModel]="field.value"
-                      (ngModelChange)="updateCreatePayloadFieldRow(i, { value: $event })"
-                    ></textarea>
-                    <input
-                      *ngIf="field.valueMode === 'null'"
-                      type="text"
-                      [ngModel]="field.value"
-                      (ngModelChange)="updateCreatePayloadFieldRow(i, { value: $event })"
-                      readonly
-                    />
-                  </label>
-                  <button class="ghost" (click)="removeCreatePayloadFieldRow(i)" *ngIf="!isTemplateFieldRow(field) || !field.required">
-                    Remover campo
-                  </button>
-                </article>
-              </div>
-
-              <div *ngIf="useJsonCreatePayload()">
-                <textarea
-                  [ngModel]="createPayloadText()"
-                  (ngModelChange)="createPayloadText.set($event)"
-                  rows="8"
-                ></textarea>
-              </div>
-
-              <div class="delete-actions" *ngIf="!useJsonCreatePayload()">
-                <button class="ghost" (click)="addCreatePayloadFieldRow()">+ Adicionar campo</button>
-              </div>
-              <button (click)="createResource()">Criar</button>
-            </article>
-          </section>
-
-          <section class="operation-panel" [class.is-active]="activeResourceActionTab() === 'update'">
-            <article class="form-card">
-              <h3>Update Resource</h3>
-              <input
-                type="text"
-                placeholder="Identifier"
-                [ngModel]="updateIdentifier()"
-                (ngModelChange)="updateIdentifier.set($event)"
-              />
-              <p class="small">
-                <button class="ghost" (click)="toggleUpdateDesiredStateMode()">
-                  {{ useJsonUpdateDesiredState() ? 'Usar formulario' : 'Usar JSON livre' }}
-                </button>
-              </p>
-              <div class="form-row-grid" *ngIf="!useJsonUpdateDesiredState()">
-                <article class="form-row-item">
-                  <label>
-                    DesiredState por chaves
-                  </label>
-                </article>
-                <article class="form-row-item form-row-item--kv" *ngFor="let field of updateDesiredStateRows(); let i = index; trackBy: trackByIndex">
-                  <label>
-                    {{ isTemplateFieldRow(field) ? asTemplateLabel(field) : field.key }}
-                    <span class="field-key" *ngIf="field.key.length > 0">({{ field.key }})</span>
-                    <span class="field-required" *ngIf="field.required">obrigatorio</span>
-                    <p class="small" *ngIf="field.description">{{ field.description }}</p>
-                  </label>
-                  <label>
-                    Nome da propriedade
-                    <input
-                      [disabled]="isTemplateFieldRow(field)"
-                      [readOnly]="isTemplateFieldRow(field)"
-                      [ngModel]="field.key"
-                      (ngModelChange)="updateUpdateDesiredStateFieldRow(i, { key: $event })"
-                    />
-                  </label>
-                  <label>
-                    Tipo
-                    <select
-                      *ngIf="!isTemplateFieldRow(field)"
-                      [ngModel]="field.valueMode"
-                      (ngModelChange)="updateUpdateDesiredStateFieldRow(i, { valueMode: $event })"
-                    >
-                      <option *ngFor="let mode of resourceFieldValueModes" [value]="mode">{{ mode }}</option>
-                    </select>
-                    <input
-                      *ngIf="isTemplateFieldRow(field) && !isTemplateFieldEnum(field)"
-                      [ngModel]="field.valueMode"
-                      disabled
-                    />
-                    <input
-                      *ngIf="isTemplateFieldRow(field) && isTemplateFieldEnum(field)"
-                      [ngModel]="field.valueMode"
-                      disabled
-                    />
-                  </label>
-                  <label>
-                    Valor
-                    <select
-                      *ngIf="isTemplateFieldRow(field) && isTemplateFieldEnum(field)"
-                      [ngModel]="field.value"
-                      (ngModelChange)="updateUpdateDesiredStateFieldRow(i, { value: $event })"
-                    >
-                      <option value="">Selecione uma opcao</option>
-                      <option *ngFor="let option of field.enumValues" [value]="option">{{ option }}</option>
-                    </select>
-                    <input
-                      *ngIf="
-                        field.valueMode === 'text' &&
-                        !(isTemplateFieldRow(field) && isTemplateFieldEnum(field))
-                      "
-                      type="text"
-                      [ngModel]="field.value"
-                      (ngModelChange)="updateUpdateDesiredStateFieldRow(i, { value: $event })"
-                      [placeholder]="field.placeholder"
-                    />
-                    <input
-                      *ngIf="field.valueMode === 'number'"
-                      type="number"
-                      [ngModel]="field.value"
-                      (ngModelChange)="updateUpdateDesiredStateFieldRow(i, { value: $event })"
-                    />
-                    <select
-                      *ngIf="field.valueMode === 'boolean'"
-                      [ngModel]="field.value"
-                      (ngModelChange)="updateUpdateDesiredStateFieldRow(i, { value: $event })"
-                    >
-                      <option value="true">true</option>
-                      <option value="false">false</option>
-                    </select>
-                    <textarea
-                      *ngIf="field.valueMode === 'json'"
-                      class="form-json-input"
-                      rows="4"
-                      [ngModel]="field.value"
-                      (ngModelChange)="updateUpdateDesiredStateFieldRow(i, { value: $event })"
-                    ></textarea>
-                    <input
-                      *ngIf="field.valueMode === 'null'"
-                      type="text"
-                      [ngModel]="field.value"
-                      (ngModelChange)="updateUpdateDesiredStateFieldRow(i, { value: $event })"
-                      readonly
-                    />
-                  </label>
-                  <button class="ghost" (click)="removeUpdateDesiredStateFieldRow(i)">Remover campo</button>
-                </article>
-              </div>
-              <div *ngIf="useJsonUpdateDesiredState()">
-                <textarea
-                  [ngModel]="updateDesiredStateText()"
-                  (ngModelChange)="updateDesiredStateText.set($event)"
-                  rows="5"
-                ></textarea>
-              </div>
-
-              <p class="small">
-                <button class="ghost" (click)="toggleUpdatePatchMode()">
-                  {{ useJsonPatchPayload() ? 'Usar formulario' : 'Usar JSON livre' }}
-                </button>
-              </p>
-              <div class="form-row-grid" *ngIf="!useJsonPatchPayload()">
-                <article class="form-row-item">
-                  <label>
-                    Patch por operacoes
-                  </label>
-                </article>
-                <article class="form-row-item form-row-item--kv" *ngFor="let patch of updatePatchRows(); let i = index; trackBy: trackByIndex">
-                  <label>
-                    Op
-                    <select
-                      [ngModel]="patch.op"
-                      (ngModelChange)="updatePatchRow(i, { op: $event })"
-                    >
-                      <option *ngFor="let patchOp of patchOperationOptions" [value]="patchOp">{{ patchOp }}</option>
-                    </select>
-                  </label>
-                  <label>
-                    Path
-                    <input
-                      [ngModel]="patch.path"
-                      (ngModelChange)="updatePatchRow(i, { path: $event })"
-                    />
-                  </label>
-                  <label>
-                    From
-                    <input
-                      *ngIf="patch.op === 'move' || patch.op === 'copy'"
-                      [ngModel]="patch.from"
-                      (ngModelChange)="updatePatchRow(i, { from: $event })"
-                    />
-                    <input
-                      *ngIf="patch.op !== 'move' && patch.op !== 'copy'"
-                      value=""
-                      readonly
-                      disabled
-                    />
-                  </label>
-                  <label>
-                    Tipo de Valor
-                    <select
-                      [ngModel]="patch.valueMode"
-                      (ngModelChange)="updatePatchRow(i, { valueMode: $event })"
-                    >
-                      <option *ngFor="let mode of resourceFieldValueModes" [value]="mode">{{ mode }}</option>
-                    </select>
-                  </label>
-                  <label>
-                    Valor
-                    <input
-                      *ngIf="patch.valueMode === 'text'"
-                      type="text"
-                      [ngModel]="patch.value"
-                      (ngModelChange)="updatePatchRow(i, { value: $event })"
-                    />
-                    <input
-                      *ngIf="patch.valueMode === 'number'"
-                      type="number"
-                      [ngModel]="patch.value"
-                      (ngModelChange)="updatePatchRow(i, { value: $event })"
-                    />
-                    <select
-                      *ngIf="patch.valueMode === 'boolean'"
-                      [ngModel]="patch.value"
-                      (ngModelChange)="updatePatchRow(i, { value: $event })"
-                    >
-                      <option value="true">true</option>
-                      <option value="false">false</option>
-                    </select>
-                    <textarea
-                      *ngIf="patch.valueMode === 'json'"
-                      class="form-json-input"
-                      rows="4"
-                      [ngModel]="patch.value"
-                      (ngModelChange)="updatePatchRow(i, { value: $event })"
-                    ></textarea>
-                    <input
-                      *ngIf="patch.valueMode === 'null'"
-                      type="text"
-                      [ngModel]="patch.value"
-                      (ngModelChange)="updatePatchRow(i, { value: $event })"
-                      readonly
-                    />
-                  </label>
-                  <button class="ghost" (click)="removeUpdatePatchRow(i)">Remover operacao</button>
-                </article>
-              </div>
-              <div *ngIf="useJsonPatchPayload()">
-                <textarea
-                  [ngModel]="updatePatchText()"
-                  (ngModelChange)="updatePatchText.set($event)"
-                  rows="5"
-                ></textarea>
-              </div>
-
-              <div class="delete-actions" *ngIf="!useJsonPatchPayload() || !useJsonUpdateDesiredState()">
-                <button class="ghost" (click)="addUpdateDesiredStateFieldRow()" *ngIf="!useJsonUpdateDesiredState()">
-                  + Adicionar campo
-                </button>
-                <button class="ghost" (click)="addUpdatePatchRow()" *ngIf="!useJsonPatchPayload()">
-                  + Adicionar operação
-                </button>
-              </div>
-              <button (click)="updateResource()">Atualizar</button>
-            </article>
-          </section>
-
-          <section class="operation-panel" [class.is-active]="activeResourceActionTab() === 'delete'">
-            <article class="form-card">
-              <h3>Delete com Dupla Confirmacao</h3>
-              <ng-container *ngIf="deleteCandidate() as candidate; else noDeleteCandidate">
-                <p>
-                  Recurso: <strong>{{ candidate.displayName }}</strong>
-                </p>
-                <p class="mono">{{ candidate.identifier }}</p>
-                <p class="small">Regiao alvo: {{ candidate.region }}</p>
-                <input
-                  type="text"
-                  placeholder="Digite DELETE"
-                  [ngModel]="deleteConfirmationText()"
-                  (ngModelChange)="deleteConfirmationText.set($event)"
-                />
-                <div class="delete-actions">
-                  <button (click)="requestDeleteIntent()">Gerar Segunda Confirmacao</button>
-                  <button class="danger" (click)="executeDelete()">Delete Definitivo</button>
-                  <button class="ghost" (click)="cancelDeleteFlow()">Cancelar</button>
-                </div>
-              </ng-container>
-              <ng-template #noDeleteCandidate>
-                <section class="empty-details">
+          <section class="operation-panel-stack">
+            <section class="operation-panel" [class.is-active]="activeResourceActionTab() === 'create'">
+              <article class="form-card">
+                <header class="operation-hero">
+                  <h4>1. Criar recurso</h4>
                   <p class="small">
-                    Nenhum recurso selecionado para exclusao.
-                    Clique em Delete na grade de inventario para abrir esta aba.
+                    Cria um novo recurso do tipo
+                    <strong>{{ selectedResourceType() || 'não selecionado' }}</strong>.
                   </p>
+                </header>
+
+                <section class="operation-section">
+                  <div class="operation-section-header">
+                    <h5>2. Formato da entrada</h5>
+                    <p class="small">Escolha como preencher os parâmetros.</p>
+                  </div>
+
+                  <div class="mode-switch">
+                    <button
+                      type="button"
+                      class="mode-chip"
+                      [class.is-active]="!useJsonCreatePayload()"
+                      (click)="!useJsonCreatePayload() || toggleCreatePayloadMode()"
+                    >
+                      Formulário (chave/valor)
+                    </button>
+                    <button
+                      type="button"
+                      class="mode-chip"
+                      [class.is-active]="useJsonCreatePayload()"
+                      (click)="useJsonCreatePayload() || toggleCreatePayloadMode()"
+                    >
+                      JSON Livre
+                    </button>
+                  </div>
                 </section>
-              </ng-template>
-            </article>
+
+                <section class="operation-section">
+                  <h5>3. Campos do recurso</h5>
+
+                  <div class="form-row-grid" *ngIf="!useJsonCreatePayload()">
+                    <article
+                      class="form-row-item form-row-item--kv"
+                      *ngFor="let field of createPayloadRows(); let i = index; trackBy: trackByIndex"
+                    >
+                      <label class="field-label">
+                        {{ isTemplateFieldRow(field) ? asTemplateLabel(field) : field.key }}
+                        <span class="field-key" *ngIf="field.key.length > 0">({{ field.key }})</span>
+                        <span class="field-required" *ngIf="field.required">obrigatorio</span>
+                        <p class="small" *ngIf="field.description">{{ field.description }}</p>
+                      </label>
+                      <label>
+                        Nome da propriedade
+                        <input
+                          [disabled]="isTemplateFieldRow(field)"
+                          [readOnly]="isTemplateFieldRow(field)"
+                          [ngModel]="field.key"
+                          (ngModelChange)="updateCreatePayloadFieldRow(i, { key: $event })"
+                        />
+                      </label>
+                      <label>
+                        Tipo
+                        <select
+                          *ngIf="!isTemplateFieldRow(field)"
+                          [ngModel]="field.valueMode"
+                          (ngModelChange)="updateCreatePayloadFieldRow(i, { valueMode: $event })"
+                        >
+                          <option *ngFor="let mode of resourceFieldValueModes" [value]="mode">{{ mode }}</option>
+                        </select>
+                        <input
+                          *ngIf="isTemplateFieldRow(field) && !isTemplateFieldEnum(field)"
+                          [ngModel]="field.valueMode"
+                          disabled
+                        />
+                        <input
+                          *ngIf="isTemplateFieldRow(field) && isTemplateFieldEnum(field)"
+                          [ngModel]="field.valueMode"
+                          disabled
+                        />
+                      </label>
+                      <label>
+                        Valor
+                        <select
+                          *ngIf="isTemplateFieldRow(field) && isTemplateFieldEnum(field)"
+                          [ngModel]="field.value"
+                          (ngModelChange)="updateCreatePayloadFieldRow(i, { value: $event })"
+                        >
+                          <option value="">Selecione uma opcao</option>
+                          <option *ngFor="let option of field.enumValues" [value]="option">{{ option }}</option>
+                        </select>
+                        <input
+                          *ngIf="
+                            field.valueMode === 'text' &&
+                            !(isTemplateFieldRow(field) && isTemplateFieldEnum(field))
+                          "
+                          type="text"
+                          [ngModel]="field.value"
+                          (ngModelChange)="updateCreatePayloadFieldRow(i, { value: $event })"
+                          [placeholder]="field.placeholder"
+                        />
+                        <input
+                          *ngIf="field.valueMode === 'number'"
+                          type="number"
+                          [ngModel]="field.value"
+                          (ngModelChange)="updateCreatePayloadFieldRow(i, { value: $event })"
+                        />
+                        <select
+                          *ngIf="field.valueMode === 'boolean'"
+                          [ngModel]="field.value"
+                          (ngModelChange)="updateCreatePayloadFieldRow(i, { value: $event })"
+                        >
+                          <option value="true">true</option>
+                          <option value="false">false</option>
+                        </select>
+                        <textarea
+                          *ngIf="field.valueMode === 'json'"
+                          class="form-json-input"
+                          rows="4"
+                          [ngModel]="field.value"
+                          (ngModelChange)="updateCreatePayloadFieldRow(i, { value: $event })"
+                        ></textarea>
+                        <input
+                          *ngIf="field.valueMode === 'null'"
+                          type="text"
+                          [ngModel]="field.value"
+                          (ngModelChange)="updateCreatePayloadFieldRow(i, { value: $event })"
+                          readonly
+                        />
+                      </label>
+                      <button
+                        class="ghost"
+                        type="button"
+                        (click)="removeCreatePayloadFieldRow(i)"
+                        *ngIf="!isTemplateFieldRow(field) || !field.required"
+                      >
+                        Remover campo
+                      </button>
+                    </article>
+                  </div>
+
+                  <div *ngIf="useJsonCreatePayload()">
+                    <label>
+                      JSON de DesiredState
+                      <textarea
+                        [ngModel]="createPayloadText()"
+                        (ngModelChange)="createPayloadText.set($event)"
+                        rows="8"
+                      ></textarea>
+                    </label>
+                  </div>
+                </section>
+
+                <section class="operation-actions">
+                  <div class="delete-actions" *ngIf="!useJsonCreatePayload()">
+                    <button type="button" class="ghost" (click)="addCreatePayloadFieldRow()">
+                      + Adicionar campo
+                    </button>
+                  </div>
+                  <button type="button" (click)="createResource()">Criar recurso</button>
+                </section>
+              </article>
+            </section>
+
+            <section class="operation-panel" [class.is-active]="activeResourceActionTab() === 'update'">
+              <article class="form-card">
+                <header class="operation-hero">
+                  <h4>1. Atualizar recurso</h4>
+                  <p class="small">
+                    Informe o identificador e altere DesiredState e/ou patch por operações.
+                  </p>
+                </header>
+
+                <section class="operation-section">
+                  <h5>2. Identificador do recurso</h5>
+                  <label>
+                    identifier
+                    <input
+                      type="text"
+                      placeholder="ID do recurso"
+                      [ngModel]="updateIdentifier()"
+                      (ngModelChange)="updateIdentifier.set($event)"
+                    />
+                  </label>
+                </section>
+
+                <section class="operation-section">
+                  <div class="operation-section-header">
+                    <h5>3. Estado Desejado (DesiredState)</h5>
+                    <p class="small">Use o modo abaixo para alterar atributos diretamente.</p>
+                  </div>
+
+                  <div class="mode-switch">
+                    <button
+                      type="button"
+                      class="mode-chip"
+                      [class.is-active]="!useJsonUpdateDesiredState()"
+                      (click)="!useJsonUpdateDesiredState() || toggleUpdateDesiredStateMode()"
+                    >
+                      Formulário (chave/valor)
+                    </button>
+                    <button
+                      type="button"
+                      class="mode-chip"
+                      [class.is-active]="useJsonUpdateDesiredState()"
+                      (click)="useJsonUpdateDesiredState() || toggleUpdateDesiredStateMode()"
+                    >
+                      JSON Livre
+                    </button>
+                  </div>
+
+                  <div class="form-row-grid" *ngIf="!useJsonUpdateDesiredState()">
+                    <article
+                      class="form-row-item form-row-item--kv"
+                      *ngFor="let field of updateDesiredStateRows(); let i = index; trackBy: trackByIndex"
+                    >
+                      <label class="field-label">
+                        {{ isTemplateFieldRow(field) ? asTemplateLabel(field) : field.key }}
+                        <span class="field-key" *ngIf="field.key.length > 0">({{ field.key }})</span>
+                        <span class="field-required" *ngIf="field.required">obrigatorio</span>
+                        <p class="small" *ngIf="field.description">{{ field.description }}</p>
+                      </label>
+                      <label>
+                        Nome da propriedade
+                        <input
+                          [disabled]="isTemplateFieldRow(field)"
+                          [readOnly]="isTemplateFieldRow(field)"
+                          [ngModel]="field.key"
+                          (ngModelChange)="updateUpdateDesiredStateFieldRow(i, { key: $event })"
+                        />
+                      </label>
+                      <label>
+                        Tipo
+                        <select
+                          *ngIf="!isTemplateFieldRow(field)"
+                          [ngModel]="field.valueMode"
+                          (ngModelChange)="updateUpdateDesiredStateFieldRow(i, { valueMode: $event })"
+                        >
+                          <option *ngFor="let mode of resourceFieldValueModes" [value]="mode">{{ mode }}</option>
+                        </select>
+                        <input
+                          *ngIf="isTemplateFieldRow(field) && !isTemplateFieldEnum(field)"
+                          [ngModel]="field.valueMode"
+                          disabled
+                        />
+                        <input
+                          *ngIf="isTemplateFieldRow(field) && isTemplateFieldEnum(field)"
+                          [ngModel]="field.valueMode"
+                          disabled
+                        />
+                      </label>
+                      <label>
+                        Valor
+                        <select
+                          *ngIf="isTemplateFieldRow(field) && isTemplateFieldEnum(field)"
+                          [ngModel]="field.value"
+                          (ngModelChange)="updateUpdateDesiredStateFieldRow(i, { value: $event })"
+                        >
+                          <option value="">Selecione uma opcao</option>
+                          <option *ngFor="let option of field.enumValues" [value]="option">{{ option }}</option>
+                        </select>
+                        <input
+                          *ngIf="
+                            field.valueMode === 'text' &&
+                            !(isTemplateFieldRow(field) && isTemplateFieldEnum(field))
+                          "
+                          type="text"
+                          [ngModel]="field.value"
+                          (ngModelChange)="updateUpdateDesiredStateFieldRow(i, { value: $event })"
+                          [placeholder]="field.placeholder"
+                        />
+                        <input
+                          *ngIf="field.valueMode === 'number'"
+                          type="number"
+                          [ngModel]="field.value"
+                          (ngModelChange)="updateUpdateDesiredStateFieldRow(i, { value: $event })"
+                        />
+                        <select
+                          *ngIf="field.valueMode === 'boolean'"
+                          [ngModel]="field.value"
+                          (ngModelChange)="updateUpdateDesiredStateFieldRow(i, { value: $event })"
+                        >
+                          <option value="true">true</option>
+                          <option value="false">false</option>
+                        </select>
+                        <textarea
+                          *ngIf="field.valueMode === 'json'"
+                          class="form-json-input"
+                          rows="4"
+                          [ngModel]="field.value"
+                          (ngModelChange)="updateUpdateDesiredStateFieldRow(i, { value: $event })"
+                        ></textarea>
+                        <input
+                          *ngIf="field.valueMode === 'null'"
+                          type="text"
+                          [ngModel]="field.value"
+                          (ngModelChange)="updateUpdateDesiredStateFieldRow(i, { value: $event })"
+                          readonly
+                        />
+                      </label>
+                      <button
+                        type="button"
+                        class="ghost"
+                        (click)="removeUpdateDesiredStateFieldRow(i)"
+                      >
+                        Remover campo
+                      </button>
+                    </article>
+                  </div>
+
+                  <div *ngIf="useJsonUpdateDesiredState()">
+                    <label>
+                      JSON do DesiredState
+                      <textarea
+                        [ngModel]="updateDesiredStateText()"
+                        (ngModelChange)="updateDesiredStateText.set($event)"
+                        rows="5"
+                      ></textarea>
+                    </label>
+                  </div>
+                </section>
+
+                <section class="operation-section">
+                  <div class="operation-section-header">
+                    <h5>4. Patch Document</h5>
+                    <p class="small">
+                      Opcionalmente, envie operações RFC6902 para alterar chaves específicas.
+                    </p>
+                  </div>
+
+                  <div class="mode-switch">
+                    <button
+                      type="button"
+                      class="mode-chip"
+                      [class.is-active]="!useJsonPatchPayload()"
+                      (click)="!useJsonPatchPayload() || toggleUpdatePatchMode()"
+                    >
+                      Formulário de operações
+                    </button>
+                    <button
+                      type="button"
+                      class="mode-chip"
+                      [class.is-active]="useJsonPatchPayload()"
+                      (click)="useJsonPatchPayload() || toggleUpdatePatchMode()"
+                    >
+                      JSON Livre
+                    </button>
+                  </div>
+
+                  <div class="form-row-grid" *ngIf="!useJsonPatchPayload()">
+                    <article class="form-row-item form-row-item--kv" *ngFor="let patch of updatePatchRows(); let i = index; trackBy: trackByIndex">
+                      <label>
+                        Op
+                        <select
+                          [ngModel]="patch.op"
+                          (ngModelChange)="updatePatchRow(i, { op: $event })"
+                        >
+                          <option *ngFor="let patchOp of patchOperationOptions" [value]="patchOp">{{ patchOp }}</option>
+                        </select>
+                      </label>
+                      <label>
+                        Path
+                        <input [ngModel]="patch.path" (ngModelChange)="updatePatchRow(i, { path: $event })" />
+                      </label>
+                      <label>
+                        From
+                        <input
+                          *ngIf="patch.op === 'move' || patch.op === 'copy'"
+                          [ngModel]="patch.from"
+                          (ngModelChange)="updatePatchRow(i, { from: $event })"
+                        />
+                        <input
+                          *ngIf="patch.op !== 'move' && patch.op !== 'copy'"
+                          value=""
+                          readonly
+                          disabled
+                        />
+                      </label>
+                      <label>
+                        Tipo de Valor
+                        <select [ngModel]="patch.valueMode" (ngModelChange)="updatePatchRow(i, { valueMode: $event })">
+                          <option *ngFor="let mode of resourceFieldValueModes" [value]="mode">{{ mode }}</option>
+                        </select>
+                      </label>
+                      <label>
+                        Valor
+                        <input
+                          *ngIf="patch.valueMode === 'text'"
+                          type="text"
+                          [ngModel]="patch.value"
+                          (ngModelChange)="updatePatchRow(i, { value: $event })"
+                        />
+                        <input
+                          *ngIf="patch.valueMode === 'number'"
+                          type="number"
+                          [ngModel]="patch.value"
+                          (ngModelChange)="updatePatchRow(i, { value: $event })"
+                        />
+                        <select
+                          *ngIf="patch.valueMode === 'boolean'"
+                          [ngModel]="patch.value"
+                          (ngModelChange)="updatePatchRow(i, { value: $event })"
+                        >
+                          <option value="true">true</option>
+                          <option value="false">false</option>
+                        </select>
+                        <textarea
+                          *ngIf="patch.valueMode === 'json'"
+                          class="form-json-input"
+                          rows="4"
+                          [ngModel]="patch.value"
+                          (ngModelChange)="updatePatchRow(i, { value: $event })"
+                        ></textarea>
+                        <input
+                          *ngIf="patch.valueMode === 'null'"
+                          type="text"
+                          [ngModel]="patch.value"
+                          (ngModelChange)="updatePatchRow(i, { value: $event })"
+                          readonly
+                        />
+                      </label>
+                      <button type="button" class="ghost" (click)="removeUpdatePatchRow(i)">Remover operacao</button>
+                    </article>
+                  </div>
+
+                  <div *ngIf="useJsonPatchPayload()">
+                    <label>
+                      JSON de Patch
+                      <textarea
+                        [ngModel]="updatePatchText()"
+                        (ngModelChange)="updatePatchText.set($event)"
+                        rows="5"
+                      ></textarea>
+                    </label>
+                  </div>
+                </section>
+
+                <section class="operation-section operation-add-actions">
+                  <div class="delete-actions">
+                    <button
+                      type="button"
+                      class="ghost"
+                      (click)="addUpdateDesiredStateFieldRow()"
+                      *ngIf="!useJsonUpdateDesiredState()"
+                    >
+                      + Adicionar campo
+                    </button>
+                    <button
+                      type="button"
+                      class="ghost"
+                      (click)="addUpdatePatchRow()"
+                      *ngIf="!useJsonPatchPayload()"
+                    >
+                      + Adicionar operação
+                    </button>
+                  </div>
+                </section>
+
+                <section class="operation-actions">
+                  <p class="small">
+                    Recomendação: informe DesiredState ou Patch (ou ambos) antes de executar.
+                  </p>
+                  <button type="button" (click)="updateResource()">Atualizar recurso</button>
+                </section>
+              </article>
+            </section>
+
+            <section class="operation-panel" [class.is-active]="activeResourceActionTab() === 'delete'">
+              <article class="form-card">
+                <header class="operation-hero">
+                  <h4>1. Excluir recurso</h4>
+                  <p class="small">
+                    Exclua com dupla confirmação para evitar exclusões acidentais.
+                  </p>
+                </header>
+
+                <ng-container *ngIf="deleteCandidate() as candidate; else noDeleteCandidate">
+                  <section class="operation-section">
+                    <h5>2. Recurso selecionado</h5>
+                    <p>
+                      <strong>{{ candidate.displayName }}</strong>
+                    </p>
+                    <p class="mono">{{ candidate.identifier }}</p>
+                    <p class="small">
+                      Tipo {{ candidate.typeName }} · Região {{ candidate.region }} · Conta {{ candidate.accountId }}
+                    </p>
+                  </section>
+
+                  <section class="operation-section">
+                    <h5>3. Chave de confirmação</h5>
+                    <label>
+                      Confirmação de segurança
+                      <input
+                        type="text"
+                        placeholder="Digite DELETE"
+                        [ngModel]="deleteConfirmationText()"
+                        (ngModelChange)="deleteConfirmationText.set($event)"
+                      />
+                    </label>
+                  </section>
+
+                  <section class="operation-actions">
+                    <div class="delete-actions">
+                      <button
+                        type="button"
+                        [disabled]="deleteConfirmationText().trim() !== 'DELETE' || deleteIntentId() !== null"
+                        (click)="requestDeleteIntent()"
+                      >
+                        Gerar Intenção
+                      </button>
+                      <button
+                        type="button"
+                        class="danger"
+                        [disabled]="!deleteIntentId()"
+                        (click)="executeDelete()"
+                      >
+                        Excluir Recurso
+                      </button>
+                      <button type="button" class="ghost" (click)="cancelDeleteFlow()">Cancelar</button>
+                    </div>
+
+                    <p class="small" *ngIf="deleteIntentId()">
+                      Intenção ativa. Confirme para concluir com exclusão.
+                    </p>
+                  </section>
+                </ng-container>
+
+                <ng-template #noDeleteCandidate>
+                  <section class="empty-details">
+                    <h4>Nenhum recurso em exclusão</h4>
+                    <p class="small">
+                      Selecione um recurso clicando em “Delete” na lista de inventário para abrir esta etapa.
+                    </p>
+                  </section>
+                </ng-template>
+              </article>
+            </section>
           </section>
-        </section>
         </section>
 
         <section class="panel details-shell">
