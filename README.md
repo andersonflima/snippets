@@ -41,7 +41,6 @@ Observações:
 | `TARGETS_CSV` | vazio | Fonte CSV de alvos: inline, caminho empacotado com a função ou `s3://` |
 | `IGNORE_CSV` | vazio | Fonte CSV de ignorados: inline, caminho empacotado com a função ou `s3://` |
 | `PERMISSION_PRECHECK` | `true` | Valida resolução de contexto/sessão por tabela antes da execução |
-| `CATCH_UP` | `false` | Quando `true`, consome múltiplos chunks incrementais de até 24h na mesma invocação até aproximar o checkpoint do horário atual |
 | `INCREMENTAL_EXPORT_VIEW_TYPE` | `NEW_IMAGE` | Define o tipo de imagem no export incremental (`NEW_IMAGE` ou `NEW_AND_OLD_IMAGES`) |
 | `LOG_LEVEL` | `INFO` | Nível de log |
 | `OUTPUT_CLOUDWATCH_ENABLED` | `false` | Quando `true`, publica o payload final da execução nos logs estruturados da própria Lambda |
@@ -55,7 +54,6 @@ Observações:
 - O bucket efetivo do export é derivado por tabela: a Lambda concatena `-<table_region>` ao final de `SNAPSHOT_BUCKET`. Exemplo: `dander` + `sa-east-1` => `dander-sa-east-1`.
 - `bucket_owner` segue a mesma regra: primeiro `S3_BUCKET_OWNER` no ambiente, depois o payload da Lambda.
 - `s3_prefix`, `checkpoint_dynamodb_table_arn`, `output_cloudwatch_enabled`, `output_dynamodb_enabled`, `output_dynamodb_table` e `output_dynamodb_region` também podem ser enviados no payload da Lambda, mas só são usados quando a env correspondente não existir.
-- `catch_up` também pode ser enviado no payload da Lambda. Quando `CATCH_UP=true`, a Lambda força espera por conclusão de cada chunk incremental antes de iniciar o próximo.
 - Para persistir os dados da execução em DynamoDB, configure no mínimo `OUTPUT_DYNAMODB_ENABLED=true` e `OUTPUT_DYNAMODB_TABLE=<nome-da-tabela>`.
 - A Lambda salva o estado do checkpoint por tabela em DynamoDB, usando chave composta com `PK=TableName` e `SK=RecordType`. O valor de `TableName` é o `TableArn` para evitar colisão entre tabelas homônimas de contas/regiões diferentes, e `TargetTableName` mantém o nome legível da tabela. Se a tabela não existir, a Lambda cria automaticamente com `BillingMode=PAY_PER_REQUEST`.
 - A Lambda também registra `TableCreatedAt` no checkpoint para detectar recriação de tabela; se o timestamp atual divergir do checkpoint, o estado antigo é invalidado e o bootstrap `FULL_EXPORT` é reexecutado.
@@ -155,8 +153,6 @@ Regras da janela incremental nativa:
 
 - a Lambda só dispara export nativo quando a janela entre `checkpoint_from` e `run_time` tiver pelo menos `15 minutos`
 - quando o atraso acumulado ultrapassa `24 horas`, a Lambda corta a janela no limite de `24 horas` e avança em fatias por execução até alcançar o horário atual
-- quando `CATCH_UP=true`, a Lambda consome automaticamente múltiplas fatias de até `24 horas` na mesma invocação até reduzir o atraso acumulado, aguardando a conclusão de cada chunk antes de iniciar o próximo
-
 Se o incremental nativo não puder ser usado e `SCAN_FALLBACK_ENABLED=true`, a Lambda pode cair no fallback por `Scan`.
 
 ## Layout no S3

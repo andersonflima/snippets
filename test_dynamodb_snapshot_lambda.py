@@ -509,33 +509,6 @@ class SnapshotOutputTests(unittest.TestCase):
 
         self.assertTrue(config["output_cloudwatch_enabled"])
 
-    def test_build_snapshot_config_reads_catch_up_from_env(self) -> None:
-        with patch.dict(
-            "os.environ",
-            {
-                "SNAPSHOT_BUCKET": "snapshot-bucket",
-                "TARGET_TABLES": "orders",
-                "CATCH_UP": "true",
-            },
-            clear=True,
-        ):
-            config = snapshot_lambda.build_snapshot_config({})
-
-        self.assertTrue(config["catch_up"])
-
-    def test_build_snapshot_config_uses_catch_up_from_event_when_env_is_absent(self) -> None:
-        with patch.dict(
-            "os.environ",
-            {
-                "SNAPSHOT_BUCKET": "snapshot-bucket",
-                "TARGET_TABLES": "orders",
-            },
-            clear=True,
-        ):
-            config = snapshot_lambda.build_snapshot_config({"catch_up": True})
-
-        self.assertTrue(config["catch_up"])
-
     def test_build_snapshot_config_reads_output_dynamodb_from_env(self) -> None:
         with patch.dict(
             "os.environ",
@@ -2694,96 +2667,6 @@ class SnapshotPointInTimeRecoveryTests(unittest.TestCase):
         )
         self.assertEqual(result["status"], "STARTED")
         self.assertEqual(result["checkpoint_to"], "2026-03-10T00:00:00Z")
-
-    def test_snapshot_table_catch_up_executes_multiple_incremental_chunks(self) -> None:
-        captured_calls: list[dict[str, Any]] = []
-
-        def fake_start_incremental_export(
-            manager: dict,
-            table_name: str,
-            table_arn: str,
-            export_from: datetime,
-            export_to: datetime,
-            **kwargs: Any,
-        ) -> dict:
-            captured_calls.append(
-                {
-                    "wait_for_completion": manager["config"]["wait_for_completion"],
-                    "export_from": export_from,
-                    "export_to": export_to,
-                }
-            )
-            return {
-                "table_name": table_name,
-                "table_arn": table_arn,
-                "mode": "INCREMENTAL",
-                "status": "COMPLETED",
-                "source": "native",
-                "checkpoint_from": kwargs["incremental_reference"]["checkpoint_from"],
-                "checkpoint_source": kwargs["incremental_reference"]["checkpoint_source"],
-                "checkpoint_to": snapshot_lambda._dt_to_iso(export_to),
-            }
-
-        manager = {
-            "config": {
-                "mode": "incremental",
-                "dry_run": False,
-                "run_time": datetime(2026, 3, 12, 12, tzinfo=timezone.utc),
-                "wait_for_completion": False,
-                "catch_up": True,
-            }
-        }
-
-        with patch.object(
-            snapshot_lambda,
-            "snapshot_manager_validate_export_session_account",
-            lambda *args, **kwargs: None,
-        ), patch.object(
-            snapshot_lambda,
-            "snapshot_manager_start_incremental_export",
-            fake_start_incremental_export,
-        ):
-            result = snapshot_lambda.snapshot_manager_snapshot_table(
-                manager,
-                {"table_name": "orders", "table_arn": TABLE_ARN},
-                {"last_to": "2026-03-09T00:00:00Z"},
-                execution_context={
-                    "ddb": object(),
-                    "s3": object(),
-                    "session_mode": "shared_session_by_table_region",
-                    "assume_role_arn": None,
-                    "table_account_id": "111111111111",
-                    "table_region": "us-east-1",
-                },
-            )
-
-        self.assertEqual(len(captured_calls), 4)
-        self.assertTrue(all(call["wait_for_completion"] for call in captured_calls))
-        self.assertEqual(
-            [snapshot_lambda._dt_to_iso(call["export_from"]) for call in captured_calls],
-            [
-                "2026-03-09T00:00:00Z",
-                "2026-03-10T00:00:00Z",
-                "2026-03-11T00:00:00Z",
-                "2026-03-12T00:00:00Z",
-            ],
-        )
-        self.assertEqual(
-            [snapshot_lambda._dt_to_iso(call["export_to"]) for call in captured_calls],
-            [
-                "2026-03-10T00:00:00Z",
-                "2026-03-11T00:00:00Z",
-                "2026-03-12T00:00:00Z",
-                "2026-03-12T12:00:00Z",
-            ],
-        )
-        self.assertEqual(result["status"], "COMPLETED")
-        self.assertEqual(result["catch_up_chunks_executed"], 4)
-        self.assertTrue(result["catch_up_forced_wait_for_completion"])
-        self.assertEqual(result["catch_up_requested_to"], "2026-03-12T12:00:00Z")
-        self.assertEqual(result["checkpoint_to"], "2026-03-12T12:00:00Z")
-        self.assertEqual(result["checkpoint_state"]["last_to"], "2026-03-12T12:00:00Z")
-        self.assertEqual(len(result["catch_up_runs"]), 4)
 
     def test_snapshot_table_skips_incremental_window_shorter_than_15_minutes(self) -> None:
         manager = {

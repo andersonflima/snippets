@@ -197,6 +197,21 @@ class SnapshotAutomaticModeTests(unittest.TestCase):
 
         self.assertEqual(config["mode"], "automatic")
 
+    def test_build_snapshot_config_does_not_expose_catch_up(self) -> None:
+        with patch.dict(
+            "os.environ",
+            {
+                "SNAPSHOT_BUCKET": "snapshot-bucket",
+                "TARGET_TABLES": "orders",
+                "CHECKPOINT_DYNAMODB_TABLE_ARN": "arn:aws:dynamodb:us-east-1:111111111111:table/checkpoints",
+                "CATCH_UP": "true",
+            },
+            clear=True,
+        ):
+            config = snapshot_lambda.build_snapshot_config({"catch_up": True})
+
+        self.assertNotIn("catch_up", config)
+
     def test_reconcile_pending_exports_persists_item_count_from_completed_export(self) -> None:
         reconciled = snapshot_lambda._reconcile_pending_exports(
             ddb_client=FakeDescribeExportClient(item_count_by_arn={f"{TABLE_ARN}/export/001": 7}),

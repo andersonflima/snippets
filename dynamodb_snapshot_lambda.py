@@ -2782,15 +2782,6 @@ def build_snapshot_config(event: Optional[Dict[str, Any]]) -> Dict[str, Any]:
         False,
     )
 
-    event_catch_up = (
-        payload.get("catch_up")
-        if payload.get("catch_up") is not None
-        else payload.get("catch-up")
-        if payload.get("catch-up") is not None
-        else payload.get("catchUp")
-    )
-    catch_up = _resolve_env_first_bool(event_catch_up, "CATCH_UP", False)
-
     dry_run = _resolve_env_first_bool(
         _resolve_optional_text(payload.get("dry_run"), payload.get("dryRun")),
         "DRY_RUN",
@@ -2899,7 +2890,6 @@ def build_snapshot_config(event: Optional[Dict[str, Any]]) -> Dict[str, Any]:
         "s3_prefix": s3_prefix,
         "wait_for_completion": wait_for_completion,
         "snapshot_bucket_exact": snapshot_bucket_exact,
-        "catch_up": catch_up,
         "dry_run": dry_run,
         "scan_fallback_enabled": scan_fallback_enabled,
         "incremental_export_view_type": incremental_export_view_type,
