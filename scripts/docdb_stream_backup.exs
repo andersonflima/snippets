@@ -21,6 +21,8 @@ defmodule DocdbStreamBackup do
   Observação:
     O upload acontece por stream em memória, sem gerar arquivo local no EC2.
     Perfil padrão otimizado para throughput: compressão nível 1 e expected-size de 10 GiB.
+    A string de conexão principal é o primeiro argumento posicional.
+    Não passe --uri novamente em --mongodump-arg.
   """
 
   def main(argv) do
@@ -331,8 +333,31 @@ defmodule DocdbStreamBackup do
       |> Enum.map(&String.trim/1)
       |> Enum.reject(&(&1 == ""))
 
-    translated_args = parse_mongodump_option_compatibility(extra_args)
-    {:ok, translated_args}
+    with {:ok, _} <- validate_mongodump_connection_args(extra_args) do
+      translated_args = parse_mongodump_option_compatibility(extra_args)
+      {:ok, translated_args}
+    end
+  end
+
+  defp validate_mongodump_connection_args(extra_args) do
+    case Enum.find(extra_args, &contains_connection_string?/1) do
+      nil -> {:ok, :ok}
+      invalid_arg -> {:error, "não use string de conexão em --mongodump-arg: #{inspect(invalid_arg)}\nA URI já é passada como primeiro argumento do script e enviada via --uri"}
+    end
+  end
+
+  defp contains_connection_string?(arg) do
+    normalized = String.trim(arg)
+
+    cond do
+      String.starts_with?(normalized, "--uri") -> true
+      connection_like?(normalized) -> true
+      true -> false
+    end
+  end
+
+  defp connection_like?(value) do
+    String.match?(value, ~r/^[a-zA-Z][a-zA-Z0-9+.-]*:\/\//)
   end
 
   defp default_num_parallel_collections do

@@ -11,6 +11,7 @@ import (
 	"strconv"
 	"strings"
 	"time"
+	"unicode"
 )
 
 const (
@@ -33,6 +34,8 @@ Exemplos:
 Observação:
   O upload acontece por stream em memória, sem gerar arquivo local no EC2.
   Perfil padrão otimizado para throughput: compressão nível 1 e expected-size de 10 GiB.
+  A conexão principal é o primeiro argumento posicional.
+  Não passe --uri novamente em --mongodump-arg.
 `
 
 type backupArgs struct {
@@ -179,6 +182,10 @@ func parseArgs(argv []string) (backupArgs, error) {
 	}
 
 	extraMongodumpArgs := translateLegacyTLSArgs(parsed.extraMongodumpArgs)
+	extraMongodumpArgs, err = validateMongodumpConnectionArgs(extraMongodumpArgs)
+	if err != nil {
+		return backupArgs{}, argsParseError{msg: err.Error()}
+	}
 
 	return backupArgs{
 		docdbURI:           docdbURI,
@@ -375,6 +382,50 @@ func splitArgWithValue(arg string) (string, string, bool) {
 		return arg, "", false
 	}
 	return parts[0], parts[1], true
+}
+
+func validateMongodumpConnectionArgs(args []string) ([]string, error) {
+	for _, arg := range args {
+		if isUriConnectionArg(arg) {
+			return nil, fmt.Errorf(
+				"não use string de conexão em --mongodump-arg: %s\nA URI já é passada como primeiro argumento do script e enviada via --uri",
+				arg,
+			)
+		}
+	}
+	return args, nil
+}
+
+func isUriConnectionArg(value string) bool {
+	normalized := strings.TrimSpace(value)
+	return strings.HasPrefix(normalized, "--uri") || connectionStringLike(normalized)
+}
+
+func connectionStringLike(value string) bool {
+	schemeSeparator := strings.Index(value, "://")
+	if schemeSeparator < 1 {
+		return false
+	}
+
+	scheme := value[:schemeSeparator]
+	if scheme == "" {
+		return false
+	}
+
+	for i, char := range scheme {
+		switch {
+		case i == 0:
+			if !unicode.IsLetter(char) {
+				return false
+			}
+		case unicode.IsLetter(char) || unicode.IsDigit(char) || char == '+' || char == '-' || char == '.':
+			continue
+		default:
+			return false
+		}
+	}
+
+	return true
 }
 
 func normalizeNonEmpty(value, label string) (string, error) {
