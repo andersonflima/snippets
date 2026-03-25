@@ -75,16 +75,25 @@ export PATH="${INSTALL_DIR}:\$PATH"
 vim.env.CURL_WRAPPER_REAL_CURL = "${REAL_CURL_BIN}"
 vim.env.PATH = "${INSTALL_DIR}:" .. vim.env.PATH
 vim.env.CURL_WRAPPER_RELEASE_FALLBACK_REPOS = "elixir-lsp/elixir-ls,luals/lua-language-server,omnisharp/omnisharp-roslyn"
+vim.env.CURL_WRAPPER_ENABLE_MASON_SMART_RELEASES = "1"
 
 3) Pré-requisitos de fallback:
 - opcional: gh CLI autenticado para assets de release do GitHub (`gh auth status`)
 - para Mason em ambiente corporativo, releases de `elixir-ls`, `lua-language-server` e `omnisharp`
-- são tratadas por padrão como restritas e o wrapper pula o curl direto, usando `gh release`
+- são tratadas por padrão como restritas
+- o wrapper tenta primeiro gerar o artefato localmente por estratégia compatível:
+- `omnisharp` e `lua-language-server`: baixa `.tar.gz` equivalente e reempacota em `.zip`
+- `elixir-ls`: baixa source tarball do tag, faz build local com `mix elixir_ls.release` e gera `.zip`
+- se a estratégia inteligente falhar, o wrapper ainda tenta `gh release`
 - para sobrescrever a lista:
 - export CURL_WRAPPER_RELEASE_FALLBACK_REPOS="elixir-lsp/elixir-ls,luals/lua-language-server,omnisharp/omnisharp-roslyn"
+- para desabilitar a estratégia inteligente:
+- export CURL_WRAPPER_ENABLE_MASON_SMART_RELEASES=0
 - para reabilitar fallback direto de release explicitamente:
 - export CURL_WRAPPER_ALLOW_DIRECT_RELEASE_FALLBACK=1
 - python3 (usa requests quando disponível; sem requests cai para urllib nativo)
+- `tar` é necessário para estratégias com `.tar.gz`
+- `elixir` e `mix` são necessários quando o Mason precisar montar `elixir-ls` localmente
 - padrão do wrapper bloqueia download de .zip; libere se precisar:
 - export CURL_WRAPPER_ALLOW_ZIP_DOWNLOAD=1
 - para contornar falhas de certificado em ambientes fechados:
