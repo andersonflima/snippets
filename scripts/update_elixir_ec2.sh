@@ -110,14 +110,22 @@ execute_fix() {
 
 validate_final_state() {
   local require_file2_status
+  local detected_elixir_bin
+  local detected_elixir_dir
   require_file2_status="unknown"
 
-  export PATH="${INSTALL_DIR}/bin:${PATH}"
+  detected_elixir_bin="$(command -v elixir || true)"
+  detected_elixir_dir="${INSTALL_DIR}/bin"
+  if [[ -n "${detected_elixir_bin}" ]]; then
+    detected_elixir_dir="$(dirname "${detected_elixir_bin}")"
+  fi
+
+  export PATH="${detected_elixir_dir}:${INSTALL_DIR}/bin:${PATH}"
 
   if [[ -f /etc/profile.d/elixir.sh ]]; then
     # shellcheck disable=SC1091
     source /etc/profile.d/elixir.sh || true
-    export PATH="${INSTALL_DIR}/bin:${PATH}"
+    export PATH="${detected_elixir_dir}:${INSTALL_DIR}/bin:${PATH}"
   fi
 
   hash -r

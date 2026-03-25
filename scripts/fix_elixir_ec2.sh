@@ -7,6 +7,7 @@ PROFILE_FILE="/etc/profile.d/elixir.sh"
 FORCE_REMOVE_PACKAGE="0"
 ELIXIR_REF_EXPLICIT="0"
 ELIXIR_DEFAULT_FALLBACK_REF="v1.17.3"
+ELIXIR_BIN_DIR="${INSTALL_DIR}/bin"
 
 log() {
   printf '[fix-elixir-ec2] %s\n' "$*" >&2
@@ -24,7 +25,8 @@ Uso:
 
 Objetivo:
   Corrigir ambiente EC2 com Elixir antigo (ex: /usr/bin/elixir 0.12.5),
-  instalando por padrão a versão mais recente compatível do Elixir via builds.hex.pm e priorizando no PATH.
+  instalando por padrão a versão mais recente compatível do Elixir via builds.hex.pm
+  (com fallback para package manager) e priorizando no PATH.
 
 Opções:
   --elixir-ref             Versão/tag do Elixir. Padrão: latest (mais recente compatível)
@@ -287,6 +289,45 @@ install_or_upgrade_erlang() {
   esac
 }
 
+install_elixir_from_package_manager() {
+  local distro
+  distro="$(detect_distro)"
+
+  case "${distro}" in
+    amzn)
+      if command_exists dnf; then
+        run_with_sudo dnf makecache -y || true
+        run_with_sudo dnf install -y elixir || die "falha ao instalar elixir com dnf"
+      elif command_exists yum; then
+        run_with_sudo yum makecache -y || true
+        if ! run_with_sudo yum install -y elixir; then
+          if command_exists amazon-linux-extras; then
+            run_with_sudo amazon-linux-extras install -y elixir || true
+            run_with_sudo yum install -y elixir || die "falha ao instalar elixir com yum"
+          else
+            die "falha ao instalar elixir com yum"
+          fi
+        fi
+      else
+        die "dnf/yum não encontrado para instalar elixir"
+      fi
+      ;;
+    ubuntu|debian)
+      run_with_sudo apt-get update
+      run_with_sudo apt-get install -y elixir || die "falha ao instalar elixir com apt"
+      ;;
+    *)
+      die "distribuição não suportada para instalar elixir via package manager: ${distro}"
+      ;;
+  esac
+
+  local detected_elixir_bin
+  detected_elixir_bin="$(command -v elixir || true)"
+  [[ -n "${detected_elixir_bin}" ]] || die "elixir não encontrado após instalação via package manager"
+  ELIXIR_BIN_DIR="$(dirname "${detected_elixir_bin}")"
+  ELIXIR_REF="package-manager"
+}
+
 resolve_latest_elixir_ref_remote() {
   local latest_ref
   latest_ref="$(
@@ -438,7 +479,8 @@ download_elixir_archive() {
     done
   done
 
-  die "falha ao baixar Elixir. Candidatos tentados: ${candidate_refs[*]}"
+  log "falha ao baixar Elixir via builds. Candidatos tentados: ${candidate_refs[*]}"
+  return 1
 }
 
 install_elixir_archive() {
@@ -452,21 +494,21 @@ install_elixir_archive() {
 
 configure_path() {
   local profile_content
-  profile_content="export PATH=${INSTALL_DIR}/bin:\$PATH"
+  profile_content="export PATH=${ELIXIR_BIN_DIR}:\$PATH"
   printf '%s\n' "${profile_content}" | run_with_sudo tee "${PROFILE_FILE}" >/dev/null
   run_with_sudo chmod 0644 "${PROFILE_FILE}"
 
-  run_with_sudo ln -sf "${INSTALL_DIR}/bin/elixir" /usr/local/bin/elixir
-  run_with_sudo ln -sf "${INSTALL_DIR}/bin/mix" /usr/local/bin/mix
-  run_with_sudo ln -sf "${INSTALL_DIR}/bin/iex" /usr/local/bin/iex
+  [[ -x "${ELIXIR_BIN_DIR}/elixir" ]] && run_with_sudo ln -sf "${ELIXIR_BIN_DIR}/elixir" /usr/local/bin/elixir || true
+  [[ -x "${ELIXIR_BIN_DIR}/mix" ]] && run_with_sudo ln -sf "${ELIXIR_BIN_DIR}/mix" /usr/local/bin/mix || true
+  [[ -x "${ELIXIR_BIN_DIR}/iex" ]] && run_with_sudo ln -sf "${ELIXIR_BIN_DIR}/iex" /usr/local/bin/iex || true
 }
 
 validate_installation() {
   local elixir_bin mix_bin
-  elixir_bin="${INSTALL_DIR}/bin/elixir"
-  mix_bin="${INSTALL_DIR}/bin/mix"
+  elixir_bin="${ELIXIR_BIN_DIR}/elixir"
+  mix_bin="${ELIXIR_BIN_DIR}/mix"
 
-  export PATH="${INSTALL_DIR}/bin:${PATH}"
+  export PATH="${ELIXIR_BIN_DIR}:${PATH}"
   hash -r
 
   [[ -x "${elixir_bin}" ]] || die "elixir não encontrado em ${elixir_bin}"
@@ -532,21 +574,32 @@ main() {
   log "candidatos de Elixir: ${elixir_ref_candidates[*]}"
 
   local workdir archive_path
+  local used_package_manager_fallback
+  used_package_manager_fallback="0"
   workdir="$(mktemp -d -t fix-elixir-XXXXXX)"
   trap 'rm -rf "${workdir}"' EXIT
 
   log "etapa: download_elixir_archive"
-  archive_path="$(download_elixir_archive "${otp_release}" "${workdir}" "${elixir_ref_candidates[@]}")"
-  log "Elixir selecionado para instalação: ${ELIXIR_REF}"
-  log "arquivo de instalação: ${archive_path}"
-  log "etapa: install_elixir_archive"
-  install_elixir_archive "${archive_path}"
+  if archive_path="$(download_elixir_archive "${otp_release}" "${workdir}" "${elixir_ref_candidates[@]}")"; then
+    ELIXIR_BIN_DIR="${INSTALL_DIR}/bin"
+    log "Elixir selecionado para instalação: ${ELIXIR_REF}"
+    log "arquivo de instalação: ${archive_path}"
+    log "etapa: install_elixir_archive"
+    install_elixir_archive "${archive_path}"
+  else
+    used_package_manager_fallback="1"
+    log "etapa: install_elixir_from_package_manager"
+    install_elixir_from_package_manager
+    log "fallback package manager aplicado"
+  fi
+
+  log "elixir bin dir: ${ELIXIR_BIN_DIR}"
   log "etapa: configure_path"
   configure_path
   log "etapa: validate_installation"
   validate_installation
 
-  export PATH="${INSTALL_DIR}/bin:${PATH}"
+  export PATH="${ELIXIR_BIN_DIR}:${PATH}"
 
   local after_state after_path after_version after_require_file2
   log "etapa: read_current_state (depois)"
@@ -558,6 +611,7 @@ main() {
 
   log "antes: elixir_path=${before_path} version='${before_version}' Code.require_file/2=${before_require_file2}"
   log "depois: elixir_path=${after_path} version='${after_version}' Code.require_file/2=${after_require_file2}"
+  log "modo instalação: $([[ \"${used_package_manager_fallback}\" == \"1\" ]] && echo package-manager || echo hex-build)"
   log "correção concluída"
   log "para novos shells: source ${PROFILE_FILE}"
 }
