@@ -546,7 +546,10 @@ func runPipeline(args backupArgs, destination string) (backupMetrics, error) {
 	defer stopProgressSpinner(stopSpinner, doneSpinner)
 
 	mongodumpArgs := make([]string, 0, len(args.extraMongodumpArgs)+3)
-	mongodumpArgs = append(mongodumpArgs, "--uri", args.docdbURI, "--archive", "--numParallelCollections", strconv.Itoa(args.numParallel))
+	mongodumpArgs = append(mongodumpArgs, "--uri", args.docdbURI, "--archive")
+	if supportsNumParallelCollections() {
+		mongodumpArgs = append(mongodumpArgs, "--numParallelCollections", strconv.Itoa(args.numParallel))
+	}
 	mongodumpArgs = append(mongodumpArgs, args.extraMongodumpArgs...)
 
 	pigzArgs := []string{"-c", fmt.Sprintf("-%d", args.compressionLevel), "-p", strconv.Itoa(args.pigzThreads)}
@@ -721,6 +724,14 @@ func runPipelineError(commandName string, commandErr error, buffers ...*bytes.Bu
 	}
 
 	return fmt.Errorf("%s: %w\n%s", commandName, commandErr, strings.Join(parts, "\n"))
+}
+
+func supportsNumParallelCollections() bool {
+	helpOutput, err := getMongodumpHelp()
+	if err != nil {
+		return true
+	}
+	return isFlagInHelp(helpOutput, "--numParallelCollections")
 }
 
 func startProgressSpinner() (chan struct{}, chan struct{}) {

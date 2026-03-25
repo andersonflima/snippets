@@ -432,10 +432,9 @@ Observação:
         "mongodump",
         "--uri",
         shell_escape(args.uri),
-        "--archive",
-        "--numParallelCollections",
-        Integer.to_string(args.num_parallel_collections)
+        "--archive"
       ]
+      |> Enum.concat(num_parallel_collections_flag(args.num_parallel_collections))
       |> Kernel.++(Enum.map(args.extra_mongodump_args, &shell_escape/1))
       |> Enum.join(" ")
 
@@ -551,6 +550,20 @@ exit \"$pipeline_exit\"
           end
       end
     end)
+  end
+
+  defp num_parallel_collections_flag(num_parallel_collections) do
+    case fetch_mongodump_help() do
+      {:ok, help_text} ->
+        if flag_supported?(help_text, "--numParallelCollections") do
+          ["--numParallelCollections", Integer.to_string(num_parallel_collections)]
+        else
+          []
+        end
+
+      _ ->
+        ["--numParallelCollections", Integer.to_string(num_parallel_collections)]
+    end
   end
 
   defp remove_pipeline_status_line(output, marker) do
