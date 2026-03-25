@@ -377,7 +377,7 @@ build_elixir_ref_candidates() {
 }
 
 download_elixir_archive() {
-  local otp_release workdir archive_path otp_url generic_url candidate_ref
+  local otp_release workdir archive_path candidate_ref
   otp_release="$1"
   workdir="$2"
   shift 2
@@ -387,25 +387,55 @@ download_elixir_archive() {
 
   archive_path="${workdir}/elixir.zip"
 
+  local -a base_urls=(
+    "https://repo.hex.pm/builds/elixir"
+    "https://builds.hex.pm/builds/elixir"
+  )
+
+  local -a ref_variants=()
+  local base_url ref_variant otp_url generic_url normalized_ref
+
   for candidate_ref in "${candidate_refs[@]}"; do
-    otp_url="https://builds.hex.pm/builds/elixir/${candidate_ref}-otp-${otp_release}.zip"
-    generic_url="https://builds.hex.pm/builds/elixir/${candidate_ref}.zip"
+    ref_variants=()
+    normalized_ref="${candidate_ref#v}"
 
-    if [[ -n "${otp_release}" ]]; then
-      log "tentando baixar build OTP específica: ${otp_url}"
-      if curl -fL --retry 3 --retry-delay 2 --connect-timeout 20 "${otp_url}" -o "${archive_path}"; then
-        ELIXIR_REF="${candidate_ref}"
-        printf '%s\n' "${archive_path}"
-        return
-      fi
+    if [[ -n "${candidate_ref}" ]]; then
+      ref_variants+=("${candidate_ref}")
+    fi
+    if [[ -n "${normalized_ref}" ]]; then
+      ref_variants+=("v${normalized_ref}" "${normalized_ref}")
     fi
 
-    log "fallback para build genérica: ${generic_url}"
-    if curl -fL --retry 3 --retry-delay 2 --connect-timeout 20 "${generic_url}" -o "${archive_path}"; then
-      ELIXIR_REF="${candidate_ref}"
-      printf '%s\n' "${archive_path}"
-      return
-    fi
+    local -a unique_ref_variants=()
+    for ref_variant in "${ref_variants[@]}"; do
+      case " ${unique_ref_variants[*]} " in
+        *" ${ref_variant} "*) ;;
+        *) unique_ref_variants+=("${ref_variant}") ;;
+      esac
+    done
+
+    for base_url in "${base_urls[@]}"; do
+      for ref_variant in "${unique_ref_variants[@]}"; do
+        otp_url="${base_url}/${ref_variant}-otp-${otp_release}.zip"
+        generic_url="${base_url}/${ref_variant}.zip"
+
+        if [[ -n "${otp_release}" ]]; then
+          log "tentando baixar build OTP específica: ${otp_url}"
+          if curl -fL --retry 3 --retry-delay 2 --connect-timeout 20 "${otp_url}" -o "${archive_path}"; then
+            ELIXIR_REF="${ref_variant}"
+            printf '%s\n' "${archive_path}"
+            return
+          fi
+        fi
+
+        log "fallback para build genérica: ${generic_url}"
+        if curl -fL --retry 3 --retry-delay 2 --connect-timeout 20 "${generic_url}" -o "${archive_path}"; then
+          ELIXIR_REF="${ref_variant}"
+          printf '%s\n' "${archive_path}"
+          return
+        fi
+      done
+    done
   done
 
   die "falha ao baixar Elixir. Candidatos tentados: ${candidate_refs[*]}"
