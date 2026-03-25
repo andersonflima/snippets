@@ -342,22 +342,24 @@ defmodule DocdbStreamBackup do
   defp validate_mongodump_connection_args(extra_args) do
     case Enum.find(extra_args, &contains_connection_string?/1) do
       nil -> {:ok, :ok}
-      invalid_arg -> {:error, "não use string de conexão em --mongodump-arg: #{inspect(invalid_arg)}\nA URI já é passada como primeiro argumento do script e enviada via --uri"}
+      invalid_arg ->
+        {:error,
+         "não use --uri ou string de conexão em --mongodump-arg: #{inspect(invalid_arg)}\nA URI já é passada como primeiro argumento do script e enviada via --uri"}
     end
   end
 
   defp contains_connection_string?(arg) do
     normalized = String.trim(arg)
 
-    cond do
-      String.starts_with?(normalized, "--uri") -> true
-      connection_like?(normalized) -> true
-      true -> false
-    end
+    is_uri_flag?(normalized) || contains_mongodb_scheme?(normalized)
   end
 
-  defp connection_like?(value) do
-    String.match?(value, ~r/^[a-zA-Z][a-zA-Z0-9+.-]*:\/\//)
+  defp is_uri_flag?(normalized) do
+    normalized == "--uri" || String.starts_with?(normalized, "--uri=")
+  end
+
+  defp contains_mongodb_scheme?(normalized) do
+    String.starts_with?(normalized, "mongodb://") || String.starts_with?(normalized, "mongodb+srv://")
   end
 
   defp default_num_parallel_collections do

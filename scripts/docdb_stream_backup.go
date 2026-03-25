@@ -11,7 +11,6 @@ import (
 	"strconv"
 	"strings"
 	"time"
-	"unicode"
 )
 
 const (
@@ -398,34 +397,10 @@ func validateMongodumpConnectionArgs(args []string) ([]string, error) {
 
 func isUriConnectionArg(value string) bool {
 	normalized := strings.TrimSpace(value)
-	return strings.HasPrefix(normalized, "--uri") || connectionStringLike(normalized)
-}
-
-func connectionStringLike(value string) bool {
-	schemeSeparator := strings.Index(value, "://")
-	if schemeSeparator < 1 {
-		return false
-	}
-
-	scheme := value[:schemeSeparator]
-	if scheme == "" {
-		return false
-	}
-
-	for i, char := range scheme {
-		switch {
-		case i == 0:
-			if !unicode.IsLetter(char) {
-				return false
-			}
-		case unicode.IsLetter(char) || unicode.IsDigit(char) || char == '+' || char == '-' || char == '.':
-			continue
-		default:
-			return false
-		}
-	}
-
-	return true
+	return normalized == "--uri" ||
+		strings.HasPrefix(normalized, "--uri=") ||
+		strings.HasPrefix(normalized, "mongodb://") ||
+		strings.HasPrefix(normalized, "mongodb+srv://")
 }
 
 func normalizeNonEmpty(value, label string) (string, error) {
