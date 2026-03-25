@@ -1,11 +1,12 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-ELIXIR_REF="v1.17.3"
+ELIXIR_REF="latest"
 INSTALL_DIR="/opt/elixir"
 PROFILE_FILE="/etc/profile.d/elixir.sh"
 FORCE_REMOVE_PACKAGE="0"
 ELIXIR_REF_EXPLICIT="0"
+ELIXIR_DEFAULT_FALLBACK_REF="v1.17.3"
 
 log() {
   printf '[fix-elixir-ec2] %s\n' "$*" >&2
@@ -19,14 +20,14 @@ die() {
 usage() {
   cat <<USAGE
 Uso:
-  $(basename "$0") [--elixir-ref v1.17.3] [--install-dir /opt/elixir] [--force-remove-package]
+  $(basename "$0") [--elixir-ref latest|vX.Y.Z] [--install-dir /opt/elixir] [--force-remove-package]
 
 Objetivo:
   Corrigir ambiente EC2 com Elixir antigo (ex: /usr/bin/elixir 0.12.5),
-  instalando uma versão moderna do Elixir via builds.hex.pm e priorizando no PATH.
+  instalando por padrão a versão mais recente compatível do Elixir via builds.hex.pm e priorizando no PATH.
 
 Opções:
-  --elixir-ref             Versão/tag do Elixir. Default: seleção automática por OTP
+  --elixir-ref             Versão/tag do Elixir. Padrão: latest (mais recente compatível)
   --install-dir            Diretório de instalação. Padrão: ${INSTALL_DIR}
   --force-remove-package   Tenta remover pacote Elixir do sistema via rpm/dpkg local antes de instalar
   -h, --help               Exibe esta ajuda
@@ -286,14 +287,29 @@ install_or_upgrade_erlang() {
   esac
 }
 
-resolve_elixir_ref_for_otp() {
+resolve_latest_elixir_ref_remote() {
+  local latest_ref
+  latest_ref="$(
+    curl -fsSL \
+      -H 'Accept: application/vnd.github+json' \
+      -H 'User-Agent: fix-elixir-ec2-script' \
+      --retry 3 --retry-delay 2 --connect-timeout 20 \
+      'https://api.github.com/repos/elixir-lang/elixir/releases/latest' 2>/dev/null \
+      | sed -n 's/^[[:space:]]*"tag_name":[[:space:]]*"\([^"]\+\)".*$/\1/p' \
+      | head -n 1
+  )"
+
+  if [[ "${latest_ref}" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+    printf '%s\n' "${latest_ref}"
+    return 0
+  fi
+
+  return 1
+}
+
+resolve_otp_fallback_ref() {
   local otp_major
   otp_major="$1"
-
-  if [[ "${ELIXIR_REF_EXPLICIT}" == "1" ]]; then
-    printf '%s\n' "${ELIXIR_REF}"
-    return
-  fi
 
   if (( otp_major >= 26 )); then
     printf '%s\n' "v1.17.3"
@@ -312,28 +328,87 @@ resolve_elixir_ref_for_otp() {
     return
   fi
 
-  die "OTP ${otp_major} não suportado para instalação automática do Elixir"
+  printf '%s\n' "${ELIXIR_DEFAULT_FALLBACK_REF}"
 }
 
-download_elixir_archive() {
-  local otp_release workdir archive_path otp_url generic_url
-  otp_release="$1"
-  workdir="$2"
-  archive_path="${workdir}/elixir.zip"
-  otp_url="https://builds.hex.pm/builds/elixir/${ELIXIR_REF}-otp-${otp_release}.zip"
-  generic_url="https://builds.hex.pm/builds/elixir/${ELIXIR_REF}.zip"
+build_elixir_ref_candidates() {
+  local otp_major latest_ref otp_fallback_ref ref
+  otp_major="$1"
+  latest_ref=""
+  otp_fallback_ref=""
 
-  if [[ -n "${otp_release}" ]]; then
-    log "tentando baixar build OTP específica: ${otp_url}"
-    if curl -fL --retry 3 --retry-delay 2 --connect-timeout 20 "${otp_url}" -o "${archive_path}"; then
-      printf '%s\n' "${archive_path}"
-      return
+  local -a refs=()
+
+  if [[ "${ELIXIR_REF_EXPLICIT}" == "1" && "${ELIXIR_REF}" != "latest" ]]; then
+    ref="${ELIXIR_REF}"
+    if [[ -n "${ref}" ]]; then
+      case " ${refs[*]} " in
+        *" ${ref} "*) ;;
+        *) refs+=("${ref}") ;;
+      esac
+    fi
+  else
+    latest_ref="$(resolve_latest_elixir_ref_remote || true)"
+    ref="${latest_ref}"
+    if [[ -n "${ref}" ]]; then
+      case " ${refs[*]} " in
+        *" ${ref} "*) ;;
+        *) refs+=("${ref}") ;;
+      esac
+    fi
+    otp_fallback_ref="$(resolve_otp_fallback_ref "${otp_major}")"
+    ref="${otp_fallback_ref}"
+    if [[ -n "${ref}" ]]; then
+      case " ${refs[*]} " in
+        *" ${ref} "*) ;;
+        *) refs+=("${ref}") ;;
+      esac
+    fi
+    ref="${ELIXIR_DEFAULT_FALLBACK_REF}"
+    if [[ -n "${ref}" ]]; then
+      case " ${refs[*]} " in
+        *" ${ref} "*) ;;
+        *) refs+=("${ref}") ;;
+      esac
     fi
   fi
 
-  log "fallback para build genérica: ${generic_url}"
-  curl -fL --retry 3 --retry-delay 2 --connect-timeout 20 "${generic_url}" -o "${archive_path}" || die "falha ao baixar Elixir ${ELIXIR_REF}"
-  printf '%s\n' "${archive_path}"
+  printf '%s\n' "${refs[@]}"
+}
+
+download_elixir_archive() {
+  local otp_release workdir archive_path otp_url generic_url candidate_ref
+  otp_release="$1"
+  workdir="$2"
+  shift 2
+
+  local -a candidate_refs=("$@")
+  [[ ${#candidate_refs[@]} -gt 0 ]] || die "nenhuma versão candidata de Elixir foi informada"
+
+  archive_path="${workdir}/elixir.zip"
+
+  for candidate_ref in "${candidate_refs[@]}"; do
+    otp_url="https://builds.hex.pm/builds/elixir/${candidate_ref}-otp-${otp_release}.zip"
+    generic_url="https://builds.hex.pm/builds/elixir/${candidate_ref}.zip"
+
+    if [[ -n "${otp_release}" ]]; then
+      log "tentando baixar build OTP específica: ${otp_url}"
+      if curl -fL --retry 3 --retry-delay 2 --connect-timeout 20 "${otp_url}" -o "${archive_path}"; then
+        ELIXIR_REF="${candidate_ref}"
+        printf '%s\n' "${archive_path}"
+        return
+      fi
+    fi
+
+    log "fallback para build genérica: ${generic_url}"
+    if curl -fL --retry 3 --retry-delay 2 --connect-timeout 20 "${generic_url}" -o "${archive_path}"; then
+      ELIXIR_REF="${candidate_ref}"
+      printf '%s\n' "${archive_path}"
+      return
+    fi
+  done
+
+  die "falha ao baixar Elixir. Candidatos tentados: ${candidate_refs[*]}"
 }
 
 install_elixir_archive() {
@@ -419,16 +494,20 @@ main() {
   local otp_major
   otp_major="$(otp_to_integer "${otp_release}" || true)"
   [[ -n "${otp_major}" ]] || die "valor inválido de OTP detectado: ${otp_release}"
-  ELIXIR_REF="$(resolve_elixir_ref_for_otp "${otp_major}")"
   log "OTP detectado: ${otp_release} (major=${otp_major})"
-  log "Elixir selecionado: ${ELIXIR_REF}"
+
+  local -a elixir_ref_candidates
+  mapfile -t elixir_ref_candidates < <(build_elixir_ref_candidates "${otp_major}")
+  [[ ${#elixir_ref_candidates[@]} -gt 0 ]] || die "não foi possível resolver versões candidatas de Elixir"
+  log "candidatos de Elixir: ${elixir_ref_candidates[*]}"
 
   local workdir archive_path
   workdir="$(mktemp -d -t fix-elixir-XXXXXX)"
   trap 'rm -rf "${workdir}"' EXIT
 
   log "etapa: download_elixir_archive"
-  archive_path="$(download_elixir_archive "${otp_release}" "${workdir}")"
+  archive_path="$(download_elixir_archive "${otp_release}" "${workdir}" "${elixir_ref_candidates[@]}")"
+  log "Elixir selecionado para instalação: ${ELIXIR_REF}"
   log "arquivo de instalação: ${archive_path}"
   log "etapa: install_elixir_archive"
   install_elixir_archive "${archive_path}"

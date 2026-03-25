@@ -4,7 +4,7 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 FIX_SCRIPT_PATH="${SCRIPT_DIR}/fix_elixir_ec2.sh"
 
-ELIXIR_REF="${ELIXIR_REF:-v1.17.3}"
+ELIXIR_REF="${ELIXIR_REF:-latest}"
 INSTALL_DIR="${INSTALL_DIR:-/opt/elixir}"
 FORCE_REMOVE_PACKAGE="${FORCE_REMOVE_PACKAGE:-0}"
 LOG_FILE="${LOG_FILE:-/tmp/update_elixir_ec2.log}"
@@ -21,11 +21,11 @@ die() {
 usage() {
   cat <<USAGE
 Uso:
-  $(basename "$0") [--elixir-ref v1.17.3] [--install-dir /opt/elixir] [--force-remove-package] [--log-file /tmp/update_elixir_ec2.log]
+  $(basename "$0") [--elixir-ref latest|vX.Y.Z] [--install-dir /opt/elixir] [--force-remove-package] [--log-file /tmp/update_elixir_ec2.log]
 
 Objetivo:
   Executar a correção de runtime Elixir no EC2 com um comando único,
-  incluindo validação final de versão e suporte a Code.require_file/2.
+  instalando por padrão a versão mais recente compatível e validando o runtime final.
 USAGE
 }
 
