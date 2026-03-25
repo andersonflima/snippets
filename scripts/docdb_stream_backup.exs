@@ -1,30 +1,29 @@
 #!/usr/bin/env elixir
 
-
 defmodule DocdbStreamBackup do
   @default_prefix "docdb/"
   @default_expected_size_bytes 10 * 1024 * 1024 * 1024
   @default_target_duration_seconds 60
 
   @usage """
-    Uso:
-      elixir scripts/docdb_stream_backup.exs <docdb_uri> <bucket>
-      elixir scripts/docdb_stream_backup.exs <docdb_uri> <bucket> <prefix>
-      elixir scripts/docdb_stream_backup.exs <docdb_uri> <bucket> [--prefix docdb/prod] [--num-parallel-collections 16] [--pigz-threads 8] [--compression-level 1] [--expected-size-bytes 10737418240]
+  Uso:
+    elixir scripts/docdb_stream_backup.exs <docdb_uri> <bucket>
+    elixir scripts/docdb_stream_backup.exs <docdb_uri> <bucket> <prefix>
+    elixir scripts/docdb_stream_backup.exs <docdb_uri> <bucket> [--prefix docdb/prod] [--num-parallel-collections 16] [--pigz-threads 8] [--compression-level 1] [--expected-size-bytes 10737418240]
+    elixir scripts/docdb_stream_backup.exs <docdb_uri> <bucket> --mongodump-arg --tls --mongodump-arg --tlsCAFile=/path/ca.pem
+    elixir scripts/docdb_stream_backup.exs <docdb_uri> <bucket> --mongodump-arg='--tls' --mongodump-arg='--tlsCAFile=/path/ca.pem'
 
-    Exemplos:
-      elixir scripts/docdb_stream_backup.exs 'mongodb://user:pass@host:27017/?tls=true&replicaSet=rs0&readPreference=secondaryPreferred&retryWrites=false' meu-bucket
-      elixir scripts/docdb_stream_backup.exs 'mongodb://user:pass@host:27017/?tls=true&replicaSet=rs0' meu-bucket docdb/prod
-      elixir scripts/docdb_stream_backup.exs 'mongodb://user:pass@host:27017/?tls=true&replicaSet=rs0' meu-bucket --num-parallel-collections 16 --pigz-threads 8 --compression-level 1 --expected-size-bytes 10737418240
-      elixir scripts/docdb_stream_backup.exs 'mongodb://user:pass@host:27017/?tls=true&replicaSet=rs0' meu-bucket --mongodump-arg --tls --mongodump-arg --tlsCAFile=/path/ca.pem
-      elixir scripts/docdb_stream_backup.exs 'mongodb://user:pass@host:27017/?tls=true&replicaSet=rs0' meu-bucket --mongodump-arg='--tls' --mongodump-arg='--tlsCAFile=/path/ca.pem'
+  Exemplos:
+    elixir scripts/docdb_stream_backup.exs 'mongodb://user:pass@host:27017/?tls=true&replicaSet=rs0&readPreference=secondaryPreferred&retryWrites=false' meu-bucket
+    elixir scripts/docdb_stream_backup.exs 'mongodb://user:pass@host:27017/?tls=true&replicaSet=rs0' meu-bucket docdb/prod
+    elixir scripts/docdb_stream_backup.exs 'mongodb://user:pass@host:27017/?tls=true&replicaSet=rs0' meu-bucket --num-parallel-collections 16 --pigz-threads 8 --compression-level 1 --expected-size-bytes 10737418240
 
-    Observação:
-      O upload acontece por stream em memória, sem gerar arquivo local no EC2.
-      Perfil padrão otimizado para throughput: compressão nível 1 e expected-size de 10 GiB.
-      Meta de desempenho: 10 GiB em até 60 segundos.
-      A string de conexão principal é o primeiro argumento posicional.
-      Não passe --uri novamente em --mongodump-arg.
+  Observação:
+    O upload acontece por stream em memória, sem gerar arquivo local no EC2.
+    Perfil padrão otimizado para throughput: compressão nível 1 e expected-size de 10 GiB.
+    Meta de desempenho: 10 GiB em até 60 segundos.
+    A string de conexão principal é o primeiro argumento posicional.
+    Não passe --uri novamente em --mongodump-arg.
   """
 
   @legacy_tls_to_ssl %{
@@ -64,11 +63,13 @@ defmodule DocdbStreamBackup do
              :ok <- ensure_binary("mongodump"),
              :ok <- ensure_binary("pigz"),
              :ok <- ensure_binary("aws"),
-             {:ok, key} <- build_s3_key(args.prefix),
-             {:ok, metrics} <- run_pipeline(args, key) do
-          print_performance_report(metrics, args.expected_size_bytes)
+             capabilities <- inspect_mongodump_capabilities(),
+             {:ok, compatible_args} <- apply_mongodump_compatibility(args, capabilities),
+             {:ok, key} <- build_s3_key(compatible_args.prefix),
+             {:ok, metrics} <- run_pipeline(compatible_args, capabilities, key) do
+          print_performance_report(metrics, compatible_args.expected_size_bytes)
           IO.puts("backup concluído")
-          IO.puts("destino: s3://#{args.bucket}/#{key}")
+          IO.puts("destino: s3://#{compatible_args.bucket}/#{key}")
           :ok
         else
           {:error, message, metrics} ->
@@ -76,6 +77,7 @@ defmodule DocdbStreamBackup do
             IO.puts("erro: #{message}")
             IO.puts(@usage)
             System.halt(1)
+
           {:error, message} ->
             IO.puts("erro: #{message}")
             IO.puts(@usage)
@@ -119,14 +121,12 @@ defmodule DocdbStreamBackup do
         {:help, @usage}
 
       invalid_options != [] ->
-        invalid_message = invalid_options |> Enum.map_join(", ", &format_invalid_option/1)
-        {:error, "opções inválidas: #{invalid_message}"}
+        {:error, "opções inválidas: #{Enum.map_join(invalid_options, ", ", &format_invalid_option/1)}"}
 
       true ->
         with {:ok, positional} <- parse_positional_args(positional_args),
              {:ok, normalized_uri} <- normalize_non_empty(positional.uri, "docdb_uri"),
              {:ok, validated_uri} <- validate_docdb_uri(normalized_uri),
-             {:ok, compatible_uri} <- migrate_uri_tls_to_ssl_if_needed(validated_uri),
              {:ok, normalized_bucket} <- normalize_non_empty(positional.bucket, "bucket"),
              {:ok, normalized_prefix} <- resolve_prefix(positional.prefix, options[:prefix]),
              {:ok, num_parallel_collections} <-
@@ -142,7 +142,7 @@ defmodule DocdbStreamBackup do
              {:ok, extra_mongodump_args} <- resolve_mongodump_args(options) do
           {:ok,
            %{
-             uri: compatible_uri,
+             uri: validated_uri,
              bucket: normalized_bucket,
              prefix: normalized_prefix,
              num_parallel_collections: num_parallel_collections,
@@ -155,9 +155,7 @@ defmodule DocdbStreamBackup do
     end
   end
 
-  defp normalize_mongodump_arg_syntax(argv) do
-    normalize_mongodump_arg_syntax(argv, [])
-  end
+  defp normalize_mongodump_arg_syntax(argv), do: normalize_mongodump_arg_syntax(argv, [])
 
   defp normalize_mongodump_arg_syntax([], acc), do: {:ok, Enum.reverse(acc)}
 
@@ -174,150 +172,12 @@ defmodule DocdbStreamBackup do
   defp normalize_mongodump_arg_syntax([arg | tail], acc),
     do: normalize_mongodump_arg_syntax(tail, [arg | acc])
 
-  defp parse_mongodump_option_compatibility(args) do
-    with {:ok, help_text} <- fetch_mongodump_help() do
-      supports_tls? = flag_supported?(help_text, "--tls")
-      supports_ssl? = flag_supported?(help_text, "--ssl")
-      supports_quiet? = flag_supported?(help_text, "--quiet")
-
-      translated_args =
-        if supports_tls? or !supports_ssl? do
-          args
-        else
-          Enum.map(args, &translate_legacy_tls_to_ssl_arg/1)
-        end
-
-      if supports_quiet? do
-        append_quiet_arg(translated_args)
-      else
-        translated_args
-      end
-    else
-      _ -> args
-    end
-  end
-
-  defp append_quiet_arg(args) do
-    has_quiet_arg? =
-      args
-      |> Enum.any?(fn arg ->
-        normalized = String.trim(arg)
-        normalized == "--quiet" || String.starts_with?(normalized, "--quiet=")
-      end)
-
-    if has_quiet_arg? do
-      args
-    else
-      args ++ ["--quiet"]
-    end
-  end
-
-  defp fetch_mongodump_help do
-    try do
-      case System.cmd("mongodump", ["--help"], stderr_to_stdout: true) do
-        {text, 0} -> {:ok, text}
-        _ -> {:error, "não foi possível consultar --help do mongodump"}
-      end
-    rescue
-      _ ->
-        {:error, "não foi possível consultar --help do mongodump"}
-    end
-  end
-
-  defp migrate_uri_tls_to_ssl_if_needed(uri) do
-    with {:ok, help_text} <- fetch_mongodump_help() do
-      supports_tls? = flag_supported?(help_text, "--tls")
-      supports_ssl? = flag_supported?(help_text, "--ssl")
-
-      if supports_tls? || !supports_ssl? do
-        {:ok, uri}
-      else
-        {:ok, migrate_uri_tls_to_ssl(uri)}
-      end
-    else
-      _ ->
-        {:ok, uri}
-    end
-  end
-
-  defp migrate_uri_tls_to_ssl(uri) do
-    parsed_uri = URI.parse(uri)
-
-    if is_nil(parsed_uri.query) || parsed_uri.query == "" do
-      uri
-    else
-      original_query = URI.decode_query(parsed_uri.query)
-      migrated_query =
-        Enum.reduce(@legacy_tls_query_to_ssl, original_query, fn {legacy_key, modern_key}, query ->
-          case Map.pop(query, legacy_key) do
-            {nil, query} ->
-              query
-
-            {value, query} ->
-              case Map.fetch(query, modern_key) do
-                {:ok, _} -> query
-                :error -> Map.put(query, modern_key, value)
-              end
-          end
-        end)
-
-      if original_query == migrated_query do
-        uri
-      else
-        %{parsed_uri | query: URI.encode_query(migrated_query)} |> URI.to_string()
-      end
-    end
-  end
-
-  defp flag_supported?(text, flag) do
-    regex = ~r/(^|\s)#{Regex.escape(flag)}(\s|=|,)/
-    String.contains?(text, flag) && Regex.match?(regex, text)
-  end
-
-  defp translate_legacy_tls_to_ssl_arg(arg) do
-    {flag, value} = split_arg_with_value(arg)
-
-    case Map.get(@legacy_tls_to_ssl, flag) do
-      nil ->
-        arg
-
-      replacement ->
-        if value == "" do
-          replacement
-        else
-          "#{replacement}=#{value}"
-        end
-    end
-  end
-
-  defp split_arg_with_value(arg) do
-    case String.split(arg, "=", parts: 2) do
-      [flag, value] -> {flag, value}
-      [flag] -> {flag, ""}
-    end
-  end
-
-  defp parse_positional_args([uri, bucket]) do
-    {:ok, %{uri: uri, bucket: bucket, prefix: nil}}
-  end
-
-  defp parse_positional_args([uri, bucket, prefix]) do
-    {:ok, %{uri: uri, bucket: bucket, prefix: prefix}}
-  end
-
+  defp parse_positional_args([uri, bucket]), do: {:ok, %{uri: uri, bucket: bucket, prefix: nil}}
+  defp parse_positional_args([uri, bucket, prefix]), do: {:ok, %{uri: uri, bucket: bucket, prefix: prefix}}
   defp parse_positional_args(_), do: {:error, "argumentos inválidos"}
 
   defp format_invalid_option({option, nil}), do: to_string(option)
   defp format_invalid_option({option, value}), do: "#{option}=#{inspect(value)}"
-
-  defp resolve_prefix(positional_prefix, option_prefix)
-
-  defp resolve_prefix(nil, nil), do: {:ok, @default_prefix}
-  defp resolve_prefix(nil, prefix), do: normalize_prefix(prefix)
-  defp resolve_prefix(prefix, nil), do: normalize_prefix(prefix)
-
-  defp resolve_prefix(_positional_prefix, _option_prefix),
-    do: {:error, "use prefix posicional ou --prefix, não os dois"}
 
   defp normalize_non_empty(value, label) do
     value
@@ -337,54 +197,60 @@ defmodule DocdbStreamBackup do
         {:ok, trimmed_uri}
 
       String.starts_with?(trimmed_uri, "mongodb+srv://") ->
-        {:error, "documentdb requer mongodb://. A URI recebida usa mongodb+srv://, que não é suportada pelo mongodump: #{inspect(trimmed_uri)}"}
+        {:error, "documentdb requer mongodb://, mas a URI recebida usa mongodb+srv://: #{trimmed_uri}"}
 
       String.contains?(trimmed_uri, "://") ->
-        {:error, "documentdb URI com formato inválido. Esperado mongodb://..., recebido: #{inspect(String.slice(trimmed_uri, 0, 80))}"}
+        {:error, "documentdb URI com formato inválido; esperado mongodb://..., recebido: #{preview(trimmed_uri)}"}
 
       true ->
-        {:error, "documentdb URI inválida: não contém esquema. Esperado mongodb://, recebido: #{inspect(String.slice(trimmed_uri, 0, 80))}"}
+        {:error, "documentdb URI inválida (esperado mongodb://): #{preview(trimmed_uri)}"}
     end
   end
+
+  defp preview(value) do
+    if String.length(value) <= 80 do
+      value
+    else
+      String.slice(value, 0, 80) <> "..."
+    end
+  end
+
+  defp resolve_prefix(nil, nil), do: {:ok, @default_prefix}
+  defp resolve_prefix(nil, prefix), do: normalize_prefix(prefix)
+  defp resolve_prefix(prefix, nil), do: normalize_prefix(prefix)
+  defp resolve_prefix(_positional_prefix, _option_prefix), do: {:error, "use prefix posicional ou --prefix, não os dois"}
 
   defp normalize_prefix(value) do
     value
     |> to_string()
     |> String.trim()
     |> case do
-      "" -> {:ok, @default_prefix}
+      "" ->
+        {:ok, @default_prefix}
+
       normalized ->
-        sanitized =
-          normalized
-          |> String.trim_leading("/")
-          |> String.replace(~r{/+}, "/")
-
-        final_prefix =
-          if String.ends_with?(sanitized, "/") do
-            sanitized
-          else
-            sanitized <> "/"
-          end
-
-        {:ok, final_prefix}
+        normalized
+        |> String.trim_leading("/")
+        |> String.replace(~r{/+}, "/")
+        |> case do
+          "" -> {:ok, @default_prefix}
+          sanitized ->
+            if String.ends_with?(sanitized, "/") do
+              {:ok, sanitized}
+            else
+              {:ok, sanitized <> "/"}
+            end
+        end
     end
   end
 
-  defp resolve_positive_integer(value, default_value, label) do
-    candidate =
-      case value do
-        nil -> default_value
-        explicit -> explicit
-      end
+  defp resolve_positive_integer(nil, default_value, label), do: resolve_positive_integer(default_value, default_value, label)
 
-    case candidate do
-      integer when is_integer(integer) and integer > 0 ->
-        {:ok, integer}
+  defp resolve_positive_integer(value, _default_value, _label) when is_integer(value) and value > 0,
+    do: {:ok, value}
 
-      _ ->
-        {:error, "#{label} precisa ser inteiro positivo"}
-    end
-  end
+  defp resolve_positive_integer(_value, _default_value, label),
+    do: {:error, "#{label} precisa ser inteiro positivo"}
 
   defp resolve_compression_level(nil), do: {:ok, 1}
 
@@ -406,9 +272,8 @@ defmodule DocdbStreamBackup do
         resolve_positive_integer(expected_size_bytes, @default_expected_size_bytes, "expected_size_bytes")
 
       not is_nil(expected_size_gib) ->
-        with {:ok, expected_size_gib_normalized} <-
-               resolve_positive_integer(expected_size_gib, 10, "expected_size_gib") do
-          {:ok, expected_size_gib_normalized * 1024 * 1024 * 1024}
+        with {:ok, parsed_gib} <- resolve_positive_integer(expected_size_gib, 10, "expected_size_gib") do
+          {:ok, parsed_gib * 1024 * 1024 * 1024}
         end
 
       true ->
@@ -417,57 +282,140 @@ defmodule DocdbStreamBackup do
   end
 
   defp resolve_mongodump_args(options) do
-    extra_args =
-      options
-      |> Keyword.get_values(:mongodump_arg)
-      |> Enum.map(&String.trim/1)
-      |> Enum.reject(&(&1 == ""))
-
-    with {:ok, _} <- validate_mongodump_connection_args(extra_args) do
-      translated_args = parse_mongodump_option_compatibility(extra_args)
-      {:ok, translated_args}
-    end
+    options
+    |> Keyword.get_values(:mongodump_arg)
+    |> Enum.map(&String.trim/1)
+    |> Enum.reject(&(&1 == ""))
+    |> validate_mongodump_connection_args()
   end
 
-  defp validate_mongodump_connection_args(extra_args) do
-    case Enum.find(extra_args, &contains_connection_string?/1) do
-      nil -> {:ok, :ok}
+  defp validate_mongodump_connection_args(args) do
+    case Enum.find(args, &uri_connection_arg?/1) do
+      nil ->
+        {:ok, args}
+
       invalid_arg ->
         {:error,
          "não use --uri ou string de conexão em --mongodump-arg: #{inspect(invalid_arg)}\nA URI já é passada como primeiro argumento do script e enviada via --uri"}
     end
   end
 
-  defp contains_connection_string?(arg) do
-    normalized = String.trim(arg)
+  defp uri_connection_arg?(value) do
+    normalized = String.trim(value)
 
-    is_uri_flag?(normalized) || contains_mongodb_scheme?(normalized)
-  end
-
-  defp is_uri_flag?(normalized) do
-    normalized == "--uri" || String.starts_with?(normalized, "--uri=")
-  end
-
-  defp contains_mongodb_scheme?(normalized) do
-    String.starts_with?(normalized, "mongodb://") || String.starts_with?(normalized, "mongodb+srv://")
-  end
-
-  defp default_num_parallel_collections do
-    System.schedulers_online()
-    |> max(16)
-    |> min(32)
-  end
-
-  defp default_pigz_threads do
-    System.schedulers_online()
-    |> max(8)
-    |> min(16)
+    normalized == "--uri" or
+      String.starts_with?(normalized, "--uri=") or
+      String.starts_with?(normalized, "mongodb://") or
+      String.starts_with?(normalized, "mongodb+srv://")
   end
 
   defp ensure_binary(binary) do
     case System.find_executable(binary) do
       nil -> {:error, "binário obrigatório não encontrado no PATH: #{binary}"}
       _ -> :ok
+    end
+  end
+
+  defp inspect_mongodump_capabilities do
+    case System.cmd("mongodump", ["--help"], stderr_to_stdout: true) do
+      {help_text, 0} ->
+        %{
+          help_available: true,
+          supports_quiet: flag_supported?(help_text, "--quiet"),
+          supports_tls: flag_supported?(help_text, "--tls"),
+          supports_ssl: flag_supported?(help_text, "--ssl"),
+          supports_num_parallel_collections: flag_supported?(help_text, "--numParallelCollections")
+        }
+
+      _ ->
+        %{
+          help_available: false,
+          supports_quiet: false,
+          supports_tls: false,
+          supports_ssl: false,
+          supports_num_parallel_collections: false
+        }
+    end
+  rescue
+    _ ->
+      %{
+        help_available: false,
+        supports_quiet: false,
+        supports_tls: false,
+        supports_ssl: false,
+        supports_num_parallel_collections: false
+      }
+  end
+
+  defp flag_supported?(text, flag) do
+    regex = ~r/(^|\s)#{Regex.escape(flag)}(\s|=|,)/
+    String.contains?(text, flag) and Regex.match?(regex, text)
+  end
+
+  defp apply_mongodump_compatibility(args, capabilities) do
+    {:ok,
+     %{
+       args
+       | uri: normalize_tls_uri_query(args.uri, capabilities),
+         extra_mongodump_args: normalize_mongodump_args(args.extra_mongodump_args, capabilities)
+     }}
+  end
+
+  defp normalize_tls_uri_query(uri, %{help_available: false}), do: uri
+  defp normalize_tls_uri_query(uri, %{supports_tls: true}), do: uri
+  defp normalize_tls_uri_query(uri, %{supports_ssl: false}), do: uri
+
+  defp normalize_tls_uri_query(uri, _capabilities) do
+    parsed_uri = URI.parse(uri)
+
+    if is_nil(parsed_uri.query) or parsed_uri.query == "" do
+      uri
+    else
+      original_query = URI.decode_query(parsed_uri.query)
+
+      normalized_query =
+        Enum.reduce(@legacy_tls_query_to_ssl, original_query, fn {legacy_key, replacement_key}, query ->
+          case Map.pop(query, legacy_key) do
+            {nil, remaining_query} ->
+              remaining_query
+
+            {value, remaining_query} ->
+              if Map.has_key?(remaining_query, replacement_key) do
+                remaining_query
+              else
+                Map.put(remaining_query, replacement_key, value)
+              end
+          end
+        end)
+
+      if normalized_query == original_query do
+        uri
+      else
+        %{parsed_uri | query: URI.encode_query(normalized_query)}
+        |> URI.to_string()
+      end
+    end
+  end
+
+  defp normalize_mongodump_args(args, capabilities) do
+    args
+    |> Enum.map(&translate_tls_arg(&1, capabilities))
+  end
+
+  defp translate_tls_arg(arg, %{help_available: false}), do: arg
+  defp translate_tls_arg(arg, %{supports_tls: true}), do: arg
+  defp translate_tls_arg(arg, %{supports_ssl: false}), do: arg
+
+  defp translate_tls_arg(arg, _capabilities) do
+    case String.split(arg, "=", parts: 2) do
+      [flag, value] ->
+        case Map.fetch(@legacy_tls_to_ssl, flag) do
+          {:ok, replacement} -> replacement <> "=" <> value
+          :error -> arg
+        end
+
+      [flag] ->
+        Map.get(@legacy_tls_to_ssl, flag, arg)
     end
   end
 
@@ -481,161 +429,202 @@ defmodule DocdbStreamBackup do
     {:ok, "#{prefix}docdb-backup-#{timestamp}.archive.gz"}
   end
 
-  defp run_pipeline(args, key) do
-    start = System.monotonic_time(:microsecond)
+  defp run_pipeline(args, capabilities, key) do
+    started_at = System.monotonic_time(:microsecond)
     destination = "s3://#{args.bucket}/#{key}"
     spinner = start_status_spinner("backup em andamento")
 
     mongodump_args =
-      [
-        "mongodump",
-        "--uri",
-        args.uri,
-        "--archive"
-      ]
-      |> Enum.concat(num_parallel_collections_flag(args.num_parallel_collections))
+      ["mongodump", "--uri", args.uri, "--archive"]
+      |> Kernel.++(num_parallel_collections_flag(args.num_parallel_collections, capabilities))
       |> Kernel.++(args.extra_mongodump_args)
 
-    pigz_args =
-      [
-        "pigz",
-        "-c",
-        "-#{args.compression_level}",
-        "-p",
-        Integer.to_string(args.pigz_threads)
-      ]
+    pigz_args = ["pigz", "-c", "-#{args.compression_level}", "-p", Integer.to_string(args.pigz_threads)]
 
-    aws_args =
-      [
-        "aws",
-        "s3",
-        "cp",
-        "-",
-        destination,
-        "--no-progress",
-        "--only-show-errors",
-        "--expected-size",
-        Integer.to_string(args.expected_size_bytes)
-      ]
-
-    mongodump_command =
-      mongodump_args
-      |> Enum.map(&shell_escape/1)
-      |> Enum.join(" ")
-
-    pigz_command =
-      pigz_args
-      |> Enum.map(&shell_escape/1)
-      |> Enum.join(" ")
-
-    aws_command =
-      aws_args
-      |> Enum.map(&shell_escape/1)
-      |> Enum.join(" ")
-
-    pipeline_summary = [
-      {"mongodump", format_logged_command("mongodump", mongodump_args)},
-      {"pigz", format_logged_command("pigz", pigz_args)},
-      {"aws", format_logged_command("aws", aws_args)}
+    aws_args = [
+      "aws",
+      "s3",
+      "cp",
+      "-",
+      destination,
+      "--no-progress",
+      "--only-show-errors",
+      "--expected-size",
+      Integer.to_string(args.expected_size_bytes)
     ]
 
-    pipeline =
-      [mongodump_command, pigz_command, aws_command]
-      |> Enum.join(" | ")
+    pipeline_summary = [
+      {"mongodump", format_logged_command(mongodump_args)},
+      {"pigz", Enum.join(pigz_args, " ")},
+      {"aws", Enum.join(aws_args, " ")}
+    ]
 
     status_probe = "__PIPESTATUS__"
-    pipeline_status_command = """
-set -o pipefail
-#{pipeline}
-pipeline_status=\"${PIPESTATUS[*]}\"
-pipeline_exit=0
-for status_code in ${pipeline_status}; do
-  if [ \"$status_code\" != \"0\" ]; then
-    pipeline_exit=1
-    break
-  fi
-done
-printf \"#{status_probe}=%s\\n\" \"${pipeline_status}\"
-exit \"$pipeline_exit\"
-"""
+    stderr_markers = [
+      {"mongodump", "__STDERR_MONGODUMP_BEGIN__", "__STDERR_MONGODUMP_END__"},
+      {"pigz", "__STDERR_PIGZ_BEGIN__", "__STDERR_PIGZ_END__"},
+      {"aws", "__STDERR_AWS_BEGIN__", "__STDERR_AWS_END__"}
+    ]
 
-    print_config(args)
+    mongodump_command = Enum.map_join(mongodump_args, " ", &shell_escape/1)
+    pigz_command = Enum.map_join(pigz_args, " ", &shell_escape/1)
+    aws_command = Enum.map_join(aws_args, " ", &shell_escape/1)
+
+    command = """
+    set -o pipefail
+    stderr_mongodump="$(mktemp)"
+    stderr_pigz="$(mktemp)"
+    stderr_aws="$(mktemp)"
+    cleanup() {
+      rm -f "${stderr_mongodump}" "${stderr_pigz}" "${stderr_aws}"
+    }
+    trap cleanup EXIT
+    #{mongodump_command} 2>"${stderr_mongodump}" | #{pigz_command} 2>"${stderr_pigz}" | #{aws_command} 2>"${stderr_aws}"
+    pipeline_status="${PIPESTATUS[*]}"
+    pipeline_exit=0
+    for status_code in ${pipeline_status}; do
+      if [ "$status_code" != "0" ]; then
+        pipeline_exit=1
+        break
+      fi
+    done
+    printf "#{status_probe}=%s\\n" "${pipeline_status}"
+    printf "__STDERR_MONGODUMP_BEGIN__\\n"
+    cat "${stderr_mongodump}"
+    printf "\\n__STDERR_MONGODUMP_END__\\n"
+    printf "__STDERR_PIGZ_BEGIN__\\n"
+    cat "${stderr_pigz}"
+    printf "\\n__STDERR_PIGZ_END__\\n"
+    printf "__STDERR_AWS_BEGIN__\\n"
+    cat "${stderr_aws}"
+    printf "\\n__STDERR_AWS_END__\\n"
+    exit "${pipeline_exit}"
+    """
+
+    print_config(args, capabilities)
     IO.puts("destino: #{destination}")
     IO.puts("alvo: #{format_bytes_binary(@default_expected_size_bytes)} em até #{@default_target_duration_seconds}s")
 
-    elapsed_us = fn -> System.monotonic_time(:microsecond) - start end
-
-    case System.cmd("bash", ["-o", "pipefail", "-c", pipeline_status_command], stderr_to_stdout: true) do
+    case System.cmd("bash", ["-c", command], stderr_to_stdout: true) do
       {output, 0} ->
         stop_status_spinner(spinner)
-        print_pipeline_output(output, status_probe)
+        print_pipeline_output(output, status_probe, stderr_markers)
+
         {:ok,
          %{
-           duration_us: elapsed_us.(),
+           duration_us: System.monotonic_time(:microsecond) - started_at,
+           raw_bytes: 0,
            estimated_bytes: args.expected_size_bytes
          }}
 
       {output, status} ->
         stop_status_spinner(spinner)
         pipeline_status = extract_pipeline_status(output, status_probe)
-        cleaned_output = remove_pipeline_status_line(output, status_probe)
-        pipeline_trace = format_pipeline_trace(pipeline_summary)
-        stages_report = format_pipeline_stages(pipeline_status)
+        cleaned_output = remove_probe_sections(output, status_probe, stderr_markers)
         failed_stages = failed_pipeline_stages(pipeline_status)
-        failed_commands = format_failed_commands(pipeline_summary, failed_stages)
-        failed_commands_with_status = format_failed_commands_with_status(pipeline_summary, pipeline_status)
-        stage_failure_description = format_failed_stage_description(failed_stages)
-        metrics = %{
-          duration_us: elapsed_us.(),
-          estimated_bytes: args.expected_size_bytes
-        }
-        error_head = "pipeline falhou com código #{status}"
+        stderr_sections = extract_stderr_sections(output, stderr_markers)
 
         details =
           [
-            pipeline_status: stages_report,
-            pipeline_failure: stage_failure_description,
-            pipeline_output: String.trim(cleaned_output),
-            pipeline_trace: pipeline_trace,
-            failed_pipeline_trace:
-              case failed_commands_with_status do
-                "" -> failed_commands
-                value -> value
-              end
+            "pipeline falhou com código #{status}",
+            format_pipeline_stage_details(failed_stages),
+            format_failed_commands(pipeline_summary, failed_stages),
+            format_stage_stderr(stderr_sections, failed_stages),
+            format_pipeline_output(cleaned_output)
           ]
-          |> Enum.reject(fn
-            {:pipeline_status, value} -> value == nil || String.trim(value) == ""
-            {:pipeline_output, value} -> value == nil || String.trim(value) == ""
-            {:pipeline_trace, value} -> value == nil || String.trim(value) == ""
-            {:pipeline_failure, value} -> value == nil || String.trim(value) == ""
-            {:failed_pipeline_trace, value} -> value == nil || String.trim(value) == ""
-          end)
-          |> Enum.map(fn
-            {:pipeline_status, value} -> "estágios: #{value}"
-            {:pipeline_failure, value} -> "falha identificada: #{value}"
-            {:pipeline_output, value} -> "saida:\n#{value}"
-            {:pipeline_trace, value} -> "comandos:\n#{value}"
-            {:failed_pipeline_trace, value} -> "comando(s) falho(s):\n#{value}"
-          end)
+          |> Enum.reject(&(&1 == ""))
           |> Enum.join("\n")
 
-        {:error, "#{error_head}\n#{details}", metrics}
+        {:error,
+         details,
+         %{
+           duration_us: System.monotonic_time(:microsecond) - started_at,
+           raw_bytes: 0,
+           estimated_bytes: 0
+         }}
     end
   end
 
-  defp format_pipeline_stages(""), do: ""
+  defp num_parallel_collections_flag(_num_parallel_collections, %{supports_num_parallel_collections: false}), do: []
 
-  defp format_pipeline_stages(status_line) do
-    status_line
-    |> String.split(" ", trim: true)
-    |> Enum.with_index()
-    |> Enum.map_join(", ", fn {status, index} ->
-      stage = Enum.at(["mongodump", "pigz", "aws"], index, "etapa-#{index + 1}")
-      "#{stage}=#{status}"
+  defp num_parallel_collections_flag(num_parallel_collections, _capabilities) do
+    ["--numParallelCollections", Integer.to_string(num_parallel_collections)]
+  end
+
+  defp format_pipeline_stage_details([]), do: ""
+
+  defp format_pipeline_stage_details(failed_stages) do
+    "falha identificada: " <> Enum.join(failed_stages, ", ")
+  end
+
+  defp format_failed_commands(pipeline_summary, failed_stages) do
+    failed_stage_names =
+      failed_stages
+      |> Enum.map(fn stage_status ->
+        stage_status
+        |> String.split("=", parts: 2)
+        |> hd()
+      end)
+      |> MapSet.new()
+
+    failed_commands =
+      pipeline_summary
+      |> Enum.filter(fn {stage, _command} -> MapSet.member?(failed_stage_names, stage) end)
+      |> Enum.map(fn {stage, command} -> "#{stage}: #{command}" end)
+
+    case failed_commands do
+      [] -> ""
+      _ -> "comando(s) falho(s):\n" <> Enum.join(failed_commands, "\n")
+    end
+  end
+
+  defp format_stage_stderr(stderr_sections, failed_stages) do
+    failed_stage_names =
+      failed_stages
+      |> Enum.map(fn stage_status ->
+        stage_status
+        |> String.split("=", parts: 2)
+        |> hd()
+      end)
+
+    formatted_sections =
+      failed_stage_names
+      |> Enum.map(fn stage_name ->
+        case Map.get(stderr_sections, stage_name, "") |> String.trim() do
+          "" -> nil
+          stderr_output -> "#{stage_name}:\n#{stderr_output}"
+        end
+      end)
+      |> Enum.reject(&is_nil/1)
+
+    case formatted_sections do
+      [] -> ""
+      _ -> "stderr detalhado:\n" <> Enum.join(formatted_sections, "\n\n")
+    end
+  end
+
+  defp format_pipeline_output(output) do
+    trimmed = String.trim(output)
+
+    if trimmed == "" do
+      ""
+    else
+      "saida:\n" <> trimmed
+    end
+  end
+
+  defp extract_pipeline_status(output, marker) do
+    output
+    |> String.split("\n", trim: true)
+    |> Enum.find_value("", fn line ->
+      case String.split(line, "=", parts: 2) do
+        [^marker, value] -> String.trim(value)
+        _ -> nil
+      end
     end)
   end
 
-  defp parse_stage_statuses(status_line) do
+  defp failed_pipeline_stages(status_line) do
     status_line
     |> String.split(" ", trim: true)
     |> Enum.with_index()
@@ -643,67 +632,71 @@ exit \"$pipeline_exit\"
       stage = Enum.at(["mongodump", "pigz", "aws"], index, "etapa-#{index + 1}")
       {stage, status}
     end)
-  end
-
-  defp failed_pipeline_stages(status_line) do
-    parse_stage_statuses(status_line)
-    |> Enum.filter(fn {_stage, status} -> status != "0" && status != "" end)
+    |> Enum.filter(fn {_stage, status} -> status != "0" and status != "" end)
     |> Enum.map(fn {stage, status} -> "#{stage}=#{status}" end)
   end
 
-  defp format_failed_stage_description([]), do: ""
-
-  defp format_failed_stage_description([head | _tail]),
-    do: head
-
-  defp format_pipeline_trace(stage_commands) do
-    stage_commands
-    |> Enum.map(fn {stage, command} -> "#{stage}: #{command}" end)
-    |> Enum.join("\n")
+  defp extract_stderr_sections(output, stderr_markers) do
+    stderr_markers
+    |> Enum.map(fn {stage_name, begin_marker, end_marker} ->
+      {stage_name, extract_marked_block(output, begin_marker, end_marker)}
+    end)
+    |> Map.new()
   end
 
-  defp format_failed_commands(stage_commands, failed_stages) do
-    failed_stage_names =
-      failed_stages
-      |> Enum.map(fn stage_status ->
-        stage_status
-        |> String.split("=", parts: 2, trim: true)
-        |> hd()
-      end)
-      |> MapSet.new()
-
-    stage_commands
-    |> Enum.filter(fn {stage, _command} -> MapSet.member?(failed_stage_names, stage) end)
-    |> Enum.map(fn {stage, command} -> "#{stage}: #{command}" end)
-    |> Enum.join("\n")
+  defp remove_probe_sections(output, marker, stderr_markers) do
+    output
+    |> remove_pipeline_status_line(marker)
+    |> Enum.reduce(stderr_markers, fn {_stage, begin_marker, end_marker}, acc ->
+      remove_marked_block(acc, begin_marker, end_marker)
+    end)
+    |> String.trim()
   end
 
-  defp format_failed_commands_with_status(stage_commands, status_line) do
-    failed_status =
-      status_line
-      |> parse_stage_statuses()
-      |> Enum.filter(fn {_stage, status} -> status != "0" && status != "" end)
-      |> Map.new()
+  defp remove_pipeline_status_line(output, marker) do
+    output
+    |> String.split("\n", trim: false)
+    |> Enum.reject(fn line ->
+      trimmed_line = String.trim(line)
 
-    stage_commands
-    |> Enum.filter(fn {stage, _command} -> Map.has_key?(failed_status, stage) end)
-    |> Enum.map(fn {stage, command} ->
-      "#{stage} (status #{Map.get(failed_status, stage)}): #{command}"
+      case String.split(line, "=", parts: 2) do
+        [^marker, _] -> true
+        _ -> false
+      end or trimmed_line == marker
     end)
     |> Enum.join("\n")
   end
 
-  defp format_logged_command("mongodump", args) do
-    sanitize_connection_args(args)
-    |> format_command_parts()
+  defp remove_marked_block(output, begin_marker, end_marker) do
+    regex = ~r/#{Regex.escape(begin_marker)}\n?(.*?)\n?#{Regex.escape(end_marker)}/s
+    Regex.replace(regex, output, "")
   end
 
-  defp format_logged_command(_command, args),
-    do: format_command_parts(args)
+  defp extract_marked_block(output, begin_marker, end_marker) do
+    regex = ~r/#{Regex.escape(begin_marker)}\n?(.*?)\n?#{Regex.escape(end_marker)}/s
 
-  defp sanitize_connection_args(args) do
-    sanitize_connection_args(args, [])
+    case Regex.run(regex, output, capture: :all_but_first) do
+      [content] -> String.trim(content)
+      _ -> ""
+    end
   end
+
+  defp print_pipeline_output(output, marker, stderr_markers) do
+    output
+    |> remove_probe_sections(marker, stderr_markers)
+    |> String.split("\n", trim: true)
+    |> Enum.reject(&(String.trim(&1) == ""))
+    |> Enum.each(&IO.puts/1)
+  end
+
+  defp format_logged_command(["mongodump" | args]) do
+    ["mongodump" | sanitize_connection_args(args)]
+    |> Enum.join(" ")
+  end
+
+  defp format_logged_command(args), do: Enum.join(args, " ")
+
+  defp sanitize_connection_args(args), do: sanitize_connection_args(args, [])
 
   defp sanitize_connection_args([], acc), do: Enum.reverse(acc)
 
@@ -720,10 +713,6 @@ exit \"$pipeline_exit\"
     end
   end
 
-  defp format_command_parts(args) do
-    Enum.join(args, " ")
-  end
-
   defp mask_connection_uri(uri) do
     parsed = URI.parse(uri)
 
@@ -734,147 +723,80 @@ exit \"$pipeline_exit\"
       userinfo ->
         masked_userinfo =
           case String.split(userinfo, ":", parts: 2) do
-            [user, password] when byte_size(password) > 0 ->
-              user <> ":***"
-
-            [user] ->
-              user
-
-            _ ->
-              "***"
+            [user, _password] -> user <> ":***"
+            [user] -> user
+            _ -> "***"
           end
 
-        if String.contains?(uri, "#{userinfo}@") do
-          String.replace(uri, "#{userinfo}@", "#{masked_userinfo}@", global: false)
-        else
-          uri
-        end
+        String.replace(uri, "#{userinfo}@", "#{masked_userinfo}@", global: false)
     end
   end
 
-  defp extract_pipeline_status(output, marker) do
-    output
-    |> String.split("\n", trim: true)
-    |> Enum.find_value(fn line ->
-      case String.split(line, "=", parts: 2) do
-        [^marker, value] -> String.trim(value)
-        _ -> nil
+  defp print_config(args, capabilities) do
+    num_parallel_display =
+      if capabilities.supports_num_parallel_collections do
+        Integer.to_string(args.num_parallel_collections)
+      else
+        "desativado"
       end
-    end) |> case do
-      nil -> ""
-      status -> status
-    end
-  end
 
-  defp print_pipeline_output(output, marker) do
-    output
-    |> String.split("\n", trim: true)
-    |> Enum.each(fn line ->
-      case String.split(line, "=", parts: 2) do
-        [^marker, _] ->
-          :ok
-        _ ->
-          if String.trim(line) != "" do
-            IO.puts(line)
-          end
-      end
-    end)
-  end
-
-  defp num_parallel_collections_flag(num_parallel_collections) do
-    case fetch_mongodump_help() do
-      {:ok, help_text} ->
-        if flag_supported?(help_text, "--numParallelCollections") do
-          ["--numParallelCollections", Integer.to_string(num_parallel_collections)]
-        else
-          []
-        end
-
-      _ ->
-        ["--numParallelCollections", Integer.to_string(num_parallel_collections)]
-    end
-  end
-
-  defp remove_pipeline_status_line(output, marker) do
-    output
-    |> String.split("\n", trim: false)
-    |> Enum.reject(fn line ->
-      case String.split(String.trim(line), "=", parts: 2) do
-        [^marker, _] -> true
-        _ -> false
-      end
-    end)
-    |> Enum.join("\n")
-  end
-
-  defp print_config(args) do
     IO.puts(
-      "config: numParallelCollections=#{args.num_parallel_collections} pigz_threads=#{args.pigz_threads} compression_level=#{args.compression_level} expected_size=#{format_bytes_binary(args.expected_size_bytes)}"
+      "config: numParallelCollections=#{num_parallel_display} pigz_threads=#{args.pigz_threads} compression_level=#{args.compression_level} expected_size=#{format_bytes_binary(args.expected_size_bytes)}"
     )
   end
 
   defp print_performance_report(metrics, expected_size_bytes) do
-    expected_size_bytes =
-      case expected_size_bytes do
-        nil -> 0
-        value when is_integer(value) and value > 0 -> value
-        _ -> 0
-      end
-
     duration_us = Map.get(metrics, :duration_us, 0)
     duration_seconds = max(1, div(duration_us, 1_000_000))
+    raw_bytes = Map.get(metrics, :raw_bytes, 0)
+    estimated_bytes = Map.get(metrics, :estimated_bytes, 0)
 
-    IO.puts("tempo total: #{format_duration(metrics)}")
+    IO.puts("tempo total: #{format_duration(duration_us)}")
 
-    estimated_bytes = Map.get(metrics, :estimated_bytes, expected_size_bytes)
-    if estimated_bytes > 0 do
-      throughput_mb_per_sec =
-        estimated_bytes / 1024.0 / 1024.0 / duration_seconds
-
-      IO.puts(
-        "volume estimado: #{format_bytes_binary(estimated_bytes)} (~#{:erlang.float_to_binary(throughput_mb_per_sec, decimals: 2)} MiB/s)"
-      )
+    if raw_bytes > 0 do
+      throughput = raw_bytes / 1024.0 / 1024.0 / duration_seconds
+      IO.puts("volume processado: #{format_bytes_binary(raw_bytes)} (~#{:erlang.float_to_binary(throughput, decimals: 2)} MiB/s)")
     else
-      IO.puts("volume estimado: não disponível")
+      if estimated_bytes > 0 do
+        throughput = estimated_bytes / 1024.0 / 1024.0 / duration_seconds
+        IO.puts("volume estimado: #{format_bytes_binary(estimated_bytes)} (~#{:erlang.float_to_binary(throughput, decimals: 2)} MiB/s)")
+      else
+        IO.puts("volume processado: sem bytes (não foi possível mensurar)")
+      end
     end
 
     target_duration_seconds = @default_target_duration_seconds
     target_speed_mib_per_sec = expected_size_bytes / 1024.0 / 1024.0 / target_duration_seconds
-    target_status =
+    target_gib_per_min = expected_size_bytes / 1024.0 / 1024.0 / 1024.0 / (target_duration_seconds / 60.0)
+
+    result =
       if duration_us <= @default_target_duration_seconds * 1_000_000 do
         "atingido"
       else
         "não atingido"
       end
 
-    target_gib_per_min = expected_size_bytes / 1024.0 / 1024.0 / 1024.0 / (target_duration_seconds / 60.0)
     IO.puts(
-      "meta de throughput: #{:erlang.float_to_binary(target_speed_mib_per_sec, decimals: 2)} MiB/s (#{:erlang.float_to_binary(target_gib_per_min, decimals: 2)} GiB/min) | resultado: #{target_status}"
+      "meta de throughput: #{:erlang.float_to_binary(target_speed_mib_per_sec, decimals: 2)} MiB/s (#{:erlang.float_to_binary(target_gib_per_min, decimals: 2)} GiB/min) | resultado: #{result}"
     )
   end
 
-  defp format_bytes_binary(bytes) when is_integer(bytes) and bytes >= 0 do
-    format_bytes_binary(bytes, 0, ["B", "KiB", "MiB", "GiB", "TiB"])
+  defp format_bytes_binary(bytes) when is_integer(bytes) and bytes <= 0, do: "0 B"
+
+  defp format_bytes_binary(bytes) do
+    do_format_bytes_binary(bytes / 1.0, ["B", "KiB", "MiB", "GiB", "TiB"])
   end
 
-  defp format_bytes_binary(bytes, _power, [_last]) when bytes >= 0 do
-    formatted = bytes / :math.pow(1024, 4)
-    "#{:erlang.float_to_binary(formatted, decimals: 2)} TiB"
-  end
+  defp do_format_bytes_binary(value, [unit | _rest]) when value < 1024,
+    do: "#{:erlang.float_to_binary(value, decimals: 2)} #{unit}"
 
-  defp format_bytes_binary(bytes, power, [unit | units]) do
-    denominator = :math.pow(1024, power)
-    if bytes < denominator * 1024 do
-      "#{:erlang.float_to_binary(bytes / denominator, decimals: 2)} #{unit}"
-    else
-      format_bytes_binary(bytes, power + 1, units)
-    end
-  end
+  defp do_format_bytes_binary(value, [_unit | rest]), do: do_format_bytes_binary(value / 1024.0, rest)
 
-  defp format_duration(%{duration_us: duration_us}) do
+  defp format_duration(duration_us) do
     total_seconds = div(duration_us, 1_000_000)
     minutes = div(total_seconds, 60)
     seconds = rem(total_seconds, 60)
+
     if minutes > 0 do
       "#{minutes}m#{String.pad_leading(Integer.to_string(seconds), 2, "0")}s"
     else
@@ -882,30 +804,29 @@ exit \"$pipeline_exit\"
     end
   end
 
-  defp format_duration(_), do: "0s"
-
   defp start_status_spinner(message) do
-    spawn(fn -> status_spinner_loop(message, 0) end)
+    spawn(fn -> status_spinner_loop(message, 0, System.monotonic_time(:millisecond)) end)
   end
 
-  defp status_spinner_loop(message, frame_idx) do
+  defp status_spinner_loop(message, frame_idx, started_at) do
     frames = ["|", "/", "-", "\\"]
 
     receive do
       :stop ->
         IO.write("\r")
-        IO.write(String.duplicate(" ", 80))
+        IO.write(String.duplicate(" ", 100))
         IO.write("\r")
         :ok
     after
       250 ->
+        elapsed_seconds = div(System.monotonic_time(:millisecond) - started_at, 1000)
         frame = Enum.at(frames, rem(frame_idx, length(frames)))
-        IO.write("\r#{message} #{frame}")
-        status_spinner_loop(message, frame_idx + 1)
+        IO.write("\r#{message} #{frame} (#{elapsed_seconds}s)")
+        status_spinner_loop(message, frame_idx + 1, started_at)
     end
   end
 
-  defp stop_status_spinner(pid) when is_pid(pid) do
+  defp stop_status_spinner(pid) do
     send(pid, :stop)
     :ok
   end
@@ -913,6 +834,18 @@ exit \"$pipeline_exit\"
   defp shell_escape(value) do
     escaped = String.replace(value, "'", "'\\''")
     "'#{escaped}'"
+  end
+
+  defp default_num_parallel_collections do
+    System.schedulers_online()
+    |> max(16)
+    |> min(32)
+  end
+
+  defp default_pigz_threads do
+    System.schedulers_online()
+    |> max(8)
+    |> min(16)
   end
 end
 
