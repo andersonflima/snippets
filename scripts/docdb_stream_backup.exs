@@ -432,7 +432,7 @@ defmodule DocdbStreamBackup do
   defp run_pipeline(args, capabilities, key) do
     started_at = System.monotonic_time(:microsecond)
     destination = "s3://#{args.bucket}/#{key}"
-    spinner = start_status_spinner("backup em andamento")
+    progress_display = start_progress_display("backup em andamento", ["mongodump", "pigz", "aws"])
 
     mongodump_args =
       ["mongodump", "--uri", args.uri, "--archive"]
@@ -507,7 +507,7 @@ defmodule DocdbStreamBackup do
 
     case System.cmd("bash", ["-c", command], stderr_to_stdout: true) do
       {output, 0} ->
-        stop_status_spinner(spinner)
+        stop_progress_display(progress_display, success_stage_states())
         print_pipeline_output(output, status_probe, stderr_markers)
 
         {:ok,
@@ -518,8 +518,8 @@ defmodule DocdbStreamBackup do
          }}
 
       {output, status} ->
-        stop_status_spinner(spinner)
         pipeline_status = extract_pipeline_status(output, status_probe)
+        stop_progress_display(progress_display, final_stage_states(pipeline_status))
         cleaned_output = remove_probe_sections(output, status_probe, stderr_markers)
         failed_stages = failed_pipeline_stages(pipeline_status)
         stderr_sections = extract_stderr_sections(output, stderr_markers)
@@ -645,9 +645,10 @@ defmodule DocdbStreamBackup do
   end
 
   defp remove_probe_sections(output, marker, stderr_markers) do
-    output
-    |> remove_pipeline_status_line(marker)
-    |> Enum.reduce(stderr_markers, fn {_stage, begin_marker, end_marker}, acc ->
+    cleaned_output = remove_pipeline_status_line(output, marker)
+
+    stderr_markers
+    |> Enum.reduce(cleaned_output, fn {_stage, begin_marker, end_marker}, acc ->
       remove_marked_block(acc, begin_marker, end_marker)
     end)
     |> String.trim()
@@ -804,31 +805,146 @@ defmodule DocdbStreamBackup do
     end
   end
 
-  defp start_status_spinner(message) do
-    spawn(fn -> status_spinner_loop(message, 0, System.monotonic_time(:millisecond)) end)
+  defp success_stage_states do
+    %{
+      "mongodump" => {:done, 0},
+      "pigz" => {:done, 0},
+      "aws" => {:done, 0}
+    }
   end
 
-  defp status_spinner_loop(message, frame_idx, started_at) do
-    frames = ["|", "/", "-", "\\"]
+  defp final_stage_states(status_line) do
+    status_line
+    |> String.split(" ", trim: true)
+    |> Enum.with_index()
+    |> Enum.map(fn {status, index} ->
+      stage = Enum.at(["mongodump", "pigz", "aws"], index, "etapa-#{index + 1}")
+      parsed_status = parse_stage_status(status)
+      stage_state =
+        if parsed_status == 0 do
+          {:done, parsed_status}
+        else
+          {:failed, parsed_status}
+        end
 
-    receive do
-      :stop ->
-        IO.write("\r")
-        IO.write(String.duplicate(" ", 100))
-        IO.write("\r")
-        :ok
-    after
-      250 ->
-        elapsed_seconds = div(System.monotonic_time(:millisecond) - started_at, 1000)
-        frame = Enum.at(frames, rem(frame_idx, length(frames)))
-        IO.write("\r#{message} #{frame} (#{elapsed_seconds}s)")
-        status_spinner_loop(message, frame_idx + 1, started_at)
+      {stage, stage_state}
+    end)
+    |> Enum.into(%{})
+  end
+
+  defp parse_stage_status(status) do
+    case Integer.parse(status) do
+      {parsed_status, ""} -> parsed_status
+      _ -> 1
     end
   end
 
-  defp stop_status_spinner(pid) do
-    send(pid, :stop)
+  defp start_progress_display(message, stage_names) do
+    ansi_enabled = IO.ANSI.enabled?()
+
+    initial_state = %{
+      message: message,
+      stage_names: stage_names,
+      stage_states: Map.new(stage_names, &{&1, {:running, nil}}),
+      started_at: System.monotonic_time(:millisecond),
+      frame: 0,
+      ansi_enabled: ansi_enabled,
+      first_render?: true
+    }
+
+    spawn(fn -> progress_display_loop(render_progress_display(initial_state)) end)
+  end
+
+  defp progress_display_loop(state) do
+    receive do
+      {:stop, stage_states} ->
+        state
+        |> Map.put(:stage_states, stage_states)
+        |> render_progress_display()
+        |> finalize_progress_display()
+    after
+      1_000 ->
+        state
+        |> Map.update!(:frame, &(&1 + 1))
+        |> render_progress_display()
+        |> progress_display_loop()
+    end
+  end
+
+  defp finalize_progress_display(state) do
+    if state.ansi_enabled do
+      IO.write(IO.ANSI.reset())
+    end
+
     :ok
+  end
+
+  defp stop_progress_display(pid, stage_states) do
+    send(pid, {:stop, stage_states})
+    :ok
+  end
+
+  defp render_progress_display(state) do
+    lines = build_progress_lines(state)
+
+    if state.ansi_enabled do
+      if state.first_render? do
+        IO.write(Enum.join(lines, "\n") <> "\n")
+      else
+        IO.write(IO.ANSI.cursor_up(length(lines)))
+        Enum.each(lines, fn line ->
+          IO.write(IO.ANSI.clear_line())
+          IO.write(line <> "\n")
+        end)
+      end
+    else
+      should_print? = state.first_render? or rem(state.frame, 5) == 0
+
+      if should_print? do
+        IO.puts(Enum.join(lines, " | "))
+      end
+    end
+
+    %{state | first_render?: false}
+  end
+
+  defp build_progress_lines(state) do
+    elapsed_seconds = div(System.monotonic_time(:millisecond) - state.started_at, 1000)
+
+    [
+      "#{state.message} (#{elapsed_seconds}s)"
+      | Enum.map(state.stage_names, fn stage_name ->
+          format_progress_stage_line(stage_name, Map.get(state.stage_states, stage_name, {:running, nil}), state.frame)
+        end)
+    ]
+  end
+
+  defp format_progress_stage_line(stage_name, {:running, _status}, frame) do
+    "#{String.pad_trailing(stage_name, 10)} #{indeterminate_bar(frame, 20)} running"
+  end
+
+  defp format_progress_stage_line(stage_name, {:done, status}, _frame) do
+    "#{String.pad_trailing(stage_name, 10)} #{String.duplicate("#", 20)} done (#{status})"
+  end
+
+  defp format_progress_stage_line(stage_name, {:failed, status}, _frame) do
+    "#{String.pad_trailing(stage_name, 10)} #{String.duplicate("!", 20)} failed (#{status})"
+  end
+
+  defp indeterminate_bar(frame, width) do
+    active_size = 5
+    travel = max(width - active_size, 1)
+    start_index = rem(frame, travel + 1)
+
+    0..(width - 1)
+    |> Enum.map(fn index ->
+      if index >= start_index and index < start_index + active_size do
+        "#"
+      else
+        "."
+      end
+    end)
+    |> Enum.join()
   end
 
   defp shell_escape(value) do
