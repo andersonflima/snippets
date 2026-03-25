@@ -438,7 +438,6 @@ defmodule DocdbStreamBackup do
   defp run_pipeline(args, capabilities, key) do
     started_at = System.monotonic_time(:microsecond)
     destination = "s3://#{args.bucket}/#{key}"
-    progress_display = start_progress_display("backup em andamento", ["mongodump", "pigz", "aws"])
 
     mongodump_args =
       ["mongodump", "--uri", args.uri, "--archive"]
@@ -510,6 +509,7 @@ defmodule DocdbStreamBackup do
     print_config(args, capabilities)
     IO.puts("destino: #{destination}")
     IO.puts("alvo: #{format_bytes_binary(@default_expected_size_bytes)} em até #{@default_target_duration_seconds}s")
+    progress_display = start_progress_display("backup em andamento", progress_stage_specs(args, capabilities))
 
     case System.cmd("bash", ["-c", command], stderr_to_stdout: true) do
       {output, 0} ->
@@ -865,6 +865,21 @@ defmodule DocdbStreamBackup do
     }
   end
 
+  defp progress_stage_specs(args, capabilities) do
+    mongodump_parallelism =
+      if capabilities.supports_num_parallel_collections do
+        max(args.num_parallel_collections, 1)
+      else
+        1
+      end
+
+    [
+      %{name: "mongodump", activity_label: "workers", parallelism: mongodump_parallelism},
+      %{name: "pigz", activity_label: "threads", parallelism: max(args.pigz_threads, 1)},
+      %{name: "aws", activity_label: "streams", parallelism: 1}
+    ]
+  end
+
   defp final_stage_states(status_line) do
     status_line
     |> String.split(" ", trim: true)
@@ -891,12 +906,13 @@ defmodule DocdbStreamBackup do
     end
   end
 
-  defp start_progress_display(message, stage_names) do
+  defp start_progress_display(message, stage_specs) do
     ansi_enabled = IO.ANSI.enabled?()
+    stage_names = Enum.map(stage_specs, & &1.name)
 
     initial_state = %{
       message: message,
-      stage_names: stage_names,
+      stage_specs: stage_specs,
       stage_states: Map.new(stage_names, &{&1, {:running, nil}}),
       started_at: System.monotonic_time(:millisecond),
       frame: 0,
@@ -965,22 +981,48 @@ defmodule DocdbStreamBackup do
 
     [
       "#{state.message} (#{elapsed_seconds}s)"
-      | Enum.map(state.stage_names, fn stage_name ->
-          format_progress_stage_line(stage_name, Map.get(state.stage_states, stage_name, {:running, nil}), state.frame)
+      | Enum.map(state.stage_specs, fn stage_spec ->
+          format_progress_stage_line(stage_spec, Map.get(state.stage_states, stage_spec.name, {:running, nil}), state.frame)
         end)
     ]
   end
 
-  defp format_progress_stage_line(stage_name, {:running, _status}, frame) do
-    "#{String.pad_trailing(stage_name, 10)} #{indeterminate_bar(frame, 20)} running"
+  defp format_progress_stage_line(stage_spec, {:running, _status} = stage_state, frame) do
+    "#{String.pad_trailing(stage_spec.name, 10)} #{indeterminate_bar(frame, 20)} running | #{format_stage_parallelism(stage_spec, stage_state, frame)}"
   end
 
-  defp format_progress_stage_line(stage_name, {:done, status}, _frame) do
-    "#{String.pad_trailing(stage_name, 10)} #{String.duplicate("#", 20)} done (#{status})"
+  defp format_progress_stage_line(stage_spec, {:done, status} = stage_state, frame) do
+    "#{String.pad_trailing(stage_spec.name, 10)} #{String.duplicate("#", 20)} done (#{status}) | #{format_stage_parallelism(stage_spec, stage_state, frame)}"
   end
 
-  defp format_progress_stage_line(stage_name, {:failed, status}, _frame) do
-    "#{String.pad_trailing(stage_name, 10)} #{String.duplicate("!", 20)} failed (#{status})"
+  defp format_progress_stage_line(stage_spec, {:failed, status} = stage_state, frame) do
+    "#{String.pad_trailing(stage_spec.name, 10)} #{String.duplicate("!", 20)} failed (#{status}) | #{format_stage_parallelism(stage_spec, stage_state, frame)}"
+  end
+
+  defp format_stage_parallelism(stage_spec, stage_state, frame) do
+    visible_slots = min(max(stage_spec.parallelism, 1), 12)
+    slot_indicator = format_parallelism_slots(visible_slots, stage_state, frame)
+    "#{stage_spec.activity_label}=#{slot_indicator} x#{stage_spec.parallelism}"
+  end
+
+  defp format_parallelism_slots(slot_count, {:running, _status}, frame) do
+    0..(slot_count - 1)
+    |> Enum.map(fn index ->
+      if rem(frame + index, 4) < 2 do
+        "#"
+      else
+        "."
+      end
+    end)
+    |> Enum.join()
+  end
+
+  defp format_parallelism_slots(slot_count, {:done, _status}, _frame) do
+    String.duplicate("#", slot_count)
+  end
+
+  defp format_parallelism_slots(slot_count, {:failed, _status}, _frame) do
+    String.duplicate("!", slot_count)
   end
 
   defp indeterminate_bar(frame, width) do
