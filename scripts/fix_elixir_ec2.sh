@@ -27,7 +27,7 @@ Objetivo:
 Opções:
   --elixir-ref             Versão/tag do Elixir. Padrão: ${ELIXIR_REF}
   --install-dir            Diretório de instalação. Padrão: ${INSTALL_DIR}
-  --force-remove-package   Remove pacote Elixir do sistema (yum/dnf/apt) antes de instalar
+  --force-remove-package   Tenta remover pacote Elixir do sistema via rpm/dpkg local antes de instalar
   -h, --help               Exibe esta ajuda
 USAGE
 }
@@ -159,17 +159,41 @@ remove_system_elixir_if_requested() {
 
   local distro
   distro="$(detect_distro)"
+  log "remoção forçada habilitada (modo local, sem resolver repositórios)"
 
   case "${distro}" in
     amzn)
-      if command_exists dnf; then
-        run_with_sudo dnf remove -y elixir || true
-      elif command_exists yum; then
-        run_with_sudo yum remove -y elixir || true
+      if command_exists rpm; then
+        if run_with_sudo rpm -q elixir >/dev/null 2>&1; then
+          if run_with_sudo rpm -e elixir >/dev/null 2>&1; then
+            log "pacote elixir removido via rpm -e"
+          else
+            log "aviso: não foi possível remover elixir via rpm -e; seguindo sem remover"
+          fi
+        else
+          log "pacote elixir não está instalado via rpm"
+        fi
+      else
+        log "aviso: rpm não encontrado; seguindo sem remover pacote"
       fi
       ;;
     ubuntu|debian)
-      run_with_sudo apt-get remove -y elixir || true
+      if command_exists dpkg; then
+        if run_with_sudo dpkg -s elixir >/dev/null 2>&1; then
+          if run_with_sudo dpkg -r elixir >/dev/null 2>&1; then
+            log "pacote elixir removido via dpkg -r"
+          else
+            log "aviso: não foi possível remover elixir via dpkg -r; seguindo sem remover"
+          fi
+        else
+          log "pacote elixir não está instalado via dpkg"
+        fi
+      else
+        log "aviso: dpkg não encontrado; seguindo sem remover pacote"
+      fi
+      ;;
+    *)
+      log "aviso: distro sem rotina de remoção local (${distro}); seguindo sem remover pacote"
       ;;
   esac
 }
