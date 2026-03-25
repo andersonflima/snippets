@@ -773,7 +773,7 @@ defmodule DocdbStreamBackup do
       end
 
     IO.puts(
-      "host: schedulers=#{runtime_tuning.schedulers_online} mem_available=#{format_memory_available(runtime_tuning.mem_available_bytes)}"
+      "host: schedulers=#{runtime_tuning.schedulers_online} mem_available=#{format_memory_available(runtime_tuning.mem_available_bytes)} tuning_profile=#{runtime_tuning.tuning_profile}"
     )
 
     IO.puts(
@@ -1049,12 +1049,15 @@ defmodule DocdbStreamBackup do
   defp default_runtime_tuning do
     schedulers_online = System.schedulers_online()
     mem_available_bytes = read_mem_available_bytes()
+    tuning_profile = infer_tuning_profile(schedulers_online, mem_available_bytes)
 
     %{
       schedulers_online: schedulers_online,
       mem_available_bytes: mem_available_bytes,
-      num_parallel_collections: recommended_num_parallel_collections(schedulers_online, mem_available_bytes),
-      pigz_threads: recommended_pigz_threads(schedulers_online, mem_available_bytes)
+      tuning_profile: tuning_profile,
+      num_parallel_collections:
+        recommended_num_parallel_collections(schedulers_online, mem_available_bytes, tuning_profile),
+      pigz_threads: recommended_pigz_threads(schedulers_online, mem_available_bytes, tuning_profile)
     }
   end
 
@@ -1068,41 +1071,99 @@ defmodule DocdbStreamBackup do
     end
   end
 
-  defp recommended_num_parallel_collections(schedulers_online, nil) do
-    schedulers_online
-    |> div(2)
-    |> max(1)
-    |> min(4)
-  end
+  defp infer_tuning_profile(schedulers_online, nil) when schedulers_online <= 2, do: :cpu_limited_balanced
+  defp infer_tuning_profile(_schedulers_online, nil), do: :balanced
 
-  defp recommended_num_parallel_collections(schedulers_online, mem_available_bytes) do
+  defp infer_tuning_profile(schedulers_online, mem_available_bytes) do
     cond do
-      mem_available_bytes < gib(2) -> 1
-      mem_available_bytes < gib(4) -> min(schedulers_online, 1)
-      mem_available_bytes < gib(8) -> min(schedulers_online, 2)
-      mem_available_bytes < gib(16) -> min(schedulers_online, 4)
-      true -> min(schedulers_online, 8)
+      mem_available_bytes < gib(2) ->
+        :conservative
+
+      schedulers_online <= 2 and mem_available_bytes < gib(3) ->
+        :cpu_limited_throughput
+
+      mem_available_bytes < gib(4) ->
+        :cpu_limited_balanced
+
+      mem_available_bytes < gib(8) ->
+        :balanced
+
+      true ->
+        :throughput
     end
   end
 
-  defp recommended_pigz_threads(schedulers_online, nil) do
+  defp recommended_num_parallel_collections(schedulers_online, nil, _tuning_profile) do
     schedulers_online
     |> div(2)
     |> max(1)
     |> min(4)
   end
 
-  defp recommended_pigz_threads(schedulers_online, mem_available_bytes) do
-    cond do
-      mem_available_bytes < gib(2) -> 1
-      mem_available_bytes < gib(4) -> min(schedulers_online, 1)
-      mem_available_bytes < gib(8) -> min(schedulers_online, 2)
-      mem_available_bytes < gib(16) -> min(schedulers_online, 4)
-      true -> min(schedulers_online, 8)
+  defp recommended_num_parallel_collections(schedulers_online, mem_available_bytes, tuning_profile) do
+    case tuning_profile do
+      :conservative ->
+        1
+
+      :cpu_limited_throughput ->
+        cond do
+          mem_available_bytes < gib(2.5) -> 1
+          true -> min(schedulers_online, 2)
+        end
+
+      :cpu_limited_balanced ->
+        min(schedulers_online, 2)
+
+      :balanced ->
+        cond do
+          mem_available_bytes < gib(6) -> min(schedulers_online, 2)
+          mem_available_bytes < gib(12) -> min(schedulers_online, 4)
+          true -> min(schedulers_online, 6)
+        end
+
+      :throughput ->
+        cond do
+          mem_available_bytes < gib(12) -> min(schedulers_online, 4)
+          true -> min(schedulers_online, 8)
+        end
+    end
+  end
+
+  defp recommended_pigz_threads(schedulers_online, nil, _tuning_profile) do
+    schedulers_online
+    |> div(2)
+    |> max(1)
+    |> min(4)
+  end
+
+  defp recommended_pigz_threads(schedulers_online, mem_available_bytes, tuning_profile) do
+    case tuning_profile do
+      :conservative ->
+        1
+
+      :cpu_limited_throughput ->
+        1
+
+      :cpu_limited_balanced ->
+        1
+
+      :balanced ->
+        cond do
+          mem_available_bytes < gib(6) -> min(max(schedulers_online - 1, 1), 2)
+          mem_available_bytes < gib(12) -> min(max(schedulers_online - 1, 1), 3)
+          true -> min(max(schedulers_online - 1, 1), 4)
+        end
+
+      :throughput ->
+        cond do
+          mem_available_bytes < gib(12) -> min(max(schedulers_online - 1, 1), 4)
+          true -> min(max(schedulers_online - 1, 1), 8)
+        end
     end
   end
 
   defp gib(value) when is_integer(value), do: value * 1024 * 1024 * 1024
+  defp gib(value) when is_float(value), do: trunc(value * 1024 * 1024 * 1024)
 end
 
 DocdbStreamBackup.main(System.argv())
