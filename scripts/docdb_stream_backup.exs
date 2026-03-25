@@ -899,7 +899,14 @@ defmodule DocdbStreamBackup do
     end
   end
 
-  defp run_parallel_database_pipeline(args, capabilities, session_prefix, database, per_database_expected_size_bytes) do
+  defp run_parallel_database_pipeline(
+         args,
+         capabilities,
+         session_prefix,
+         database,
+         per_database_expected_size_bytes,
+         progress_target
+       ) do
     database_name = database.name
     key = build_parallel_database_key(session_prefix, database_name)
 
@@ -912,7 +919,8 @@ defmodule DocdbStreamBackup do
     case run_pipeline(database_args, capabilities, key,
            show_config?: false,
            show_progress?: false,
-           print_output?: false
+           print_output?: false,
+           stream_progress_target: progress_target
          ) do
       {:ok, metrics} ->
         {:ok, %{database_name: database_name, destination: "s3://#{args.bucket}/#{key}", metrics: metrics}}
@@ -1000,7 +1008,8 @@ defmodule DocdbStreamBackup do
         state.capabilities,
         state.session_prefix,
         work_item.database,
-        work_item.expected_size_bytes
+        work_item.expected_size_bytes,
+        {:display_stage, state.progress_display, work_item.database.name}
       )
     end)
   end
@@ -1152,9 +1161,30 @@ defmodule DocdbStreamBackup do
   defp throughput_floor_mib_per_sec(:throughput), do: 60.0
 
   defp format_parallel_database_completion_label(metrics) do
-    estimated_bytes = Map.get(metrics, :estimated_bytes, 0)
-    throughput = estimated_throughput_mib_per_sec(metrics)
-    "#{format_bytes_binary(estimated_bytes)} @ #{:erlang.float_to_binary(throughput, decimals: 1)} MiB/s"
+    measured_bytes = Map.get(metrics, :raw_bytes, 0)
+    throughput = measured_throughput_mib_per_sec(metrics)
+
+    cond do
+      measured_bytes > 0 ->
+        "#{format_bytes_binary(measured_bytes)} real @ #{:erlang.float_to_binary(throughput, decimals: 1)} MiB/s"
+
+      true ->
+        estimated_bytes = Map.get(metrics, :estimated_bytes, 0)
+        "#{format_bytes_binary(estimated_bytes)} estimado @ #{:erlang.float_to_binary(estimated_throughput_mib_per_sec(metrics), decimals: 1)} MiB/s"
+    end
+  end
+
+  defp measured_throughput_mib_per_sec(metrics) do
+    duration_seconds =
+      metrics
+      |> Map.get(:duration_us, 0)
+      |> Kernel./(1_000_000)
+      |> max(1.0)
+
+    metrics
+    |> Map.get(:raw_bytes, 0)
+    |> Kernel./(1024 * 1024)
+    |> Kernel./(duration_seconds)
   end
 
   defp build_parallel_database_key(session_prefix, database_name) do
@@ -1183,6 +1213,7 @@ defmodule DocdbStreamBackup do
   defp run_pipeline(args, capabilities, key, opts \\ []) do
     started_at = System.monotonic_time(:microsecond)
     destination = "s3://#{args.bucket}/#{key}"
+    meter_progress_file = build_runtime_probe_path("stream-progress")
 
     mongodump_args =
       ["mongodump", "--uri", args.uri, "--archive"]
@@ -1229,7 +1260,20 @@ defmodule DocdbStreamBackup do
       rm -f "${stderr_mongodump}" "${stderr_pigz}" "${stderr_aws}"
     }
     trap cleanup EXIT
-    #{mongodump_command} 2>"${stderr_mongodump}" | #{pigz_command} 2>"${stderr_pigz}" | #{aws_command} 2>"${stderr_aws}"
+    : > #{shell_escape(meter_progress_file)}
+    stream_meter_aws() {
+      LC_ALL=C dd bs=8M of=/dev/stdout status=progress 2>#{shell_escape(meter_progress_file)} | #{aws_command} 2>"${stderr_aws}"
+      meter_pipeline_status="${PIPESTATUS[*]}"
+      meter_pipeline_exit=0
+      for status_code in ${meter_pipeline_status}; do
+        if [ "$status_code" != "0" ]; then
+          meter_pipeline_exit=1
+          break
+        fi
+      done
+      return "${meter_pipeline_exit}"
+    }
+    #{mongodump_command} 2>"${stderr_mongodump}" | #{pigz_command} 2>"${stderr_pigz}" | stream_meter_aws
     pipeline_status="${PIPESTATUS[*]}"
     pipeline_exit=0
     for status_code in ${pipeline_status}; do
@@ -1268,22 +1312,37 @@ defmodule DocdbStreamBackup do
         nil
       end
 
+    stream_progress_target = resolve_stream_progress_target(opts, progress_display)
+
+    stream_progress_watcher =
+      start_stream_progress_watcher(
+        meter_progress_file,
+        stream_progress_target,
+        started_at
+      )
+
     case System.cmd("bash", ["-c", command], stderr_to_stdout: true) do
       {output, 0} ->
+        measured_bytes = read_streamed_bytes(meter_progress_file)
+        stop_stream_progress_watcher(stream_progress_watcher)
         maybe_stop_progress_display(progress_display, success_stage_states())
 
         if print_output? do
           print_pipeline_output(output, status_probe, stderr_markers)
         end
 
+        cleanup_runtime_probe_file(meter_progress_file)
+
         {:ok,
          %{
            duration_us: System.monotonic_time(:microsecond) - started_at,
-           raw_bytes: 0,
+           raw_bytes: measured_bytes,
            estimated_bytes: args.expected_size_bytes
          }}
 
       {output, status} ->
+        measured_bytes = read_streamed_bytes(meter_progress_file)
+        stop_stream_progress_watcher(stream_progress_watcher)
         pipeline_status = extract_pipeline_status(output, status_probe)
         maybe_stop_progress_display(progress_display, final_stage_states(pipeline_status))
         cleaned_output = remove_probe_sections(output, status_probe, stderr_markers)
@@ -1302,13 +1361,120 @@ defmodule DocdbStreamBackup do
           |> Enum.reject(&(&1 == ""))
           |> Enum.join("\n")
 
+        cleanup_runtime_probe_file(meter_progress_file)
+
         {:error,
          details,
          %{
            duration_us: System.monotonic_time(:microsecond) - started_at,
-           raw_bytes: 0,
+           raw_bytes: measured_bytes,
            estimated_bytes: 0
          }}
+    end
+  end
+
+  defp build_runtime_probe_path(label) do
+    Path.join(
+      System.tmp_dir!(),
+      "#{label}-#{System.system_time(:microsecond)}-#{System.unique_integer([:positive])}.log"
+    )
+  end
+
+  defp cleanup_runtime_probe_file(path) do
+    File.rm(path)
+    :ok
+  end
+
+  defp resolve_stream_progress_target(opts, progress_display) do
+    case Keyword.get(opts, :stream_progress_target) do
+      nil ->
+        if is_pid(progress_display) do
+          {:display_stage, progress_display, "aws"}
+        else
+          nil
+        end
+
+      explicit_target ->
+        explicit_target
+    end
+  end
+
+  defp start_stream_progress_watcher(_meter_progress_file, nil, _started_at), do: nil
+
+  defp start_stream_progress_watcher(meter_progress_file, progress_target, started_at) do
+    spawn(fn -> stream_progress_watcher_loop(meter_progress_file, progress_target, started_at, 0) end)
+  end
+
+  defp stop_stream_progress_watcher(nil), do: :ok
+
+  defp stop_stream_progress_watcher(pid) do
+    send(pid, :stop)
+    :ok
+  end
+
+  defp stream_progress_watcher_loop(meter_progress_file, progress_target, started_at, last_bytes) do
+    receive do
+      :stop ->
+        :ok
+    after
+      1_000 ->
+        current_bytes = read_streamed_bytes(meter_progress_file)
+
+        if current_bytes > last_bytes do
+          detail = format_stream_progress_detail(current_bytes, started_at)
+          publish_stream_progress(progress_target, detail)
+        end
+
+        stream_progress_watcher_loop(
+          meter_progress_file,
+          progress_target,
+          started_at,
+          max(current_bytes, last_bytes)
+        )
+    end
+  end
+
+  defp publish_stream_progress({:display_stage, progress_display, stage_name}, detail) do
+    update_progress_display(progress_display, stage_name, {:running, nil, detail})
+  end
+
+  defp publish_stream_progress(_, _detail), do: :ok
+
+  defp format_stream_progress_detail(streamed_bytes, started_at) do
+    elapsed_seconds =
+      started_at
+      |> Kernel.-(System.monotonic_time(:microsecond))
+      |> Kernel.*(-1)
+      |> Kernel./(1_000_000)
+      |> max(1.0)
+
+    throughput =
+      streamed_bytes
+      |> Kernel./(1024 * 1024)
+      |> Kernel./(elapsed_seconds)
+
+    "#{format_bytes_binary(streamed_bytes)} real @ #{:erlang.float_to_binary(throughput, decimals: 1)} MiB/s"
+  end
+
+  defp read_streamed_bytes(meter_progress_file) do
+    case File.read(meter_progress_file) do
+      {:ok, contents} ->
+        contents
+        |> Regex.scan(~r/(\d+)\s+bytes\b/)
+        |> List.last()
+        |> case do
+          [_, bytes_text] ->
+            case Integer.parse(bytes_text) do
+              {bytes, ""} -> bytes
+              _ -> 0
+            end
+
+          _ ->
+            0
+        end
+
+      _ ->
+        0
     end
   end
 
