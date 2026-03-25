@@ -89,6 +89,7 @@ defmodule DocdbStreamBackup do
       true ->
         with {:ok, positional} <- parse_positional_args(positional_args),
              {:ok, normalized_uri} <- normalize_non_empty(positional.uri, "docdb_uri"),
+             {:ok, validated_uri} <- validate_docdb_uri(normalized_uri),
              {:ok, normalized_bucket} <- normalize_non_empty(positional.bucket, "bucket"),
              {:ok, normalized_prefix} <- resolve_prefix(positional.prefix, options[:prefix]),
              {:ok, num_parallel_collections} <-
@@ -104,7 +105,7 @@ defmodule DocdbStreamBackup do
              {:ok, extra_mongodump_args} <- resolve_mongodump_args(options) do
           {:ok,
            %{
-             uri: normalized_uri,
+             uri: validated_uri,
              bucket: normalized_bucket,
              prefix: normalized_prefix,
              num_parallel_collections: num_parallel_collections,
@@ -233,6 +234,24 @@ defmodule DocdbStreamBackup do
     |> case do
       "" -> {:error, "#{label} não pode ser vazio"}
       normalized -> {:ok, normalized}
+    end
+  end
+
+  defp validate_docdb_uri(uri) do
+    trimmed_uri = String.trim(uri)
+
+    cond do
+      String.starts_with?(trimmed_uri, "mongodb://") ->
+        {:ok, trimmed_uri}
+
+      String.starts_with?(trimmed_uri, "mongodb+srv://") ->
+        {:error, "documentdb requer mongodb://. A URI recebida usa mongodb+srv://, que não é suportada pelo mongodump: #{inspect(trimmed_uri)}"}
+
+      String.contains?(trimmed_uri, "://") ->
+        {:error, "documentdb URI com formato inválido. Esperado mongodb://..., recebido: #{inspect(String.slice(trimmed_uri, 0, 80))}"}
+
+      true ->
+        {:error, "documentdb URI inválida: não contém esquema. Esperado mongodb://, recebido: #{inspect(String.slice(trimmed_uri, 0, 80))}"}
     end
   end
 

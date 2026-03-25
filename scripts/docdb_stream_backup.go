@@ -131,6 +131,11 @@ func parseArgs(argv []string) (backupArgs, error) {
 		return backupArgs{}, argsParseError{msg: err.Error()}
 	}
 
+	docdbURI, err = validateDocdbURI(docdbURI)
+	if err != nil {
+		return backupArgs{}, argsParseError{msg: err.Error()}
+	}
+
 	bucket, err := normalizeNonEmpty(positionals[1], "bucket")
 	if err != nil {
 		return backupArgs{}, argsParseError{msg: err.Error()}
@@ -378,6 +383,31 @@ func normalizeNonEmpty(value, label string) (string, error) {
 		return "", fmt.Errorf("%s não pode ser vazio", label)
 	}
 	return normalized, nil
+}
+
+func validateDocdbURI(uri string) (string, error) {
+	normalized := strings.TrimSpace(uri)
+	switch {
+	case strings.HasPrefix(normalized, "mongodb://"):
+		return normalized, nil
+	case strings.HasPrefix(normalized, "mongodb+srv://"):
+		return "", fmt.Errorf(
+			"documentdb requer mongodb://, mas a URI recebida usa mongodb+srv://: %s",
+			normalized,
+		)
+	case strings.Contains(normalized, "://"):
+		preview := normalized
+		if len(preview) > 80 {
+			preview = preview[:80] + "..."
+		}
+		return "", fmt.Errorf("documentdb URI com formato inválido; esperado mongodb://..., recebido: %s", preview)
+	default:
+		preview := normalized
+		if len(preview) > 80 {
+			preview = preview[:80] + "..."
+		}
+		return "", fmt.Errorf("documentdb URI inválida (esperado mongodb://): %s", preview)
+	}
 }
 
 func resolvePrefixSource(positionalPrefix, optionPrefix string) string {
