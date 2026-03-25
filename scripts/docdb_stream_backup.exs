@@ -535,7 +535,7 @@ defmodule DocdbStreamBackup do
 
     with {:ok, target_databases} <- resolve_target_databases(args),
          {:ok, session_prefix} <- build_parallel_session_prefix(args.prefix) do
-      parallel_args = apply_parallel_database_runtime_tuning(args)
+      parallel_args = apply_parallel_database_runtime_tuning(args, target_databases)
       per_database_expected_size_bytes = expected_size_bytes_per_database(args.expected_size_bytes, length(target_databases))
 
       print_parallel_database_config(parallel_args, capabilities, target_databases, session_prefix, per_database_expected_size_bytes)
@@ -561,7 +561,7 @@ defmodule DocdbStreamBackup do
               per_database_expected_size_bytes
             )
           end,
-          max_concurrency: min(args.database_concurrency, max(length(target_databases), 1)),
+          max_concurrency: parallel_args.database_concurrency,
           ordered: false,
           timeout: :infinity
         )
@@ -664,18 +664,49 @@ defmodule DocdbStreamBackup do
     |> Enum.reject(&(&1 in ["admin", "config", "local"]))
   end
 
-  defp apply_parallel_database_runtime_tuning(args) do
+  defp apply_parallel_database_runtime_tuning(args, target_databases) do
+    effective_database_concurrency = effective_parallel_database_concurrency(args, target_databases)
+
     %{
       args
-      | num_parallel_collections: parallel_database_num_parallel_collections(args),
+      | database_concurrency: effective_database_concurrency,
+        num_parallel_collections: parallel_database_num_parallel_collections(args),
         pigz_threads: parallel_database_pigz_threads(args)
+    }
+    |> distribute_parallel_database_runtime_budgets()
+  end
+
+  defp effective_parallel_database_concurrency(args, target_databases) do
+    target_databases
+    |> length()
+    |> min(max(args.database_concurrency, 1))
+    |> max(1)
+  end
+
+  defp distribute_parallel_database_runtime_budgets(args) do
+    %{
+      args
+      | num_parallel_collections:
+          distribute_parallel_budget(args.num_parallel_collections, args.database_concurrency, args.num_parallel_collections_source),
+        pigz_threads:
+          distribute_parallel_budget(args.pigz_threads, args.database_concurrency, args.pigz_threads_source)
     }
   end
 
-  defp parallel_database_num_parallel_collections(%{num_parallel_collections_source: :auto}), do: 1
+  defp distribute_parallel_budget(total_budget, _database_concurrency, :cli), do: total_budget
+
+  defp distribute_parallel_budget(total_budget, database_concurrency, :auto) do
+    total_budget
+    |> div(max(database_concurrency, 1))
+    |> max(1)
+  end
+
+  defp parallel_database_num_parallel_collections(%{num_parallel_collections_source: :auto} = args),
+    do: args.num_parallel_collections
+
   defp parallel_database_num_parallel_collections(args), do: args.num_parallel_collections
 
-  defp parallel_database_pigz_threads(%{pigz_threads_source: :auto}), do: 1
+  defp parallel_database_pigz_threads(%{pigz_threads_source: :auto} = args), do: args.pigz_threads
   defp parallel_database_pigz_threads(args), do: args.pigz_threads
 
   defp expected_size_bytes_per_database(expected_size_bytes, database_count) do
@@ -686,7 +717,9 @@ defmodule DocdbStreamBackup do
 
   defp print_parallel_database_config(args, capabilities, target_databases, session_prefix, per_database_expected_size_bytes) do
     print_config(args, capabilities)
-    IO.puts("modo: parallel_databases database_concurrency=#{args.database_concurrency} databases=#{length(target_databases)}")
+    IO.puts(
+      "modo: parallel_databases database_concurrency=#{args.database_concurrency} databases=#{length(target_databases)} per_pipeline=#{format_parallel_runtime(args, capabilities)}"
+    )
     IO.puts("destino-base: s3://#{args.bucket}/#{session_prefix}")
     IO.puts("expected_size_por_database: #{format_bytes_binary(per_database_expected_size_bytes)}")
     IO.puts("databases: #{Enum.join(target_databases, ", ")}")
