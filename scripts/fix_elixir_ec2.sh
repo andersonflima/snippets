@@ -69,6 +69,30 @@ run_with_sudo() {
   "${SUDO_CMD[@]}" "$@"
 }
 
+is_ec2_environment() {
+  local signal_files=(
+    "/sys/hypervisor/uuid"
+    "/sys/devices/virtual/dmi/id/product_uuid"
+    "/sys/devices/virtual/dmi/id/board_asset_tag"
+  )
+  local signal_file
+
+  for signal_file in "${signal_files[@]}"; do
+    [[ -r "${signal_file}" ]] || continue
+    if grep -Eiq '^(ec2|i-[0-9a-f]+)' "${signal_file}"; then
+      return 0
+    fi
+  done
+
+  return 1
+}
+
+assert_ec2_environment() {
+  if ! is_ec2_environment; then
+    die "este script é exclusivo para EC2"
+  fi
+}
+
 validate_sudo_non_interactive() {
   if [[ ${#SUDO_CMD[@]} -eq 0 ]]; then
     return
@@ -155,7 +179,10 @@ ensure_erlang_runtime() {
 }
 
 remove_system_elixir_if_requested() {
-  [[ "${FORCE_REMOVE_PACKAGE}" == "1" ]] || return
+  if [[ "${FORCE_REMOVE_PACKAGE}" != "1" ]]; then
+    log "remoção forçada desativada; seguindo sem remover pacote"
+    return 0
+  fi
 
   local distro
   distro="$(detect_distro)"
@@ -275,6 +302,7 @@ validate_installation() {
 
 main() {
   log "iniciando correção de runtime Elixir"
+  assert_ec2_environment
   validate_sudo_non_interactive
   log "etapa: ensure_base_tools"
   ensure_base_tools

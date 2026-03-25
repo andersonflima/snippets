@@ -62,6 +62,30 @@ done
 [[ -n "${INSTALL_DIR}" ]] || die "--install-dir não pode ser vazio"
 [[ -n "${LOG_FILE}" ]] || die "--log-file não pode ser vazio"
 
+is_ec2_environment() {
+  local signal_files=(
+    "/sys/hypervisor/uuid"
+    "/sys/devices/virtual/dmi/id/product_uuid"
+    "/sys/devices/virtual/dmi/id/board_asset_tag"
+  )
+  local signal_file
+
+  for signal_file in "${signal_files[@]}"; do
+    [[ -r "${signal_file}" ]] || continue
+    if grep -Eiq '^(ec2|i-[0-9a-f]+)' "${signal_file}"; then
+      return 0
+    fi
+  done
+
+  return 1
+}
+
+assert_ec2_environment() {
+  if ! is_ec2_environment; then
+    die "este script é exclusivo para EC2"
+  fi
+}
+
 build_fix_args() {
   local args=(--elixir-ref "${ELIXIR_REF}" --install-dir "${INSTALL_DIR}")
   if [[ "${FORCE_REMOVE_PACKAGE}" == "1" ]]; then
@@ -108,6 +132,7 @@ validate_final_state() {
 }
 
 main() {
+  assert_ec2_environment
   execute_fix
   validate_final_state
   log "correção aplicada com sucesso"
