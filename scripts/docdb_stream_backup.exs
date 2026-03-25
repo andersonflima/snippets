@@ -20,7 +20,8 @@ defmodule DocdbStreamBackup do
 
   Observação:
     O upload acontece por stream em memória, sem gerar arquivo local no EC2.
-    Perfil padrão otimizado para throughput: compressão nível 1 e expected-size de 10 GiB.
+    Os defaults de paralelismo são ajustados automaticamente por RAM/CPU do host para reduzir risco de OOM no mongodump.
+    O perfil padrão mantém compressão nível 1 e expected-size de 10 GiB.
     Meta de desempenho: 10 GiB em até 60 segundos.
     A string de conexão principal é o primeiro argumento posicional.
     Não passe --uri novamente em --mongodump-arg.
@@ -116,6 +117,8 @@ defmodule DocdbStreamBackup do
         ]
       )
 
+    runtime_tuning = default_runtime_tuning()
+
     cond do
       options[:help] ->
         {:help, @usage}
@@ -132,11 +135,11 @@ defmodule DocdbStreamBackup do
              {:ok, num_parallel_collections} <-
                resolve_positive_integer(
                  options[:num_parallel_collections],
-                 default_num_parallel_collections(),
+                 runtime_tuning.num_parallel_collections,
                  "num_parallel_collections"
                ),
              {:ok, pigz_threads} <-
-               resolve_positive_integer(options[:pigz_threads], default_pigz_threads(), "pigz_threads"),
+               resolve_positive_integer(options[:pigz_threads], runtime_tuning.pigz_threads, "pigz_threads"),
              {:ok, compression_level} <- resolve_compression_level(options[:compression_level]),
              {:ok, expected_size_bytes} <- resolve_expected_size_bytes(options),
              {:ok, extra_mongodump_args} <- resolve_mongodump_args(options) do
@@ -149,7 +152,10 @@ defmodule DocdbStreamBackup do
              pigz_threads: pigz_threads,
              compression_level: compression_level,
              expected_size_bytes: expected_size_bytes,
-             extra_mongodump_args: extra_mongodump_args
+             extra_mongodump_args: extra_mongodump_args,
+             runtime_tuning: runtime_tuning,
+             num_parallel_collections_source: option_source(options[:num_parallel_collections]),
+             pigz_threads_source: option_source(options[:pigz_threads])
            }}
         end
     end
@@ -530,6 +536,7 @@ defmodule DocdbStreamBackup do
             format_pipeline_stage_details(failed_stages),
             format_failed_commands(pipeline_summary, failed_stages),
             format_stage_stderr(stderr_sections, failed_stages),
+            format_failure_hint(stderr_sections, failed_stages, args, capabilities),
             format_pipeline_output(cleaned_output)
           ]
           |> Enum.reject(&(&1 == ""))
@@ -600,6 +607,29 @@ defmodule DocdbStreamBackup do
     case formatted_sections do
       [] -> ""
       _ -> "stderr detalhado:\n" <> Enum.join(formatted_sections, "\n\n")
+    end
+  end
+
+  defp format_failure_hint(stderr_sections, failed_stages, args, capabilities) do
+    mongodump_failed? = Enum.any?(failed_stages, &String.starts_with?(&1, "mongodump="))
+    mongodump_stderr = Map.get(stderr_sections, "mongodump", "")
+    normalized_stderr = String.downcase(mongodump_stderr)
+
+    cond do
+      not mongodump_failed? ->
+        ""
+
+      String.contains?(normalized_stderr, "low available memory") ->
+        [
+          "dica: o mongodump encerrou por falta de memória.",
+          "ajuste aplicado: os defaults agora usam auto-tuning por RAM/CPU do host.",
+          "configuração atual: #{format_parallel_runtime(args, capabilities)}",
+          "se precisar forçar modo conservador, rode com: --num-parallel-collections 1 --pigz-threads 1"
+        ]
+        |> Enum.join("\n")
+
+      true ->
+        ""
     end
   end
 
@@ -734,6 +764,7 @@ defmodule DocdbStreamBackup do
   end
 
   defp print_config(args, capabilities) do
+    runtime_tuning = Map.get(args, :runtime_tuning, default_runtime_tuning())
     num_parallel_display =
       if capabilities.supports_num_parallel_collections do
         Integer.to_string(args.num_parallel_collections)
@@ -742,8 +773,26 @@ defmodule DocdbStreamBackup do
       end
 
     IO.puts(
-      "config: numParallelCollections=#{num_parallel_display} pigz_threads=#{args.pigz_threads} compression_level=#{args.compression_level} expected_size=#{format_bytes_binary(args.expected_size_bytes)}"
+      "host: schedulers=#{runtime_tuning.schedulers_online} mem_available=#{format_memory_available(runtime_tuning.mem_available_bytes)}"
     )
+
+    IO.puts(
+      "config: numParallelCollections=#{num_parallel_display} (#{Map.get(args, :num_parallel_collections_source, :auto)}) pigz_threads=#{args.pigz_threads} (#{Map.get(args, :pigz_threads_source, :auto)}) compression_level=#{args.compression_level} expected_size=#{format_bytes_binary(args.expected_size_bytes)}"
+    )
+  end
+
+  defp option_source(nil), do: :auto
+  defp option_source(_value), do: :cli
+
+  defp format_parallel_runtime(args, capabilities) do
+    num_parallel_display =
+      if capabilities.supports_num_parallel_collections do
+        Integer.to_string(args.num_parallel_collections)
+      else
+        "desativado"
+      end
+
+    "numParallelCollections=#{num_parallel_display} pigz_threads=#{args.pigz_threads} compression_level=#{args.compression_level}"
   end
 
   defp print_performance_report(metrics, expected_size_bytes) do
@@ -804,6 +853,9 @@ defmodule DocdbStreamBackup do
       "#{seconds}s"
     end
   end
+
+  defp format_memory_available(nil), do: "desconhecida"
+  defp format_memory_available(bytes), do: format_bytes_binary(bytes)
 
   defp success_stage_states do
     %{
@@ -952,17 +1004,63 @@ defmodule DocdbStreamBackup do
     "'#{escaped}'"
   end
 
-  defp default_num_parallel_collections do
-    System.schedulers_online()
-    |> max(16)
-    |> min(32)
+  defp default_runtime_tuning do
+    schedulers_online = System.schedulers_online()
+    mem_available_bytes = read_mem_available_bytes()
+
+    %{
+      schedulers_online: schedulers_online,
+      mem_available_bytes: mem_available_bytes,
+      num_parallel_collections: recommended_num_parallel_collections(schedulers_online, mem_available_bytes),
+      pigz_threads: recommended_pigz_threads(schedulers_online, mem_available_bytes)
+    }
   end
 
-  defp default_pigz_threads do
-    System.schedulers_online()
-    |> max(8)
-    |> min(16)
+  defp read_mem_available_bytes do
+    with {:ok, meminfo} <- File.read("/proc/meminfo"),
+         [value_kib] <- Regex.run(~r/^MemAvailable:\s+(\d+)\s+kB$/m, meminfo, capture: :all_but_first),
+         {parsed_kib, ""} <- Integer.parse(value_kib) do
+      parsed_kib * 1024
+    else
+      _ -> nil
+    end
   end
+
+  defp recommended_num_parallel_collections(schedulers_online, nil) do
+    schedulers_online
+    |> div(2)
+    |> max(1)
+    |> min(4)
+  end
+
+  defp recommended_num_parallel_collections(schedulers_online, mem_available_bytes) do
+    cond do
+      mem_available_bytes < gib(2) -> 1
+      mem_available_bytes < gib(4) -> min(schedulers_online, 1)
+      mem_available_bytes < gib(8) -> min(schedulers_online, 2)
+      mem_available_bytes < gib(16) -> min(schedulers_online, 4)
+      true -> min(schedulers_online, 8)
+    end
+  end
+
+  defp recommended_pigz_threads(schedulers_online, nil) do
+    schedulers_online
+    |> div(2)
+    |> max(1)
+    |> min(4)
+  end
+
+  defp recommended_pigz_threads(schedulers_online, mem_available_bytes) do
+    cond do
+      mem_available_bytes < gib(2) -> 1
+      mem_available_bytes < gib(4) -> min(schedulers_online, 1)
+      mem_available_bytes < gib(8) -> min(schedulers_online, 2)
+      mem_available_bytes < gib(16) -> min(schedulers_online, 4)
+      true -> min(schedulers_online, 8)
+    end
+  end
+
+  defp gib(value) when is_integer(value), do: value * 1024 * 1024 * 1024
 end
 
 DocdbStreamBackup.main(System.argv())
