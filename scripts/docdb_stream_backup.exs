@@ -56,6 +56,9 @@ defmodule DocdbStreamBackup do
     "tlsFIPSMode" => "sslFIPSMode"
   }
 
+  @legacy_ssl_to_tls Map.new(@legacy_tls_to_ssl, fn {tls_flag, ssl_flag} -> {ssl_flag, tls_flag} end)
+  @legacy_ssl_query_to_tls Map.new(@legacy_tls_query_to_ssl, fn {tls_key, ssl_key} -> {ssl_key, tls_key} end)
+
   def main(argv) do
     case parse_args(argv) do
       {:help, message} ->
@@ -600,15 +603,15 @@ defmodule DocdbStreamBackup do
   end
 
   defp resolve_target_databases(%{database_names: []} = args) do
-    discover_databases(args.uri)
+    discover_databases(args.uri, args.extra_mongodump_args)
   end
 
   defp resolve_target_databases(%{database_names: database_names}) do
     {:ok, database_names}
   end
 
-  defp discover_databases(uri) do
-    with {:ok, discovery_command} <- database_discovery_command(uri),
+  defp discover_databases(uri, extra_connection_args) do
+    with {:ok, discovery_command} <- database_discovery_command(uri, extra_connection_args),
          {output, 0} <- run_database_discovery(discovery_command),
          {:ok, database_names} <- parse_discovered_databases(output) do
       case filter_discovered_databases(database_names) do
@@ -624,20 +627,96 @@ defmodule DocdbStreamBackup do
     end
   end
 
-  defp database_discovery_command(uri) do
+  defp database_discovery_command(uri, extra_connection_args) do
     script = "db.adminCommand({ listDatabases: 1, nameOnly: true }).databases.forEach((item) => console.log(item.name))"
 
     cond do
       System.find_executable("mongosh") ->
-        {:ok, {"mongosh", ["--quiet", uri, "--eval", script]}}
+        discovery_uri = normalize_discovery_uri_query(uri, :mongosh)
+        discovery_args = discovery_connection_args(extra_connection_args, :mongosh)
+        {:ok, {"mongosh", ["--quiet", discovery_uri] ++ discovery_args ++ ["--eval", script]}}
 
       System.find_executable("mongo") ->
         legacy_script = "db.adminCommand({ listDatabases: 1, nameOnly: true }).databases.forEach(function(item) { print(item.name) })"
-        {:ok, {"mongo", ["--quiet", uri, "--eval", legacy_script]}}
+        discovery_uri = normalize_discovery_uri_query(uri, :mongo)
+        discovery_args = discovery_connection_args(extra_connection_args, :mongo)
+        {:ok, {"mongo", ["--quiet", discovery_uri] ++ discovery_args ++ ["--eval", legacy_script]}}
 
       true ->
         {:error,
          "modo --parallel-databases sem --database exige mongosh ou mongo no PATH para descobrir os databases"}
+    end
+  end
+
+  defp discovery_connection_args(extra_connection_args, discovery_tool) do
+    extra_connection_args
+    |> Enum.filter(&discovery_connection_arg?/1)
+    |> Enum.map(&translate_discovery_connection_arg(&1, discovery_tool))
+    |> Enum.uniq()
+  end
+
+  defp discovery_connection_arg?(arg) do
+    normalized_arg = String.trim(arg)
+
+    String.starts_with?(normalized_arg, "--tls") or
+      String.starts_with?(normalized_arg, "--ssl")
+  end
+
+  defp translate_discovery_connection_arg(arg, :mongosh) do
+    translate_flag_prefix(arg, @legacy_ssl_to_tls)
+  end
+
+  defp translate_discovery_connection_arg(arg, :mongo) do
+    translate_flag_prefix(arg, @legacy_tls_to_ssl)
+  end
+
+  defp translate_flag_prefix(arg, replacements) do
+    case String.split(arg, "=", parts: 2) do
+      [flag, value] ->
+        Map.get(replacements, flag, flag) <> "=" <> value
+
+      [flag] ->
+        Map.get(replacements, flag, flag)
+    end
+  end
+
+  defp normalize_discovery_uri_query(uri, :mongosh) do
+    normalize_uri_query_keys(uri, @legacy_ssl_query_to_tls)
+  end
+
+  defp normalize_discovery_uri_query(uri, :mongo) do
+    normalize_uri_query_keys(uri, @legacy_tls_query_to_ssl)
+  end
+
+  defp normalize_uri_query_keys(uri, replacements) do
+    parsed_uri = URI.parse(uri)
+
+    if is_nil(parsed_uri.query) or parsed_uri.query == "" do
+      uri
+    else
+      original_query = URI.decode_query(parsed_uri.query)
+
+      normalized_query =
+        Enum.reduce(replacements, original_query, fn {legacy_key, replacement_key}, query ->
+          case Map.pop(query, legacy_key) do
+            {nil, remaining_query} ->
+              remaining_query
+
+            {value, remaining_query} ->
+              if Map.has_key?(remaining_query, replacement_key) do
+                remaining_query
+              else
+                Map.put(remaining_query, replacement_key, value)
+              end
+          end
+        end)
+
+      if normalized_query == original_query do
+        uri
+      else
+        %{parsed_uri | query: URI.encode_query(normalized_query)}
+        |> URI.to_string()
+      end
     end
   end
 
