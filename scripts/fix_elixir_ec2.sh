@@ -69,6 +69,16 @@ run_with_sudo() {
   "${SUDO_CMD[@]}" "$@"
 }
 
+validate_sudo_non_interactive() {
+  if [[ ${#SUDO_CMD[@]} -eq 0 ]]; then
+    return
+  fi
+
+  if ! sudo -n true >/dev/null 2>&1; then
+    die "sudo sem modo não interativo. Execute como root ou use: sudo -E bash scripts/fix_elixir_ec2.sh"
+  fi
+}
+
 detect_distro() {
   [[ -f /etc/os-release ]] || die "arquivo /etc/os-release não encontrado"
   # shellcheck disable=SC1091
@@ -168,13 +178,10 @@ read_current_state() {
   local path version_line require_file2
   path="$(command -v elixir || true)"
   version_line="não instalado"
-  require_file2="não"
+  require_file2="não verificado"
 
   if [[ -n "${path}" ]]; then
     version_line="$(elixir --version 2>&1 | head -n 1 || true)"
-    if elixir -e 'System.halt(if function_exported?(Code, :require_file, 2), do: 0, else: 1)' >/dev/null 2>&1; then
-      require_file2="sim"
-    fi
   fi
 
   printf '%s|%s|%s\n' "${path:-<ausente>}" "${version_line}" "${require_file2}"
@@ -244,11 +251,16 @@ validate_installation() {
 
 main() {
   log "iniciando correção de runtime Elixir"
+  validate_sudo_non_interactive
+  log "etapa: ensure_base_tools"
   ensure_base_tools
+  log "etapa: ensure_erlang_runtime"
   ensure_erlang_runtime
+  log "etapa: remove_system_elixir_if_requested"
   remove_system_elixir_if_requested
 
   local before_state before_path before_version before_require_file2
+  log "etapa: read_current_state (antes)"
   before_state="$(read_current_state)"
   before_path="${before_state%%|*}"
   before_version="${before_state#*|}"
@@ -256,6 +268,7 @@ main() {
   before_require_file2="${before_state##*|}"
 
   local otp_release
+  log "etapa: detect_otp_release"
   otp_release="$(detect_otp_release)"
   [[ -n "${otp_release}" ]] || die "não foi possível detectar OTP release via erl"
   log "OTP detectado: ${otp_release}"
@@ -264,15 +277,20 @@ main() {
   workdir="$(mktemp -d -t fix-elixir-XXXXXX)"
   trap 'rm -rf "${workdir}"' EXIT
 
+  log "etapa: download_elixir_archive"
   archive_path="$(download_elixir_archive "${otp_release}" "${workdir}")"
   log "arquivo de instalação: ${archive_path}"
+  log "etapa: install_elixir_archive"
   install_elixir_archive "${archive_path}"
+  log "etapa: configure_path"
   configure_path
+  log "etapa: validate_installation"
   validate_installation
 
   export PATH="${INSTALL_DIR}/bin:${PATH}"
 
   local after_state after_path after_version after_require_file2
+  log "etapa: read_current_state (depois)"
   after_state="$(read_current_state)"
   after_path="${after_state%%|*}"
   after_version="${after_state#*|}"
