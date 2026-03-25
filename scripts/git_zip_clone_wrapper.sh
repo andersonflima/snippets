@@ -223,6 +223,10 @@ download_github_archive() {
     else
       candidate_urls+=("https://github.com/${slug}/archive/HEAD.tar.gz")
       candidate_urls+=("https://codeload.github.com/${slug}/tar.gz/HEAD")
+      candidate_urls+=("https://github.com/${slug}/archive/refs/heads/main.tar.gz")
+      candidate_urls+=("https://codeload.github.com/${slug}/tar.gz/refs/heads/main")
+      candidate_urls+=("https://github.com/${slug}/archive/refs/heads/master.tar.gz")
+      candidate_urls+=("https://codeload.github.com/${slug}/tar.gz/refs/heads/master")
     fi
 
     if is_truthy "${ALLOW_ZIP_FALLBACK}"; then
@@ -235,6 +239,10 @@ download_github_archive() {
       else
         candidate_urls+=("https://github.com/${slug}/archive/HEAD.zip")
         candidate_urls+=("https://codeload.github.com/${slug}/zip/HEAD")
+        candidate_urls+=("https://github.com/${slug}/archive/refs/heads/main.zip")
+        candidate_urls+=("https://codeload.github.com/${slug}/zip/refs/heads/main")
+        candidate_urls+=("https://github.com/${slug}/archive/refs/heads/master.zip")
+        candidate_urls+=("https://codeload.github.com/${slug}/zip/refs/heads/master")
       fi
     fi
   fi

@@ -92,6 +92,37 @@ assert_non_zip_download_request() {
   fi
 }
 
+normalize_curl_args_for_parser() {
+  PARSED_ARGS=()
+  local arg payload ch i len
+
+  for arg in "$@"; do
+    if [[ "${arg}" == --* ]] || [[ "${arg}" == "-" ]] || [[ "${arg}" != -* ]]; then
+      PARSED_ARGS+=("${arg}")
+      continue
+    fi
+
+    case "${arg}" in
+      -o*|-A*|-H*|-d*|-X*|-F*|-T*)
+        PARSED_ARGS+=("${arg}")
+        continue
+        ;;
+    esac
+
+    payload="${arg:1}"
+    len="${#payload}"
+    if [[ "${arg}" =~ ^-[fsS4kIL]+$ ]]; then
+      for (( i = 0; i < len; i++ )); do
+        ch="${payload:i:1}"
+        PARSED_ARGS+=("-${ch}")
+      done
+      continue
+    fi
+
+    PARSED_ARGS+=("${arg}")
+  done
+}
+
 resolve_real_curl() {
   if [[ -n "${CURL_WRAPPER_REAL_CURL:-}" ]]; then
     [[ -x "${CURL_WRAPPER_REAL_CURL}" ]] || die "CURL_WRAPPER_REAL_CURL inválido: ${CURL_WRAPPER_REAL_CURL}"
@@ -459,10 +490,13 @@ main() {
   real_curl="$(resolve_real_curl)"
   local can_fallback=0
   local parsed_fallback=0
+  local -a normalized_args=()
 
   is_truthy "${CURL_WRAPPER_ALLOW_ZIP_DOWNLOAD}" || assert_non_zip_download_request "$@"
+  normalize_curl_args_for_parser "$@"
+  normalized_args=("${PARSED_ARGS[@]}")
 
-  if parse_curl_arguments_for_python_fallback "$@"; then
+  if parse_curl_arguments_for_python_fallback "${normalized_args[@]}"; then
     parsed_fallback=1
     if [[ "${CURL_FALLBACK_CAN_HANDLE}" == "1" ]]; then
       can_fallback=1
@@ -486,7 +520,7 @@ main() {
     exit "${curl_exit}"
   fi
 
-  if (( parsed_fallback == 0 )) && parse_curl_arguments_for_python_fallback "$@"; then
+  if (( parsed_fallback == 0 )) && parse_curl_arguments_for_python_fallback "${normalized_args[@]}"; then
     parsed_fallback=1
   fi
   if (( parsed_fallback == 0 )) || (( can_fallback == 0 )); then

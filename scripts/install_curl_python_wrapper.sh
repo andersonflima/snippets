@@ -82,5 +82,5 @@ vim.env.PATH = "${INSTALL_DIR}:" .. vim.env.PATH
 - export CURL_WRAPPER_ALLOW_ZIP_DOWNLOAD=1
 
 4) Teste:
-curl -fsSL https://github.com/neovim/neovim/archive/HEAD.tar.gz -o /tmp/neovim.tar.gz
+curl -fsSL https://github.com/neovim/neovim/archive/refs/heads/master.tar.gz -o /tmp/neovim.tar.gz
 EOF
