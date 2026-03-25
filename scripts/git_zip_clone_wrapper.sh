@@ -15,6 +15,19 @@ ARCHIVE_FORMAT="${GIT_ZIP_WRAPPER_ARCHIVE_FORMAT:-tar.gz}"
 ALLOW_ZIP_FALLBACK="${GIT_ZIP_WRAPPER_ALLOW_ZIP_FALLBACK:-0}"
 GIT_ZIP_WRAPPER_CURL_INSECURE="${GIT_ZIP_WRAPPER_CURL_INSECURE:-0}"
 GIT_ZIP_WRAPPER_CURL_CACERT="${GIT_ZIP_WRAPPER_CURL_CACERT:-}"
+GIT_ZIP_WRAPPER_ACTIVE_PROXY=""
+
+resolve_proxy_config() {
+  local proxy
+  proxy="${GIT_ZIP_WRAPPER_PROXY:-}"
+  [[ -n "${proxy}" ]] || proxy="${HTTPS_PROXY:-}"
+  [[ -n "${proxy}" ]] || proxy="${https_proxy:-}"
+  [[ -n "${proxy}" ]] || proxy="${ALL_PROXY:-}"
+  [[ -n "${proxy}" ]] || proxy="${all_proxy:-}"
+  [[ -n "${proxy}" ]] || proxy="${HTTP_PROXY:-}"
+  [[ -n "${proxy}" ]] || proxy="${http_proxy:-}"
+  GIT_ZIP_WRAPPER_ACTIVE_PROXY="${proxy}"
+}
 
 cleanup_temp_dir() {
   local dir
@@ -285,6 +298,7 @@ download_url_with_retries() {
   local mode attempt mode_label
   local -a curl_modes=("" "--http1.1" "-4" "-4 --http1.1")
   local -a tls_opts=()
+  local -a proxy_opts=()
   local user_agent
   user_agent="Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36"
 
@@ -293,6 +307,10 @@ download_url_with_retries() {
   fi
   if [[ -n "${GIT_ZIP_WRAPPER_CURL_CACERT}" ]]; then
     tls_opts+=("--cacert" "${GIT_ZIP_WRAPPER_CURL_CACERT}")
+  fi
+  if [[ -n "${GIT_ZIP_WRAPPER_ACTIVE_PROXY}" ]]; then
+    proxy_opts=("--proxy" "${GIT_ZIP_WRAPPER_ACTIVE_PROXY}")
+    log "download usando proxy: ${GIT_ZIP_WRAPPER_ACTIVE_PROXY}"
   fi
 
   for mode in "${curl_modes[@]}"; do
@@ -309,6 +327,7 @@ download_url_with_retries() {
         --retry-all-errors \
         --tlsv1.2 \
         "${tls_opts[@]}" \
+        "${proxy_opts[@]}" \
         -A "${user_agent}" \
         -H "Accept: application/octet-stream,*/*" \
         ${mode} \
@@ -387,6 +406,10 @@ main() {
   repo_url="${CLONE_REPO_URL}"
   branch="${CLONE_BRANCH}"
   destination="${CLONE_DESTINATION}"
+  resolve_proxy_config
+  if [[ -n "${GIT_ZIP_WRAPPER_ACTIVE_PROXY}" ]]; then
+    log "proxy ativo para wrapper git clone: ${GIT_ZIP_WRAPPER_ACTIVE_PROXY}"
+  fi
 
   local slug
   if ! slug="$(extract_github_slug "${repo_url}")"; then

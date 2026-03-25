@@ -82,6 +82,12 @@ vim.env.PATH = "${INSTALL_DIR}:" .. vim.env.PATH
 - export CURL_WRAPPER_ALLOW_ZIP_DOWNLOAD=1
 - para contornar falhas de certificado em ambientes fechados:
 - export CURL_WRAPPER_AUTO_INSECURE_ON_CERT_ERROR=1
+- proxy por env (suportado explicitamente pelo wrapper):
+- export HTTPS_PROXY=http://proxy.seu-dominio:3128
+- export HTTP_PROXY=http://proxy.seu-dominio:3128
+- export ALL_PROXY=http://proxy.seu-dominio:3128
+- ou sobrescrever explicitamente:
+- export CURL_WRAPPER_PROXY=http://proxy.seu-dominio:3128
 
 4) Teste:
 curl -fsSL https://github.com/neovim/neovim/archive/refs/heads/master.tar.gz -o /tmp/neovim.tar.gz

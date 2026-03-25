@@ -23,12 +23,25 @@ is_truthy() {
 
 CURL_WRAPPER_ALLOW_ZIP_DOWNLOAD="${CURL_WRAPPER_ALLOW_ZIP_DOWNLOAD:-0}"
 CURL_WRAPPER_AUTO_INSECURE_ON_CERT_ERROR="${CURL_WRAPPER_AUTO_INSECURE_ON_CERT_ERROR:-0}"
+CURL_WRAPPER_ACTIVE_PROXY=""
 
 is_zip_extension() {
   local value
   value="${1%%\?*}"
   value="${value%%#*}"
   [[ "${value}" == *.zip ]]
+}
+
+resolve_proxy_config() {
+  local proxy
+  proxy="${CURL_WRAPPER_PROXY:-}"
+  [[ -n "${proxy}" ]] || proxy="${HTTPS_PROXY:-}"
+  [[ -n "${proxy}" ]] || proxy="${https_proxy:-}"
+  [[ -n "${proxy}" ]] || proxy="${ALL_PROXY:-}"
+  [[ -n "${proxy}" ]] || proxy="${all_proxy:-}"
+  [[ -n "${proxy}" ]] || proxy="${HTTP_PROXY:-}"
+  [[ -n "${proxy}" ]] || proxy="${http_proxy:-}"
+  CURL_WRAPPER_ACTIVE_PROXY="${proxy}"
 }
 
 assert_non_zip_download_request() {
@@ -104,7 +117,7 @@ normalize_curl_args_for_parser() {
     fi
 
     case "${arg}" in
-      -o*|-A*|-H*|-d*|-X*|-F*|-T*)
+      -o*|-A*|-H*|-d*|-X*|-F*|-T*|-x*)
         PARSED_ARGS+=("${arg}")
         continue
         ;;
@@ -157,6 +170,7 @@ CURL_FALLBACK_USER_AGENT=""
 CURL_FALLBACK_CONNECT_TIMEOUT="20"
 CURL_FALLBACK_MAX_TIME="300"
 CURL_FALLBACK_HEADERS=""
+CURL_FALLBACK_PROXY=""
 CURL_FALLBACK_ALLOW_REDIRECTS="1"
 CURL_FALLBACK_CAN_HANDLE="1"
 CURL_FALLBACK_REMOTE_NAME="0"
@@ -171,6 +185,7 @@ parse_curl_arguments_for_python_fallback() {
   CURL_FALLBACK_CONNECT_TIMEOUT="20"
   CURL_FALLBACK_MAX_TIME="300"
   CURL_FALLBACK_HEADERS=""
+  CURL_FALLBACK_PROXY=""
   CURL_FALLBACK_ALLOW_REDIRECTS="1"
   CURL_FALLBACK_CAN_HANDLE="1"
   CURL_FALLBACK_REMOTE_NAME="0"
@@ -201,6 +216,24 @@ parse_curl_arguments_for_python_fallback() {
         ;;
       --output=*)
         CURL_FALLBACK_OUTPUT="${arg#--output=}"
+        index=$((index + 1))
+        ;;
+      -x)
+        (( index + 1 < ${#args[@]} )) || return 1
+        CURL_FALLBACK_PROXY="${args[index + 1]}"
+        index=$((index + 2))
+        ;;
+      -x*)
+        CURL_FALLBACK_PROXY="${arg#-x}"
+        index=$((index + 1))
+        ;;
+      --proxy)
+        (( index + 1 < ${#args[@]} )) || return 1
+        CURL_FALLBACK_PROXY="${args[index + 1]}"
+        index=$((index + 2))
+        ;;
+      --proxy=*)
+        CURL_FALLBACK_PROXY="${arg#--proxy=}"
         index=$((index + 1))
         ;;
       -O|--remote-name|--remote-name-all)
@@ -272,11 +305,11 @@ parse_curl_arguments_for_python_fallback() {
           index=$((index + 1))
         fi
         ;;
-      -I|--head|-X|--request|-T|--upload-file|-F|--form|-d|--data|--data-binary|--data-raw|--data-urlencode|--compressed|--proxy|--proxy-user)
+      -I|--head|-X|--request|-T|--upload-file|-F|--form|-d|--data|--data-binary|--data-raw|--data-urlencode|--compressed|--proxy-user)
         CURL_FALLBACK_CAN_HANDLE="0"
         return 0
         ;;
-      --request=*|--data=*|--data-binary=*|--data-raw=*|--data-urlencode=*|--form=*|--proxy=*|--proxy-user=*|--upload-file=*|--cacert=*|--cert=*|--key=*)
+      --request=*|--data=*|--data-binary=*|--data-raw=*|--data-urlencode=*|--form=*|--proxy-user=*|--upload-file=*|--cacert=*|--cert=*|--key=*)
         CURL_FALLBACK_CAN_HANDLE="0"
         return 0
         ;;
@@ -380,6 +413,7 @@ download_with_python_requests() {
   PYTHON_CURL_WRAPPER_CONNECT_TIMEOUT="${CURL_FALLBACK_CONNECT_TIMEOUT}" \
   PYTHON_CURL_WRAPPER_MAX_TIME="${CURL_FALLBACK_MAX_TIME}" \
   PYTHON_CURL_WRAPPER_HEADERS="${CURL_FALLBACK_HEADERS}" \
+  PYTHON_CURL_WRAPPER_PROXY="${CURL_FALLBACK_PROXY}" \
   PYTHON_CURL_WRAPPER_ALLOW_REDIRECTS="${CURL_FALLBACK_ALLOW_REDIRECTS}" \
   PYTHON_CURL_WRAPPER_CREATE_DIRS="${CURL_FALLBACK_CREATE_DIRS}" \
   PYTHON_CURL_WRAPPER_INSECURE="${CURL_FALLBACK_INSECURE}" \
@@ -419,6 +453,14 @@ max_time = float(os.environ.get("PYTHON_CURL_WRAPPER_MAX_TIME", "300") or "300")
 allow_redirects = os.environ.get("PYTHON_CURL_WRAPPER_ALLOW_REDIRECTS", "1").strip().lower() in {"1", "true", "yes", "on"}
 create_dirs = os.environ.get("PYTHON_CURL_WRAPPER_CREATE_DIRS", "0").strip().lower() in {"1", "true", "yes", "on"}
 insecure = os.environ.get("PYTHON_CURL_WRAPPER_INSECURE", "0").strip().lower() in {"1", "true", "yes", "on"}
+raw_proxy = os.environ.get("PYTHON_CURL_WRAPPER_PROXY", "").strip()
+parsed_proxy = raw_proxy.strip() if raw_proxy else ""
+proxies = {}
+if parsed_proxy:
+    proxies = {
+        "http": parsed_proxy,
+        "https": parsed_proxy,
+    }
 
 if not url:
     raise SystemExit(1)
@@ -444,6 +486,8 @@ if requests is not None:
     }
     if insecure:
         request_kwargs["verify"] = False
+    if proxies:
+        request_kwargs["proxies"] = proxies
 
     with requests.get(url, **request_kwargs) as response:
         response.raise_for_status()
@@ -459,6 +503,8 @@ if requests is not None:
                     out.write(chunk)
 else:
     import ssl
+    proxy_handler = urllib_request.ProxyHandler(proxies)
+    opener = urllib_request.build_opener(proxy_handler, urllib_request.HTTPSHandler(context=context), urllib_request.HTTPHandler())
 
     context = ssl.create_default_context()
     if insecure:
@@ -466,7 +512,7 @@ else:
 
     req = urllib_request.Request(url, headers=headers, method="GET")
     try:
-        with urllib_request.urlopen(req, timeout=max_time, context=context) as response:
+        with opener.open(req, timeout=max_time) as response:
             if output_path:
                 with open(output_path, "wb") as handle:
                     while True:
@@ -486,13 +532,31 @@ else:
 PY
 }
 
+has_explicit_proxy_arg() {
+  local arg
+  for arg in "$@"; do
+    case "${arg}" in
+      -x|--proxy|-x*|--proxy=*)
+        return 0
+        ;;
+    esac
+  done
+  return 1
+}
+
 main() {
   local real_curl
   real_curl="$(resolve_real_curl)"
   local can_fallback=0
   local parsed_fallback=0
   local -a normalized_args=()
+  local -a real_curl_env=()
+  local -a real_curl_cmd=("${real_curl}")
+  local proxy_from_env
+  proxy_from_env=""
 
+  resolve_proxy_config
+  local resolved_proxy="${CURL_WRAPPER_ACTIVE_PROXY:-}"
   is_truthy "${CURL_WRAPPER_ALLOW_ZIP_DOWNLOAD}" || assert_non_zip_download_request "$@"
   normalize_curl_args_for_parser "$@"
   normalized_args=("${PARSED_ARGS[@]}")
@@ -508,9 +572,25 @@ main() {
     exec "${real_curl}"
   fi
 
+  if [[ -z "${CURL_FALLBACK_PROXY:-}" ]] && [[ -n "${resolved_proxy}" ]] && ! has_explicit_proxy_arg "$@"; then
+    log "proxy ativo para curl: ${resolved_proxy}"
+    CURL_FALLBACK_PROXY="${resolved_proxy}"
+    real_curl_cmd+=(--proxy "${resolved_proxy}")
+    real_curl_env=(
+      "HTTPS_PROXY=${resolved_proxy}" "https_proxy=${resolved_proxy}"
+      "HTTP_PROXY=${resolved_proxy}" "http_proxy=${resolved_proxy}"
+      "ALL_PROXY=${resolved_proxy}" "all_proxy=${resolved_proxy}"
+    )
+    proxy_from_env="1"
+  fi
+
   local curl_exit
   set +e
-  "${real_curl}" "$@"
+  if (( proxy_from_env == 1 )); then
+    env "${real_curl_env[@]}" "${real_curl_cmd[@]}" "$@"
+  else
+    "${real_curl_cmd[@]}" "$@"
+  fi
   curl_exit=$?
   set -e
   if [[ "${curl_exit}" -eq 0 ]]; then
@@ -535,6 +615,10 @@ main() {
 
   if [[ "${CURL_FALLBACK_CAN_HANDLE}" != "1" ]]; then
     exit "${curl_exit}"
+  fi
+
+  if [[ -n "${CURL_FALLBACK_PROXY}" ]]; then
+    log "proxy ativo no fallback python: ${CURL_FALLBACK_PROXY}"
   fi
 
   if is_github_release_asset_url "${CURL_FALLBACK_URL}"; then

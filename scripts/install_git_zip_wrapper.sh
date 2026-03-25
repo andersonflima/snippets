@@ -74,6 +74,8 @@ export PATH="${INSTALL_DIR}:\$PATH"
 # export GIT_ZIP_WRAPPER_STRICT=1
 # padrão do wrapper usa .tar.gz
 export GIT_ZIP_WRAPPER_ARCHIVE_FORMAT=tar.gz
+# proxy do ambiente (preferência: GIT_ZIP_WRAPPER_PROXY > HTTPS_PROXY > ALL_PROXY > HTTP_PROXY)
+# export GIT_ZIP_WRAPPER_PROXY=http://proxy.seu-dominio:3128
 # habilitar .zip somente quando necessário
 # export GIT_ZIP_WRAPPER_ALLOW_ZIP_FALLBACK=1
 # resolver certificado em ambiente corporativo/proxy:
@@ -87,6 +89,8 @@ vim.env.PATH = "${INSTALL_DIR}:" .. vim.env.PATH
 -- vim.env.GIT_ZIP_WRAPPER_STRICT = "1"
 -- padrão do wrapper usa .tar.gz
 vim.env.GIT_ZIP_WRAPPER_ARCHIVE_FORMAT = "tar.gz"
+-- proxy do ambiente
+-- vim.env.GIT_ZIP_WRAPPER_PROXY = "http://proxy.seu-dominio:3128"
 -- habilitar .zip somente quando necessário
 -- vim.env.GIT_ZIP_WRAPPER_ALLOW_ZIP_FALLBACK = "1"
 -- opcional: informar CA intermediária personalizada
