@@ -9,22 +9,20 @@ defmodule DocdbStreamBackup do
   Uso:
     elixir scripts/docdb_stream_backup.exs <docdb_uri> <bucket>
     elixir scripts/docdb_stream_backup.exs <docdb_uri> <bucket> <prefix>
-    elixir scripts/docdb_stream_backup.exs <docdb_uri> <bucket> [--prefix docdb/prod] [--num-parallel-collections 16] [--pigz-threads 8] [--compression-level 1] [--s3-max-concurrent-requests 8] [--s3-multipart-chunksize-mib 32] [--expected-size-bytes 10737418240]
-    elixir scripts/docdb_stream_backup.exs <docdb_uri> <bucket> --parallel-databases [--database app] [--database analytics] [--database-concurrency 2]
+    elixir scripts/docdb_stream_backup.exs <docdb_uri> <bucket> --prefix docdb/prod
     elixir scripts/docdb_stream_backup.exs <docdb_uri> <bucket> --mongodump-arg --tls --mongodump-arg --tlsCAFile=/path/ca.pem
     elixir scripts/docdb_stream_backup.exs <docdb_uri> <bucket> --mongodump-arg='--tls' --mongodump-arg='--tlsCAFile=/path/ca.pem'
 
   Exemplos:
     elixir scripts/docdb_stream_backup.exs 'mongodb://user:pass@host:27017/?tls=true&replicaSet=rs0&readPreference=secondaryPreferred&retryWrites=false' meu-bucket
     elixir scripts/docdb_stream_backup.exs 'mongodb://user:pass@host:27017/?tls=true&replicaSet=rs0' meu-bucket docdb/prod
-    elixir scripts/docdb_stream_backup.exs 'mongodb://user:pass@host:27017/?tls=true&replicaSet=rs0' meu-bucket --num-parallel-collections 16 --pigz-threads 8 --compression-level 1 --s3-max-concurrent-requests 8 --s3-multipart-chunksize-mib 32 --expected-size-bytes 10737418240
-    elixir scripts/docdb_stream_backup.exs 'mongodb://user:pass@host:27017/?tls=true&replicaSet=rs0' meu-bucket --parallel-databases --database app --database analytics --database-concurrency 2
+    elixir scripts/docdb_stream_backup.exs 'mongodb://user:pass@host:27017/?tls=true&replicaSet=rs0' meu-bucket --prefix docdb/prod --mongodump-arg --tlsCAFile=/path/ca.pem
 
   Observação:
     O upload acontece por stream em memória, sem gerar arquivo local no EC2.
-    Os defaults de paralelismo são ajustados automaticamente por RAM/CPU do host para reduzir risco de OOM no mongodump.
-    O nível de compressão padrão também é ajustado automaticamente: 0 em host CPU-limitado e 1 nos demais perfis.
-    No modo --parallel-databases, cada database gera um objeto separado sob o prefixo docdb-backup-<timestamp>/.
+    O script decide automaticamente entre pipeline único e paralelismo por database conforme CPU, RAM, número de databases e distribuição de volume do cluster.
+    Os defaults de paralelismo, compressão, tuning do multipart do S3 e medição do stream são ajustados automaticamente por RAM/CPU do host para reduzir risco de OOM e maximizar throughput.
+    Quando fizer sentido, cada database gera um objeto separado sob o prefixo docdb-backup-<timestamp>/.
     Meta de desempenho: 10 GiB em até 60 segundos.
     A string de conexão principal é o primeiro argumento posicional.
     Não passe --uri novamente em --mongodump-arg.
@@ -276,13 +274,11 @@ defmodule DocdbStreamBackup do
        not is_nil(options[:database_concurrency])}
   end
 
-  defp resolve_database_concurrency(_database_concurrency, _runtime_tuning, false), do: {:ok, 1}
-
-  defp resolve_database_concurrency(nil, runtime_tuning, true) do
+  defp resolve_database_concurrency(nil, runtime_tuning, _parallel_databases) do
     {:ok, default_database_concurrency(runtime_tuning)}
   end
 
-  defp resolve_database_concurrency(database_concurrency, _runtime_tuning, true) do
+  defp resolve_database_concurrency(database_concurrency, _runtime_tuning, _parallel_databases) do
     resolve_positive_integer(database_concurrency, database_concurrency, "database_concurrency")
   end
 
@@ -582,19 +578,70 @@ defmodule DocdbStreamBackup do
   end
 
   defp run_backup(args, capabilities) do
-    if args.parallel_databases do
-      run_parallel_database_pipelines(args, capabilities)
-    else
-      with {:ok, key} <- build_s3_key(args.prefix),
-           {:ok, metrics} <- run_pipeline(args, capabilities, key) do
-        {:ok,
-         %{
-           mode: :single,
-           metrics: metrics,
-           destinations: ["s3://#{args.bucket}/#{key}"]
-         }}
-      end
+    case resolve_execution_plan(args) do
+      {:parallel, target_databases, strategy_label} ->
+        IO.puts("plano: #{strategy_label}")
+        run_parallel_database_pipelines(args, capabilities, target_databases, strategy_label)
+
+      {:single, strategy_label} ->
+        IO.puts("plano: #{strategy_label}")
+
+        with {:ok, key} <- build_s3_key(args.prefix),
+             {:ok, metrics} <- run_pipeline(args, capabilities, key) do
+          {:ok,
+           %{
+             mode: :single,
+             metrics: metrics,
+             destinations: ["s3://#{args.bucket}/#{key}"]
+           }}
+        end
     end
+  end
+
+  defp resolve_execution_plan(%{parallel_databases: true} = args) do
+    case resolve_target_databases(args) do
+      {:ok, [_single_database]} ->
+        {:single, "single_stream (1 database explícito)"}
+
+      {:ok, target_databases} ->
+        {:parallel, target_databases, "parallel_databases (explícito)"}
+
+      {:error, message} ->
+        {:single, "single_stream (fallback: #{message})"}
+    end
+  end
+
+  defp resolve_execution_plan(args) do
+    cond do
+      database_targeted_in_mongodump_args?(args.extra_mongodump_args) ->
+        {:single, "single_stream (mongodump já segmentado por --db/--collection)"}
+
+      true ->
+        case discover_databases(args.uri, args.extra_mongodump_args) do
+          {:ok, []} ->
+            {:single, "single_stream (nenhum database elegível descoberto)"}
+
+          {:ok, [_single_database]} ->
+            {:single, "single_stream (1 database descoberto)"}
+
+          {:ok, target_databases} ->
+            case effective_parallel_database_concurrency(args, target_databases) do
+              concurrency when concurrency > 1 ->
+                {:parallel, target_databases,
+                 "parallel_databases (auto: #{length(target_databases)} databases, concurrency=#{concurrency})"}
+
+              _ ->
+                {:single, "single_stream (auto: host/dados favorecem pipeline único)"}
+            end
+
+          {:error, _message} ->
+            {:single, "single_stream (fallback: descoberta automática indisponível)"}
+        end
+    end
+  end
+
+  defp database_targeted_in_mongodump_args?(extra_mongodump_args) do
+    Enum.any?(extra_mongodump_args, &parallel_database_incompatible_arg?/1)
   end
 
   defp print_backup_summary(outcome) do
@@ -614,10 +661,10 @@ defmodule DocdbStreamBackup do
     end
   end
 
-  defp run_parallel_database_pipelines(args, capabilities) do
+  defp run_parallel_database_pipelines(args, capabilities, target_databases, strategy_label) do
     started_at = System.monotonic_time(:microsecond)
 
-    with {:ok, target_databases} <- resolve_target_databases(args),
+    with {:ok, target_databases} <- ensure_target_databases(args, target_databases),
          {:ok, session_prefix} <- build_parallel_session_prefix(args.prefix) do
       parallel_args = apply_parallel_database_runtime_tuning(args, target_databases)
       target_database_names = Enum.map(target_databases, & &1.name)
@@ -627,7 +674,8 @@ defmodule DocdbStreamBackup do
         capabilities,
         target_databases,
         session_prefix,
-        args.expected_size_bytes
+        args.expected_size_bytes,
+        strategy_label
       )
 
       stage_specs =
@@ -684,6 +732,11 @@ defmodule DocdbStreamBackup do
       end
     end
   end
+
+  defp ensure_target_databases(_args, target_databases) when is_list(target_databases),
+    do: {:ok, target_databases}
+
+  defp ensure_target_databases(args, nil), do: resolve_target_databases(args)
 
   defp resolve_target_databases(%{database_names: []} = args) do
     discover_databases(args.uri, args.extra_mongodump_args)
@@ -998,12 +1051,13 @@ defmodule DocdbStreamBackup do
          capabilities,
          target_databases,
          session_prefix,
-         expected_size_bytes
+         expected_size_bytes,
+         strategy_label
        ) do
     print_config(args, capabilities)
 
     IO.puts(
-      "modo: parallel_databases database_concurrency=#{args.database_concurrency} databases=#{length(target_databases)} per_pipeline=#{format_parallel_runtime(args, capabilities)}"
+      "modo: #{strategy_label} database_concurrency=#{args.database_concurrency} databases=#{length(target_databases)} per_pipeline=#{format_parallel_runtime(args, capabilities)}"
     )
 
     IO.puts("destino-base: s3://#{args.bucket}/#{session_prefix}")
