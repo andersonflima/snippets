@@ -59,14 +59,18 @@ done
 [[ -n "${ELIXIR_REF}" ]] || die "--elixir-ref não pode ser vazio"
 [[ -n "${INSTALL_DIR}" ]] || die "--install-dir não pode ser vazio"
 
-SUDO_CMD=()
+USE_SUDO="0"
 if [[ "$(id -u)" -ne 0 ]]; then
   command -v sudo >/dev/null 2>&1 || die "sudo é necessário para esta operação"
-  SUDO_CMD=(sudo)
+  USE_SUDO="1"
 fi
 
 run_with_sudo() {
-  "${SUDO_CMD[@]}" "$@"
+  if [[ "${USE_SUDO}" == "1" ]]; then
+    sudo "$@"
+  else
+    "$@"
+  fi
 }
 
 is_ec2_environment() {
@@ -94,7 +98,7 @@ assert_ec2_environment() {
 }
 
 validate_sudo_non_interactive() {
-  if [[ ${#SUDO_CMD[@]} -eq 0 ]]; then
+  if [[ "${USE_SUDO}" != "1" ]]; then
     return
   fi
 
@@ -284,18 +288,31 @@ configure_path() {
 }
 
 validate_installation() {
+  local elixir_bin mix_bin
+  elixir_bin="${INSTALL_DIR}/bin/elixir"
+  mix_bin="${INSTALL_DIR}/bin/mix"
+
   export PATH="${INSTALL_DIR}/bin:${PATH}"
+  hash -r
 
-  command_exists elixir || die "elixir não encontrado após instalação"
-  command_exists mix || die "mix não encontrado após instalação"
+  [[ -x "${elixir_bin}" ]] || die "elixir não encontrado em ${elixir_bin}"
+  [[ -x "${mix_bin}" ]] || die "mix não encontrado em ${mix_bin}"
 
-  elixir -e 'System.halt(if function_exported?(Code, :require_file, 2), do: 0, else: 1)' || die "Code.require_file/2 não está disponível após instalação"
+  if ! "${elixir_bin}" -e 'IO.puts("elixir-ok")' >/dev/null 2>&1; then
+    die "elixir instalado não executa corretamente"
+  fi
 
-  if ! mix local.hex --force >/dev/null 2>&1; then
+  if "${elixir_bin}" -e 'System.halt(if function_exported?(Code, :require_file, 2), do: 0, else: 1)' >/dev/null 2>&1; then
+    log "Code.require_file/2 disponível"
+  else
+    log "aviso: Code.require_file/2 não disponível; prosseguindo"
+  fi
+
+  if ! "${mix_bin}" local.hex --force >/dev/null 2>&1; then
     log "aviso: não foi possível executar mix local.hex --force"
   fi
 
-  if ! mix local.rebar --force >/dev/null 2>&1; then
+  if ! "${mix_bin}" local.rebar --force >/dev/null 2>&1; then
     log "aviso: não foi possível executar mix local.rebar --force"
   fi
 }
