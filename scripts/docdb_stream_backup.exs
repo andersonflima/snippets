@@ -427,18 +427,17 @@ Observação:
     destination = "s3://#{args.bucket}/#{key}"
     spinner = start_status_spinner("backup em andamento")
 
-    mongodump_command =
+    mongodump_args =
       [
         "mongodump",
         "--uri",
-        shell_escape(args.uri),
+        args.uri,
         "--archive"
       ]
       |> Enum.concat(num_parallel_collections_flag(args.num_parallel_collections))
-      |> Kernel.++(Enum.map(args.extra_mongodump_args, &shell_escape/1))
-      |> Enum.join(" ")
+      |> Kernel.++(args.extra_mongodump_args)
 
-    pigz_command =
+    pigz_args =
       [
         "pigz",
         "-c",
@@ -446,21 +445,40 @@ Observação:
         "-p",
         Integer.to_string(args.pigz_threads)
       ]
-      |> Enum.join(" ")
 
-    aws_command =
+    aws_args =
       [
         "aws",
         "s3",
         "cp",
         "-",
-        shell_escape(destination),
+        destination,
         "--no-progress",
         "--only-show-errors",
         "--expected-size",
         Integer.to_string(args.expected_size_bytes)
       ]
+
+    mongodump_command =
+      mongodump_args
+      |> Enum.map(&shell_escape/1)
       |> Enum.join(" ")
+
+    pigz_command =
+      pigz_args
+      |> Enum.map(&shell_escape/1)
+      |> Enum.join(" ")
+
+    aws_command =
+      aws_args
+      |> Enum.map(&shell_escape/1)
+      |> Enum.join(" ")
+
+    pipeline_summary = [
+      "mongodump: #{format_logged_command("mongodump", mongodump_args)}",
+      "pigz: #{format_logged_command("pigz", pigz_args)}",
+      "aws: #{format_logged_command("aws", aws_args)}"
+    ]
 
     pipeline =
       [mongodump_command, pigz_command, aws_command]
@@ -502,23 +520,103 @@ exit \"$pipeline_exit\"
         stop_status_spinner(spinner)
         pipeline_status = extract_pipeline_status(output, status_probe)
         cleaned_output = remove_pipeline_status_line(output, status_probe)
+        pipeline_trace = Enum.join(pipeline_summary, "\n")
+        stages_report = format_pipeline_stages(pipeline_status)
         metrics = %{
           duration_us: elapsed_us.(),
           estimated_bytes: args.expected_size_bytes
         }
+        error_head = "pipeline falhou com código #{status}"
 
-        if String.trim(cleaned_output) == "" do
-          if pipeline_status == "" do
-            {:error, "pipeline falhou com código #{status}", metrics}
-          else
-            {:error, "pipeline falhou com código #{status} | estágios (mongodump,pigz,aws): #{pipeline_status}", metrics}
+        details =
+          [
+            pipeline_status: stages_report,
+            pipeline_output: String.trim(cleaned_output),
+            pipeline_trace: pipeline_trace
+          ]
+          |> Enum.reject(fn
+            {:pipeline_status, value} -> value == nil || String.trim(value) == ""
+            {:pipeline_output, value} -> value == nil || String.trim(value) == ""
+            {:pipeline_trace, value} -> value == nil || String.trim(value) == ""
+          end)
+          |> Enum.map(fn
+            {:pipeline_status, value} -> "estágios: #{value}"
+            {:pipeline_output, value} -> "saida:\n#{value}"
+            {:pipeline_trace, value} -> "comandos:\n#{value}"
+          end)
+          |> Enum.join("\n")
+
+        {:error, "#{error_head}\n#{details}", metrics}
+    end
+  end
+
+  defp format_pipeline_stages(""), do: ""
+
+  defp format_pipeline_stages(status_line) do
+    status_line
+    |> String.split(" ", trim: true)
+    |> Enum.with_index()
+    |> Enum.map_join(", ", fn {status, index} ->
+      stage = Enum.at(["mongodump", "pigz", "aws"], index, "etapa-#{index + 1}")
+      "#{stage}=#{status}"
+    end)
+  end
+
+  defp format_logged_command("mongodump", args) do
+    sanitize_connection_args(args)
+    |> format_command_parts()
+  end
+
+  defp format_logged_command(_command, args),
+    do: format_command_parts(args)
+
+  defp sanitize_connection_args(args) do
+    sanitize_connection_args(args, [])
+  end
+
+  defp sanitize_connection_args([], acc), do: Enum.reverse(acc)
+
+  defp sanitize_connection_args(["--uri", uri | tail], acc) do
+    sanitize_connection_args(tail, [mask_connection_uri(uri), "--uri" | acc])
+  end
+
+  defp sanitize_connection_args([arg | tail], acc) do
+    if String.starts_with?(arg, "--uri=") do
+      uri = String.trim_leading(arg, "--uri=")
+      sanitize_connection_args(tail, ["--uri=#{mask_connection_uri(uri)}" | acc])
+    else
+      sanitize_connection_args(tail, [arg | acc])
+    end
+  end
+
+  defp format_command_parts(args) do
+    Enum.join(args, " ")
+  end
+
+  defp mask_connection_uri(uri) do
+    parsed = URI.parse(uri)
+
+    case parsed.userinfo do
+      nil ->
+        uri
+
+      userinfo ->
+        masked_userinfo =
+          case String.split(userinfo, ":", parts: 2) do
+            [user, password] when byte_size(password) > 0 ->
+              user <> ":***"
+
+            [user] ->
+              user
+
+            _ ->
+              "***"
           end
+
+        if String.contains?(uri, "#{userinfo}@") do
+          String.replace(uri, "#{userinfo}@", "#{masked_userinfo}@", global: false)
         else
-          if pipeline_status == "" do
-            {:error, "pipeline falhou com código #{status}\n#{cleaned_output}", metrics}
-          else
-            {:error, "pipeline falhou com código #{status} | estágios (mongodump,pigz,aws): #{pipeline_status}\n#{cleaned_output}", metrics}
-          end
+          uri
         end
     end
   end

@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"net/url"
 	"os"
 	"os/exec"
 	"runtime"
@@ -585,18 +586,18 @@ func runPipeline(args backupArgs, destination string) (backupMetrics, error) {
 	awsCmd.Stdin = pigzOut
 
 	if err := pigzCmd.Start(); err != nil {
-		return metrics, runPipelineError("falha ao iniciar pigz", err, &pigzErr, &awsErr)
+		return metrics, runPipelineError("falha ao iniciar pigz", err, formatCommandForLog("pigz", pigzArgs), &pigzErr, &awsErr)
 	}
 
 	if err := awsCmd.Start(); err != nil {
 		_ = pigzCmd.Process.Kill()
-		return metrics, runPipelineError("falha ao iniciar aws", err, &pigzErr, &awsErr)
+		return metrics, runPipelineError("falha ao iniciar aws", err, formatCommandForLog("aws", awsArgs), &pigzErr, &awsErr)
 	}
 
 	if err := mongodumpCmd.Start(); err != nil {
 		_ = pigzCmd.Process.Kill()
 		_ = awsCmd.Process.Kill()
-		return metrics, runPipelineError("falha ao iniciar mongodump", err, &mongodumpErr, &pigzErr, &awsErr)
+		return metrics, runPipelineError("falha ao iniciar mongodump", err, formatCommandForLog("mongodump", mongodumpArgs), &mongodumpErr, &pigzErr, &awsErr)
 	}
 
 	counter := &byteCounter{reader: dumpOut}
@@ -612,25 +613,25 @@ func runPipeline(args backupArgs, destination string) (backupMetrics, error) {
 		_ = pigzCmd.Process.Kill()
 		_ = awsCmd.Process.Kill()
 		metrics.rawBytes = counter.bytes
-		return metrics, runPipelineError("mongodump falhou", err, &mongodumpErr, &pigzErr, &awsErr)
+		return metrics, runPipelineError("mongodump falhou", err, formatCommandForLog("mongodump", mongodumpArgs), &mongodumpErr, &pigzErr, &awsErr)
 	}
 
 	if copyErr := <-copyDone; copyErr != nil {
 		_ = pigzCmd.Process.Kill()
 		_ = awsCmd.Process.Kill()
 		metrics.rawBytes = counter.bytes
-		return metrics, runPipelineError("falha ao encaminhar fluxo entre mongodump e pigz", copyErr, &pigzErr, &awsErr)
+		return metrics, runPipelineError("falha ao encaminhar fluxo entre mongodump e pigz", copyErr, "", &pigzErr, &awsErr)
 	}
 
 	if err := pigzCmd.Wait(); err != nil {
 		_ = awsCmd.Process.Kill()
 		metrics.rawBytes = counter.bytes
-		return metrics, runPipelineError("pigz falhou", err, &pigzErr, &awsErr, &mongodumpErr)
+		return metrics, runPipelineError("pigz falhou", err, formatCommandForLog("pigz", pigzArgs), &pigzErr, &awsErr, &mongodumpErr)
 	}
 
 	if err := awsCmd.Wait(); err != nil {
 		metrics.rawBytes = counter.bytes
-		return metrics, runPipelineError("aws falhou", err, &awsErr, &pigzErr, &mongodumpErr)
+		return metrics, runPipelineError("aws falhou", err, formatCommandForLog("aws", awsArgs), &awsErr, &pigzErr, &mongodumpErr)
 	}
 
 	metrics.rawBytes = counter.bytes
@@ -709,9 +710,12 @@ func formatDuration(d time.Duration) string {
 	return fmt.Sprintf("%ds", remainingSeconds)
 }
 
-func runPipelineError(commandName string, commandErr error, buffers ...*bytes.Buffer) error {
+func runPipelineError(commandName string, commandErr error, commandLine string, buffers ...*bytes.Buffer) error {
 	parts := make([]string, 0, len(buffers)+1)
 	parts = append(parts, commandName)
+	if commandLine != "" {
+		parts = append(parts, fmt.Sprintf("comando: %s", commandLine))
+	}
 	for _, buffer := range buffers {
 		text := strings.TrimSpace(buffer.String())
 		if text != "" {
@@ -724,6 +728,67 @@ func runPipelineError(commandName string, commandErr error, buffers ...*bytes.Bu
 	}
 
 	return fmt.Errorf("%s: %w\n%s", commandName, commandErr, strings.Join(parts, "\n"))
+}
+
+func formatCommandForLog(command string, args []string) string {
+	sanitizedArgs := make([]string, 0, len(args))
+	for _, arg := range maskSensitiveArgs(command, args) {
+		sanitizedArgs = append(sanitizedArgs, strconv.Quote(arg))
+	}
+	return strings.Join(append([]string{command}, sanitizedArgs...), " ")
+}
+
+func maskSensitiveArgs(command string, args []string) []string {
+	if command != "mongodump" {
+		return args
+	}
+
+	masked := make([]string, len(args))
+	copy(masked, args)
+
+	for index := 0; index < len(masked); index++ {
+		switch masked[index] {
+		case "--uri":
+			if index+1 < len(masked) {
+				masked[index+1] = maskMongoUri(masked[index+1])
+			}
+		default:
+			if strings.HasPrefix(masked[index], "--uri=") {
+				masked[index] = "--uri=" + maskMongoUri(strings.TrimPrefix(masked[index], "--uri="))
+			}
+		}
+	}
+
+	return masked
+}
+
+func maskMongoUri(uri string) string {
+	parsed, err := url.Parse(uri)
+	if err != nil {
+		return "mongodb://***:***@***"
+	}
+
+	if parsed.User == nil {
+		return uri
+	}
+
+	user := parsed.User.Username()
+	if user == "" {
+		return uri
+	}
+
+	password, hasPassword := parsed.User.Password()
+	if !hasPassword {
+		parsed.User = url.User(user)
+		return parsed.String()
+	}
+	if password == "" {
+		parsed.User = url.UserPassword(user, "***")
+		return parsed.String()
+	}
+
+	parsed.User = url.UserPassword(user, "***")
+	return parsed.String()
 }
 
 func supportsNumParallelCollections() bool {
