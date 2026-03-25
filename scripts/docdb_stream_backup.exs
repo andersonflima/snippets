@@ -93,18 +93,18 @@ defmodule DocdbStreamBackup do
                resolve_positive_integer(options[:pigz_threads], default_pigz_threads(), "pigz_threads"),
              {:ok, compression_level} <- resolve_compression_level(options[:compression_level]),
              {:ok, expected_size_bytes} <- resolve_expected_size_bytes(options),
-             {:ok, extra_mongodump_args} <- resolve_mongodump_args(options),
-             args <- %{
-               uri: normalized_uri,
-               bucket: normalized_bucket,
-               prefix: normalized_prefix,
-               num_parallel_collections: num_parallel_collections,
-               pigz_threads: pigz_threads,
-               compression_level: compression_level,
-               expected_size_bytes: expected_size_bytes,
-               extra_mongodump_args: extra_mongodump_args
-             } do
-          {:ok, args}
+             {:ok, extra_mongodump_args} <- resolve_mongodump_args(options) do
+          {:ok,
+           %{
+             uri: normalized_uri,
+             bucket: normalized_bucket,
+             prefix: normalized_prefix,
+             num_parallel_collections: num_parallel_collections,
+             pigz_threads: pigz_threads,
+             compression_level: compression_level,
+             expected_size_bytes: expected_size_bytes,
+             extra_mongodump_args: extra_mongodump_args
+           }}
         end
     end
   end
