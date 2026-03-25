@@ -96,7 +96,7 @@ func main() {
 			os.Exit(0)
 		}
 
-		fmt.Fprintf(os.Stderr, "erro: %v\n\n%s\n", err, usageText)
+		fmt.Printf("erro: %v\n\n%s\n", err, usageText)
 		os.Exit(1)
 	}
 }

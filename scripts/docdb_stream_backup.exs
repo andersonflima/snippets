@@ -47,14 +47,14 @@ Observação:
         else
           {:error, message, metrics} ->
             print_performance_report(metrics, args.expected_size_bytes)
-            IO.puts(:stderr, "erro: #{message}")
-            IO.puts(:stderr, @usage)
+            IO.puts("erro: #{message}")
+            IO.puts(@usage)
             System.halt(1)
         end
 
       {:error, message} ->
-        IO.puts(:stderr, "erro: #{message}")
-        IO.puts(:stderr, @usage)
+        IO.puts("erro: #{message}")
+        IO.puts(@usage)
         System.halt(1)
     end
   end
