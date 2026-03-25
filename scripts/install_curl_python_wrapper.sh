@@ -78,7 +78,9 @@ vim.env.PATH = "${INSTALL_DIR}:" .. vim.env.PATH
 3) Pré-requisitos de fallback:
 - opcional: gh CLI autenticado para assets de release do GitHub (`gh auth status`)
 - python3 (usa requests quando disponível; sem requests cai para urllib nativo)
+- padrão do wrapper bloqueia download de .zip; libere se precisar:
+- export CURL_WRAPPER_ALLOW_ZIP_DOWNLOAD=1
 
 4) Teste:
-curl -fsSL https://github.com/neovim/neovim/archive/HEAD.zip -o /tmp/neovim.zip
+curl -fsSL https://github.com/neovim/neovim/archive/HEAD.tar.gz -o /tmp/neovim.tar.gz
 EOF

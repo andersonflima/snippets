@@ -72,12 +72,20 @@ export GIT_ZIP_WRAPPER_REAL_GIT="${REAL_GIT_BIN}"
 export PATH="${INSTALL_DIR}:\$PATH"
 # opcional: forçar modo estrito (sem fallback para git clone normal)
 # export GIT_ZIP_WRAPPER_STRICT=1
+# padrão do wrapper usa .tar.gz
+export GIT_ZIP_WRAPPER_ARCHIVE_FORMAT=tar.gz
+# habilitar .zip somente quando necessário
+# export GIT_ZIP_WRAPPER_ALLOW_ZIP_FALLBACK=1
 
 2) Para LazyVim/Mason (init.lua):
 vim.env.GIT_ZIP_WRAPPER_REAL_GIT = "${REAL_GIT_BIN}"
 vim.env.PATH = "${INSTALL_DIR}:" .. vim.env.PATH
 -- opcional: sem fallback para git clone normal
 -- vim.env.GIT_ZIP_WRAPPER_STRICT = "1"
+-- padrão do wrapper usa .tar.gz
+vim.env.GIT_ZIP_WRAPPER_ARCHIVE_FORMAT = "tar.gz"
+-- habilitar .zip somente quando necessário
+-- vim.env.GIT_ZIP_WRAPPER_ALLOW_ZIP_FALLBACK = "1"
 
 3) Teste:
 git clone https://github.com/neovim/neovim ~/tmp/neovim-zip-clone

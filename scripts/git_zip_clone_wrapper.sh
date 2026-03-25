@@ -11,6 +11,8 @@ die() {
 }
 
 GIT_ZIP_WRAPPER_TMP_DIR=""
+ARCHIVE_FORMAT="${GIT_ZIP_WRAPPER_ARCHIVE_FORMAT:-tar.gz}"
+ALLOW_ZIP_FALLBACK="${GIT_ZIP_WRAPPER_ALLOW_ZIP_FALLBACK:-0}"
 
 cleanup_temp_dir() {
   local dir
@@ -21,6 +23,37 @@ cleanup_temp_dir() {
 }
 
 trap cleanup_temp_dir EXIT
+
+is_truthy() {
+  local value
+  value="$(printf '%s' "${1:-}" | tr '[:upper:]' '[:lower:]')"
+  case "${value}" in
+    1|true|yes|on)
+      return 0
+      ;;
+  esac
+  return 1
+}
+
+normalize_archive_format() {
+  local requested
+  requested="$1"
+  requested="${requested,,}"
+
+  case "${requested}" in
+    tar.gz|tgz|tar|zip)
+      echo "${requested}"
+      ;;
+    "")
+      echo "tar.gz"
+      ;;
+    *)
+      die "formato de arquivo inválido: ${requested}. Valores válidos: tar.gz, tgz, tar, zip"
+      ;;
+  esac
+}
+
+ARCHIVE_FORMAT="$(normalize_archive_format "${ARCHIVE_FORMAT}")"
 
 resolve_real_git() {
   if [[ -n "${GIT_ZIP_WRAPPER_REAL_GIT:-}" ]]; then
@@ -58,10 +91,6 @@ default_destination_from_repo() {
   [[ -n "${repo_name}" ]] || die "não foi possível inferir diretório de destino para clone: ${repo_url}"
   printf '%s\n' "${repo_name}"
 }
-
-CLONE_REPO_URL=""
-CLONE_BRANCH=""
-CLONE_DESTINATION=""
 
 parse_clone_arguments() {
   CLONE_REPO_URL=""
@@ -172,15 +201,42 @@ download_github_archive() {
   archive_path="$3"
 
   local candidate_urls=()
-  if [[ -n "${branch}" ]]; then
-    candidate_urls+=("https://github.com/${slug}/archive/refs/heads/${branch}.zip")
-    candidate_urls+=("https://github.com/${slug}/archive/refs/tags/${branch}.zip")
-    candidate_urls+=("https://codeload.github.com/${slug}/zip/refs/heads/${branch}")
-    candidate_urls+=("https://codeload.github.com/${slug}/zip/refs/tags/${branch}")
-    candidate_urls+=("https://codeload.github.com/${slug}/zip/${branch}")
+
+  if [[ "${ARCHIVE_FORMAT}" == "zip" ]]; then
+    if [[ -n "${branch}" ]]; then
+      candidate_urls+=("https://github.com/${slug}/archive/refs/heads/${branch}.zip")
+      candidate_urls+=("https://github.com/${slug}/archive/refs/tags/${branch}.zip")
+      candidate_urls+=("https://codeload.github.com/${slug}/zip/refs/heads/${branch}")
+      candidate_urls+=("https://codeload.github.com/${slug}/zip/refs/tags/${branch}")
+      candidate_urls+=("https://codeload.github.com/${slug}/zip/${branch}")
+    else
+      candidate_urls+=("https://github.com/${slug}/archive/HEAD.zip")
+      candidate_urls+=("https://codeload.github.com/${slug}/zip/HEAD")
+    fi
   else
-    candidate_urls+=("https://github.com/${slug}/archive/HEAD.zip")
-    candidate_urls+=("https://codeload.github.com/${slug}/zip/HEAD")
+    if [[ -n "${branch}" ]]; then
+      candidate_urls+=("https://github.com/${slug}/archive/refs/heads/${branch}.tar.gz")
+      candidate_urls+=("https://github.com/${slug}/archive/refs/tags/${branch}.tar.gz")
+      candidate_urls+=("https://codeload.github.com/${slug}/tar.gz/refs/heads/${branch}")
+      candidate_urls+=("https://codeload.github.com/${slug}/tar.gz/refs/tags/${branch}")
+      candidate_urls+=("https://codeload.github.com/${slug}/tar.gz/${branch}")
+    else
+      candidate_urls+=("https://github.com/${slug}/archive/HEAD.tar.gz")
+      candidate_urls+=("https://codeload.github.com/${slug}/tar.gz/HEAD")
+    fi
+
+    if is_truthy "${ALLOW_ZIP_FALLBACK}"; then
+      if [[ -n "${branch}" ]]; then
+        candidate_urls+=("https://github.com/${slug}/archive/refs/heads/${branch}.zip")
+        candidate_urls+=("https://github.com/${slug}/archive/refs/tags/${branch}.zip")
+        candidate_urls+=("https://codeload.github.com/${slug}/zip/refs/heads/${branch}")
+        candidate_urls+=("https://codeload.github.com/${slug}/zip/refs/tags/${branch}")
+        candidate_urls+=("https://codeload.github.com/${slug}/zip/${branch}")
+      else
+        candidate_urls+=("https://github.com/${slug}/archive/HEAD.zip")
+        candidate_urls+=("https://codeload.github.com/${slug}/zip/HEAD")
+      fi
+    fi
   fi
 
   local url
@@ -191,6 +247,24 @@ download_github_archive() {
     fi
   done
   return 1
+}
+
+assert_supported_archive_format() {
+  local archive_path="$1"
+  case "${archive_path}" in
+    *.zip)
+      if is_truthy "${ALLOW_ZIP_FALLBACK}"; then
+        return 0
+      fi
+      die "formato .zip não permitido para este wrapper (GIT_ZIP_WRAPPER_ALLOW_ZIP_FALLBACK=1 para habilitar)"
+      ;;
+    *.tar.gz|*.tgz|*.tar)
+      return 0
+      ;;
+    *)
+      die "formato de arquivo não suportado: ${archive_path}"
+      ;;
+  esac
 }
 
 download_url_with_retries() {
@@ -216,7 +290,7 @@ download_url_with_retries() {
         --retry-all-errors \
         --tlsv1.2 \
         -A "${user_agent}" \
-        -H "Accept: application/zip,application/octet-stream,*/*" \
+        -H "Accept: application/octet-stream,*/*" \
         ${mode} \
         "${url}" \
         -o "${archive_path}"; then
@@ -226,17 +300,6 @@ download_url_with_retries() {
       sleep 2
     done
   done
-  return 1
-}
-
-is_truthy() {
-  local value
-  value="$(printf '%s' "${1:-}" | tr '[:upper:]' '[:lower:]')"
-  case "${value}" in
-    1|true|yes|on)
-      return 0
-      ;;
-  esac
   return 1
 }
 
@@ -258,9 +321,24 @@ extract_archive_to_destination() {
   destination="$2"
 
   temp_extract="$(mktemp -d -t git-zip-extract-XXXXXX)"
-  unzip -q "${archive_path}" -d "${temp_extract}"
+
+  case "${archive_path}" in
+    *.zip)
+      unzip -q "${archive_path}" -d "${temp_extract}"
+      ;;
+    *.tar.gz|*.tgz)
+      tar -xzf "${archive_path}" -C "${temp_extract}"
+      ;;
+    *.tar)
+      tar -xf "${archive_path}" -C "${temp_extract}"
+      ;;
+    *)
+      die "tipo de arquivo não suportado para extração: ${archive_path}"
+      ;;
+  esac
+
   top_dir="$(find "${temp_extract}" -mindepth 1 -maxdepth 1 -type d | head -n 1 || true)"
-  [[ -n "${top_dir}" ]] || die "não foi possível localizar conteúdo extraído do arquivo zip"
+  [[ -n "${top_dir}" ]] || die "não foi possível localizar conteúdo extraído do arquivo de origem"
   cp -a "${top_dir}/." "${destination}/"
   rm -rf "${temp_extract}"
 }
@@ -278,8 +356,11 @@ main() {
   fi
 
   command -v curl >/dev/null 2>&1 || die "curl não encontrado"
-  command -v unzip >/dev/null 2>&1 || die "unzip não encontrado"
+  command -v tar >/dev/null 2>&1 || die "tar não encontrado"
   command -v mktemp >/dev/null 2>&1 || die "mktemp não encontrado"
+  if is_truthy "${ALLOW_ZIP_FALLBACK}"; then
+    command -v unzip >/dev/null 2>&1 || die "unzip não encontrado"
+  fi
 
   parse_clone_arguments "${@:2}"
   local repo_url branch destination
@@ -297,18 +378,36 @@ main() {
 
   local archive_path source_url
   GIT_ZIP_WRAPPER_TMP_DIR="$(mktemp -d -t git-zip-clone-XXXXXX)"
-  archive_path="${GIT_ZIP_WRAPPER_TMP_DIR}/repo.zip"
+  case "${ARCHIVE_FORMAT}" in
+    tar.gz)
+      archive_path="${GIT_ZIP_WRAPPER_TMP_DIR}/repo.tar.gz"
+      ;;
+    tgz)
+      archive_path="${GIT_ZIP_WRAPPER_TMP_DIR}/repo.tgz"
+      ;;
+    tar)
+      archive_path="${GIT_ZIP_WRAPPER_TMP_DIR}/repo.tar"
+      ;;
+    zip)
+      archive_path="${GIT_ZIP_WRAPPER_TMP_DIR}/repo.zip"
+      ;;
+    *)
+      archive_path="${GIT_ZIP_WRAPPER_TMP_DIR}/repo.tar.gz"
+      ;;
+  esac
+
+  assert_supported_archive_format "${archive_path}"
 
   if ! source_url="$(download_github_archive "${slug}" "${branch}" "${archive_path}")"; then
     if is_truthy "${GIT_ZIP_WRAPPER_STRICT:-0}"; then
-      die "falha ao baixar zip para ${repo_url} (branch/tag: ${branch:-HEAD})"
+      die "falha ao baixar arquivo para ${repo_url} (branch/tag: ${branch:-HEAD})"
     fi
-    log "falha ao baixar zip para ${repo_url}; fallback para git clone normal."
+    log "falha ao baixar arquivo para ${repo_url}; fallback para git clone normal."
     exec "${real_git}" "$@"
   fi
 
   extract_archive_to_destination "${archive_path}" "${destination}"
-  log "clone(zip) concluído: ${repo_url} -> ${destination} (source: ${source_url})"
+  log "clone(${ARCHIVE_FORMAT}) concluído: ${repo_url} -> ${destination} (source: ${source_url})"
 }
 
 main "$@"

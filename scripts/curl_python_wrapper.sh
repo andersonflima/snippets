@@ -21,6 +21,77 @@ is_truthy() {
   return 1
 }
 
+CURL_WRAPPER_ALLOW_ZIP_DOWNLOAD="${CURL_WRAPPER_ALLOW_ZIP_DOWNLOAD:-0}"
+
+is_zip_extension() {
+  local value
+  value="${1%%\?*}"
+  value="${value%%#*}"
+  [[ "${value}" == *.zip ]]
+}
+
+assert_non_zip_download_request() {
+  local args_count index arg output_path url_path
+  args_count=$#
+  local -a args=("$@")
+  local -a positional=()
+  index=0
+  while (( index < args_count )); do
+    arg="${args[index]}"
+    case "${arg}" in
+      -o)
+        (( index + 1 < args_count )) || return 1
+        output_path="${args[index + 1]}"
+        index=$((index + 2))
+        ;;
+      -o*)
+        output_path="${arg#-o}"
+        index=$((index + 1))
+        ;;
+      --output)
+        (( index + 1 < args_count )) || return 1
+        output_path="${args[index + 1]}"
+        index=$((index + 2))
+        ;;
+      --output=*)
+        output_path="${arg#--output=}"
+        index=$((index + 1))
+        ;;
+      --output-dir=*)
+        index=$((index + 1))
+        ;;
+      --output-dir)
+        index=$((index + 2))
+        ;;
+      --)
+        index=$((index + 1))
+        while (( index < args_count )); do
+          positional+=("${args[index]}")
+          index=$((index + 1))
+        done
+        ;;
+      -*)
+        index=$((index + 1))
+        ;;
+      *)
+        positional+=("${arg}")
+        index=$((index + 1))
+        ;;
+    esac
+  done
+
+  if (( ${#positional[@]} > 0 )); then
+    url_path="${positional[${#positional[@]} - 1]}"
+    if is_zip_extension "${url_path}"; then
+      die "download bloqueado para URL .zip: ${url_path}. Defina CURL_WRAPPER_ALLOW_ZIP_DOWNLOAD=1 para permitir"
+    fi
+  fi
+
+  if [[ -n "${output_path:-}" ]] && is_zip_extension "${output_path}"; then
+    die "download bloqueado para saída .zip: ${output_path}. Defina CURL_WRAPPER_ALLOW_ZIP_DOWNLOAD=1 para permitir"
+  fi
+}
+
 resolve_real_curl() {
   if [[ -n "${CURL_WRAPPER_REAL_CURL:-}" ]]; then
     [[ -x "${CURL_WRAPPER_REAL_CURL}" ]] || die "CURL_WRAPPER_REAL_CURL inválido: ${CURL_WRAPPER_REAL_CURL}"
@@ -386,6 +457,17 @@ PY
 main() {
   local real_curl
   real_curl="$(resolve_real_curl)"
+  local can_fallback=0
+  local parsed_fallback=0
+
+  is_truthy "${CURL_WRAPPER_ALLOW_ZIP_DOWNLOAD}" || assert_non_zip_download_request "$@"
+
+  if parse_curl_arguments_for_python_fallback "$@"; then
+    parsed_fallback=1
+    if [[ "${CURL_FALLBACK_CAN_HANDLE}" == "1" ]]; then
+      can_fallback=1
+    fi
+  fi
 
   if [[ $# -eq 0 ]]; then
     exec "${real_curl}"
@@ -404,7 +486,10 @@ main() {
     exit "${curl_exit}"
   fi
 
-  if ! parse_curl_arguments_for_python_fallback "$@"; then
+  if (( parsed_fallback == 0 )) && parse_curl_arguments_for_python_fallback "$@"; then
+    parsed_fallback=1
+  fi
+  if (( parsed_fallback == 0 )) || (( can_fallback == 0 )); then
     exit "${curl_exit}"
   fi
   if [[ "${CURL_FALLBACK_CAN_HANDLE}" != "1" ]]; then
