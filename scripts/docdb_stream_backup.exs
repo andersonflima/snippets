@@ -23,7 +23,7 @@ defmodule DocdbStreamBackup do
   Observação:
     O upload acontece por stream em memória, sem gerar arquivo local no EC2.
     Os defaults de paralelismo são ajustados automaticamente por RAM/CPU do host para reduzir risco de OOM no mongodump.
-    O perfil padrão mantém compressão nível 1 e expected-size de 10 GiB.
+    O nível de compressão padrão também é ajustado automaticamente: 0 em host CPU-limitado e 1 nos demais perfis.
     No modo --parallel-databases, cada database gera um objeto separado sob o prefixo docdb-backup-<timestamp>/.
     Meta de desempenho: 10 GiB em até 60 segundos.
     A string de conexão principal é o primeiro argumento posicional.
@@ -151,7 +151,7 @@ defmodule DocdbStreamBackup do
                ),
              {:ok, pigz_threads} <-
                resolve_positive_integer(options[:pigz_threads], runtime_tuning.pigz_threads, "pigz_threads"),
-             {:ok, compression_level} <- resolve_compression_level(options[:compression_level]),
+             {:ok, compression_level} <- resolve_compression_level(options[:compression_level], runtime_tuning),
              {:ok, expected_size_bytes} <- resolve_expected_size_bytes(options),
              {:ok, extra_mongodump_args} <- resolve_mongodump_args(options),
              :ok <- validate_parallel_database_args(parallel_databases, database_names, extra_mongodump_args) do
@@ -170,7 +170,8 @@ defmodule DocdbStreamBackup do
              extra_mongodump_args: extra_mongodump_args,
              runtime_tuning: runtime_tuning,
              num_parallel_collections_source: option_source(options[:num_parallel_collections]),
-             pigz_threads_source: option_source(options[:pigz_threads])
+             pigz_threads_source: option_source(options[:pigz_threads]),
+             compression_level_source: option_source(options[:compression_level])
            }}
         end
     end
@@ -318,13 +319,13 @@ defmodule DocdbStreamBackup do
   defp resolve_positive_integer(_value, _default_value, label),
     do: {:error, "#{label} precisa ser inteiro positivo"}
 
-  defp resolve_compression_level(nil), do: {:ok, 1}
+  defp resolve_compression_level(nil, runtime_tuning), do: {:ok, default_compression_level(runtime_tuning)}
 
-  defp resolve_compression_level(level) when is_integer(level) and level >= 1 and level <= 9,
+  defp resolve_compression_level(level, _runtime_tuning) when is_integer(level) and level >= 0 and level <= 9,
     do: {:ok, level}
 
-  defp resolve_compression_level(_),
-    do: {:error, "compression_level precisa estar entre 1 e 9"}
+  defp resolve_compression_level(_, _runtime_tuning),
+    do: {:error, "compression_level precisa estar entre 0 e 9"}
 
   defp resolve_expected_size_bytes(options) do
     expected_size_bytes = options[:expected_size_bytes]
@@ -1231,7 +1232,7 @@ defmodule DocdbStreamBackup do
     )
 
     IO.puts(
-      "config: numParallelCollections=#{num_parallel_display} (#{Map.get(args, :num_parallel_collections_source, :auto)}) pigz_threads=#{args.pigz_threads} (#{Map.get(args, :pigz_threads_source, :auto)}) compression_level=#{args.compression_level} expected_size=#{format_bytes_binary(args.expected_size_bytes)}"
+      "config: numParallelCollections=#{num_parallel_display} (#{Map.get(args, :num_parallel_collections_source, :auto)}) pigz_threads=#{args.pigz_threads} (#{Map.get(args, :pigz_threads_source, :auto)}) compression_level=#{args.compression_level} (#{Map.get(args, :compression_level_source, :auto)}) expected_size=#{format_bytes_binary(args.expected_size_bytes)}"
     )
   end
 
@@ -1527,7 +1528,8 @@ defmodule DocdbStreamBackup do
       tuning_profile: tuning_profile,
       num_parallel_collections:
         recommended_num_parallel_collections(schedulers_online, mem_available_bytes, tuning_profile),
-      pigz_threads: recommended_pigz_threads(schedulers_online, mem_available_bytes, tuning_profile)
+      pigz_threads: recommended_pigz_threads(schedulers_online, mem_available_bytes, tuning_profile),
+      compression_level: recommended_compression_level(tuning_profile)
     }
   end
 
@@ -1581,6 +1583,16 @@ defmodule DocdbStreamBackup do
         min(runtime_tuning.schedulers_online, 4)
     end
   end
+
+  defp default_compression_level(runtime_tuning) do
+    runtime_tuning.compression_level
+  end
+
+  defp recommended_compression_level(:conservative), do: 0
+  defp recommended_compression_level(:cpu_limited_throughput), do: 0
+  defp recommended_compression_level(:cpu_limited_balanced), do: 0
+  defp recommended_compression_level(:balanced), do: 1
+  defp recommended_compression_level(:throughput), do: 1
 
   defp recommended_num_parallel_collections(schedulers_online, nil, _tuning_profile) do
     schedulers_online
