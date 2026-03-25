@@ -565,9 +565,14 @@ defmodule DocdbStreamBackup do
       result =
         initial_state
         |> start_parallel_database_scheduler()
-        |> Map.take([:stage_states, :destinations, :errors])
+        |> Map.take([:stage_states, :destinations, :errors, :completed_metrics])
 
       stop_progress_display(progress_display, result.stage_states)
+
+      total_processed_bytes =
+        result.completed_metrics
+        |> Kernel.++(Enum.map(result.errors, & &1.metrics))
+        |> sum_reported_bytes()
 
       case result.errors do
         [] ->
@@ -576,7 +581,7 @@ defmodule DocdbStreamBackup do
              mode: :parallel_databases,
              metrics: %{
                duration_us: System.monotonic_time(:microsecond) - started_at,
-               raw_bytes: 0,
+               raw_bytes: total_processed_bytes,
                estimated_bytes: args.expected_size_bytes
              },
              destinations: Enum.sort(result.destinations)
@@ -587,7 +592,7 @@ defmodule DocdbStreamBackup do
            format_parallel_database_errors(errors),
            %{
              duration_us: System.monotonic_time(:microsecond) - started_at,
-             raw_bytes: 0,
+             raw_bytes: total_processed_bytes,
              estimated_bytes: 0
            }}
       end
@@ -958,6 +963,8 @@ defmodule DocdbStreamBackup do
       destinations: [],
       errors: [],
       completed_metrics: [],
+      live_metrics: %{},
+      total_expected_bytes: expected_size_bytes,
       progress_display: progress_display,
       parallel_args: parallel_args,
       capabilities: capabilities,
@@ -967,6 +974,7 @@ defmodule DocdbStreamBackup do
 
   defp start_parallel_database_scheduler(state) do
     state
+    |> update_parallel_progress_summary()
     |> fill_parallel_database_workers()
     |> parallel_database_scheduler_loop()
   end
@@ -997,11 +1005,19 @@ defmodule DocdbStreamBackup do
         }
 
         update_progress_display(updated_state.progress_display, work_item.database.name, stage_state)
-        fill_parallel_database_workers(updated_state)
+
+        updated_state
+        |> register_live_metric(
+          work_item.database.name,
+          build_stream_progress_snapshot(0, System.monotonic_time(:microsecond), work_item.expected_size_bytes)
+        )
+        |> fill_parallel_database_workers()
     end
   end
 
   defp spawn_parallel_database_task(state, work_item) do
+    scheduler_pid = self()
+
     Task.async(fn ->
       run_parallel_database_pipeline(
         state.parallel_args,
@@ -1009,7 +1025,10 @@ defmodule DocdbStreamBackup do
         state.session_prefix,
         work_item.database,
         work_item.expected_size_bytes,
-        {:display_stage, state.progress_display, work_item.database.name}
+        [
+          {:display_stage, state.progress_display, work_item.database.name},
+          {:scheduler, scheduler_pid, work_item.database.name}
+        ]
       )
     end)
   end
@@ -1020,6 +1039,11 @@ defmodule DocdbStreamBackup do
 
   defp parallel_database_scheduler_loop(state) do
     receive do
+      {:stream_progress, database_name, snapshot} ->
+        state
+        |> register_live_metric(database_name, snapshot)
+        |> parallel_database_scheduler_loop()
+
       {ref, task_result} ->
         handle_parallel_database_task_result(state, ref, task_result)
 
@@ -1083,12 +1107,16 @@ defmodule DocdbStreamBackup do
 
     update_progress_display(state.progress_display, result.database_name, stage_state)
 
-    %{
-      state
-      | stage_states: Map.put(state.stage_states, result.database_name, stage_state),
-        destinations: [result.destination | state.destinations],
-        completed_metrics: [result.metrics | state.completed_metrics]
-    }
+    state
+    |> drop_live_metric(result.database_name)
+    |> then(fn updated_state ->
+      %{
+        updated_state
+        | stage_states: Map.put(updated_state.stage_states, result.database_name, stage_state),
+          destinations: [result.destination | updated_state.destinations],
+          completed_metrics: [result.metrics | updated_state.completed_metrics]
+      }
+    end)
   end
 
   defp register_parallel_database_error(state, error) do
@@ -1096,11 +1124,15 @@ defmodule DocdbStreamBackup do
 
     update_progress_display(state.progress_display, error.database_name, stage_state)
 
-    %{
-      state
-      | stage_states: Map.put(state.stage_states, error.database_name, stage_state),
-        errors: [error | state.errors]
-    }
+    state
+    |> drop_live_metric(error.database_name)
+    |> then(fn updated_state ->
+      %{
+        updated_state
+        | stage_states: Map.put(updated_state.stage_states, error.database_name, stage_state),
+          errors: [error | updated_state.errors]
+      }
+    end)
   end
 
   defp maybe_reduce_runtime_database_concurrency(%{current_concurrency: current_concurrency} = state)
@@ -1112,7 +1144,7 @@ defmodule DocdbStreamBackup do
       new_concurrency = max(state.current_concurrency - 1, 1)
 
       IO.puts(
-        "ajuste dinâmico: database_concurrency #{state.current_concurrency} -> #{new_concurrency} por throughput estimado"
+        "ajuste dinâmico: database_concurrency #{state.current_concurrency} -> #{new_concurrency} por throughput observado"
       )
 
       %{state | current_concurrency: new_concurrency}
@@ -1128,17 +1160,138 @@ defmodule DocdbStreamBackup do
     completed_count >= state.current_concurrency and
       state.pending_work != [] and
       tuning_profile in [:conservative, :cpu_limited_throughput, :cpu_limited_balanced] and
-      average_estimated_throughput_mib_per_sec(state.completed_metrics) <
+      average_observed_throughput_mib_per_sec(state.completed_metrics) <
         throughput_floor_mib_per_sec(tuning_profile)
   end
 
-  defp average_estimated_throughput_mib_per_sec([]), do: 0.0
+  defp average_observed_throughput_mib_per_sec([]), do: 0.0
 
-  defp average_estimated_throughput_mib_per_sec(completed_metrics) do
+  defp average_observed_throughput_mib_per_sec(completed_metrics) do
     completed_metrics
-    |> Enum.map(&estimated_throughput_mib_per_sec/1)
+    |> Enum.map(&reported_throughput_mib_per_sec/1)
     |> Enum.sum()
     |> Kernel./(length(completed_metrics))
+  end
+
+  defp register_live_metric(state, database_name, snapshot) do
+    state
+    |> put_in([:live_metrics, database_name], snapshot)
+    |> update_parallel_progress_summary()
+  end
+
+  defp drop_live_metric(state, database_name) do
+    state
+    |> update_in([:live_metrics], &Map.delete(&1, database_name))
+    |> update_parallel_progress_summary()
+  end
+
+  defp update_parallel_progress_summary(%{progress_display: nil} = state), do: state
+
+  defp update_parallel_progress_summary(state) do
+    update_progress_summary(state.progress_display, parallel_progress_summary(state))
+    state
+  end
+
+  defp parallel_progress_summary(state) do
+    completed_bytes = sum_reported_bytes(state.completed_metrics)
+    active_bytes = sum_live_bytes(state.live_metrics)
+    processed_bytes = completed_bytes + active_bytes
+    active_rate_mib_per_sec = sum_live_throughput(state.live_metrics)
+    remaining_bytes = max(state.total_expected_bytes - processed_bytes, 0)
+
+    %{
+      aggregate:
+        "agregado: #{format_bytes_binary(processed_bytes)}/#{format_bytes_binary(state.total_expected_bytes)} @ #{format_mib_per_sec(active_rate_mib_per_sec)} | ativos=#{map_size(state.live_metrics)}#{format_eta_detail(remaining_bytes, active_rate_mib_per_sec)}",
+      active:
+        "por database: #{format_active_database_rates(state.live_metrics)}"
+    }
+  end
+
+  defp sum_live_bytes(live_metrics) do
+    live_metrics
+    |> Map.values()
+    |> Enum.map(&Map.get(&1, :raw_bytes, 0))
+    |> Enum.sum()
+  end
+
+  defp sum_live_throughput(live_metrics) do
+    live_metrics
+    |> Map.values()
+    |> Enum.map(&Map.get(&1, :throughput_mib_per_sec, 0.0))
+    |> Enum.sum()
+  end
+
+  defp sum_reported_bytes(metrics_list) do
+    metrics_list
+    |> Enum.map(fn metrics ->
+      raw_bytes = Map.get(metrics, :raw_bytes, 0)
+
+      if raw_bytes > 0 do
+        raw_bytes
+      else
+        Map.get(metrics, :estimated_bytes, 0)
+      end
+    end)
+    |> Enum.sum()
+  end
+
+  defp format_active_database_rates(live_metrics) when map_size(live_metrics) == 0, do: "nenhum ativo"
+
+  defp format_active_database_rates(live_metrics) do
+    {visible_entries, hidden_entries} =
+      live_metrics
+      |> Enum.sort_by(fn {_database_name, snapshot} -> Map.get(snapshot, :throughput_mib_per_sec, 0.0) end, :desc)
+      |> Enum.split(4)
+
+    visible_text =
+      visible_entries
+      |> Enum.map(fn {database_name, snapshot} ->
+        "#{database_name}=#{format_mib_per_sec(Map.get(snapshot, :throughput_mib_per_sec, 0.0))}"
+      end)
+      |> Enum.join(", ")
+
+    case hidden_entries do
+      [] -> visible_text
+      _ -> visible_text <> " +" <> Integer.to_string(length(hidden_entries))
+    end
+  end
+
+  defp format_mib_per_sec(value) when is_integer(value), do: format_mib_per_sec(value * 1.0)
+  defp format_mib_per_sec(value), do: :erlang.float_to_binary(value, decimals: 1) <> " MiB/s"
+
+  defp format_eta_detail(_remaining_bytes, active_rate_mib_per_sec) when active_rate_mib_per_sec <= 0, do: ""
+
+  defp format_eta_detail(remaining_bytes, active_rate_mib_per_sec) do
+    seconds =
+      remaining_bytes
+      |> Kernel./(1024 * 1024)
+      |> Kernel./(active_rate_mib_per_sec)
+      |> round()
+
+    " | eta=#{format_eta_seconds(seconds)}"
+  end
+
+  defp format_eta_seconds(seconds) when seconds < 60, do: "#{seconds}s"
+
+  defp format_eta_seconds(seconds) when seconds < 3600 do
+    minutes = div(seconds, 60)
+    remaining_seconds = rem(seconds, 60)
+    "#{minutes}m#{remaining_seconds}s"
+  end
+
+  defp format_eta_seconds(seconds) do
+    hours = div(seconds, 3600)
+    minutes = div(rem(seconds, 3600), 60)
+    remaining_seconds = rem(seconds, 60)
+    "#{hours}h#{minutes}m#{remaining_seconds}s"
+  end
+
+  defp reported_throughput_mib_per_sec(metrics) do
+    if Map.get(metrics, :raw_bytes, 0) > 0 do
+      measured_throughput_mib_per_sec(metrics)
+    else
+      estimated_throughput_mib_per_sec(metrics)
+    end
   end
 
   defp estimated_throughput_mib_per_sec(metrics) do
@@ -1318,7 +1471,8 @@ defmodule DocdbStreamBackup do
       start_stream_progress_watcher(
         meter_progress_file,
         stream_progress_target,
-        started_at
+        started_at,
+        args.expected_size_bytes
       )
 
     case System.cmd("bash", ["-c", command], stderr_to_stdout: true) do
@@ -1399,10 +1553,12 @@ defmodule DocdbStreamBackup do
     end
   end
 
-  defp start_stream_progress_watcher(_meter_progress_file, nil, _started_at), do: nil
+  defp start_stream_progress_watcher(_meter_progress_file, nil, _started_at, _target_bytes), do: nil
 
-  defp start_stream_progress_watcher(meter_progress_file, progress_target, started_at) do
-    spawn(fn -> stream_progress_watcher_loop(meter_progress_file, progress_target, started_at, 0) end)
+  defp start_stream_progress_watcher(meter_progress_file, progress_target, started_at, target_bytes) do
+    spawn(fn ->
+      stream_progress_watcher_loop(meter_progress_file, progress_target, started_at, target_bytes, 0)
+    end)
   end
 
   defp stop_stream_progress_watcher(nil), do: :ok
@@ -1412,7 +1568,7 @@ defmodule DocdbStreamBackup do
     :ok
   end
 
-  defp stream_progress_watcher_loop(meter_progress_file, progress_target, started_at, last_bytes) do
+  defp stream_progress_watcher_loop(meter_progress_file, progress_target, started_at, target_bytes, last_bytes) do
     receive do
       :stop ->
         :ok
@@ -1421,30 +1577,39 @@ defmodule DocdbStreamBackup do
         current_bytes = read_streamed_bytes(meter_progress_file)
 
         if current_bytes > last_bytes do
-          detail = format_stream_progress_detail(current_bytes, started_at)
-          publish_stream_progress(progress_target, detail)
+          snapshot = build_stream_progress_snapshot(current_bytes, started_at, target_bytes)
+          publish_stream_progress(progress_target, snapshot)
         end
 
         stream_progress_watcher_loop(
           meter_progress_file,
           progress_target,
           started_at,
+          target_bytes,
           max(current_bytes, last_bytes)
         )
     end
   end
 
-  defp publish_stream_progress({:display_stage, progress_display, stage_name}, detail) do
-    update_progress_display(progress_display, stage_name, {:running, nil, detail})
+  defp publish_stream_progress(targets, snapshot) when is_list(targets) do
+    Enum.each(targets, &publish_stream_progress(&1, snapshot))
   end
 
-  defp publish_stream_progress(_, _detail), do: :ok
+  defp publish_stream_progress({:display_stage, progress_display, stage_name}, snapshot) do
+    update_progress_display(progress_display, stage_name, {:running, nil, snapshot.detail})
+  end
 
-  defp format_stream_progress_detail(streamed_bytes, started_at) do
+  defp publish_stream_progress({:scheduler, scheduler_pid, database_name}, snapshot) do
+    send(scheduler_pid, {:stream_progress, database_name, snapshot})
+    :ok
+  end
+
+  defp publish_stream_progress(_, _snapshot), do: :ok
+
+  defp build_stream_progress_snapshot(streamed_bytes, started_at, target_bytes) do
     elapsed_seconds =
-      started_at
-      |> Kernel.-(System.monotonic_time(:microsecond))
-      |> Kernel.*(-1)
+      System.monotonic_time(:microsecond)
+      |> Kernel.-(started_at)
       |> Kernel./(1_000_000)
       |> max(1.0)
 
@@ -1453,7 +1618,13 @@ defmodule DocdbStreamBackup do
       |> Kernel./(1024 * 1024)
       |> Kernel./(elapsed_seconds)
 
-    "#{format_bytes_binary(streamed_bytes)} real @ #{:erlang.float_to_binary(throughput, decimals: 1)} MiB/s"
+    %{
+      raw_bytes: streamed_bytes,
+      throughput_mib_per_sec: throughput,
+      target_bytes: target_bytes,
+      detail:
+        "#{format_bytes_binary(streamed_bytes)} real @ #{format_mib_per_sec(throughput)}#{format_eta_detail(max(target_bytes - streamed_bytes, 0), throughput)}"
+    }
   end
 
   defp read_streamed_bytes(meter_progress_file) do
@@ -1840,10 +2011,12 @@ defmodule DocdbStreamBackup do
       message: message,
       stage_specs: stage_specs,
       stage_states: Map.new(stage_names, &{&1, {:running, nil, ""}}),
+      summary: nil,
       started_at: System.monotonic_time(:millisecond),
       frame: 0,
       ansi_enabled: ansi_enabled,
-      first_render?: true
+      first_render?: true,
+      rendered_line_count: 0
     }
 
     spawn(fn -> progress_display_loop(render_progress_display(initial_state)) end)
@@ -1860,6 +2033,12 @@ defmodule DocdbStreamBackup do
       {:update, stage_name, stage_state} ->
         state
         |> put_in([:stage_states, stage_name], stage_state)
+        |> render_progress_display()
+        |> progress_display_loop()
+
+      {:summary, summary} ->
+        state
+        |> Map.put(:summary, summary)
         |> render_progress_display()
         |> progress_display_loop()
     after
@@ -1894,6 +2073,13 @@ defmodule DocdbStreamBackup do
     :ok
   end
 
+  defp update_progress_summary(nil, _summary), do: :ok
+
+  defp update_progress_summary(pid, summary) do
+    send(pid, {:summary, summary})
+    :ok
+  end
+
   defp render_progress_display(state) do
     lines = build_progress_lines(state)
 
@@ -1901,7 +2087,7 @@ defmodule DocdbStreamBackup do
       if state.first_render? do
         IO.write(Enum.join(lines, "\n") <> "\n")
       else
-        IO.write(IO.ANSI.cursor_up(length(lines)))
+        IO.write(IO.ANSI.cursor_up(state.rendered_line_count))
         Enum.each(lines, fn line ->
           IO.write(IO.ANSI.clear_line())
           IO.write(line <> "\n")
@@ -1915,18 +2101,26 @@ defmodule DocdbStreamBackup do
       end
     end
 
-    %{state | first_render?: false}
+    %{state | first_render?: false, rendered_line_count: length(lines)}
   end
 
   defp build_progress_lines(state) do
     elapsed_seconds = div(System.monotonic_time(:millisecond) - state.started_at, 1000)
 
-    [
-      "#{state.message} (#{elapsed_seconds}s)"
-      | Enum.map(state.stage_specs, fn stage_spec ->
+    ["#{state.message} (#{elapsed_seconds}s)"]
+    |> Kernel.++(format_progress_summary_lines(Map.get(state, :summary)))
+    |> Kernel.++(
+      Enum.map(state.stage_specs, fn stage_spec ->
           format_progress_stage_line(stage_spec, Map.get(state.stage_states, stage_spec.name, {:running, nil, ""}), state.frame)
-        end)
-    ]
+      end)
+    )
+  end
+
+  defp format_progress_summary_lines(nil), do: []
+
+  defp format_progress_summary_lines(summary) do
+    [Map.get(summary, :aggregate), Map.get(summary, :active)]
+    |> Enum.reject(&(&1 in [nil, ""]))
   end
 
   defp format_progress_stage_line(stage_spec, {:running, _status} = stage_state, frame) do
