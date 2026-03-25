@@ -13,7 +13,7 @@ die() {
 usage() {
   cat <<'USAGE'
 Uso:
-  install_go_ec2.sh [--version <latest|vX.Y.Z>] [--install-dir /usr/local/go] [--profile /etc/profile.d/go.sh] [--force]
+  install_go_ec2.sh [--version <latest|vX.Y.Z>] [--install-dir /usr/local/go] [--profile /etc/profile.d/go.sh] [--force] [--no-package-fallback]
 
 Exemplos:
   install_go_ec2.sh
@@ -23,6 +23,7 @@ Exemplos:
 Observação:
   - Por padrão instala a última versão estável (latest)
   - Requer privilégios de sudo quando instalar em /usr/local/go
+  - Faz fallback por apt/yum/dnf quando --version latest falha (pode ser desativado com --no-package-fallback)
 USAGE
 }
 
@@ -31,6 +32,8 @@ GO_INSTALL_DIR="/usr/local/go"
 GO_PROFILE_PATH="/etc/profile.d/go.sh"
 FORCE_REINSTALL=0
 HTTP_TIMEOUT=15
+PACKAGE_FALLBACK=1
+GO_INSTALL_SOURCE="tarball"
 
 LATEST_FALLBACK_URLS=(
   "https://go.dev/dl/?mode=json"
@@ -54,6 +57,10 @@ while [[ $# -gt 0 ]]; do
       ;;
     --force)
       FORCE_REINSTALL=1
+      shift
+      ;;
+    --no-package-fallback)
+      PACKAGE_FALLBACK=0
       shift
       ;;
     -h|--help)
@@ -179,7 +186,6 @@ fetch_latest_version() {
     fi
 
     if [[ -z "${json}" ]]; then
-      attempts+=("${url}")
       continue
     fi
 
@@ -205,7 +211,7 @@ normalize_version() {
 
   if [[ "${requested}" == "latest" ]]; then
     fetch_latest_version
-    return
+    return $?
   fi
 
   if [[ "${requested}" == v* ]]; then
@@ -228,6 +234,32 @@ current_go_version() {
     return
   fi
   echo ""
+}
+
+install_go_from_package_manager() {
+  local distro
+  distro="$(detect_distro)"
+
+  case "${distro}" in
+    amzn|amzn2|amazon|alinux*)
+      if command -v dnf >/dev/null 2>&1; then
+        run_with_sudo dnf install -y golang
+        return 0
+      fi
+      if command -v yum >/dev/null 2>&1; then
+        run_with_sudo yum install -y golang
+        return 0
+      fi
+      return 1
+      ;;
+    ubuntu|debian)
+      run_with_sudo apt-get install -y golang
+      return 0
+      ;;
+    *)
+      return 1
+      ;;
+  esac
 }
 
 write_profile() {
@@ -268,8 +300,13 @@ install_go() {
 
   ensure_downloader
 
-  resolved_version="$(normalize_version "${GO_VERSION}")"
-  if [[ -z "${resolved_version}" ]]; then
+  if ! resolved_version="$(normalize_version "${GO_VERSION}")"; then
+    if [[ "${GO_VERSION}" == "latest" && "${PACKAGE_FALLBACK}" -eq 1 ]]; then
+      if install_go_from_package_manager; then
+        GO_INSTALL_SOURCE="package"
+        return
+      fi
+    fi
     die "não foi possível resolver a versão do Go. Verifique conexão e URL"
   fi
 
@@ -324,12 +361,15 @@ install_go() {
 }
 
 validate_install() {
-  if [[ ! -x "${GO_INSTALL_DIR}/bin/go" ]]; then
-    die "instalação falhou: binário go não encontrado em ${GO_INSTALL_DIR}/bin/go"
+  local go_bin
+  local installed
+
+  go_bin="$(command -v go || true)"
+  if [[ -z "${go_bin}" ]]; then
+    die "instalação falhou: binário go não encontrado no PATH"
   fi
 
-  local installed
-  installed="$(${GO_INSTALL_DIR}/bin/go version)"
+  installed="$("${go_bin}" version)"
   log "instalado: ${installed}"
 }
 
@@ -339,10 +379,12 @@ main() {
   validate_install
 
   log "instalação concluída"
-  log "para carregar Go nesta sessão atual:"
-  log "  source ${GO_PROFILE_PATH}"
-  log "para carregar automaticamente nos próximos logins (root):"
-  log "  reinicie o shell"
+  if [[ "${GO_INSTALL_SOURCE}" == "tarball" ]]; then
+    log "para carregar Go nesta sessão atual:"
+    log "  source ${GO_PROFILE_PATH}"
+    log "para carregar automaticamente nos próximos logins (root):"
+    log "  reinicie o shell"
+  fi
 }
 
 main "$@"
