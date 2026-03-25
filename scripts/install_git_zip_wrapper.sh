@@ -1,4 +1,13 @@
-#!/usr/bin/env bash
+#!/bin/sh
+[ -n "${BASH_VERSION:-}" ] || {
+  if command -v bash >/dev/null 2>&1; then
+    exec bash "$0" "$@"
+  fi
+
+  printf '[install-git-zip-wrapper] erro: bash é obrigatório para instalar o wrapper\n' >&2
+  exit 1
+}
+
 set -euo pipefail
 
 log() {

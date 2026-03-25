@@ -1,4 +1,13 @@
-#!/usr/bin/env bash
+#!/bin/sh
+[ -n "${BASH_VERSION:-}" ] || {
+  if command -v bash >/dev/null 2>&1; then
+    exec bash "$0" "$@"
+  fi
+
+  printf '[git-zip-wrapper] erro: bash é obrigatório para executar este wrapper\n' >&2
+  exit 1
+}
+
 set -euo pipefail
 
 log() {
@@ -53,7 +62,7 @@ is_truthy() {
 normalize_archive_format() {
   local requested
   requested="$1"
-  requested="${requested,,}"
+  requested="$(printf '%s' "${requested}" | tr '[:upper:]' '[:lower:]')"
 
   case "${requested}" in
     tar.gz|tgz|tar|zip)
@@ -91,7 +100,9 @@ resolve_real_git() {
       printf '%s\n' "${candidate}"
       return
     fi
-  done < <(which -a git 2>/dev/null || true)
+  done <<EOF
+$(which -a git 2>/dev/null || true)
+EOF
 
   [[ -x "/usr/bin/git" ]] || die "não foi possível localizar o git real. Defina GIT_ZIP_WRAPPER_REAL_GIT."
   printf '%s\n' "/usr/bin/git"
@@ -112,71 +123,86 @@ parse_clone_arguments() {
   CLONE_BRANCH=""
   CLONE_DESTINATION=""
 
-  local args=("$@")
-  local index=0
-  local positional=()
+  local arg positional_count positional_repo positional_destination
+  positional_count=0
+  positional_repo=""
+  positional_destination=""
 
-  while (( index < ${#args[@]} )); do
-    local arg="${args[index]}"
+  if [[ "${1:-}" == "clone" ]]; then
+    shift
+  fi
+
+  while [[ $# -gt 0 ]]; do
+    arg="$1"
     case "${arg}" in
       -b|--branch)
-        (( index + 1 < ${#args[@]} )) || die "faltou valor para ${arg}"
-        CLONE_BRANCH="${args[index + 1]}"
-        index=$((index + 2))
+        [[ $# -ge 2 ]] || die "faltou valor para ${arg}"
+        CLONE_BRANCH="$2"
+        shift 2
         ;;
       -c|--config)
-        (( index + 1 < ${#args[@]} )) || die "faltou valor para ${arg}"
-        index=$((index + 2))
+        [[ $# -ge 2 ]] || die "faltou valor para ${arg}"
+        shift 2
         ;;
       -c*)
-        index=$((index + 1))
+        shift
         ;;
       -o|--origin|-u|--upload-pack)
-        (( index + 1 < ${#args[@]} )) || die "faltou valor para ${arg}"
-        index=$((index + 2))
+        [[ $# -ge 2 ]] || die "faltou valor para ${arg}"
+        shift 2
         ;;
       -j|--jobs)
-        (( index + 1 < ${#args[@]} )) || die "faltou valor para ${arg}"
-        index=$((index + 2))
+        [[ $# -ge 2 ]] || die "faltou valor para ${arg}"
+        shift 2
         ;;
       --branch=*)
         CLONE_BRANCH="${arg#--branch=}"
-        index=$((index + 1))
+        shift
         ;;
       --config=*|--jobs=*)
-        index=$((index + 1))
+        shift
         ;;
       --depth|--filter|--origin|--config|--upload-pack|--template|--reference|--reference-if-able|--server-option|--separate-git-dir)
-        (( index + 1 < ${#args[@]} )) || die "faltou valor para ${arg}"
-        index=$((index + 2))
+        [[ $# -ge 2 ]] || die "faltou valor para ${arg}"
+        shift 2
         ;;
       --depth=*|--filter=*|--origin=*|--config=*|--upload-pack=*|--template=*|--reference=*|--reference-if-able=*|--server-option=*|--separate-git-dir=*)
-        index=$((index + 1))
+        shift
         ;;
       --single-branch|--no-single-branch|--recurse-submodules|--shallow-submodules|--no-shallow-submodules|--no-tags|--tags|--quiet|--verbose|--progress|--no-checkout)
-        index=$((index + 1))
+        shift
         ;;
       --)
-        index=$((index + 1))
-        while (( index < ${#args[@]} )); do
-          positional+=("${args[index]}")
-          index=$((index + 1))
+        shift
+        while [[ $# -gt 0 ]]; do
+          positional_count=$((positional_count + 1))
+          if [[ ${positional_count} -eq 1 ]]; then
+            positional_repo="$1"
+          elif [[ ${positional_count} -eq 2 ]]; then
+            positional_destination="$1"
+          fi
+          shift
         done
         ;;
       -*)
-        index=$((index + 1))
+        shift
         ;;
       *)
-        positional+=("${arg}")
-        index=$((index + 1))
+        positional_count=$((positional_count + 1))
+        if [[ ${positional_count} -eq 1 ]]; then
+          positional_repo="${arg}"
+        elif [[ ${positional_count} -eq 2 ]]; then
+          positional_destination="${arg}"
+        fi
+        shift
         ;;
     esac
   done
 
-  (( ${#positional[@]} >= 1 )) || die "uso inválido: git clone <repo> [destino]"
-  CLONE_REPO_URL="${positional[0]}"
-  if (( ${#positional[@]} >= 2 )); then
-    CLONE_DESTINATION="${positional[1]}"
+  [[ ${positional_count} -ge 1 ]] || die "uso inválido: git clone <repo> [destino]"
+  CLONE_REPO_URL="${positional_repo}"
+  if [[ ${positional_count} -ge 2 ]]; then
+    CLONE_DESTINATION="${positional_destination}"
   else
     CLONE_DESTINATION="$(default_destination_from_repo "${CLONE_REPO_URL}")"
   fi
@@ -215,55 +241,66 @@ download_github_archive() {
   branch="$2"
   archive_path="$3"
 
-  local candidate_urls=()
-
   if [[ "${ARCHIVE_FORMAT}" == "zip" ]]; then
     if [[ -n "${branch}" ]]; then
-      candidate_urls+=("https://github.com/${slug}/archive/refs/heads/${branch}.zip")
-      candidate_urls+=("https://github.com/${slug}/archive/refs/tags/${branch}.zip")
-      candidate_urls+=("https://codeload.github.com/${slug}/zip/refs/heads/${branch}")
-      candidate_urls+=("https://codeload.github.com/${slug}/zip/refs/tags/${branch}")
-      candidate_urls+=("https://codeload.github.com/${slug}/zip/${branch}")
+      try_download_candidate_urls "${archive_path}" \
+        "https://github.com/${slug}/archive/refs/heads/${branch}.zip" \
+        "https://github.com/${slug}/archive/refs/tags/${branch}.zip" \
+        "https://codeload.github.com/${slug}/zip/refs/heads/${branch}" \
+        "https://codeload.github.com/${slug}/zip/refs/tags/${branch}" \
+        "https://codeload.github.com/${slug}/zip/${branch}" && return 0
     else
-      candidate_urls+=("https://github.com/${slug}/archive/HEAD.zip")
-      candidate_urls+=("https://codeload.github.com/${slug}/zip/HEAD")
+      try_download_candidate_urls "${archive_path}" \
+        "https://github.com/${slug}/archive/HEAD.zip" \
+        "https://codeload.github.com/${slug}/zip/HEAD" && return 0
     fi
   else
     if [[ -n "${branch}" ]]; then
-      candidate_urls+=("https://github.com/${slug}/archive/refs/heads/${branch}.tar.gz")
-      candidate_urls+=("https://github.com/${slug}/archive/refs/tags/${branch}.tar.gz")
-      candidate_urls+=("https://codeload.github.com/${slug}/tar.gz/refs/heads/${branch}")
-      candidate_urls+=("https://codeload.github.com/${slug}/tar.gz/refs/tags/${branch}")
-      candidate_urls+=("https://codeload.github.com/${slug}/tar.gz/${branch}")
+      try_download_candidate_urls "${archive_path}" \
+        "https://github.com/${slug}/archive/refs/heads/${branch}.tar.gz" \
+        "https://github.com/${slug}/archive/refs/tags/${branch}.tar.gz" \
+        "https://codeload.github.com/${slug}/tar.gz/refs/heads/${branch}" \
+        "https://codeload.github.com/${slug}/tar.gz/refs/tags/${branch}" \
+        "https://codeload.github.com/${slug}/tar.gz/${branch}" && return 0
     else
-      candidate_urls+=("https://github.com/${slug}/archive/HEAD.tar.gz")
-      candidate_urls+=("https://codeload.github.com/${slug}/tar.gz/HEAD")
-      candidate_urls+=("https://github.com/${slug}/archive/refs/heads/main.tar.gz")
-      candidate_urls+=("https://codeload.github.com/${slug}/tar.gz/refs/heads/main")
-      candidate_urls+=("https://github.com/${slug}/archive/refs/heads/master.tar.gz")
-      candidate_urls+=("https://codeload.github.com/${slug}/tar.gz/refs/heads/master")
+      try_download_candidate_urls "${archive_path}" \
+        "https://github.com/${slug}/archive/HEAD.tar.gz" \
+        "https://codeload.github.com/${slug}/tar.gz/HEAD" \
+        "https://github.com/${slug}/archive/refs/heads/main.tar.gz" \
+        "https://codeload.github.com/${slug}/tar.gz/refs/heads/main" \
+        "https://github.com/${slug}/archive/refs/heads/master.tar.gz" \
+        "https://codeload.github.com/${slug}/tar.gz/refs/heads/master" && return 0
     fi
 
     if is_truthy "${ALLOW_ZIP_FALLBACK}"; then
       if [[ -n "${branch}" ]]; then
-        candidate_urls+=("https://github.com/${slug}/archive/refs/heads/${branch}.zip")
-        candidate_urls+=("https://github.com/${slug}/archive/refs/tags/${branch}.zip")
-        candidate_urls+=("https://codeload.github.com/${slug}/zip/refs/heads/${branch}")
-        candidate_urls+=("https://codeload.github.com/${slug}/zip/refs/tags/${branch}")
-        candidate_urls+=("https://codeload.github.com/${slug}/zip/${branch}")
+        try_download_candidate_urls "${archive_path}" \
+          "https://github.com/${slug}/archive/refs/heads/${branch}.zip" \
+          "https://github.com/${slug}/archive/refs/tags/${branch}.zip" \
+          "https://codeload.github.com/${slug}/zip/refs/heads/${branch}" \
+          "https://codeload.github.com/${slug}/zip/refs/tags/${branch}" \
+          "https://codeload.github.com/${slug}/zip/${branch}" && return 0
       else
-        candidate_urls+=("https://github.com/${slug}/archive/HEAD.zip")
-        candidate_urls+=("https://codeload.github.com/${slug}/zip/HEAD")
-        candidate_urls+=("https://github.com/${slug}/archive/refs/heads/main.zip")
-        candidate_urls+=("https://codeload.github.com/${slug}/zip/refs/heads/main")
-        candidate_urls+=("https://github.com/${slug}/archive/refs/heads/master.zip")
-        candidate_urls+=("https://codeload.github.com/${slug}/zip/refs/heads/master")
+        try_download_candidate_urls "${archive_path}" \
+          "https://github.com/${slug}/archive/HEAD.zip" \
+          "https://codeload.github.com/${slug}/zip/HEAD" \
+          "https://github.com/${slug}/archive/refs/heads/main.zip" \
+          "https://codeload.github.com/${slug}/zip/refs/heads/main" \
+          "https://github.com/${slug}/archive/refs/heads/master.zip" \
+          "https://codeload.github.com/${slug}/zip/refs/heads/master" && return 0
       fi
     fi
   fi
 
-  local url
-  for url in "${candidate_urls[@]}"; do
+  return 1
+}
+
+try_download_candidate_urls() {
+  local archive_path url
+  archive_path="$1"
+  shift
+
+  for url in "$@"; do
     if download_url_with_retries "${url}" "${archive_path}"; then
       printf '%s\n' "${url}"
       return 0
@@ -295,44 +332,17 @@ download_url_with_retries() {
   url="$1"
   archive_path="$2"
 
-  local mode attempt mode_label
-  local -a curl_modes=("" "--http1.1" "-4" "-4 --http1.1")
-  local -a tls_opts=()
-  local -a proxy_opts=()
-  local user_agent
+  local mode_name attempt mode_label user_agent
   user_agent="Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36"
 
-  if is_truthy "${GIT_ZIP_WRAPPER_CURL_INSECURE}"; then
-    tls_opts+=("--insecure")
-  fi
-  if [[ -n "${GIT_ZIP_WRAPPER_CURL_CACERT}" ]]; then
-    tls_opts+=("--cacert" "${GIT_ZIP_WRAPPER_CURL_CACERT}")
-  fi
   if [[ -n "${GIT_ZIP_WRAPPER_ACTIVE_PROXY}" ]]; then
-    proxy_opts=("--proxy" "${GIT_ZIP_WRAPPER_ACTIVE_PROXY}")
     log "download usando proxy: ${GIT_ZIP_WRAPPER_ACTIVE_PROXY}"
   fi
 
-  for mode in "${curl_modes[@]}"; do
-    mode_label="default"
-    if [[ -n "${mode}" ]]; then
-      mode_label="${mode}"
-    fi
+  for mode_name in default http1 ipv4 ipv4_http1; do
+    mode_label="$(curl_mode_label "${mode_name}")"
     for attempt in 1 2 3; do
-      if curl -fsSL \
-        --connect-timeout 20 \
-        --max-time 300 \
-        --retry 3 \
-        --retry-delay 2 \
-        --retry-all-errors \
-        --tlsv1.2 \
-        "${tls_opts[@]}" \
-        "${proxy_opts[@]}" \
-        -A "${user_agent}" \
-        -H "Accept: application/octet-stream,*/*" \
-        ${mode} \
-        "${url}" \
-        -o "${archive_path}"; then
+      if run_curl_download "${mode_name}" "${url}" "${archive_path}" "${user_agent}"; then
         return 0
       fi
       log "download falhou (tentativa ${attempt}/3, modo ${mode_label}): ${url}"
@@ -340,6 +350,62 @@ download_url_with_retries() {
     done
   done
   return 1
+}
+
+curl_mode_label() {
+  case "$1" in
+    default) printf '%s\n' "default" ;;
+    http1) printf '%s\n' "--http1.1" ;;
+    ipv4) printf '%s\n' "-4" ;;
+    ipv4_http1) printf '%s\n' "-4 --http1.1" ;;
+    *) printf '%s\n' "$1" ;;
+  esac
+}
+
+run_curl_download() {
+  local mode_name url archive_path user_agent
+  mode_name="$1"
+  url="$2"
+  archive_path="$3"
+  user_agent="$4"
+
+  set -- curl -fsSL \
+    --connect-timeout 20 \
+    --max-time 300 \
+    --retry 3 \
+    --retry-delay 2 \
+    --retry-all-errors \
+    --tlsv1.2
+
+  if is_truthy "${GIT_ZIP_WRAPPER_CURL_INSECURE}"; then
+    set -- "$@" --insecure
+  fi
+  if [[ -n "${GIT_ZIP_WRAPPER_CURL_CACERT}" ]]; then
+    set -- "$@" --cacert "${GIT_ZIP_WRAPPER_CURL_CACERT}"
+  fi
+  if [[ -n "${GIT_ZIP_WRAPPER_ACTIVE_PROXY}" ]]; then
+    set -- "$@" --proxy "${GIT_ZIP_WRAPPER_ACTIVE_PROXY}"
+  fi
+
+  case "${mode_name}" in
+    http1)
+      set -- "$@" --http1.1
+      ;;
+    ipv4)
+      set -- "$@" -4
+      ;;
+    ipv4_http1)
+      set -- "$@" -4 --http1.1
+      ;;
+  esac
+
+  set -- "$@" \
+    -A "${user_agent}" \
+    -H "Accept: application/octet-stream,*/*" \
+    "${url}" \
+    -o "${archive_path}"
+
+  "$@"
 }
 
 validate_clone_destination() {
@@ -401,7 +467,7 @@ main() {
     command -v unzip >/dev/null 2>&1 || die "unzip não encontrado"
   fi
 
-  parse_clone_arguments "${@:2}"
+  parse_clone_arguments "$@"
   local repo_url branch destination
   repo_url="${CLONE_REPO_URL}"
   branch="${CLONE_BRANCH}"
