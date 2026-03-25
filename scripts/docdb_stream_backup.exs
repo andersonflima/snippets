@@ -475,9 +475,9 @@ Observação:
       |> Enum.join(" ")
 
     pipeline_summary = [
-      "mongodump: #{format_logged_command("mongodump", mongodump_args)}",
-      "pigz: #{format_logged_command("pigz", pigz_args)}",
-      "aws: #{format_logged_command("aws", aws_args)}"
+      {"mongodump", format_logged_command("mongodump", mongodump_args)},
+      {"pigz", format_logged_command("pigz", pigz_args)},
+      {"aws", format_logged_command("aws", aws_args)}
     ]
 
     pipeline =
@@ -520,8 +520,11 @@ exit \"$pipeline_exit\"
         stop_status_spinner(spinner)
         pipeline_status = extract_pipeline_status(output, status_probe)
         cleaned_output = remove_pipeline_status_line(output, status_probe)
-        pipeline_trace = Enum.join(pipeline_summary, "\n")
+        pipeline_trace = format_pipeline_trace(pipeline_summary)
         stages_report = format_pipeline_stages(pipeline_status)
+        failed_stages = failed_pipeline_stages(pipeline_status)
+        failed_commands = format_failed_commands(pipeline_summary, failed_stages)
+        stage_failure_description = format_failed_stage_description(failed_stages)
         metrics = %{
           duration_us: elapsed_us.(),
           estimated_bytes: args.expected_size_bytes
@@ -531,18 +534,24 @@ exit \"$pipeline_exit\"
         details =
           [
             pipeline_status: stages_report,
+            pipeline_failure: stage_failure_description,
             pipeline_output: String.trim(cleaned_output),
-            pipeline_trace: pipeline_trace
+            pipeline_trace: pipeline_trace,
+            failed_pipeline_trace: failed_commands
           ]
           |> Enum.reject(fn
             {:pipeline_status, value} -> value == nil || String.trim(value) == ""
             {:pipeline_output, value} -> value == nil || String.trim(value) == ""
             {:pipeline_trace, value} -> value == nil || String.trim(value) == ""
+            {:pipeline_failure, value} -> value == nil || String.trim(value) == ""
+            {:failed_pipeline_trace, value} -> value == nil || String.trim(value) == ""
           end)
           |> Enum.map(fn
             {:pipeline_status, value} -> "estágios: #{value}"
+            {:pipeline_failure, value} -> "falha identificada: #{value}"
             {:pipeline_output, value} -> "saida:\n#{value}"
             {:pipeline_trace, value} -> "comandos:\n#{value}"
+            {:failed_pipeline_trace, value} -> "comando(s) falho(s):\n#{value}"
           end)
           |> Enum.join("\n")
 
@@ -560,6 +569,49 @@ exit \"$pipeline_exit\"
       stage = Enum.at(["mongodump", "pigz", "aws"], index, "etapa-#{index + 1}")
       "#{stage}=#{status}"
     end)
+  end
+
+  defp parse_stage_statuses(status_line) do
+    status_line
+    |> String.split(" ", trim: true)
+    |> Enum.with_index()
+    |> Enum.map(fn {status, index} ->
+      stage = Enum.at(["mongodump", "pigz", "aws"], index, "etapa-#{index + 1}")
+      {stage, status}
+    end)
+  end
+
+  defp failed_pipeline_stages(status_line) do
+    parse_stage_statuses(status_line)
+    |> Enum.filter(fn {_stage, status} -> status != "0" && status != "" end)
+    |> Enum.map(fn {stage, status} -> "#{stage}=#{status}" end)
+  end
+
+  defp format_failed_stage_description([]), do: ""
+
+  defp format_failed_stage_description([head | _tail]),
+    do: head
+
+  defp format_pipeline_trace(stage_commands) do
+    stage_commands
+    |> Enum.map(fn {stage, command} -> "#{stage}: #{command}" end)
+    |> Enum.join("\n")
+  end
+
+  defp format_failed_commands(stage_commands, failed_stages) do
+    failed_stage_names =
+      failed_stages
+      |> Enum.map(fn stage_status ->
+        stage_status
+        |> String.split("=", parts: 2, trim: true)
+        |> hd()
+      end)
+      |> MapSet.new()
+
+    stage_commands
+    |> Enum.filter(fn {stage, _command} -> MapSet.member?(failed_stage_names, stage) end)
+    |> Enum.map(fn {stage, command} -> "#{stage}: #{command}" end)
+    |> Enum.join("\n")
   end
 
   defp format_logged_command("mongodump", args) do
