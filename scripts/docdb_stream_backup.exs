@@ -146,6 +146,7 @@ defmodule DocdbStreamBackup do
              bucket: normalized_bucket,
              prefix: normalized_prefix,
              num_parallel_collections: num_parallel_collections,
+             skip_num_parallel: false,
              pigz_threads: pigz_threads,
              compression_level: compression_level,
              expected_size_bytes: expected_size_bytes,
@@ -481,7 +482,9 @@ defmodule DocdbStreamBackup do
     {:ok, "#{prefix}docdb-backup-#{timestamp}.archive.gz"}
   end
 
-  defp run_pipeline(args, key) do
+  defp run_pipeline(args, key), do: run_pipeline(args, key, 0)
+
+  defp run_pipeline(args, key, attempt) do
     start = System.monotonic_time(:microsecond)
     destination = "s3://#{args.bucket}/#{key}"
     spinner = start_status_spinner("backup em andamento")
@@ -493,7 +496,7 @@ defmodule DocdbStreamBackup do
         args.uri,
         "--archive"
       ]
-      |> Enum.concat(num_parallel_collections_flag(args.num_parallel_collections))
+      |> Enum.concat(num_parallel_collections_flag(args.num_parallel_collections, args.skip_num_parallel))
       |> Kernel.++(args.extra_mongodump_args)
 
     pigz_args =
@@ -591,35 +594,46 @@ exit \"$pipeline_exit\"
         }
         error_head = "pipeline falhou com código #{status}"
 
-        details =
-          [
-            pipeline_status: stages_report,
-            pipeline_failure: stage_failure_description,
-            pipeline_output: String.trim(cleaned_output),
-            pipeline_trace: pipeline_trace,
-            failed_pipeline_trace:
-              case failed_commands_with_status do
-                "" -> failed_commands
-                value -> value
-              end
-          ]
-          |> Enum.reject(fn
-            {:pipeline_status, value} -> value == nil || String.trim(value) == ""
-            {:pipeline_output, value} -> value == nil || String.trim(value) == ""
-            {:pipeline_trace, value} -> value == nil || String.trim(value) == ""
-            {:pipeline_failure, value} -> value == nil || String.trim(value) == ""
-            {:failed_pipeline_trace, value} -> value == nil || String.trim(value) == ""
-          end)
-          |> Enum.map(fn
-            {:pipeline_status, value} -> "estágios: #{value}"
-            {:pipeline_failure, value} -> "falha identificada: #{value}"
-            {:pipeline_output, value} -> "saida:\n#{value}"
-            {:pipeline_trace, value} -> "comandos:\n#{value}"
-            {:failed_pipeline_trace, value} -> "comando(s) falho(s):\n#{value}"
-          end)
-          |> Enum.join("\n")
+        case maybe_retry_on_mongodump_failure(
+               pipeline_status,
+               cleaned_output,
+               args
+             ) do
+          {:retry, recovered_args, reason} when attempt < 1 ->
+            IO.puts("recuperação automática: #{reason} -- tentativa 2")
+            run_pipeline(recovered_args, key, attempt + 1)
 
-        {:error, "#{error_head}\n#{details}", metrics}
+          _ ->
+            details =
+              [
+                pipeline_status: stages_report,
+                pipeline_failure: stage_failure_description,
+                pipeline_output: String.trim(cleaned_output),
+                pipeline_trace: pipeline_trace,
+                failed_pipeline_trace:
+                  case failed_commands_with_status do
+                    "" -> failed_commands
+                    value -> value
+                  end
+              ]
+              |> Enum.reject(fn
+                {:pipeline_status, value} -> value == nil || String.trim(value) == ""
+                {:pipeline_output, value} -> value == nil || String.trim(value) == ""
+                {:pipeline_trace, value} -> value == nil || String.trim(value) == ""
+                {:pipeline_failure, value} -> value == nil || String.trim(value) == ""
+                {:failed_pipeline_trace, value} -> value == nil || String.trim(value) == ""
+              end)
+              |> Enum.map(fn
+                {:pipeline_status, value} -> "estágios: #{value}"
+                {:pipeline_failure, value} -> "falha identificada: #{value}"
+                {:pipeline_output, value} -> "saida:\n#{value}"
+                {:pipeline_trace, value} -> "comandos:\n#{value}"
+                {:failed_pipeline_trace, value} -> "comando(s) falho(s):\n#{value}"
+              end)
+              |> Enum.join("\n")
+
+            {:error, "#{error_head}\n#{details}", metrics}
+        end
     end
   end
 
@@ -691,6 +705,53 @@ exit \"$pipeline_exit\"
       "#{stage} (status #{Map.get(failed_status, stage)}): #{command}"
     end)
     |> Enum.join("\n")
+  end
+
+  defp maybe_retry_on_mongodump_failure(pipeline_status, output, args) do
+    with true <- stage_failed?(pipeline_status, "mongodump"),
+         true <- contains_unknown_option_error?(output) do
+      lower_output = String.downcase(output)
+
+      cond do
+        String.contains?(lower_output, "numparallelcollections") && args.skip_num_parallel == false &&
+          args.num_parallel_collections > 0 ->
+          {:retry,
+           Map.put(args, :skip_num_parallel, true),
+           "removendo --numParallelCollections por incompatibilidade com mongodump"}
+
+        String.contains?(lower_output, "--tls") ->
+          recovered_args = force_translate_tls_mongodump_args(args.extra_mongodump_args)
+
+          if recovered_args == args.extra_mongodump_args do
+            nil
+          else
+            {:retry, Map.put(args, :extra_mongodump_args, recovered_args), "forçando migração de --tls para --ssl em --mongodump-arg"}
+          end
+
+        true ->
+          nil
+      end
+    else
+      _ -> nil
+    end
+  end
+
+  defp contains_unknown_option_error?(output) do
+    lower_output = String.downcase(output)
+    String.contains?(lower_output, "unknown option") || String.contains?(lower_output, "unknown: --")
+  end
+
+  defp stage_failed?(pipeline_status, stage_name) do
+    pipeline_status
+    |> parse_stage_statuses()
+    |> Enum.any?(fn {stage, status} ->
+      stage == stage_name and status != "0" and status != ""
+    end)
+  end
+
+  defp force_translate_tls_mongodump_args(args) do
+    args
+    |> Enum.map(&translate_legacy_tls_to_ssl_arg/1)
   end
 
   defp format_logged_command("mongodump", args) do
@@ -781,7 +842,9 @@ exit \"$pipeline_exit\"
     end)
   end
 
-  defp num_parallel_collections_flag(num_parallel_collections) do
+  defp num_parallel_collections_flag(_num_parallel_collections, true), do: []
+
+  defp num_parallel_collections_flag(num_parallel_collections, false) do
     case fetch_mongodump_help() do
       {:ok, help_text} ->
         if flag_supported?(help_text, "--numParallelCollections") do

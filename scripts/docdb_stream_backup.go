@@ -599,10 +599,32 @@ func runPipeline(args backupArgs, destination string) (backupMetrics, error) {
 	ctx := context.Background()
 	stopSpinner, doneSpinner := startProgressSpinner()
 	defer stopProgressSpinner(stopSpinner, doneSpinner)
+	retries := 1
+	currentArgs := args
+
+	for attempt := 1; ; attempt++ {
+		runMetrics, recoveredArgs, shouldRetry, retryReason, err := runPipelineAttempt(ctx, currentArgs, destination)
+		metrics = runMetrics
+		if err == nil {
+			return metrics, nil
+		}
+
+		if !shouldRetry || retries == 0 {
+			return metrics, err
+		}
+
+		fmt.Printf("recuperação automática (%s) -- tentativa %d\n", retryReason, attempt+1)
+		currentArgs = recoveredArgs
+		retries--
+	}
+}
+
+func runPipelineAttempt(ctx context.Context, args backupArgs, destination string) (backupMetrics, backupArgs, bool, string, error) {
+	metrics := backupMetrics{}
 
 	mongodumpArgs := make([]string, 0, len(args.extraMongodumpArgs)+3)
 	mongodumpArgs = append(mongodumpArgs, "--uri", args.docdbURI, "--archive")
-	if supportsNumParallelCollections() {
+	if args.numParallel > 0 && supportsNumParallelCollections() {
 		mongodumpArgs = append(mongodumpArgs, "--numParallelCollections", strconv.Itoa(args.numParallel))
 	}
 	mongodumpArgs = append(mongodumpArgs, args.extraMongodumpArgs...)
@@ -621,17 +643,17 @@ func runPipeline(args backupArgs, destination string) (backupMetrics, error) {
 
 	dumpOut, err := mongodumpCmd.StdoutPipe()
 	if err != nil {
-		return metrics, err
+		return metrics, args, false, "", err
 	}
 
 	pigzIn, err := pigzCmd.StdinPipe()
 	if err != nil {
-		return metrics, err
+		return metrics, args, false, "", err
 	}
 
 	pigzOut, err := pigzCmd.StdoutPipe()
 	if err != nil {
-		return metrics, err
+		return metrics, args, false, "", err
 	}
 
 	mongodumpCmd.Stderr = &mongodumpErr
@@ -640,18 +662,18 @@ func runPipeline(args backupArgs, destination string) (backupMetrics, error) {
 	awsCmd.Stdin = pigzOut
 
 	if err := pigzCmd.Start(); err != nil {
-		return metrics, runPipelineError("falha ao iniciar pigz", err, formatCommandForLog("pigz", pigzArgs), &pigzErr, &awsErr)
+		return metrics, args, false, "", runPipelineError("falha ao iniciar pigz", err, formatCommandForLog("pigz", pigzArgs), &pigzErr, &awsErr)
 	}
 
 	if err := awsCmd.Start(); err != nil {
 		_ = pigzCmd.Process.Kill()
-		return metrics, runPipelineError("falha ao iniciar aws", err, formatCommandForLog("aws", awsArgs), &pigzErr, &awsErr)
+		return metrics, args, false, "", runPipelineError("falha ao iniciar aws", err, formatCommandForLog("aws", awsArgs), &pigzErr, &awsErr)
 	}
 
 	if err := mongodumpCmd.Start(); err != nil {
 		_ = pigzCmd.Process.Kill()
 		_ = awsCmd.Process.Kill()
-		return metrics, runPipelineError("falha ao iniciar mongodump", err, formatCommandForLog("mongodump", mongodumpArgs), &mongodumpErr, &pigzErr, &awsErr)
+		return metrics, args, false, "", runPipelineError("falha ao iniciar mongodump", err, formatCommandForLog("mongodump", mongodumpArgs), &mongodumpErr, &pigzErr, &awsErr)
 	}
 
 	counter := &byteCounter{reader: dumpOut}
@@ -667,29 +689,77 @@ func runPipeline(args backupArgs, destination string) (backupMetrics, error) {
 		_ = pigzCmd.Process.Kill()
 		_ = awsCmd.Process.Kill()
 		metrics.rawBytes = counter.bytes
-		return metrics, runPipelineError("mongodump falhou", err, formatCommandForLog("mongodump", mongodumpArgs), &mongodumpErr, &pigzErr, &awsErr)
+
+		mongodumpFailure := strings.ToLower(strings.TrimSpace(mongodumpErr.String()))
+		recoveredArgs, reason, shouldRetry := recoverFromMongodumpFailure(args, mongodumpFailure)
+		return metrics, recoveredArgs, shouldRetry, reason, runPipelineError("mongodump falhou", err, formatCommandForLog("mongodump", mongodumpArgs), &mongodumpErr, &pigzErr, &awsErr)
 	}
 
 	if copyErr := <-copyDone; copyErr != nil {
 		_ = pigzCmd.Process.Kill()
 		_ = awsCmd.Process.Kill()
 		metrics.rawBytes = counter.bytes
-		return metrics, runPipelineError("falha ao encaminhar fluxo entre mongodump e pigz", copyErr, "", &pigzErr, &awsErr)
+		return metrics, args, false, "", runPipelineError("falha ao encaminhar fluxo entre mongodump e pigz", copyErr, "", &pigzErr, &awsErr)
 	}
 
 	if err := pigzCmd.Wait(); err != nil {
 		_ = awsCmd.Process.Kill()
 		metrics.rawBytes = counter.bytes
-		return metrics, runPipelineError("pigz falhou", err, formatCommandForLog("pigz", pigzArgs), &pigzErr, &awsErr, &mongodumpErr)
+		return metrics, args, false, "", runPipelineError("pigz falhou", err, formatCommandForLog("pigz", pigzArgs), &pigzErr, &awsErr, &mongodumpErr)
 	}
 
 	if err := awsCmd.Wait(); err != nil {
 		metrics.rawBytes = counter.bytes
-		return metrics, runPipelineError("aws falhou", err, formatCommandForLog("aws", awsArgs), &awsErr, &pigzErr, &mongodumpErr)
+		return metrics, args, false, "", runPipelineError("aws falhou", err, formatCommandForLog("aws", awsArgs), &awsErr, &pigzErr, &mongodumpErr)
 	}
 
 	metrics.rawBytes = counter.bytes
-	return metrics, nil
+	return metrics, args, false, "", nil
+}
+
+func recoverFromMongodumpFailure(args backupArgs, stderr string) (backupArgs, string, bool) {
+	if stderr == "" {
+		return args, "", false
+	}
+
+	if strings.Contains(stderr, "unknown option") && strings.Contains(stderr, "numparallelcollections") && args.numParallel > 0 {
+		recovered := args
+		recovered.numParallel = 0
+		return recovered, "removendo --numParallelCollections por incompatibilidade do mongodump", true
+	}
+
+	if strings.Contains(stderr, "unknown option") && strings.Contains(stderr, "--tls") {
+		recoveredArgs := forceTranslateTLSArgs(args.extraMongodumpArgs)
+		if !stringSlicesEqual(args.extraMongodumpArgs, recoveredArgs) {
+			recovered := args
+			recovered.extraMongodumpArgs = recoveredArgs
+			return recovered, "forçando migração de opções --tls para --ssl em --mongodump-arg", true
+		}
+	}
+
+	return args, "", false
+}
+
+func forceTranslateTLSArgs(args []string) []string {
+	translated := make([]string, 0, len(args))
+	for _, arg := range args {
+		translated = append(translated, translateLegacyTLSArg(arg))
+	}
+	return translated
+}
+
+func stringSlicesEqual(lhs, rhs []string) bool {
+	if len(lhs) != len(rhs) {
+		return false
+	}
+
+	for index := range lhs {
+		if lhs[index] != rhs[index] {
+			return false
+		}
+	}
+
+	return true
 }
 
 func printConfig(args backupArgs) {
