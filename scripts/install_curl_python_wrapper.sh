@@ -80,6 +80,8 @@ vim.env.PATH = "${INSTALL_DIR}:" .. vim.env.PATH
 - python3 (usa requests quando disponível; sem requests cai para urllib nativo)
 - padrão do wrapper bloqueia download de .zip; libere se precisar:
 - export CURL_WRAPPER_ALLOW_ZIP_DOWNLOAD=1
+- para contornar falhas de certificado em ambientes fechados:
+- export CURL_WRAPPER_AUTO_INSECURE_ON_CERT_ERROR=1
 
 4) Teste:
 curl -fsSL https://github.com/neovim/neovim/archive/refs/heads/master.tar.gz -o /tmp/neovim.tar.gz

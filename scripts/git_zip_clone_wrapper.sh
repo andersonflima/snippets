@@ -13,6 +13,8 @@ die() {
 GIT_ZIP_WRAPPER_TMP_DIR=""
 ARCHIVE_FORMAT="${GIT_ZIP_WRAPPER_ARCHIVE_FORMAT:-tar.gz}"
 ALLOW_ZIP_FALLBACK="${GIT_ZIP_WRAPPER_ALLOW_ZIP_FALLBACK:-0}"
+GIT_ZIP_WRAPPER_CURL_INSECURE="${GIT_ZIP_WRAPPER_CURL_INSECURE:-0}"
+GIT_ZIP_WRAPPER_CURL_CACERT="${GIT_ZIP_WRAPPER_CURL_CACERT:-}"
 
 cleanup_temp_dir() {
   local dir
@@ -282,8 +284,17 @@ download_url_with_retries() {
 
   local mode attempt mode_label
   local -a curl_modes=("" "--http1.1" "-4" "-4 --http1.1")
+  local -a tls_opts=()
   local user_agent
   user_agent="Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36"
+
+  if is_truthy "${GIT_ZIP_WRAPPER_CURL_INSECURE}"; then
+    tls_opts+=("--insecure")
+  fi
+  if [[ -n "${GIT_ZIP_WRAPPER_CURL_CACERT}" ]]; then
+    tls_opts+=("--cacert" "${GIT_ZIP_WRAPPER_CURL_CACERT}")
+  fi
+
   for mode in "${curl_modes[@]}"; do
     mode_label="default"
     if [[ -n "${mode}" ]]; then
@@ -297,6 +308,7 @@ download_url_with_retries() {
         --retry-delay 2 \
         --retry-all-errors \
         --tlsv1.2 \
+        "${tls_opts[@]}" \
         -A "${user_agent}" \
         -H "Accept: application/octet-stream,*/*" \
         ${mode} \

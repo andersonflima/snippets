@@ -22,6 +22,7 @@ is_truthy() {
 }
 
 CURL_WRAPPER_ALLOW_ZIP_DOWNLOAD="${CURL_WRAPPER_ALLOW_ZIP_DOWNLOAD:-0}"
+CURL_WRAPPER_AUTO_INSECURE_ON_CERT_ERROR="${CURL_WRAPPER_AUTO_INSECURE_ON_CERT_ERROR:-0}"
 
 is_zip_extension() {
   local value
@@ -526,6 +527,12 @@ main() {
   if (( parsed_fallback == 0 )) || (( can_fallback == 0 )); then
     exit "${curl_exit}"
   fi
+
+  if [[ "${curl_exit}" -eq 60 ]] && is_truthy "${CURL_WRAPPER_AUTO_INSECURE_ON_CERT_ERROR}" && [[ "${CURL_FALLBACK_INSECURE}" != "1" ]]; then
+    log "retry em fallback com verificação TLS desativada por política de recuperação de certificado"
+    CURL_FALLBACK_INSECURE="1"
+  fi
+
   if [[ "${CURL_FALLBACK_CAN_HANDLE}" != "1" ]]; then
     exit "${curl_exit}"
   fi

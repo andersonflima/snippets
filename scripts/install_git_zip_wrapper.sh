@@ -76,6 +76,9 @@ export PATH="${INSTALL_DIR}:\$PATH"
 export GIT_ZIP_WRAPPER_ARCHIVE_FORMAT=tar.gz
 # habilitar .zip somente quando necessário
 # export GIT_ZIP_WRAPPER_ALLOW_ZIP_FALLBACK=1
+# resolver certificado em ambiente corporativo/proxy:
+# export GIT_ZIP_WRAPPER_CURL_CACERT=/etc/pki/ca-trust/source/anchors/corp-ca.pem
+# export GIT_ZIP_WRAPPER_CURL_INSECURE=0
 
 2) Para LazyVim/Mason (init.lua):
 vim.env.GIT_ZIP_WRAPPER_REAL_GIT = "${REAL_GIT_BIN}"
@@ -86,6 +89,10 @@ vim.env.PATH = "${INSTALL_DIR}:" .. vim.env.PATH
 vim.env.GIT_ZIP_WRAPPER_ARCHIVE_FORMAT = "tar.gz"
 -- habilitar .zip somente quando necessário
 -- vim.env.GIT_ZIP_WRAPPER_ALLOW_ZIP_FALLBACK = "1"
+-- opcional: informar CA intermediária personalizada
+-- vim.env.GIT_ZIP_WRAPPER_CURL_CACERT = "/etc/pki/ca-trust/source/anchors/corp-ca.pem"
+-- opcional: aceitar certs inválidos (apenas para ambiente controlado)
+-- vim.env.GIT_ZIP_WRAPPER_CURL_INSECURE = "0"
 
 3) Teste:
 git clone https://github.com/neovim/neovim ~/tmp/neovim-zip-clone
