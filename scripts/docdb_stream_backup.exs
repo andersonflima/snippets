@@ -7,25 +7,51 @@ defmodule DocdbStreamBackup do
   @default_target_duration_seconds 60
 
   @usage """
-Uso:
-  elixir scripts/docdb_stream_backup.exs <docdb_uri> <bucket>
-  elixir scripts/docdb_stream_backup.exs <docdb_uri> <bucket> <prefix>
-  elixir scripts/docdb_stream_backup.exs <docdb_uri> <bucket> [--prefix docdb/prod] [--num-parallel-collections 16] [--pigz-threads 8] [--compression-level 1] [--expected-size-bytes 10737418240]
+    Uso:
+      elixir scripts/docdb_stream_backup.exs <docdb_uri> <bucket>
+      elixir scripts/docdb_stream_backup.exs <docdb_uri> <bucket> <prefix>
+      elixir scripts/docdb_stream_backup.exs <docdb_uri> <bucket> [--prefix docdb/prod] [--num-parallel-collections 16] [--pigz-threads 8] [--compression-level 1] [--expected-size-bytes 10737418240]
 
-Exemplos:
-  elixir scripts/docdb_stream_backup.exs 'mongodb://user:pass@host:27017/?tls=true&replicaSet=rs0&readPreference=secondaryPreferred&retryWrites=false' meu-bucket
-  elixir scripts/docdb_stream_backup.exs 'mongodb://user:pass@host:27017/?tls=true&replicaSet=rs0' meu-bucket docdb/prod
-  elixir scripts/docdb_stream_backup.exs 'mongodb://user:pass@host:27017/?tls=true&replicaSet=rs0' meu-bucket --num-parallel-collections 16 --pigz-threads 8 --compression-level 1 --expected-size-bytes 10737418240
-  elixir scripts/docdb_stream_backup.exs 'mongodb://user:pass@host:27017/?tls=true&replicaSet=rs0' meu-bucket --mongodump-arg --tls --mongodump-arg --tlsCAFile=/path/ca.pem
-  elixir scripts/docdb_stream_backup.exs 'mongodb://user:pass@host:27017/?tls=true&replicaSet=rs0' meu-bucket --mongodump-arg='--tls' --mongodump-arg='--tlsCAFile=/path/ca.pem'
+    Exemplos:
+      elixir scripts/docdb_stream_backup.exs 'mongodb://user:pass@host:27017/?tls=true&replicaSet=rs0&readPreference=secondaryPreferred&retryWrites=false' meu-bucket
+      elixir scripts/docdb_stream_backup.exs 'mongodb://user:pass@host:27017/?tls=true&replicaSet=rs0' meu-bucket docdb/prod
+      elixir scripts/docdb_stream_backup.exs 'mongodb://user:pass@host:27017/?tls=true&replicaSet=rs0' meu-bucket --num-parallel-collections 16 --pigz-threads 8 --compression-level 1 --expected-size-bytes 10737418240
+      elixir scripts/docdb_stream_backup.exs 'mongodb://user:pass@host:27017/?tls=true&replicaSet=rs0' meu-bucket --mongodump-arg --tls --mongodump-arg --tlsCAFile=/path/ca.pem
+      elixir scripts/docdb_stream_backup.exs 'mongodb://user:pass@host:27017/?tls=true&replicaSet=rs0' meu-bucket --mongodump-arg='--tls' --mongodump-arg='--tlsCAFile=/path/ca.pem'
 
-Observação:
-  O upload acontece por stream em memória, sem gerar arquivo local no EC2.
-  Perfil padrão otimizado para throughput: compressão nível 1 e expected-size de 10 GiB.
-  Meta de desempenho: 10 GiB em até 60 segundos.
-  A string de conexão principal é o primeiro argumento posicional.
-  Não passe --uri novamente em --mongodump-arg.
-"""
+    Observação:
+      O upload acontece por stream em memória, sem gerar arquivo local no EC2.
+      Perfil padrão otimizado para throughput: compressão nível 1 e expected-size de 10 GiB.
+      Meta de desempenho: 10 GiB em até 60 segundos.
+      A string de conexão principal é o primeiro argumento posicional.
+      Não passe --uri novamente em --mongodump-arg.
+  """
+
+  @legacy_tls_to_ssl %{
+    "--tls" => "--ssl",
+    "--tlsAllowInvalidCertificates" => "--sslAllowInvalidCertificates",
+    "--tlsAllowInvalidHostnames" => "--sslAllowInvalidHostnames",
+    "--tlsCAFile" => "--sslCAFile",
+    "--tlsCRLFile" => "--sslCRLFile",
+    "--tlsCertificateKeyFile" => "--sslPEMKeyFile",
+    "--tlsCertificateKeyFilePassword" => "--sslPEMKeyPassword",
+    "--tlsDisabledProtocols" => "--sslDisabledProtocols",
+    "--tlsInsecure" => "--sslInsecure",
+    "--tlsFIPSMode" => "--sslFIPSMode"
+  }
+
+  @legacy_tls_query_to_ssl %{
+    "tls" => "ssl",
+    "tlsAllowInvalidCertificates" => "sslAllowInvalidCertificates",
+    "tlsAllowInvalidHostnames" => "sslAllowInvalidHostnames",
+    "tlsCAFile" => "sslCAFile",
+    "tlsCRLFile" => "sslCRLFile",
+    "tlsCertificateKeyFile" => "sslPEMKeyFile",
+    "tlsCertificateKeyFilePassword" => "sslPEMKeyPassword",
+    "tlsDisabledProtocols" => "sslDisabledProtocols",
+    "tlsInsecure" => "sslInsecure",
+    "tlsFIPSMode" => "sslFIPSMode"
+  }
 
   def main(argv) do
     case parse_args(argv) do
@@ -100,6 +126,7 @@ Observação:
         with {:ok, positional} <- parse_positional_args(positional_args),
              {:ok, normalized_uri} <- normalize_non_empty(positional.uri, "docdb_uri"),
              {:ok, validated_uri} <- validate_docdb_uri(normalized_uri),
+             {:ok, compatible_uri} <- migrate_uri_tls_to_ssl_if_needed(validated_uri),
              {:ok, normalized_bucket} <- normalize_non_empty(positional.bucket, "bucket"),
              {:ok, normalized_prefix} <- resolve_prefix(positional.prefix, options[:prefix]),
              {:ok, num_parallel_collections} <-
@@ -115,7 +142,7 @@ Observação:
              {:ok, extra_mongodump_args} <- resolve_mongodump_args(options) do
           {:ok,
            %{
-             uri: validated_uri,
+             uri: compatible_uri,
              bucket: normalized_bucket,
              prefix: normalized_prefix,
              num_parallel_collections: num_parallel_collections,
@@ -197,23 +224,55 @@ Observação:
     end
   end
 
+  defp migrate_uri_tls_to_ssl_if_needed(uri) do
+    with {:ok, help_text} <- fetch_mongodump_help() do
+      supports_tls? = flag_supported?(help_text, "--tls")
+      supports_ssl? = flag_supported?(help_text, "--ssl")
+
+      if supports_tls? || !supports_ssl? do
+        {:ok, uri}
+      else
+        {:ok, migrate_uri_tls_to_ssl(uri)}
+      end
+    else
+      _ ->
+        {:ok, uri}
+    end
+  end
+
+  defp migrate_uri_tls_to_ssl(uri) do
+    parsed_uri = URI.parse(uri)
+
+    if is_nil(parsed_uri.query) || parsed_uri.query == "" do
+      uri
+    else
+      original_query = URI.decode_query(parsed_uri.query)
+      migrated_query =
+        Enum.reduce(@legacy_tls_query_to_ssl, original_query, fn {legacy_key, modern_key}, query ->
+          case Map.pop(query, legacy_key) do
+            {nil, query} ->
+              query
+
+            {value, query} ->
+              case Map.fetch(query, modern_key) do
+                {:ok, _} -> query
+                :error -> Map.put(query, modern_key, value)
+              end
+          end
+        end)
+
+      if original_query == migrated_query do
+        uri
+      else
+        %{parsed_uri | query: URI.encode_query(migrated_query)} |> URI.to_string()
+      end
+    end
+  end
+
   defp flag_supported?(text, flag) do
     regex = ~r/(^|\s)#{Regex.escape(flag)}(\s|=|,)/
     String.contains?(text, flag) && Regex.match?(regex, text)
   end
-
-  @legacy_tls_to_ssl %{
-    "--tls" => "--ssl",
-    "--tlsAllowInvalidCertificates" => "--sslAllowInvalidCertificates",
-    "--tlsAllowInvalidHostnames" => "--sslAllowInvalidHostnames",
-    "--tlsCAFile" => "--sslCAFile",
-    "--tlsCRLFile" => "--sslCRLFile",
-    "--tlsCertificateKeyFile" => "--sslPEMKeyFile",
-    "--tlsCertificateKeyFilePassword" => "--sslPEMKeyPassword",
-    "--tlsDisabledProtocols" => "--sslDisabledProtocols",
-    "--tlsInsecure" => "--sslInsecure",
-    "--tlsFIPSMode" => "--sslFIPSMode"
-  }
 
   defp translate_legacy_tls_to_ssl_arg(arg) do
     {flag, value} = split_arg_with_value(arg)
@@ -524,6 +583,7 @@ exit \"$pipeline_exit\"
         stages_report = format_pipeline_stages(pipeline_status)
         failed_stages = failed_pipeline_stages(pipeline_status)
         failed_commands = format_failed_commands(pipeline_summary, failed_stages)
+        failed_commands_with_status = format_failed_commands_with_status(pipeline_summary, pipeline_status)
         stage_failure_description = format_failed_stage_description(failed_stages)
         metrics = %{
           duration_us: elapsed_us.(),
@@ -537,7 +597,11 @@ exit \"$pipeline_exit\"
             pipeline_failure: stage_failure_description,
             pipeline_output: String.trim(cleaned_output),
             pipeline_trace: pipeline_trace,
-            failed_pipeline_trace: failed_commands
+            failed_pipeline_trace:
+              case failed_commands_with_status do
+                "" -> failed_commands
+                value -> value
+              end
           ]
           |> Enum.reject(fn
             {:pipeline_status, value} -> value == nil || String.trim(value) == ""
@@ -611,6 +675,21 @@ exit \"$pipeline_exit\"
     stage_commands
     |> Enum.filter(fn {stage, _command} -> MapSet.member?(failed_stage_names, stage) end)
     |> Enum.map(fn {stage, command} -> "#{stage}: #{command}" end)
+    |> Enum.join("\n")
+  end
+
+  defp format_failed_commands_with_status(stage_commands, status_line) do
+    failed_status =
+      status_line
+      |> parse_stage_statuses()
+      |> Enum.filter(fn {_stage, status} -> status != "0" && status != "" end)
+      |> Map.new()
+
+    stage_commands
+    |> Enum.filter(fn {stage, _command} -> Map.has_key?(failed_status, stage) end)
+    |> Enum.map(fn {stage, command} ->
+      "#{stage} (status #{Map.get(failed_status, stage)}): #{command}"
+    end)
     |> Enum.join("\n")
   end
 

@@ -88,6 +88,19 @@ var legacyTLSAliases = map[string]string{
 	"--tlsFIPSMode":                   "--sslFIPSMode",
 }
 
+var legacyTLSQueryAliases = map[string]string{
+	"tls":                           "ssl",
+	"tlsAllowInvalidCertificates":   "sslAllowInvalidCertificates",
+	"tlsAllowInvalidHostnames":      "sslAllowInvalidHostnames",
+	"tlsCAFile":                     "sslCAFile",
+	"tlsCRLFile":                    "sslCRLFile",
+	"tlsCertificateKeyFile":         "sslPEMKeyFile",
+	"tlsCertificateKeyFilePassword": "sslPEMKeyPassword",
+	"tlsDisabledProtocols":          "sslDisabledProtocols",
+	"tlsInsecure":                   "sslInsecure",
+	"tlsFIPSMode":                   "sslFIPSMode",
+}
+
 var errShowUsage = errors.New("show usage")
 
 func main() {
@@ -152,6 +165,7 @@ func parseArgs(argv []string) (backupArgs, error) {
 	if err != nil {
 		return backupArgs{}, argsParseError{msg: err.Error()}
 	}
+	docdbURI = normalizeTLSOptionsInURI(docdbURI)
 
 	bucket, err := normalizeNonEmpty(positionals[1], "bucket")
 	if err != nil {
@@ -467,6 +481,46 @@ func validateDocdbURI(uri string) (string, error) {
 		}
 		return "", fmt.Errorf("documentdb URI inválida (esperado mongodb://): %s", preview)
 	}
+}
+
+func normalizeTLSOptionsInURI(uri string) string {
+	helpOutput, err := getMongodumpHelp()
+	if err != nil {
+		return uri
+	}
+
+	supportsTLS := isFlagInHelp(helpOutput, "--tls")
+	supportsSSL := isFlagInHelp(helpOutput, "--ssl")
+	if supportsTLS || !supportsSSL {
+		return uri
+	}
+
+	parsedURI, parseErr := url.Parse(uri)
+	if parseErr != nil {
+		return uri
+	}
+
+	query := parsedURI.Query()
+	didChange := false
+	for legacyKey, modernKey := range legacyTLSQueryAliases {
+		values, exists := query[legacyKey]
+		if !exists {
+			continue
+		}
+
+		if _, modernExists := query[modernKey]; !modernExists {
+			query[modernKey] = values
+		}
+		delete(query, legacyKey)
+		didChange = true
+	}
+
+	if !didChange {
+		return uri
+	}
+
+	parsedURI.RawQuery = query.Encode()
+	return parsedURI.String()
 }
 
 func resolvePrefixSource(positionalPrefix, optionPrefix string) string {
