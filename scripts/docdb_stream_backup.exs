@@ -551,30 +551,21 @@ defmodule DocdbStreamBackup do
         end)
 
       progress_display = start_progress_display("backup paralelo por database", stage_specs)
-      initial_stage_states = Map.new(target_database_names, &{&1, {:running, nil}})
+      initial_state =
+        build_parallel_scheduler_state(
+          target_databases,
+          target_database_names,
+          parallel_args,
+          capabilities,
+          session_prefix,
+          progress_display,
+          args.expected_size_bytes
+        )
 
       result =
-        target_databases
-        |> Task.async_stream(
-          fn database ->
-            run_parallel_database_pipeline(
-              parallel_args,
-              capabilities,
-              session_prefix,
-              database,
-              expected_size_bytes_for_database(args.expected_size_bytes, target_databases, database)
-            )
-          end,
-          max_concurrency: parallel_args.database_concurrency,
-          ordered: false,
-          timeout: :infinity
-        )
-        |> Enum.reduce(
-          %{stage_states: initial_stage_states, destinations: [], errors: []},
-          fn task_result, acc ->
-            reduce_parallel_database_result(task_result, acc, progress_display)
-          end
-        )
+        initial_state
+        |> start_parallel_database_scheduler()
+        |> Map.take([:stage_states, :destinations, :errors])
 
       stop_progress_display(progress_display, result.stage_states)
 
@@ -931,6 +922,241 @@ defmodule DocdbStreamBackup do
     end
   end
 
+  defp build_parallel_scheduler_state(
+         target_databases,
+         target_database_names,
+         parallel_args,
+         capabilities,
+         session_prefix,
+         progress_display,
+         expected_size_bytes
+       ) do
+    pending_work =
+      Enum.map(target_databases, fn database ->
+        %{
+          database: database,
+          expected_size_bytes: expected_size_bytes_for_database(expected_size_bytes, target_databases, database)
+        }
+      end)
+
+    %{
+      pending_work: pending_work,
+      running_tasks: %{},
+      current_concurrency: parallel_args.database_concurrency,
+      stage_states:
+        Map.new(target_database_names, fn database_name ->
+          {database_name, {:running, nil, "aguardando agendamento"}}
+        end),
+      destinations: [],
+      errors: [],
+      completed_metrics: [],
+      progress_display: progress_display,
+      parallel_args: parallel_args,
+      capabilities: capabilities,
+      session_prefix: session_prefix
+    }
+  end
+
+  defp start_parallel_database_scheduler(state) do
+    state
+    |> fill_parallel_database_workers()
+    |> parallel_database_scheduler_loop()
+  end
+
+  defp fill_parallel_database_workers(state) do
+    cond do
+      map_size(state.running_tasks) >= state.current_concurrency ->
+        state
+
+      state.pending_work == [] ->
+        state
+
+      true ->
+        [work_item | remaining_work] = state.pending_work
+        task = spawn_parallel_database_task(state, work_item)
+
+        running_tasks =
+          Map.put(state.running_tasks, task.ref, %{task: task, work_item: work_item})
+
+        stage_state =
+          {:running, nil, "alvo=#{format_bytes_binary(work_item.expected_size_bytes)}"}
+
+        updated_state = %{
+          state
+          | pending_work: remaining_work,
+            running_tasks: running_tasks,
+            stage_states: Map.put(state.stage_states, work_item.database.name, stage_state)
+        }
+
+        update_progress_display(updated_state.progress_display, work_item.database.name, stage_state)
+        fill_parallel_database_workers(updated_state)
+    end
+  end
+
+  defp spawn_parallel_database_task(state, work_item) do
+    Task.async(fn ->
+      run_parallel_database_pipeline(
+        state.parallel_args,
+        state.capabilities,
+        state.session_prefix,
+        work_item.database,
+        work_item.expected_size_bytes
+      )
+    end)
+  end
+
+  defp parallel_database_scheduler_loop(%{pending_work: [], running_tasks: running_tasks} = state)
+       when map_size(running_tasks) == 0,
+       do: state
+
+  defp parallel_database_scheduler_loop(state) do
+    receive do
+      {ref, task_result} ->
+        handle_parallel_database_task_result(state, ref, task_result)
+
+      {:DOWN, ref, :process, _pid, reason} ->
+        handle_parallel_database_task_down(state, ref, reason)
+    end
+  end
+
+  defp handle_parallel_database_task_result(state, ref, task_result) do
+    case Map.pop(state.running_tasks, ref) do
+      {nil, _running_tasks} ->
+        parallel_database_scheduler_loop(state)
+
+      {%{task: task, work_item: work_item}, running_tasks} ->
+        Process.demonitor(task.ref, [:flush])
+
+        state
+        |> Map.put(:running_tasks, running_tasks)
+        |> apply_parallel_database_task_result(work_item, task_result)
+        |> maybe_reduce_runtime_database_concurrency()
+        |> fill_parallel_database_workers()
+        |> parallel_database_scheduler_loop()
+    end
+  end
+
+  defp handle_parallel_database_task_down(state, ref, reason) do
+    case Map.pop(state.running_tasks, ref) do
+      {nil, _running_tasks} ->
+        parallel_database_scheduler_loop(state)
+
+      {%{work_item: work_item}, running_tasks} ->
+        error =
+          %{
+            database_name: work_item.database.name,
+            message: "task abortada: #{inspect(reason)}",
+            metrics: %{duration_us: 0, raw_bytes: 0, estimated_bytes: work_item.expected_size_bytes}
+          }
+
+        state
+        |> Map.put(:running_tasks, running_tasks)
+        |> register_parallel_database_error(error)
+        |> maybe_reduce_runtime_database_concurrency()
+        |> fill_parallel_database_workers()
+        |> parallel_database_scheduler_loop()
+    end
+  end
+
+  defp apply_parallel_database_task_result(state, _work_item, {:ok, result}) do
+    state
+    |> register_parallel_database_success(result)
+  end
+
+  defp apply_parallel_database_task_result(state, _work_item, {:error, error}) do
+    state
+    |> register_parallel_database_error(error)
+  end
+
+  defp register_parallel_database_success(state, result) do
+    throughput_label = format_parallel_database_completion_label(result.metrics)
+    stage_state = {:done, 0, throughput_label}
+
+    update_progress_display(state.progress_display, result.database_name, stage_state)
+
+    %{
+      state
+      | stage_states: Map.put(state.stage_states, result.database_name, stage_state),
+        destinations: [result.destination | state.destinations],
+        completed_metrics: [result.metrics | state.completed_metrics]
+    }
+  end
+
+  defp register_parallel_database_error(state, error) do
+    stage_state = {:failed, 1, "sem throughput útil"}
+
+    update_progress_display(state.progress_display, error.database_name, stage_state)
+
+    %{
+      state
+      | stage_states: Map.put(state.stage_states, error.database_name, stage_state),
+        errors: [error | state.errors]
+    }
+  end
+
+  defp maybe_reduce_runtime_database_concurrency(%{current_concurrency: current_concurrency} = state)
+       when current_concurrency <= 1,
+       do: state
+
+  defp maybe_reduce_runtime_database_concurrency(state) do
+    if should_step_down_runtime_parallelism?(state) do
+      new_concurrency = max(state.current_concurrency - 1, 1)
+
+      IO.puts(
+        "ajuste dinâmico: database_concurrency #{state.current_concurrency} -> #{new_concurrency} por throughput estimado"
+      )
+
+      %{state | current_concurrency: new_concurrency}
+    else
+      state
+    end
+  end
+
+  defp should_step_down_runtime_parallelism?(state) do
+    completed_count = length(state.completed_metrics)
+    tuning_profile = state.parallel_args.runtime_tuning.tuning_profile
+
+    completed_count >= state.current_concurrency and
+      state.pending_work != [] and
+      tuning_profile in [:conservative, :cpu_limited_throughput, :cpu_limited_balanced] and
+      average_estimated_throughput_mib_per_sec(state.completed_metrics) <
+        throughput_floor_mib_per_sec(tuning_profile)
+  end
+
+  defp average_estimated_throughput_mib_per_sec([]), do: 0.0
+
+  defp average_estimated_throughput_mib_per_sec(completed_metrics) do
+    completed_metrics
+    |> Enum.map(&estimated_throughput_mib_per_sec/1)
+    |> Enum.sum()
+    |> Kernel./(length(completed_metrics))
+  end
+
+  defp estimated_throughput_mib_per_sec(metrics) do
+    duration_seconds =
+      metrics
+      |> Map.get(:duration_us, 0)
+      |> Kernel./(1_000_000)
+      |> max(1.0)
+
+    metrics
+    |> Map.get(:estimated_bytes, 0)
+    |> Kernel./(1024 * 1024)
+    |> Kernel./(duration_seconds)
+  end
+
+  defp throughput_floor_mib_per_sec(:conservative), do: 20.0
+  defp throughput_floor_mib_per_sec(:cpu_limited_throughput), do: 35.0
+  defp throughput_floor_mib_per_sec(:cpu_limited_balanced), do: 30.0
+  defp throughput_floor_mib_per_sec(:balanced), do: 45.0
+  defp throughput_floor_mib_per_sec(:throughput), do: 60.0
+
+  defp format_parallel_database_completion_label(metrics) do
+    estimated_bytes = Map.get(metrics, :estimated_bytes, 0)
+    throughput = estimated_throughput_mib_per_sec(metrics)
+    "#{format_bytes_binary(estimated_bytes)} @ #{:erlang.float_to_binary(throughput, decimals: 1)} MiB/s"
+  end
+
   defp build_parallel_database_key(session_prefix, database_name) do
     "#{session_prefix}#{sanitize_s3_segment(database_name)}.archive.gz"
   end
@@ -939,31 +1165,6 @@ defmodule DocdbStreamBackup do
     segment
     |> String.trim()
     |> String.replace(~r{[^a-zA-Z0-9._-]+}, "_")
-  end
-
-  defp reduce_parallel_database_result({:ok, {:ok, result}}, acc, progress_display) do
-    update_progress_display(progress_display, result.database_name, {:done, 0})
-
-    %{
-      acc
-      | stage_states: Map.put(acc.stage_states, result.database_name, {:done, 0}),
-        destinations: [result.destination | acc.destinations]
-    }
-  end
-
-  defp reduce_parallel_database_result({:ok, {:error, error}}, acc, progress_display) do
-    update_progress_display(progress_display, error.database_name, {:failed, 1})
-
-    %{
-      acc
-      | stage_states: Map.put(acc.stage_states, error.database_name, {:failed, 1}),
-        errors: [error | acc.errors]
-    }
-  end
-
-  defp reduce_parallel_database_result({:exit, reason}, acc, _progress_display) do
-    error = %{database_name: "desconhecido", message: "task abortada: #{inspect(reason)}", metrics: %{}}
-    %{acc | errors: [error | acc.errors]}
   end
 
   defp format_parallel_database_errors(errors) do
@@ -1472,7 +1673,7 @@ defmodule DocdbStreamBackup do
     initial_state = %{
       message: message,
       stage_specs: stage_specs,
-      stage_states: Map.new(stage_names, &{&1, {:running, nil}}),
+      stage_states: Map.new(stage_names, &{&1, {:running, nil, ""}}),
       started_at: System.monotonic_time(:millisecond),
       frame: 0,
       ansi_enabled: ansi_enabled,
@@ -1557,7 +1758,7 @@ defmodule DocdbStreamBackup do
     [
       "#{state.message} (#{elapsed_seconds}s)"
       | Enum.map(state.stage_specs, fn stage_spec ->
-          format_progress_stage_line(stage_spec, Map.get(state.stage_states, stage_spec.name, {:running, nil}), state.frame)
+          format_progress_stage_line(stage_spec, Map.get(state.stage_states, stage_spec.name, {:running, nil, ""}), state.frame)
         end)
     ]
   end
@@ -1566,12 +1767,24 @@ defmodule DocdbStreamBackup do
     "#{String.pad_trailing(stage_spec.name, 10)} #{indeterminate_bar(frame, 20)} running | #{format_stage_parallelism(stage_spec, stage_state, frame)}"
   end
 
+  defp format_progress_stage_line(stage_spec, {:running, _status, detail} = stage_state, frame) do
+    "#{String.pad_trailing(stage_spec.name, 10)} #{indeterminate_bar(frame, 20)} running | #{format_stage_parallelism(stage_spec, stage_state, frame)}#{format_stage_detail(detail)}"
+  end
+
   defp format_progress_stage_line(stage_spec, {:done, status} = stage_state, frame) do
     "#{String.pad_trailing(stage_spec.name, 10)} #{String.duplicate("#", 20)} done (#{status}) | #{format_stage_parallelism(stage_spec, stage_state, frame)}"
   end
 
+  defp format_progress_stage_line(stage_spec, {:done, status, detail} = stage_state, frame) do
+    "#{String.pad_trailing(stage_spec.name, 10)} #{String.duplicate("#", 20)} done (#{status}) | #{format_stage_parallelism(stage_spec, stage_state, frame)}#{format_stage_detail(detail)}"
+  end
+
   defp format_progress_stage_line(stage_spec, {:failed, status} = stage_state, frame) do
     "#{String.pad_trailing(stage_spec.name, 10)} #{String.duplicate("!", 20)} failed (#{status}) | #{format_stage_parallelism(stage_spec, stage_state, frame)}"
+  end
+
+  defp format_progress_stage_line(stage_spec, {:failed, status, detail} = stage_state, frame) do
+    "#{String.pad_trailing(stage_spec.name, 10)} #{String.duplicate("!", 20)} failed (#{status}) | #{format_stage_parallelism(stage_spec, stage_state, frame)}#{format_stage_detail(detail)}"
   end
 
   defp format_stage_parallelism(stage_spec, stage_state, frame) do
@@ -1592,13 +1805,28 @@ defmodule DocdbStreamBackup do
     |> Enum.join()
   end
 
+  defp format_parallelism_slots(slot_count, {:running, _status, _detail}, frame) do
+    format_parallelism_slots(slot_count, {:running, nil}, frame)
+  end
+
   defp format_parallelism_slots(slot_count, {:done, _status}, _frame) do
+    String.duplicate("#", slot_count)
+  end
+
+  defp format_parallelism_slots(slot_count, {:done, _status, _detail}, _frame) do
     String.duplicate("#", slot_count)
   end
 
   defp format_parallelism_slots(slot_count, {:failed, _status}, _frame) do
     String.duplicate("!", slot_count)
   end
+
+  defp format_parallelism_slots(slot_count, {:failed, _status, _detail}, _frame) do
+    String.duplicate("!", slot_count)
+  end
+
+  defp format_stage_detail(""), do: ""
+  defp format_stage_detail(detail), do: " | " <> detail
 
   defp indeterminate_bar(frame, width) do
     active_size = 5
