@@ -64,13 +64,52 @@ if ! [[ -r /sys/hypervisor/uuid && -s /sys/hypervisor/uuid ]]; then
   log "aviso: sem garantia de que é EC2; prosseguindo mesmo assim"
 fi
 
-if ! [[ -f /etc/os-release ]]; then
-  die "/etc/os-release não encontrado"
-fi
-
+[[ -f /etc/os-release ]] || die "/etc/os-release não encontrado"
 # shellcheck disable=SC1091
 source /etc/os-release
 DISTRIB_ID="${ID:-unknown}"
+
+install_awscli_with_fallback() {
+  local pm="$1"
+
+  case "${pm}" in
+    dnf)
+      if run dnf install -y awscli2; then
+        log "awscli2 instalado"
+        return 0
+      fi
+      log "aviso: awscli2 indisponível no dnf (tentando awscli)"
+      if run dnf install -y awscli; then
+        log "awscli instalado"
+        return 0
+      fi
+      log "aviso: awscli indisponível no dnf"
+      return 1
+      ;;
+    yum)
+      if run yum install -y awscli2; then
+        log "awscli2 instalado"
+        return 0
+      fi
+      log "aviso: awscli2 indisponível no yum"
+      if command -v amazon-linux-extras >/dev/null 2>&1; then
+        run amazon-linux-extras install -y epel || true
+      fi
+      if run yum install -y awscli; then
+        log "awscli instalado"
+        return 0
+      fi
+      log "aviso: awscli indisponível no yum"
+      if run yum install -y awscli2; then
+        log "awscli2 instalado"
+        return 0
+      fi
+      return 1
+      ;;
+  esac
+
+  return 1
+}
 
 if [[ "${REMOVE_OLD}" == "1" ]]; then
   log "removendo versões antigas de Elixir/Erlang via gerenciador"
@@ -81,26 +120,25 @@ if [[ "${REMOVE_OLD}" == "1" ]]; then
       run yum remove -y elixir erlang || true
     fi
   elif [[ "${DISTRIB_ID}" == "ubuntu" || "${DISTRIB_ID}" == "debian" ]]; then
-    run apt-get remove -y "elixir" "erlang" || true
+    run apt-get remove -y elixir erlang || true
   else
     log "remove-old não suportado para ${DISTRIB_ID} (seguindo para instalação)"
   fi
 fi
 
-log "distribuição detectada: ${DISTRIB_ID}"
-
 case "${DISTRIB_ID}" in
   amzn)
     if command -v dnf >/dev/null 2>&1; then
       run dnf makecache -y || true
-      run dnf install -y erlang elixir pigz awscli2 || run dnf install -y erlang elixir pigz awscli
+      run dnf install -y erlang elixir pigz || die "falha ao instalar erlang/elixir/pigz com dnf"
+      if ! install_awscli_with_fallback dnf; then
+        log "aviso: aws cli não instalado automaticamente; instale manualmente se necessário"
+      fi
     elif command -v yum >/dev/null 2>&1; then
       run yum makecache -y || true
-      if ! run yum install -y erlang elixir pigz awscli2; then
-        if command -v amazon-linux-extras >/dev/null 2>&1; then
-          run amazon-linux-extras install -y epel || true
-        fi
-        run yum install -y erlang elixir pigz awscli || run yum install -y awscli2
+      run yum install -y erlang elixir pigz || die "falha ao instalar erlang/elixir/pigz com yum"
+      if ! install_awscli_with_fallback yum; then
+        log "aviso: aws cli não instalado automaticamente; instale manualmente se necessário"
       fi
     else
       die "dnf/yum não encontrado no sistema"
