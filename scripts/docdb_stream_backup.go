@@ -15,8 +15,9 @@ import (
 )
 
 const (
-	defaultPrefix                  = "docdb/"
-	defaultExpectedSizeBytes int64 = 10 * 1024 * 1024 * 1024
+	defaultPrefix                      = "docdb/"
+	defaultExpectedSizeBytes     int64 = 10 * 1024 * 1024 * 1024
+	defaultTargetDurationSeconds       = 60
 )
 
 var usageText = `Uso:
@@ -31,9 +32,10 @@ Exemplos:
   go run scripts/docdb_stream_backup.go 'mongodb://user:pass@host:27017/?tls=true&replicaSet=rs0' meu-bucket docdb/prod
   go run scripts/docdb_stream_backup.go 'mongodb://user:pass@host:27017/?tls=true&replicaSet=rs0' meu-bucket --num-parallel-collections 16 --pigz-threads 8 --compression-level 1 --expected-size-bytes 10737418240
 
-Observação:
-  O upload acontece por stream em memória, sem gerar arquivo local no EC2.
-  Perfil padrão otimizado para throughput: compressão nível 1 e expected-size de 10 GiB.
+  Observação:
+    O upload acontece por stream em memória, sem gerar arquivo local no EC2.
+    Perfil padrão otimizado para throughput: compressão nível 1 e expected-size de 10 GiB.
+    Meta de desempenho: 10 GiB em até 60 segundos.
   A conexão principal é o primeiro argumento posicional.
   Não passe --uri novamente em --mongodump-arg.
 `
@@ -47,6 +49,11 @@ type backupArgs struct {
 	compressionLevel   int
 	expectedSizeBytes  int64
 	extraMongodumpArgs []string
+}
+
+type backupMetrics struct {
+	rawBytes int64
+	duration time.Duration
 }
 
 type parsedOptions struct {
@@ -100,6 +107,7 @@ func run(argv []string) error {
 		return err
 	}
 
+	start := time.Now()
 	if err := ensureBinaries(); err != nil {
 		return err
 	}
@@ -107,9 +115,14 @@ func run(argv []string) error {
 	key := buildS3Key(args.prefix)
 	destination := fmt.Sprintf("s3://%s/%s", args.bucket, key)
 
+	printConfig(args)
 	fmt.Printf("destino: %s\n", destination)
+	fmt.Printf("alvo: %s em até %ds\n", formatBytesBinary(defaultExpectedSizeBytes), defaultTargetDurationSeconds)
 
-	if err := runPipeline(args, destination); err != nil {
+	metrics, err := runPipeline(args, destination)
+	metrics.duration = time.Since(start)
+	printPerformanceReport(metrics, args.expectedSizeBytes)
+	if err != nil {
 		return err
 	}
 
@@ -526,7 +539,8 @@ func buildS3Key(prefix string) string {
 	return fmt.Sprintf("%sdocdb-backup-%s.archive.gz", prefix, timestamp)
 }
 
-func runPipeline(args backupArgs, destination string) error {
+func runPipeline(args backupArgs, destination string) (backupMetrics, error) {
+	metrics := backupMetrics{}
 	ctx := context.Background()
 	stopSpinner, doneSpinner := startProgressSpinner()
 	defer stopProgressSpinner(stopSpinner, doneSpinner)
@@ -549,17 +563,17 @@ func runPipeline(args backupArgs, destination string) error {
 
 	dumpOut, err := mongodumpCmd.StdoutPipe()
 	if err != nil {
-		return err
+		return metrics, err
 	}
 
 	pigzIn, err := pigzCmd.StdinPipe()
 	if err != nil {
-		return err
+		return metrics, err
 	}
 
 	pigzOut, err := pigzCmd.StdoutPipe()
 	if err != nil {
-		return err
+		return metrics, err
 	}
 
 	mongodumpCmd.Stderr = &mongodumpErr
@@ -568,23 +582,24 @@ func runPipeline(args backupArgs, destination string) error {
 	awsCmd.Stdin = pigzOut
 
 	if err := pigzCmd.Start(); err != nil {
-		return runPipelineError(err, &pigzErr, &awsErr)
+		return metrics, runPipelineError(err, &pigzErr, &awsErr)
 	}
 
 	if err := awsCmd.Start(); err != nil {
 		_ = pigzCmd.Process.Kill()
-		return runPipelineError(err, &pigzErr, &awsErr)
+		return metrics, runPipelineError(err, &pigzErr, &awsErr)
 	}
 
 	if err := mongodumpCmd.Start(); err != nil {
 		_ = pigzCmd.Process.Kill()
 		_ = awsCmd.Process.Kill()
-		return runPipelineError(err, &mongodumpErr, &pigzErr, &awsErr)
+		return metrics, runPipelineError(err, &mongodumpErr, &pigzErr, &awsErr)
 	}
 
+	counter := &byteCounter{reader: dumpOut}
 	copyDone := make(chan error, 1)
 	go func() {
-		_, copyErr := io.Copy(pigzIn, dumpOut)
+		_, copyErr := io.Copy(pigzIn, counter)
 		_ = pigzIn.Close()
 		copyDone <- copyErr
 	}()
@@ -593,25 +608,102 @@ func runPipeline(args backupArgs, destination string) error {
 		_ = <-copyDone
 		_ = pigzCmd.Process.Kill()
 		_ = awsCmd.Process.Kill()
-		return runPipelineError(err, &mongodumpErr, &pigzErr, &awsErr)
+		metrics.rawBytes = counter.bytes
+		return metrics, runPipelineError(err, &mongodumpErr, &pigzErr, &awsErr)
 	}
 
 	if copyErr := <-copyDone; copyErr != nil {
 		_ = pigzCmd.Process.Kill()
 		_ = awsCmd.Process.Kill()
-		return runPipelineError(copyErr, &pigzErr, &awsErr)
+		metrics.rawBytes = counter.bytes
+		return metrics, runPipelineError(copyErr, &pigzErr, &awsErr)
 	}
 
 	if err := pigzCmd.Wait(); err != nil {
 		_ = awsCmd.Process.Kill()
-		return runPipelineError(err, &pigzErr, &awsErr, &mongodumpErr)
+		metrics.rawBytes = counter.bytes
+		return metrics, runPipelineError(err, &pigzErr, &awsErr, &mongodumpErr)
 	}
 
 	if err := awsCmd.Wait(); err != nil {
-		return runPipelineError(err, &awsErr, &pigzErr, &mongodumpErr)
+		metrics.rawBytes = counter.bytes
+		return metrics, runPipelineError(err, &awsErr, &pigzErr, &mongodumpErr)
 	}
 
-	return nil
+	metrics.rawBytes = counter.bytes
+	return metrics, nil
+}
+
+func printConfig(args backupArgs) {
+	fmt.Printf(
+		"config: numParallelCollections=%d pigz_threads=%d compression_level=%d expected_size=%s\n",
+		args.numParallel,
+		args.pigzThreads,
+		args.compressionLevel,
+		formatBytesBinary(args.expectedSizeBytes),
+	)
+}
+
+func printPerformanceReport(metrics backupMetrics, expectedBytes int64) {
+	targetDuration := time.Duration(defaultTargetDurationSeconds) * time.Second
+	fmt.Printf("tempo total: %s\n", formatDuration(metrics.duration))
+
+	if metrics.rawBytes > 0 {
+		seconds := metrics.duration.Seconds()
+		if seconds <= 0 {
+			seconds = 1
+		}
+		mbPerSecond := float64(metrics.rawBytes) / 1024.0 / 1024.0 / seconds
+		fmt.Printf(
+			"volume processado: %s (%0.2f MiB/s)\n",
+			formatBytesBinary(metrics.rawBytes),
+			mbPerSecond,
+		)
+	} else {
+		fmt.Printf("volume processado: sem bytes (não foi possível mensurar)\n")
+	}
+
+	targetMiBPerSecond := float64(expectedBytes) / 1024.0 / 1024.0 / targetDuration.Seconds()
+	targetGiBPerMinute := float64(expectedBytes) / 1024.0 / 1024.0 / 1024.0 / targetDuration.Minutes()
+	resultStatus := "não atingido"
+	if metrics.duration <= targetDuration {
+		resultStatus = "atingido"
+	}
+
+	fmt.Printf(
+		"meta de throughput: %0.2f MiB/s (ou %0.2f GiB/min) | resultado: %s\n",
+		targetMiBPerSecond,
+		targetGiBPerMinute,
+		resultStatus,
+	)
+}
+
+func formatBytesBinary(size int64) string {
+	const unit = 1024.0
+	if size <= 0 {
+		return "0 B"
+	}
+
+	divisions := []string{"B", "KiB", "MiB", "GiB", "TiB"}
+	value := float64(size)
+	for _, label := range divisions {
+		if value < unit {
+			return fmt.Sprintf("%.2f %s", value, label)
+		}
+		value = value / unit
+	}
+
+	return fmt.Sprintf("%.2f TiB", value)
+}
+
+func formatDuration(d time.Duration) string {
+	seconds := int64(d.Seconds())
+	minutes := seconds / 60
+	remainingSeconds := seconds % 60
+	if minutes > 0 {
+		return fmt.Sprintf("%dm%02ds", minutes, remainingSeconds)
+	}
+	return fmt.Sprintf("%ds", remainingSeconds)
 }
 
 func runPipelineError(commandErr error, buffers ...*bytes.Buffer) error {
@@ -662,20 +754,34 @@ func stopProgressSpinner(stop chan struct{}, done chan struct{}) {
 }
 
 func defaultNumParallelCollections() int {
-	candidate := runtime.NumCPU() * 2
-	if candidate < 8 {
-		candidate = 8
+	candidate := runtime.NumCPU()
+	if candidate < 16 {
+		return 16
 	}
 	if candidate > 32 {
-		candidate = 32
+		return 32
 	}
 	return candidate
 }
 
 func defaultPigzThreads() int {
 	numCPU := runtime.NumCPU()
-	if numCPU < 1 {
-		return 1
+	if numCPU < 8 {
+		return 8
+	}
+	if numCPU > 16 {
+		return 16
 	}
 	return numCPU
+}
+
+type byteCounter struct {
+	reader io.Reader
+	bytes  int64
+}
+
+func (counter *byteCounter) Read(p []byte) (int, error) {
+	n, err := counter.reader.Read(p)
+	counter.bytes += int64(n)
+	return n, err
 }

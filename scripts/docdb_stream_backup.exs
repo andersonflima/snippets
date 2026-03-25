@@ -4,26 +4,28 @@
 defmodule DocdbStreamBackup do
   @default_prefix "docdb/"
   @default_expected_size_bytes 10 * 1024 * 1024 * 1024
+  @default_target_duration_seconds 60
 
   @usage """
-  Uso:
-    elixir scripts/docdb_stream_backup.exs <docdb_uri> <bucket>
-    elixir scripts/docdb_stream_backup.exs <docdb_uri> <bucket> <prefix>
-    elixir scripts/docdb_stream_backup.exs <docdb_uri> <bucket> [--prefix docdb/prod] [--num-parallel-collections 16] [--pigz-threads 8] [--compression-level 1] [--expected-size-bytes 10737418240]
+Uso:
+  elixir scripts/docdb_stream_backup.exs <docdb_uri> <bucket>
+  elixir scripts/docdb_stream_backup.exs <docdb_uri> <bucket> <prefix>
+  elixir scripts/docdb_stream_backup.exs <docdb_uri> <bucket> [--prefix docdb/prod] [--num-parallel-collections 16] [--pigz-threads 8] [--compression-level 1] [--expected-size-bytes 10737418240]
 
-  Exemplos:
-    elixir scripts/docdb_stream_backup.exs 'mongodb://user:pass@host:27017/?tls=true&replicaSet=rs0&readPreference=secondaryPreferred&retryWrites=false' meu-bucket
-    elixir scripts/docdb_stream_backup.exs 'mongodb://user:pass@host:27017/?tls=true&replicaSet=rs0' meu-bucket docdb/prod
-    elixir scripts/docdb_stream_backup.exs 'mongodb://user:pass@host:27017/?tls=true&replicaSet=rs0' meu-bucket --num-parallel-collections 16 --pigz-threads 8 --compression-level 1 --expected-size-bytes 10737418240
-    elixir scripts/docdb_stream_backup.exs 'mongodb://user:pass@host:27017/?tls=true&replicaSet=rs0' meu-bucket --mongodump-arg --tls --mongodump-arg --tlsCAFile=/path/ca.pem
-    elixir scripts/docdb_stream_backup.exs 'mongodb://user:pass@host:27017/?tls=true&replicaSet=rs0' meu-bucket --mongodump-arg='--tls' --mongodump-arg='--tlsCAFile=/path/ca.pem'
+Exemplos:
+  elixir scripts/docdb_stream_backup.exs 'mongodb://user:pass@host:27017/?tls=true&replicaSet=rs0&readPreference=secondaryPreferred&retryWrites=false' meu-bucket
+  elixir scripts/docdb_stream_backup.exs 'mongodb://user:pass@host:27017/?tls=true&replicaSet=rs0' meu-bucket docdb/prod
+  elixir scripts/docdb_stream_backup.exs 'mongodb://user:pass@host:27017/?tls=true&replicaSet=rs0' meu-bucket --num-parallel-collections 16 --pigz-threads 8 --compression-level 1 --expected-size-bytes 10737418240
+  elixir scripts/docdb_stream_backup.exs 'mongodb://user:pass@host:27017/?tls=true&replicaSet=rs0' meu-bucket --mongodump-arg --tls --mongodump-arg --tlsCAFile=/path/ca.pem
+  elixir scripts/docdb_stream_backup.exs 'mongodb://user:pass@host:27017/?tls=true&replicaSet=rs0' meu-bucket --mongodump-arg='--tls' --mongodump-arg='--tlsCAFile=/path/ca.pem'
 
-  Observação:
-    O upload acontece por stream em memória, sem gerar arquivo local no EC2.
-    Perfil padrão otimizado para throughput: compressão nível 1 e expected-size de 10 GiB.
-    A string de conexão principal é o primeiro argumento posicional.
-    Não passe --uri novamente em --mongodump-arg.
-  """
+Observação:
+  O upload acontece por stream em memória, sem gerar arquivo local no EC2.
+  Perfil padrão otimizado para throughput: compressão nível 1 e expected-size de 10 GiB.
+  Meta de desempenho: 10 GiB em até 60 segundos.
+  A string de conexão principal é o primeiro argumento posicional.
+  Não passe --uri novamente em --mongodump-arg.
+"""
 
   def main(argv) do
     case parse_args(argv) do
@@ -37,12 +39,14 @@ defmodule DocdbStreamBackup do
              :ok <- ensure_binary("pigz"),
              :ok <- ensure_binary("aws"),
              {:ok, key} <- build_s3_key(args.prefix),
-             :ok <- run_pipeline(args, key) do
+             {:ok, metrics} <- run_pipeline(args, key) do
+          print_performance_report(metrics, args.expected_size_bytes)
           IO.puts("backup concluído")
           IO.puts("destino: s3://#{args.bucket}/#{key}")
           :ok
         else
-          {:error, message} ->
+          {:error, message, metrics} ->
+            print_performance_report(metrics, args.expected_size_bytes)
             IO.puts(:stderr, "erro: #{message}")
             IO.puts(:stderr, @usage)
             System.halt(1)
@@ -387,14 +391,14 @@ defmodule DocdbStreamBackup do
 
   defp default_num_parallel_collections do
     System.schedulers_online()
-    |> Kernel.*(2)
-    |> max(8)
+    |> max(16)
     |> min(32)
   end
 
   defp default_pigz_threads do
     System.schedulers_online()
-    |> max(1)
+    |> max(8)
+    |> min(16)
   end
 
   defp ensure_binary(binary) do
@@ -415,6 +419,7 @@ defmodule DocdbStreamBackup do
   end
 
   defp run_pipeline(args, key) do
+    start = System.monotonic_time(:microsecond)
     destination = "s3://#{args.bucket}/#{key}"
     spinner = start_status_spinner("backup em andamento")
 
@@ -458,25 +463,112 @@ defmodule DocdbStreamBackup do
       [mongodump_command, pigz_command, aws_command]
       |> Enum.join(" | ")
 
-    IO.puts(
-      "config: numParallelCollections=#{args.num_parallel_collections} pigz_threads=#{args.pigz_threads} compression_level=#{args.compression_level} expected_size_bytes=#{args.expected_size_bytes}"
-    )
+    print_config(args)
+    IO.puts("destino: #{destination}")
+    IO.puts("alvo: #{format_bytes_binary(@default_expected_size_bytes)} em até #{@default_target_duration_seconds}s")
+
+    elapsed_us = fn -> System.monotonic_time(:microsecond) - start end
 
     case System.cmd("bash", ["-o", "pipefail", "-c", command], stderr_to_stdout: true) do
       {_, 0} ->
         stop_status_spinner(spinner)
-        :ok
+        {:ok,
+         %{
+           duration_us: elapsed_us.(),
+           estimated_bytes: args.expected_size_bytes
+         }}
 
       {output, status} ->
         stop_status_spinner(spinner)
+        metrics = %{
+          duration_us: elapsed_us.(),
+          estimated_bytes: args.expected_size_bytes
+        }
 
         if String.trim(output) == "" do
-          {:error, "pipeline falhou com código #{status}"}
+          {:error, "pipeline falhou com código #{status}", metrics}
         else
-          {:error, "pipeline falhou com código #{status}\n#{output}"}
+          {:error, "pipeline falhou com código #{status}\n#{output}", metrics}
         end
     end
   end
+
+  defp print_config(args) do
+    IO.puts(
+      "config: numParallelCollections=#{args.num_parallel_collections} pigz_threads=#{args.pigz_threads} compression_level=#{args.compression_level} expected_size=#{format_bytes_binary(args.expected_size_bytes)}"
+    )
+  end
+
+  defp print_performance_report(metrics, expected_size_bytes) do
+    expected_size_bytes =
+      case expected_size_bytes do
+        nil -> 0
+        value when is_integer(value) and value > 0 -> value
+        _ -> 0
+      end
+
+    duration_us = Map.get(metrics, :duration_us, 0)
+    duration_seconds = max(1, div(duration_us, 1_000_000))
+
+    IO.puts("tempo total: #{format_duration(metrics)}")
+
+    estimated_bytes = Map.get(metrics, :estimated_bytes, expected_size_bytes)
+    if estimated_bytes > 0 do
+      throughput_mb_per_sec =
+        estimated_bytes / 1024.0 / 1024.0 / duration_seconds
+
+      IO.puts(
+        "volume estimado: #{format_bytes_binary(estimated_bytes)} (~#{:erlang.float_to_binary(throughput_mb_per_sec, decimals: 2)} MiB/s)"
+      )
+    else
+      IO.puts("volume estimado: não disponível")
+    end
+
+    target_duration_seconds = @default_target_duration_seconds
+    target_speed_mib_per_sec = expected_size_bytes / 1024.0 / 1024.0 / target_duration_seconds
+    target_status =
+      if duration_us <= @default_target_duration_seconds * 1_000_000 do
+        "atingido"
+      else
+        "não atingido"
+      end
+
+    target_gib_per_min = expected_size_bytes / 1024.0 / 1024.0 / 1024.0 / (target_duration_seconds / 60.0)
+    IO.puts(
+      "meta de throughput: #{:erlang.float_to_binary(target_speed_mib_per_sec, decimals: 2)} MiB/s (#{:erlang.float_to_binary(target_gib_per_min, decimals: 2)} GiB/min) | resultado: #{target_status}"
+    )
+  end
+
+  defp format_bytes_binary(bytes) when is_integer(bytes) and bytes >= 0 do
+    format_bytes_binary(bytes, 0, ["B", "KiB", "MiB", "GiB", "TiB"])
+  end
+
+  defp format_bytes_binary(bytes, _power, [_last]) when bytes >= 0 do
+    formatted = bytes / :math.pow(1024, 4)
+    "#{:erlang.float_to_binary(formatted, decimals: 2)} TiB"
+  end
+
+  defp format_bytes_binary(bytes, power, [unit | units]) do
+    denominator = :math.pow(1024, power)
+    if bytes < denominator * 1024 do
+      "#{:erlang.float_to_binary(bytes / denominator, decimals: 2)} #{unit}"
+    else
+      format_bytes_binary(bytes, power + 1, units)
+    end
+  end
+
+  defp format_duration(%{duration_us: duration_us}) do
+    total_seconds = div(duration_us, 1_000_000)
+    minutes = div(total_seconds, 60)
+    seconds = rem(total_seconds, 60)
+    if minutes > 0 do
+      "#{minutes}m#{String.pad_leading(Integer.to_string(seconds), 2, "0")}s"
+    else
+      "#{seconds}s"
+    end
+  end
+
+  defp format_duration(_), do: "0s"
 
   defp start_status_spinner(message) do
     spawn(fn -> status_spinner_loop(message, 0) end)
