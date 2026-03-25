@@ -30,6 +30,13 @@ GO_VERSION="latest"
 GO_INSTALL_DIR="/usr/local/go"
 GO_PROFILE_PATH="/etc/profile.d/go.sh"
 FORCE_REINSTALL=0
+HTTP_TIMEOUT=15
+
+LATEST_FALLBACK_URLS=(
+  "https://go.dev/dl/?mode=json"
+  "https://golang.org/dl/?mode=json"
+  "https://api.github.com/repos/golang/go/releases/latest"
+)
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
@@ -89,7 +96,7 @@ install_prereqs() {
   distro="$(detect_distro)"
 
   case "${distro}" in
-    amzn|amzn2|alinux*)
+    amzn|amzn2|amazon|alinux*)
       if command -v dnf >/dev/null 2>&1; then
         run_with_sudo dnf makecache -y
         run_with_sudo dnf install -y tar gzip curl ca-certificates
@@ -161,17 +168,36 @@ detect_arch() {
 
 fetch_latest_version() {
   local json
-  local url="https://go.dev/dl/?mode=json"
+  local url
+  local version
 
-  if [[ "${DOWNLOADER}" == "curl" ]]; then
-    json="$(curl -fsSL "${url}")"
-  else
-    json="$(wget -qO- "${url}")"
-  fi
+  for url in "${LATEST_FALLBACK_URLS[@]}"; do
+    if [[ "${DOWNLOADER}" == "curl" ]]; then
+      json="$(curl -fsSL --max-time "${HTTP_TIMEOUT}" --retry 2 --retry-delay 1 "${url}" || true)"
+    else
+      json="$(wget -qO- --timeout="${HTTP_TIMEOUT}" --tries=2 "${url}" || true)"
+    fi
 
-  printf '%s\n' "${json}" |
-    sed -n 's/.*"version":"\(go[^"]*\)".*/\1/p' |
-    head -n 1
+    if [[ -z "${json}" ]]; then
+      attempts+=("${url}")
+      continue
+    fi
+
+    if [[ "${url}" == *"api.github.com"* ]]; then
+      version="$(printf '%s' "${json}" | grep -o '"tag_name":"go[0-9][^"]*"' | head -n 1 | cut -d'"' -f4)"
+    else
+      version="$(printf '%s' "${json}" | grep -o '"version":"go[0-9][^"]*"' | head -n 1 | cut -d'"' -f4)"
+    fi
+
+    if [[ -n "${version}" ]]; then
+      echo "${version}"
+      return 0
+    fi
+  done
+
+  log "falha ao consultar versões do Go nos endpoints:"
+  log "  ${LATEST_FALLBACK_URLS[*]}"
+  return 1
 }
 
 normalize_version() {
