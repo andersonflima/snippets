@@ -5,6 +5,7 @@ ELIXIR_REF="v1.17.3"
 INSTALL_DIR="/opt/elixir"
 PROFILE_FILE="/etc/profile.d/elixir.sh"
 FORCE_REMOVE_PACKAGE="0"
+ELIXIR_REF_EXPLICIT="0"
 
 log() {
   printf '[fix-elixir-ec2] %s\n' "$*" >&2
@@ -25,7 +26,7 @@ Objetivo:
   instalando uma versão moderna do Elixir via builds.hex.pm e priorizando no PATH.
 
 Opções:
-  --elixir-ref             Versão/tag do Elixir. Padrão: ${ELIXIR_REF}
+  --elixir-ref             Versão/tag do Elixir. Default: seleção automática por OTP
   --install-dir            Diretório de instalação. Padrão: ${INSTALL_DIR}
   --force-remove-package   Tenta remover pacote Elixir do sistema via rpm/dpkg local antes de instalar
   -h, --help               Exibe esta ajuda
@@ -36,6 +37,7 @@ while [[ $# -gt 0 ]]; do
   case "$1" in
     --elixir-ref)
       ELIXIR_REF="${2:-}"
+      ELIXIR_REF_EXPLICIT="1"
       shift 2
       ;;
     --install-dir)
@@ -155,31 +157,26 @@ ensure_base_tools() {
 }
 
 ensure_erlang_runtime() {
+  local otp_release otp_major
+  otp_release=""
+  otp_major=""
+
   if command_exists erl; then
-    return
+    otp_release="$(detect_otp_release)"
+    otp_major="$(otp_to_integer "${otp_release}" || true)"
+    if [[ -n "${otp_major}" && "${otp_major}" -ge 24 ]]; then
+      return
+    fi
+    log "Erlang encontrado, mas OTP atual é ${otp_release:-desconhecido}; tentando atualizar para OTP >= 24"
+  else
+    log "Erlang não encontrado; instalando runtime OTP >= 24"
   fi
 
-  local distro
-  distro="$(detect_distro)"
+  install_or_upgrade_erlang
 
-  case "${distro}" in
-    amzn)
-      if command_exists dnf; then
-        run_with_sudo dnf install -y erlang || die "falha ao instalar erlang com dnf"
-      elif command_exists yum; then
-        run_with_sudo yum install -y erlang || die "falha ao instalar erlang com yum"
-      else
-        die "dnf/yum não encontrado para instalar erlang"
-      fi
-      ;;
-    ubuntu|debian)
-      run_with_sudo apt-get update
-      run_with_sudo apt-get install -y erlang || die "falha ao instalar erlang com apt"
-      ;;
-    *)
-      die "distribuição não suportada para auto-instalar erlang: ${distro}"
-      ;;
-  esac
+  otp_release="$(detect_otp_release)"
+  otp_major="$(otp_to_integer "${otp_release}" || true)"
+  [[ -n "${otp_major}" && "${otp_major}" -ge 24 ]] || die "Erlang incompatível após atualização (OTP=${otp_release:-desconhecido}). Requer OTP >= 24"
 }
 
 remove_system_elixir_if_requested() {
@@ -246,6 +243,78 @@ detect_otp_release() {
   erl -noshell -eval 'io:format("~s", [erlang:system_info(otp_release)]), halt().' 2>/dev/null || true
 }
 
+otp_to_integer() {
+  local otp_release
+  otp_release="$1"
+  if [[ "${otp_release}" =~ ^[0-9]+$ ]]; then
+    printf '%s\n' "${otp_release}"
+    return 0
+  fi
+  return 1
+}
+
+install_or_upgrade_erlang() {
+  local distro
+  distro="$(detect_distro)"
+
+  case "${distro}" in
+    amzn)
+      if command_exists dnf; then
+        run_with_sudo dnf makecache -y || true
+        run_with_sudo dnf install -y erlang || die "falha ao instalar/atualizar erlang com dnf"
+      elif command_exists yum; then
+        run_with_sudo yum makecache -y || true
+        if ! run_with_sudo yum install -y erlang; then
+          if command_exists amazon-linux-extras; then
+            run_with_sudo amazon-linux-extras install -y erlang || true
+            run_with_sudo yum install -y erlang || die "falha ao instalar/atualizar erlang com yum"
+          else
+            die "falha ao instalar/atualizar erlang com yum"
+          fi
+        fi
+      else
+        die "dnf/yum não encontrado para instalar/atualizar erlang"
+      fi
+      ;;
+    ubuntu|debian)
+      run_with_sudo apt-get update
+      run_with_sudo apt-get install -y erlang || die "falha ao instalar/atualizar erlang com apt"
+      ;;
+    *)
+      die "distribuição não suportada para instalar/atualizar erlang: ${distro}"
+      ;;
+  esac
+}
+
+resolve_elixir_ref_for_otp() {
+  local otp_major
+  otp_major="$1"
+
+  if [[ "${ELIXIR_REF_EXPLICIT}" == "1" ]]; then
+    printf '%s\n' "${ELIXIR_REF}"
+    return
+  fi
+
+  if (( otp_major >= 26 )); then
+    printf '%s\n' "v1.17.3"
+    return
+  fi
+  if (( otp_major == 25 )); then
+    printf '%s\n' "v1.16.3"
+    return
+  fi
+  if (( otp_major == 24 )); then
+    printf '%s\n' "v1.15.8"
+    return
+  fi
+  if (( otp_major == 23 )); then
+    printf '%s\n' "v1.14.5"
+    return
+  fi
+
+  die "OTP ${otp_major} não suportado para instalação automática do Elixir"
+}
+
 download_elixir_archive() {
   local otp_release workdir archive_path otp_url generic_url
   otp_release="$1"
@@ -298,7 +367,14 @@ validate_installation() {
   [[ -x "${elixir_bin}" ]] || die "elixir não encontrado em ${elixir_bin}"
   [[ -x "${mix_bin}" ]] || die "mix não encontrado em ${mix_bin}"
 
-  if ! "${elixir_bin}" -e 'IO.puts("elixir-ok")' >/dev/null 2>&1; then
+  local run_output
+  run_output="$("${elixir_bin}" -e 'IO.puts("elixir-ok")' 2>&1 || true)"
+  if [[ "${run_output}" != *"elixir-ok"* ]]; then
+    if [[ -n "${run_output}" ]]; then
+      log "detalhe falha do Elixir: ${run_output}"
+    fi
+    log "erl path atual: $(command -v erl || echo '<ausente>')"
+    log "erl version (resumo): $(erl -version 2>&1 | head -n 1 || echo '<indisponível>')"
     die "elixir instalado não executa corretamente"
   fi
 
@@ -340,7 +416,12 @@ main() {
   log "etapa: detect_otp_release"
   otp_release="$(detect_otp_release)"
   [[ -n "${otp_release}" ]] || die "não foi possível detectar OTP release via erl"
-  log "OTP detectado: ${otp_release}"
+  local otp_major
+  otp_major="$(otp_to_integer "${otp_release}" || true)"
+  [[ -n "${otp_major}" ]] || die "valor inválido de OTP detectado: ${otp_release}"
+  ELIXIR_REF="$(resolve_elixir_ref_for_otp "${otp_major}")"
+  log "OTP detectado: ${otp_release} (major=${otp_major})"
+  log "Elixir selecionado: ${ELIXIR_REF}"
 
   local workdir archive_path
   workdir="$(mktemp -d -t fix-elixir-XXXXXX)"
