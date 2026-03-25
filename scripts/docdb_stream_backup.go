@@ -582,18 +582,18 @@ func runPipeline(args backupArgs, destination string) (backupMetrics, error) {
 	awsCmd.Stdin = pigzOut
 
 	if err := pigzCmd.Start(); err != nil {
-		return metrics, runPipelineError(err, &pigzErr, &awsErr)
+		return metrics, runPipelineError("falha ao iniciar pigz", err, &pigzErr, &awsErr)
 	}
 
 	if err := awsCmd.Start(); err != nil {
 		_ = pigzCmd.Process.Kill()
-		return metrics, runPipelineError(err, &pigzErr, &awsErr)
+		return metrics, runPipelineError("falha ao iniciar aws", err, &pigzErr, &awsErr)
 	}
 
 	if err := mongodumpCmd.Start(); err != nil {
 		_ = pigzCmd.Process.Kill()
 		_ = awsCmd.Process.Kill()
-		return metrics, runPipelineError(err, &mongodumpErr, &pigzErr, &awsErr)
+		return metrics, runPipelineError("falha ao iniciar mongodump", err, &mongodumpErr, &pigzErr, &awsErr)
 	}
 
 	counter := &byteCounter{reader: dumpOut}
@@ -609,25 +609,25 @@ func runPipeline(args backupArgs, destination string) (backupMetrics, error) {
 		_ = pigzCmd.Process.Kill()
 		_ = awsCmd.Process.Kill()
 		metrics.rawBytes = counter.bytes
-		return metrics, runPipelineError(err, &mongodumpErr, &pigzErr, &awsErr)
+		return metrics, runPipelineError("mongodump falhou", err, &mongodumpErr, &pigzErr, &awsErr)
 	}
 
 	if copyErr := <-copyDone; copyErr != nil {
 		_ = pigzCmd.Process.Kill()
 		_ = awsCmd.Process.Kill()
 		metrics.rawBytes = counter.bytes
-		return metrics, runPipelineError(copyErr, &pigzErr, &awsErr)
+		return metrics, runPipelineError("falha ao encaminhar fluxo entre mongodump e pigz", copyErr, &pigzErr, &awsErr)
 	}
 
 	if err := pigzCmd.Wait(); err != nil {
 		_ = awsCmd.Process.Kill()
 		metrics.rawBytes = counter.bytes
-		return metrics, runPipelineError(err, &pigzErr, &awsErr, &mongodumpErr)
+		return metrics, runPipelineError("pigz falhou", err, &pigzErr, &awsErr, &mongodumpErr)
 	}
 
 	if err := awsCmd.Wait(); err != nil {
 		metrics.rawBytes = counter.bytes
-		return metrics, runPipelineError(err, &awsErr, &pigzErr, &mongodumpErr)
+		return metrics, runPipelineError("aws falhou", err, &awsErr, &pigzErr, &mongodumpErr)
 	}
 
 	metrics.rawBytes = counter.bytes
@@ -706,8 +706,9 @@ func formatDuration(d time.Duration) string {
 	return fmt.Sprintf("%ds", remainingSeconds)
 }
 
-func runPipelineError(commandErr error, buffers ...*bytes.Buffer) error {
-	parts := make([]string, 0, len(buffers))
+func runPipelineError(commandName string, commandErr error, buffers ...*bytes.Buffer) error {
+	parts := make([]string, 0, len(buffers)+1)
+	parts = append(parts, commandName)
 	for _, buffer := range buffers {
 		text := strings.TrimSpace(buffer.String())
 		if text != "" {
@@ -716,10 +717,10 @@ func runPipelineError(commandErr error, buffers ...*bytes.Buffer) error {
 	}
 
 	if len(parts) == 0 {
-		return commandErr
+		return fmt.Errorf("%s: %w", commandName, commandErr)
 	}
 
-	return fmt.Errorf("%w\n%s", commandErr, strings.Join(parts, "\n"))
+	return fmt.Errorf("%s: %w\n%s", commandName, commandErr, strings.Join(parts, "\n"))
 }
 
 func startProgressSpinner() (chan struct{}, chan struct{}) {

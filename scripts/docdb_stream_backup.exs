@@ -50,6 +50,10 @@ Observação:
             IO.puts("erro: #{message}")
             IO.puts(@usage)
             System.halt(1)
+          {:error, message} ->
+            IO.puts("erro: #{message}")
+            IO.puts(@usage)
+            System.halt(1)
         end
 
       {:error, message} ->
@@ -459,9 +463,25 @@ Observação:
       ]
       |> Enum.join(" ")
 
-    command =
+    pipeline =
       [mongodump_command, pigz_command, aws_command]
       |> Enum.join(" | ")
+
+    status_probe = "__PIPESTATUS__"
+    pipeline_status_command = """
+set -o pipefail
+#{pipeline}
+pipeline_status=\"${PIPESTATUS[*]}\"
+pipeline_exit=0
+for status_code in ${pipeline_status}; do
+  if [ \"$status_code\" != \"0\" ]; then
+    pipeline_exit=1
+    break
+  fi
+done
+printf \"#{status_probe}=%s\\n\" \"${pipeline_status}\"
+exit \"$pipeline_exit\"
+"""
 
     print_config(args)
     IO.puts("destino: #{destination}")
@@ -469,9 +489,10 @@ Observação:
 
     elapsed_us = fn -> System.monotonic_time(:microsecond) - start end
 
-    case System.cmd("bash", ["-o", "pipefail", "-c", command], stderr_to_stdout: true) do
-      {_, 0} ->
+    case System.cmd("bash", ["-o", "pipefail", "-c", pipeline_status_command], stderr_to_stdout: true) do
+      {output, 0} ->
         stop_status_spinner(spinner)
+        print_pipeline_output(output, status_probe)
         {:ok,
          %{
            duration_us: elapsed_us.(),
@@ -480,17 +501,68 @@ Observação:
 
       {output, status} ->
         stop_status_spinner(spinner)
+        pipeline_status = extract_pipeline_status(output, status_probe)
+        cleaned_output = remove_pipeline_status_line(output, status_probe)
         metrics = %{
           duration_us: elapsed_us.(),
           estimated_bytes: args.expected_size_bytes
         }
 
-        if String.trim(output) == "" do
-          {:error, "pipeline falhou com código #{status}", metrics}
+        if String.trim(cleaned_output) == "" do
+          if pipeline_status == "" do
+            {:error, "pipeline falhou com código #{status}", metrics}
+          else
+            {:error, "pipeline falhou com código #{status} | estágios (mongodump,pigz,aws): #{pipeline_status}", metrics}
+          end
         else
-          {:error, "pipeline falhou com código #{status}\n#{output}", metrics}
+          if pipeline_status == "" do
+            {:error, "pipeline falhou com código #{status}\n#{cleaned_output}", metrics}
+          else
+            {:error, "pipeline falhou com código #{status} | estágios (mongodump,pigz,aws): #{pipeline_status}\n#{cleaned_output}", metrics}
+          end
         end
     end
+  end
+
+  defp extract_pipeline_status(output, marker) do
+    output
+    |> String.split("\n", trim: true)
+    |> Enum.find_value(fn line ->
+      case String.split(line, "=", parts: 2) do
+        [^marker, value] -> String.trim(value)
+        _ -> nil
+      end
+    end) |> case do
+      nil -> ""
+      status -> status
+    end
+  end
+
+  defp print_pipeline_output(output, marker) do
+    output
+    |> String.split("\n", trim: true)
+    |> Enum.each(fn line ->
+      case String.split(line, "=", parts: 2) do
+        [^marker, _] ->
+          :ok
+        _ ->
+          if String.trim(line) != "" do
+            IO.puts(line)
+          end
+      end
+    end)
+  end
+
+  defp remove_pipeline_status_line(output, marker) do
+    output
+    |> String.split("\n", trim: false)
+    |> Enum.reject(fn line ->
+      case String.split(String.trim(line), "=", parts: 2) do
+        [^marker, _] -> true
+        _ -> false
+      end
+    end)
+    |> Enum.join("\n")
   end
 
   defp print_config(args) do
