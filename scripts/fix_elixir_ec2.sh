@@ -7,7 +7,7 @@ PROFILE_FILE="/etc/profile.d/elixir.sh"
 FORCE_REMOVE_PACKAGE="0"
 
 log() {
-  printf '[fix-elixir-ec2] %s\n' "$*"
+  printf '[fix-elixir-ec2] %s\n' "$*" >&2
 }
 
 die() {
@@ -243,6 +243,7 @@ validate_installation() {
 }
 
 main() {
+  log "iniciando correção de runtime Elixir"
   ensure_base_tools
   ensure_erlang_runtime
   remove_system_elixir_if_requested
@@ -257,12 +258,14 @@ main() {
   local otp_release
   otp_release="$(detect_otp_release)"
   [[ -n "${otp_release}" ]] || die "não foi possível detectar OTP release via erl"
+  log "OTP detectado: ${otp_release}"
 
   local workdir archive_path
   workdir="$(mktemp -d -t fix-elixir-XXXXXX)"
   trap 'rm -rf "${workdir}"' EXIT
 
   archive_path="$(download_elixir_archive "${otp_release}" "${workdir}")"
+  log "arquivo de instalação: ${archive_path}"
   install_elixir_archive "${archive_path}"
   configure_path
   validate_installation
