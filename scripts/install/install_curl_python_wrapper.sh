@@ -13,17 +13,20 @@ die() {
 usage() {
   cat <<'USAGE'
 Uso:
-  scripts/install/install_curl_python_wrapper.sh [--install-dir <dir>] [--wrapper-source <file>] [--real-curl <path>]
+  scripts/install/install_curl_python_wrapper.sh [--install-dir <dir>] [--wrapper-source <file>] [--lib-source-dir <dir>] [--real-curl <path>]
 
 Padrões:
   --install-dir: $HOME/.local/share/curl-python-wrapper/bin
   --wrapper-source: scripts/wrappers/curl_python_wrapper.sh
+  --lib-source-dir: scripts/wrappers/lib
   --real-curl: primeiro curl encontrado no PATH
 USAGE
 }
 
 INSTALL_DIR="${HOME}/.local/share/curl-python-wrapper/bin"
 WRAPPER_SOURCE="$(cd "$(dirname "$0")/.." && pwd)/wrappers/curl_python_wrapper.sh"
+LIB_SOURCE_DIR="$(cd "$(dirname "$0")/.." && pwd)/wrappers/lib"
+LIB_SOURCE_DIR_EXPLICIT="0"
 REAL_CURL_BIN="${CURL_WRAPPER_REAL_CURL:-}"
 
 while [[ $# -gt 0 ]]; do
@@ -34,6 +37,11 @@ while [[ $# -gt 0 ]]; do
       ;;
     --wrapper-source)
       WRAPPER_SOURCE="${2:-}"
+      shift 2
+      ;;
+    --lib-source-dir)
+      LIB_SOURCE_DIR="${2:-}"
+      LIB_SOURCE_DIR_EXPLICIT="1"
       shift 2
       ;;
     --real-curl)
@@ -53,6 +61,12 @@ done
 [[ -n "${INSTALL_DIR}" ]] || die "--install-dir não pode ser vazio"
 [[ -n "${WRAPPER_SOURCE}" ]] || die "--wrapper-source não pode ser vazio"
 [[ -f "${WRAPPER_SOURCE}" ]] || die "wrapper não encontrado: ${WRAPPER_SOURCE}"
+if [[ "${LIB_SOURCE_DIR_EXPLICIT}" != "1" ]]; then
+  LIB_SOURCE_DIR="$(cd "$(dirname "${WRAPPER_SOURCE}")" && pwd)/lib"
+fi
+if [[ -n "${LIB_SOURCE_DIR}" && ! -d "${LIB_SOURCE_DIR}" ]]; then
+  die "diretório de libs não encontrado: ${LIB_SOURCE_DIR}"
+fi
 
 if [[ -z "${REAL_CURL_BIN}" ]]; then
   REAL_CURL_BIN="$(command -v curl || true)"
@@ -63,6 +77,10 @@ fi
 mkdir -p "${INSTALL_DIR}"
 cp "${WRAPPER_SOURCE}" "${INSTALL_DIR}/curl"
 chmod 0755 "${INSTALL_DIR}/curl"
+if [[ -n "${LIB_SOURCE_DIR}" ]]; then
+  mkdir -p "${INSTALL_DIR}/lib"
+  cp -R "${LIB_SOURCE_DIR}/." "${INSTALL_DIR}/lib/"
+fi
 
 cat <<EOF
 Instalação concluída.
@@ -76,24 +94,34 @@ vim.env.CURL_WRAPPER_REAL_CURL = "${REAL_CURL_BIN}"
 vim.env.PATH = "${INSTALL_DIR}:" .. vim.env.PATH
 vim.env.CURL_WRAPPER_RELEASE_FALLBACK_REPOS = "elixir-lsp/elixir-ls,luals/lua-language-server,omnisharp/omnisharp-roslyn"
 vim.env.CURL_WRAPPER_ENABLE_MASON_SMART_RELEASES = "1"
+vim.env.CURL_WRAPPER_RELEASE_CACHE_DIR = vim.fn.expand("~/.cache/curl-python-wrapper/releases")
+vim.env.CURL_WRAPPER_MASON_BUILDERS = "elixir-lsp/elixir-ls=elixir_ls_release"
 
 3) Pré-requisitos de fallback:
-- opcional: gh CLI autenticado para assets de release do GitHub (`gh auth status`)
-- para Mason em ambiente corporativo, releases de `elixir-ls`, `lua-language-server` e `omnisharp`
-- são tratadas por padrão como restritas
-- o wrapper tenta primeiro gerar o artefato localmente por estratégia compatível:
-- `omnisharp` e `lua-language-server`: baixa `.tar.gz` equivalente e reempacota em `.zip`
-- `elixir-ls`: baixa source tarball do tag, faz build local com `mix elixir_ls.release` e gera `.zip`
+- opcional: gh CLI autenticado para assets de release do GitHub (gh auth status)
+- para Mason em ambiente corporativo, o wrapper agora tenta automaticamente:
+- descobrir assets alternativos da release via API do GitHub
+- preferir .tar.gz/.tgz/.tar quando o Mason pede .zip
+- reempacotar localmente em .zip para preservar o contrato esperado pelo Mason
+- usar builders registrados quando não houver asset alternativo equivalente
+- builder padrão atual:
+- elixir-lsp/elixir-ls=elixir_ls_release
 - se a estratégia inteligente falhar, o wrapper ainda tenta `gh release`
 - para sobrescrever a lista:
 - export CURL_WRAPPER_RELEASE_FALLBACK_REPOS="elixir-lsp/elixir-ls,luals/lua-language-server,omnisharp/omnisharp-roslyn"
+- para sobrescrever o registro de builders:
+- export CURL_WRAPPER_MASON_BUILDERS="elixir-lsp/elixir-ls=elixir_ls_release"
+- para sobrescrever o cache local:
+- export CURL_WRAPPER_RELEASE_CACHE_DIR="\$HOME/.cache/curl-python-wrapper/releases"
+- para sobrescrever extensões reempacotáveis:
+- export CURL_WRAPPER_MASON_REPACKAGE_EXTENSIONS="tar.gz,tgz,tar"
 - para desabilitar a estratégia inteligente:
 - export CURL_WRAPPER_ENABLE_MASON_SMART_RELEASES=0
 - para reabilitar fallback direto de release explicitamente:
 - export CURL_WRAPPER_ALLOW_DIRECT_RELEASE_FALLBACK=1
 - python3 (usa requests quando disponível; sem requests cai para urllib nativo)
-- `tar` é necessário para estratégias com `.tar.gz`
-- `elixir` e `mix` são necessários quando o Mason precisar montar `elixir-ls` localmente
+- tar é necessário para estratégias com .tar.gz
+- elixir e mix são necessários quando o Mason precisar montar elixir-ls localmente
 - padrão do wrapper bloqueia download de .zip; libere se precisar:
 - export CURL_WRAPPER_ALLOW_ZIP_DOWNLOAD=1
 - para contornar falhas de certificado em ambientes fechados:

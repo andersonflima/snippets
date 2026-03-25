@@ -27,6 +27,7 @@ CURL_WRAPPER_RELEASE_FALLBACK_REPOS="${CURL_WRAPPER_RELEASE_FALLBACK_REPOS:-elix
 CURL_WRAPPER_ALLOW_DIRECT_RELEASE_FALLBACK="${CURL_WRAPPER_ALLOW_DIRECT_RELEASE_FALLBACK:-0}"
 CURL_WRAPPER_ENABLE_MASON_SMART_RELEASES="${CURL_WRAPPER_ENABLE_MASON_SMART_RELEASES:-1}"
 CURL_WRAPPER_ACTIVE_PROXY=""
+WRAPPER_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
 is_zip_extension() {
   local value
@@ -497,169 +498,6 @@ download_source_tarball_for_tag() {
     "${output_path}"
 }
 
-resolve_single_extracted_root() {
-  local base_dir
-  base_dir="$1"
-
-  mapfile -t extracted_entries < <(find "${base_dir}" -mindepth 1 -maxdepth 1)
-
-  if [[ "${#extracted_entries[@]}" -eq 1 && -d "${extracted_entries[0]}" ]]; then
-    printf '%s\n' "${extracted_entries[0]}"
-    return 0
-  fi
-
-  printf '%s\n' "${base_dir}"
-}
-
-pack_directory_as_zip() {
-  local source_dir output_path
-  source_dir="$1"
-  output_path="$2"
-
-  command -v python3 >/dev/null 2>&1 || die "python3 é obrigatório para empacotar artefato zip local"
-  mkdir -p "$(dirname "${output_path}")"
-
-  python3 - "${source_dir}" "${output_path}" <<'PY'
-import os
-import sys
-import zipfile
-
-source_dir, output_path = sys.argv[1], sys.argv[2]
-
-with zipfile.ZipFile(output_path, "w", zipfile.ZIP_DEFLATED) as archive:
-    for root, dirs, files in os.walk(source_dir):
-        dirs.sort()
-        files.sort()
-        for name in files:
-            full_path = os.path.join(root, name)
-            rel_path = os.path.relpath(full_path, source_dir)
-            archive.write(full_path, rel_path)
-PY
-}
-
-derive_tarball_release_asset_name() {
-  local slug asset
-  slug="$(normalize_repo_slug "${1:-}")"
-  asset="$2"
-
-  [[ "${asset}" == *.zip ]] || return 1
-
-  case "${slug}" in
-    omnisharp/omnisharp-roslyn|luals/lua-language-server)
-      [[ "${asset}" == *win* ]] && return 1
-      printf '%s\n' "${asset%.zip}.tar.gz"
-      return 0
-      ;;
-  esac
-
-  return 1
-}
-
-repackage_tarball_asset_as_zip() {
-  local owner repo tag asset output_path tarball_asset tmp_dir tarball_path extracted_dir package_root
-  owner="$1"
-  repo="$2"
-  tag="$3"
-  asset="$4"
-  output_path="$5"
-
-  tarball_asset="$(derive_tarball_release_asset_name "${owner}/${repo}" "${asset}" 2>/dev/null || true)"
-  [[ -n "${tarball_asset}" ]] || return 1
-
-  tmp_dir="$(mktemp -d -t curl-wrapper-release-XXXXXX)"
-  tarball_path="${tmp_dir}/${tarball_asset}"
-  extracted_dir="${tmp_dir}/extract"
-  mkdir -p "${extracted_dir}"
-
-  if ! download_release_asset_by_name "${owner}" "${repo}" "${tag}" "${tarball_asset}" "${tarball_path}"; then
-    rm -rf "${tmp_dir}"
-    return 1
-  fi
-
-  tar -xzf "${tarball_path}" -C "${extracted_dir}"
-  package_root="$(resolve_single_extracted_root "${extracted_dir}")"
-  pack_directory_as_zip "${package_root}" "${output_path}"
-  rm -rf "${tmp_dir}"
-  return 0
-}
-
-build_elixir_ls_release_zip() {
-  local owner repo tag output_path tmp_dir source_tarball source_extract source_root release_dir
-  owner="$1"
-  repo="$2"
-  tag="$3"
-  output_path="$4"
-
-  command -v elixir >/dev/null 2>&1 || return 1
-  command -v mix >/dev/null 2>&1 || return 1
-  command -v tar >/dev/null 2>&1 || return 1
-
-  tmp_dir="$(mktemp -d -t curl-wrapper-elixirls-XXXXXX)"
-  source_tarball="${tmp_dir}/source.tar.gz"
-  source_extract="${tmp_dir}/source"
-  release_dir="${tmp_dir}/release"
-  mkdir -p "${source_extract}" "${release_dir}"
-
-  if ! download_source_tarball_for_tag "${owner}" "${repo}" "${tag}" "${source_tarball}"; then
-    rm -rf "${tmp_dir}"
-    return 1
-  fi
-
-  tar -xzf "${source_tarball}" -C "${source_extract}"
-  source_root="$(resolve_single_extracted_root "${source_extract}")"
-
-  (
-    cd "${source_root}"
-    mix local.hex --force >/dev/null 2>&1 || true
-    mix local.rebar --force >/dev/null 2>&1 || true
-    mix deps.get
-    mix elixir_ls.release -o "${release_dir}"
-  ) >/dev/null 2>&1 || {
-    rm -rf "${tmp_dir}"
-    return 1
-  }
-
-  pack_directory_as_zip "${release_dir}" "${output_path}"
-  rm -rf "${tmp_dir}"
-  return 0
-}
-
-handle_restricted_release_asset() {
-  local output_path
-  output_path="${CURL_FALLBACK_OUTPUT:-}"
-  [[ -n "${output_path}" ]] || return 1
-  [[ "${output_path}" == *.zip ]] || return 1
-  parse_github_release_asset_url "${CURL_FALLBACK_URL:-}" || return 1
-
-  if is_truthy "${CURL_WRAPPER_ENABLE_MASON_SMART_RELEASES}"; then
-    case "${GITHUB_RELEASE_SLUG}" in
-      omnisharp/omnisharp-roslyn|luals/lua-language-server)
-        if repackage_tarball_asset_as_zip \
-          "${GITHUB_RELEASE_OWNER}" \
-          "${GITHUB_RELEASE_REPO}" \
-          "${GITHUB_RELEASE_TAG}" \
-          "${GITHUB_RELEASE_ASSET}" \
-          "${output_path}"; then
-          log "artefato zip gerado localmente a partir de release tar.gz para ${GITHUB_RELEASE_SLUG}"
-          return 0
-        fi
-        ;;
-      elixir-lsp/elixir-ls)
-        if build_elixir_ls_release_zip \
-          "${GITHUB_RELEASE_OWNER}" \
-          "${GITHUB_RELEASE_REPO}" \
-          "${GITHUB_RELEASE_TAG}" \
-          "${output_path}"; then
-          log "artefato zip do ElixirLS gerado localmente a partir do source tarball ${GITHUB_RELEASE_TAG}"
-          return 0
-        fi
-        ;;
-    esac
-  fi
-
-  return 1
-}
-
 download_with_gh_release() {
   command -v gh >/dev/null 2>&1 || return 1
 
@@ -833,6 +671,8 @@ has_explicit_proxy_arg() {
   return 1
 }
 
+source "${WRAPPER_DIR}/lib/mason_release_engine.sh"
+
 main() {
   local real_curl
   real_curl="$(resolve_real_curl)"
@@ -864,7 +704,7 @@ main() {
   if should_skip_direct_release_download "${CURL_FALLBACK_URL:-}"; then
     log "release corporativamente restrita detectada; pulando curl direto para ${CURL_FALLBACK_URL}"
 
-    if handle_restricted_release_asset; then
+    if handle_smart_release_asset; then
       exit 0
     fi
 
@@ -930,6 +770,13 @@ main() {
   fi
 
   if is_github_release_asset_url "${CURL_FALLBACK_URL}"; then
+    if is_truthy "${CURL_WRAPPER_ENABLE_MASON_SMART_RELEASES}"; then
+      log "curl falhou com exit=${curl_exit}; tentando engine dinâmica de release para ${CURL_FALLBACK_URL}"
+      if handle_smart_release_asset; then
+        exit 0
+      fi
+    fi
+
     log "curl falhou com exit=${curl_exit}; tentando fallback com gh release para ${CURL_FALLBACK_URL}"
     if download_with_gh_release; then
       if [[ -n "${CURL_FALLBACK_OUTPUT}" && ! -f "${CURL_FALLBACK_OUTPUT}" ]]; then

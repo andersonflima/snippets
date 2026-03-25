@@ -72,6 +72,8 @@ vim.env.PATH = table.concat({
 
 vim.env.CURL_WRAPPER_RELEASE_FALLBACK_REPOS = "elixir-lsp/elixir-ls,luals/lua-language-server,omnisharp/omnisharp-roslyn"
 vim.env.CURL_WRAPPER_ENABLE_MASON_SMART_RELEASES = "1"
+vim.env.CURL_WRAPPER_RELEASE_CACHE_DIR = vim.fn.expand("~/.cache/curl-python-wrapper/releases")
+vim.env.CURL_WRAPPER_MASON_BUILDERS = "elixir-lsp/elixir-ls=elixir_ls_release"
 vim.env.GIT_ZIP_WRAPPER_ARCHIVE_FORMAT = "tar.gz"
 ```
 
@@ -108,6 +110,18 @@ Principais variáveis:
   Ativa a estratégia inteligente do Mason para montar artefatos localmente.
   Padrão: `1`.
 
+- `CURL_WRAPPER_RELEASE_CACHE_DIR`
+  Diretório de cache dos artefatos gerados localmente.
+  Padrão: `$XDG_CACHE_HOME/curl-python-wrapper/releases`.
+
+- `CURL_WRAPPER_MASON_BUILDERS`
+  Registro CSV `repo=builder` para builders especiais quando não houver asset alternativo.
+  Padrão: `elixir-lsp/elixir-ls=elixir_ls_release`.
+
+- `CURL_WRAPPER_MASON_REPACKAGE_EXTENSIONS`
+  Extensões candidatas que a engine dinâmica pode baixar e reempacotar em `.zip`.
+  Padrão: `tar.gz,tgz,tar`.
+
 - `CURL_WRAPPER_STRICT`
   Desativa fallbacks e faz o wrapper retornar o erro do `curl` real.
 
@@ -140,21 +154,15 @@ Principais variáveis:
 
 ## Mason inteligente
 
-No `curl` wrapper existe uma camada adicional para alguns pacotes do Mason que normalmente falham em ambiente corporativo por dependerem de asset `.zip` de release.
+No `curl` wrapper existe uma engine adicional para pacotes do Mason que falham em ambiente corporativo por dependerem de asset `.zip` de release.
 
-Hoje as estratégias especiais cobrem:
+Comportamento atual:
 
-- `omnisharp/omnisharp-roslyn`
-- `luals/lua-language-server`
-- `elixir-lsp/elixir-ls`
-
-Comportamento:
-
-- `omnisharp` e `lua-language-server`
-  Se o Mason pedir `.zip`, o wrapper tenta baixar o `.tar.gz` equivalente da release, extrai e reempacota localmente em `.zip`.
-
-- `elixir-ls`
-  O wrapper baixa o source tarball do tag, roda `mix elixir_ls.release` e gera o `.zip` localmente.
+- quando a URL é de GitHub release e o Mason pede `.zip`, a engine tenta descobrir assets equivalentes da release via API
+- se encontrar `.tar.gz`, `.tgz` ou `.tar` compatível, baixa, extrai e reempacota localmente em `.zip`
+- se não encontrar asset equivalente, consulta o registro de builders especiais
+- o builder padrão atual cobre `elixir-lsp/elixir-ls`, gerando o release localmente com `mix elixir_ls.release`
+- o artefato gerado fica em cache local para reutilização automática nas próximas instalações
 
 Se a estratégia inteligente falhar:
 
@@ -168,7 +176,7 @@ Para o `curl` wrapper:
 - `python3`
 - `tar`
 
-Para a estratégia inteligente do `elixir-ls`:
+Para a engine dinâmica do `elixir-ls`:
 
 - `elixir`
 - `mix`
@@ -214,6 +222,6 @@ git clone https://github.com/neovim/neovim ~/tmp/neovim-zip-clone
 
 ## Observações
 
-- A parte mais genérica dos wrappers serve para outros pacotes também.
-- A parte “inteligente” de montar artefato localmente ainda é específica por pacote.
-- Para adicionar outro pacote do Mason com regra especial, o ponto de extensão principal está em `scripts/wrappers/curl_python_wrapper.sh`.
+- A descoberta de asset alternativo agora é genérica para releases do GitHub que tenham formato compatível.
+- O ponto de extensão para builders especiais está em `scripts/wrappers/lib/mason_release_engine.sh`.
+- Para adicionar outro builder especial, registre `repo=builder` em `CURL_WRAPPER_MASON_BUILDERS` e implemente o builder na engine.
