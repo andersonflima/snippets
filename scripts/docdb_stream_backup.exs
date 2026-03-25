@@ -10,6 +10,7 @@ defmodule DocdbStreamBackup do
     elixir scripts/docdb_stream_backup.exs <docdb_uri> <bucket>
     elixir scripts/docdb_stream_backup.exs <docdb_uri> <bucket> <prefix>
     elixir scripts/docdb_stream_backup.exs <docdb_uri> <bucket> [--prefix docdb/prod] [--num-parallel-collections 16] [--pigz-threads 8] [--compression-level 1] [--expected-size-bytes 10737418240]
+    elixir scripts/docdb_stream_backup.exs <docdb_uri> <bucket> --parallel-databases [--database app] [--database analytics] [--database-concurrency 2]
     elixir scripts/docdb_stream_backup.exs <docdb_uri> <bucket> --mongodump-arg --tls --mongodump-arg --tlsCAFile=/path/ca.pem
     elixir scripts/docdb_stream_backup.exs <docdb_uri> <bucket> --mongodump-arg='--tls' --mongodump-arg='--tlsCAFile=/path/ca.pem'
 
@@ -17,11 +18,13 @@ defmodule DocdbStreamBackup do
     elixir scripts/docdb_stream_backup.exs 'mongodb://user:pass@host:27017/?tls=true&replicaSet=rs0&readPreference=secondaryPreferred&retryWrites=false' meu-bucket
     elixir scripts/docdb_stream_backup.exs 'mongodb://user:pass@host:27017/?tls=true&replicaSet=rs0' meu-bucket docdb/prod
     elixir scripts/docdb_stream_backup.exs 'mongodb://user:pass@host:27017/?tls=true&replicaSet=rs0' meu-bucket --num-parallel-collections 16 --pigz-threads 8 --compression-level 1 --expected-size-bytes 10737418240
+    elixir scripts/docdb_stream_backup.exs 'mongodb://user:pass@host:27017/?tls=true&replicaSet=rs0' meu-bucket --parallel-databases --database app --database analytics --database-concurrency 2
 
   Observação:
     O upload acontece por stream em memória, sem gerar arquivo local no EC2.
     Os defaults de paralelismo são ajustados automaticamente por RAM/CPU do host para reduzir risco de OOM no mongodump.
     O perfil padrão mantém compressão nível 1 e expected-size de 10 GiB.
+    No modo --parallel-databases, cada database gera um objeto separado sob o prefixo docdb-backup-<timestamp>/.
     Meta de desempenho: 10 GiB em até 60 segundos.
     A string de conexão principal é o primeiro argumento posicional.
     Não passe --uri novamente em --mongodump-arg.
@@ -66,11 +69,9 @@ defmodule DocdbStreamBackup do
              :ok <- ensure_binary("aws"),
              capabilities <- inspect_mongodump_capabilities(),
              {:ok, compatible_args} <- apply_mongodump_compatibility(args, capabilities),
-             {:ok, key} <- build_s3_key(compatible_args.prefix),
-             {:ok, metrics} <- run_pipeline(compatible_args, capabilities, key) do
-          print_performance_report(metrics, compatible_args.expected_size_bytes)
-          IO.puts("backup concluído")
-          IO.puts("destino: s3://#{compatible_args.bucket}/#{key}")
+             {:ok, outcome} <- run_backup(compatible_args, capabilities) do
+          print_performance_report(outcome.metrics, compatible_args.expected_size_bytes)
+          print_backup_summary(outcome)
           :ok
         else
           {:error, message, metrics} ->
@@ -104,6 +105,9 @@ defmodule DocdbStreamBackup do
         strict: [
           help: :boolean,
           prefix: :string,
+          parallel_databases: :boolean,
+          database: :keep,
+          database_concurrency: :integer,
           num_parallel_collections: :integer,
           pigz_threads: :integer,
           compression_level: :integer,
@@ -132,6 +136,10 @@ defmodule DocdbStreamBackup do
              {:ok, validated_uri} <- validate_docdb_uri(normalized_uri),
              {:ok, normalized_bucket} <- normalize_non_empty(positional.bucket, "bucket"),
              {:ok, normalized_prefix} <- resolve_prefix(positional.prefix, options[:prefix]),
+             {:ok, database_names} <- resolve_database_names(options),
+             {:ok, parallel_databases} <- resolve_parallel_databases(options, database_names),
+             {:ok, database_concurrency} <-
+               resolve_database_concurrency(options[:database_concurrency], runtime_tuning, parallel_databases),
              {:ok, num_parallel_collections} <-
                resolve_positive_integer(
                  options[:num_parallel_collections],
@@ -142,12 +150,16 @@ defmodule DocdbStreamBackup do
                resolve_positive_integer(options[:pigz_threads], runtime_tuning.pigz_threads, "pigz_threads"),
              {:ok, compression_level} <- resolve_compression_level(options[:compression_level]),
              {:ok, expected_size_bytes} <- resolve_expected_size_bytes(options),
-             {:ok, extra_mongodump_args} <- resolve_mongodump_args(options) do
+             {:ok, extra_mongodump_args} <- resolve_mongodump_args(options),
+             :ok <- validate_parallel_database_args(parallel_databases, database_names, extra_mongodump_args) do
           {:ok,
            %{
              uri: validated_uri,
              bucket: normalized_bucket,
              prefix: normalized_prefix,
+             parallel_databases: parallel_databases,
+             database_names: database_names,
+             database_concurrency: database_concurrency,
              num_parallel_collections: num_parallel_collections,
              pigz_threads: pigz_threads,
              compression_level: compression_level,
@@ -181,6 +193,51 @@ defmodule DocdbStreamBackup do
   defp parse_positional_args([uri, bucket]), do: {:ok, %{uri: uri, bucket: bucket, prefix: nil}}
   defp parse_positional_args([uri, bucket, prefix]), do: {:ok, %{uri: uri, bucket: bucket, prefix: prefix}}
   defp parse_positional_args(_), do: {:error, "argumentos inválidos"}
+
+  defp resolve_database_names(options) do
+    database_names =
+      options
+      |> Keyword.get_values(:database)
+      |> Enum.map(&String.trim/1)
+      |> Enum.reject(&(&1 == ""))
+      |> Enum.uniq()
+
+    {:ok, database_names}
+  end
+
+  defp resolve_parallel_databases(options, database_names) do
+    {:ok, options[:parallel_databases] == true or database_names != [] or not is_nil(options[:database_concurrency])}
+  end
+
+  defp resolve_database_concurrency(_database_concurrency, _runtime_tuning, false), do: {:ok, 1}
+
+  defp resolve_database_concurrency(nil, runtime_tuning, true) do
+    {:ok, default_database_concurrency(runtime_tuning)}
+  end
+
+  defp resolve_database_concurrency(database_concurrency, _runtime_tuning, true) do
+    resolve_positive_integer(database_concurrency, database_concurrency, "database_concurrency")
+  end
+
+  defp validate_parallel_database_args(false, _database_names, _extra_mongodump_args), do: :ok
+
+  defp validate_parallel_database_args(true, _database_names, extra_mongodump_args) do
+    case Enum.find(extra_mongodump_args, &parallel_database_incompatible_arg?/1) do
+      nil ->
+        :ok
+
+      invalid_arg ->
+        {:error,
+         "no modo --parallel-databases não use --db/--collection em --mongodump-arg: #{inspect(invalid_arg)}"}
+    end
+  end
+
+  defp parallel_database_incompatible_arg?(arg) do
+    normalized_arg = String.trim(arg)
+
+    String.starts_with?(normalized_arg, "--db") or
+      String.starts_with?(normalized_arg, "--collection")
+  end
 
   defp format_invalid_option({option, nil}), do: to_string(option)
   defp format_invalid_option({option, value}), do: "#{option}=#{inspect(value)}"
@@ -426,16 +483,286 @@ defmodule DocdbStreamBackup do
   end
 
   defp build_s3_key(prefix) do
-    timestamp =
-      DateTime.utc_now()
-      |> DateTime.to_iso8601()
-      |> String.replace([":", "-"], "")
-      |> String.replace(".", "")
-
-    {:ok, "#{prefix}docdb-backup-#{timestamp}.archive.gz"}
+    {:ok, "#{prefix}docdb-backup-#{build_backup_timestamp()}.archive.gz"}
   end
 
-  defp run_pipeline(args, capabilities, key) do
+  defp build_parallel_session_prefix(prefix) do
+    {:ok, "#{prefix}docdb-backup-#{build_backup_timestamp()}/"}
+  end
+
+  defp build_backup_timestamp do
+    DateTime.utc_now()
+    |> DateTime.to_iso8601()
+    |> String.replace([":", "-"], "")
+    |> String.replace(".", "")
+  end
+
+  defp run_backup(args, capabilities) do
+    if args.parallel_databases do
+      run_parallel_database_pipelines(args, capabilities)
+    else
+      with {:ok, key} <- build_s3_key(args.prefix),
+           {:ok, metrics} <- run_pipeline(args, capabilities, key) do
+        {:ok,
+         %{
+           mode: :single,
+           metrics: metrics,
+           destinations: ["s3://#{args.bucket}/#{key}"]
+         }}
+      end
+    end
+  end
+
+  defp print_backup_summary(outcome) do
+    IO.puts("backup concluído")
+
+    case outcome.mode do
+      :single ->
+        [destination] = outcome.destinations
+        IO.puts("destino: #{destination}")
+
+      :parallel_databases ->
+        IO.puts("destinos:")
+
+        outcome.destinations
+        |> Enum.sort()
+        |> Enum.each(&IO.puts/1)
+    end
+  end
+
+  defp run_parallel_database_pipelines(args, capabilities) do
+    started_at = System.monotonic_time(:microsecond)
+
+    with {:ok, target_databases} <- resolve_target_databases(args),
+         {:ok, session_prefix} <- build_parallel_session_prefix(args.prefix) do
+      parallel_args = apply_parallel_database_runtime_tuning(args)
+      per_database_expected_size_bytes = expected_size_bytes_per_database(args.expected_size_bytes, length(target_databases))
+
+      print_parallel_database_config(parallel_args, capabilities, target_databases, session_prefix, per_database_expected_size_bytes)
+
+      stage_specs =
+        target_databases
+        |> Enum.map(fn database_name ->
+          %{name: database_name, activity_label: "stream", parallelism: 1}
+        end)
+
+      progress_display = start_progress_display("backup paralelo por database", stage_specs)
+      initial_stage_states = Map.new(target_databases, &{&1, {:running, nil}})
+
+      result =
+        target_databases
+        |> Task.async_stream(
+          fn database_name ->
+            run_parallel_database_pipeline(
+              parallel_args,
+              capabilities,
+              session_prefix,
+              database_name,
+              per_database_expected_size_bytes
+            )
+          end,
+          max_concurrency: min(args.database_concurrency, max(length(target_databases), 1)),
+          ordered: false,
+          timeout: :infinity
+        )
+        |> Enum.reduce(
+          %{stage_states: initial_stage_states, destinations: [], errors: []},
+          fn task_result, acc ->
+            reduce_parallel_database_result(task_result, acc, progress_display)
+          end
+        )
+
+      stop_progress_display(progress_display, result.stage_states)
+
+      case result.errors do
+        [] ->
+          {:ok,
+           %{
+             mode: :parallel_databases,
+             metrics: %{
+               duration_us: System.monotonic_time(:microsecond) - started_at,
+               raw_bytes: 0,
+               estimated_bytes: args.expected_size_bytes
+             },
+             destinations: Enum.sort(result.destinations)
+           }}
+
+        errors ->
+          {:error,
+           format_parallel_database_errors(errors),
+           %{
+             duration_us: System.monotonic_time(:microsecond) - started_at,
+             raw_bytes: 0,
+             estimated_bytes: 0
+           }}
+      end
+    end
+  end
+
+  defp resolve_target_databases(%{database_names: []} = args) do
+    discover_databases(args.uri)
+  end
+
+  defp resolve_target_databases(%{database_names: database_names}) do
+    {:ok, database_names}
+  end
+
+  defp discover_databases(uri) do
+    with {:ok, discovery_command} <- database_discovery_command(uri),
+         {output, 0} <- run_database_discovery(discovery_command),
+         {:ok, database_names} <- parse_discovered_databases(output) do
+      case filter_discovered_databases(database_names) do
+        [] -> {:error, "nenhum database de usuário encontrado para o modo --parallel-databases"}
+        discovered_databases -> {:ok, discovered_databases}
+      end
+    else
+      {:error, message} ->
+        {:error, message}
+
+      {output, status} ->
+        {:error, "falha ao descobrir databases (status #{status}): #{String.trim(output)}"}
+    end
+  end
+
+  defp database_discovery_command(uri) do
+    script = "db.adminCommand({ listDatabases: 1, nameOnly: true }).databases.forEach((item) => console.log(item.name))"
+
+    cond do
+      System.find_executable("mongosh") ->
+        {:ok, {"mongosh", ["--quiet", uri, "--eval", script]}}
+
+      System.find_executable("mongo") ->
+        legacy_script = "db.adminCommand({ listDatabases: 1, nameOnly: true }).databases.forEach(function(item) { print(item.name) })"
+        {:ok, {"mongo", ["--quiet", uri, "--eval", legacy_script]}}
+
+      true ->
+        {:error,
+         "modo --parallel-databases sem --database exige mongosh ou mongo no PATH para descobrir os databases"}
+    end
+  end
+
+  defp run_database_discovery({binary, command_args}) do
+    System.cmd(binary, command_args, stderr_to_stdout: true)
+  rescue
+    error ->
+      {:error, Exception.message(error)}
+  end
+
+  defp parse_discovered_databases(output) do
+    database_names =
+      output
+      |> String.split("\n", trim: true)
+      |> Enum.map(&String.trim/1)
+      |> Enum.reject(&(&1 == "" or &1 == "undefined"))
+      |> Enum.uniq()
+
+    {:ok, database_names}
+  end
+
+  defp filter_discovered_databases(database_names) do
+    database_names
+    |> Enum.reject(&(&1 in ["admin", "config", "local"]))
+  end
+
+  defp apply_parallel_database_runtime_tuning(args) do
+    %{
+      args
+      | num_parallel_collections: parallel_database_num_parallel_collections(args),
+        pigz_threads: parallel_database_pigz_threads(args)
+    }
+  end
+
+  defp parallel_database_num_parallel_collections(%{num_parallel_collections_source: :auto}), do: 1
+  defp parallel_database_num_parallel_collections(args), do: args.num_parallel_collections
+
+  defp parallel_database_pigz_threads(%{pigz_threads_source: :auto}), do: 1
+  defp parallel_database_pigz_threads(args), do: args.pigz_threads
+
+  defp expected_size_bytes_per_database(expected_size_bytes, database_count) do
+    expected_size_bytes
+    |> div(max(database_count, 1))
+    |> max(1_048_576)
+  end
+
+  defp print_parallel_database_config(args, capabilities, target_databases, session_prefix, per_database_expected_size_bytes) do
+    print_config(args, capabilities)
+    IO.puts("modo: parallel_databases database_concurrency=#{args.database_concurrency} databases=#{length(target_databases)}")
+    IO.puts("destino-base: s3://#{args.bucket}/#{session_prefix}")
+    IO.puts("expected_size_por_database: #{format_bytes_binary(per_database_expected_size_bytes)}")
+    IO.puts("databases: #{Enum.join(target_databases, ", ")}")
+  end
+
+  defp run_parallel_database_pipeline(args, capabilities, session_prefix, database_name, per_database_expected_size_bytes) do
+    key = build_parallel_database_key(session_prefix, database_name)
+
+    database_args = %{
+      args
+      | expected_size_bytes: per_database_expected_size_bytes,
+        extra_mongodump_args: args.extra_mongodump_args ++ ["--db=#{database_name}"]
+    }
+
+    case run_pipeline(database_args, capabilities, key,
+           show_config?: false,
+           show_progress?: false,
+           print_output?: false
+         ) do
+      {:ok, metrics} ->
+        {:ok, %{database_name: database_name, destination: "s3://#{args.bucket}/#{key}", metrics: metrics}}
+
+      {:error, message, metrics} ->
+        {:error, %{database_name: database_name, message: message, metrics: metrics}}
+    end
+  end
+
+  defp build_parallel_database_key(session_prefix, database_name) do
+    "#{session_prefix}#{sanitize_s3_segment(database_name)}.archive.gz"
+  end
+
+  defp sanitize_s3_segment(segment) do
+    segment
+    |> String.trim()
+    |> String.replace(~r{[^a-zA-Z0-9._-]+}, "_")
+  end
+
+  defp reduce_parallel_database_result({:ok, {:ok, result}}, acc, progress_display) do
+    update_progress_display(progress_display, result.database_name, {:done, 0})
+
+    %{
+      acc
+      | stage_states: Map.put(acc.stage_states, result.database_name, {:done, 0}),
+        destinations: [result.destination | acc.destinations]
+    }
+  end
+
+  defp reduce_parallel_database_result({:ok, {:error, error}}, acc, progress_display) do
+    update_progress_display(progress_display, error.database_name, {:failed, 1})
+
+    %{
+      acc
+      | stage_states: Map.put(acc.stage_states, error.database_name, {:failed, 1}),
+        errors: [error | acc.errors]
+    }
+  end
+
+  defp reduce_parallel_database_result({:exit, reason}, acc, _progress_display) do
+    error = %{database_name: "desconhecido", message: "task abortada: #{inspect(reason)}", metrics: %{}}
+    %{acc | errors: [error | acc.errors]}
+  end
+
+  defp format_parallel_database_errors(errors) do
+    errors
+    |> Enum.reverse()
+    |> Enum.map(fn error ->
+      """
+      database: #{error.database_name}
+      #{error.message}
+      """
+      |> String.trim()
+    end)
+    |> Enum.join("\n\n")
+  end
+
+  defp run_pipeline(args, capabilities, key, opts \\ []) do
     started_at = System.monotonic_time(:microsecond)
     destination = "s3://#{args.bucket}/#{key}"
 
@@ -506,15 +833,30 @@ defmodule DocdbStreamBackup do
     exit "${pipeline_exit}"
     """
 
-    print_config(args, capabilities)
-    IO.puts("destino: #{destination}")
-    IO.puts("alvo: #{format_bytes_binary(@default_expected_size_bytes)} em até #{@default_target_duration_seconds}s")
-    progress_display = start_progress_display("backup em andamento", progress_stage_specs(args, capabilities))
+    show_config? = Keyword.get(opts, :show_config?, true)
+    show_progress? = Keyword.get(opts, :show_progress?, true)
+    print_output? = Keyword.get(opts, :print_output?, true)
+
+    if show_config? do
+      print_config(args, capabilities)
+      IO.puts("destino: #{destination}")
+      IO.puts("alvo: #{format_bytes_binary(@default_expected_size_bytes)} em até #{@default_target_duration_seconds}s")
+    end
+
+    progress_display =
+      if show_progress? do
+        start_progress_display("backup em andamento", progress_stage_specs(args, capabilities))
+      else
+        nil
+      end
 
     case System.cmd("bash", ["-c", command], stderr_to_stdout: true) do
       {output, 0} ->
-        stop_progress_display(progress_display, success_stage_states())
-        print_pipeline_output(output, status_probe, stderr_markers)
+        maybe_stop_progress_display(progress_display, success_stage_states())
+
+        if print_output? do
+          print_pipeline_output(output, status_probe, stderr_markers)
+        end
 
         {:ok,
          %{
@@ -525,7 +867,7 @@ defmodule DocdbStreamBackup do
 
       {output, status} ->
         pipeline_status = extract_pipeline_status(output, status_probe)
-        stop_progress_display(progress_display, final_stage_states(pipeline_status))
+        maybe_stop_progress_display(progress_display, final_stage_states(pipeline_status))
         cleaned_output = remove_probe_sections(output, status_probe, stderr_markers)
         failed_stages = failed_pipeline_stages(pipeline_status)
         stderr_sections = extract_stderr_sections(output, stderr_markers)
@@ -930,6 +1272,12 @@ defmodule DocdbStreamBackup do
         |> Map.put(:stage_states, stage_states)
         |> render_progress_display()
         |> finalize_progress_display()
+
+      {:update, stage_name, stage_state} ->
+        state
+        |> put_in([:stage_states, stage_name], stage_state)
+        |> render_progress_display()
+        |> progress_display_loop()
     after
       1_000 ->
         state
@@ -949,6 +1297,16 @@ defmodule DocdbStreamBackup do
 
   defp stop_progress_display(pid, stage_states) do
     send(pid, {:stop, stage_states})
+    :ok
+  end
+
+  defp maybe_stop_progress_display(nil, _stage_states), do: :ok
+  defp maybe_stop_progress_display(pid, stage_states), do: stop_progress_display(pid, stage_states)
+
+  defp update_progress_display(nil, _stage_name, _stage_state), do: :ok
+
+  defp update_progress_display(pid, stage_name, stage_state) do
+    send(pid, {:update, stage_name, stage_state})
     :ok
   end
 
@@ -1090,6 +1448,25 @@ defmodule DocdbStreamBackup do
 
       true ->
         :throughput
+    end
+  end
+
+  defp default_database_concurrency(runtime_tuning) do
+    case runtime_tuning.tuning_profile do
+      :conservative ->
+        1
+
+      :cpu_limited_throughput ->
+        min(runtime_tuning.schedulers_online, 2)
+
+      :cpu_limited_balanced ->
+        1
+
+      :balanced ->
+        min(runtime_tuning.schedulers_online, 2)
+
+      :throughput ->
+        min(runtime_tuning.schedulers_online, 4)
     end
   end
 
