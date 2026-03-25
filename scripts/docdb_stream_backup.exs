@@ -540,29 +540,29 @@ defmodule DocdbStreamBackup do
     with {:ok, target_databases} <- resolve_target_databases(args),
          {:ok, session_prefix} <- build_parallel_session_prefix(args.prefix) do
       parallel_args = apply_parallel_database_runtime_tuning(args, target_databases)
-      per_database_expected_size_bytes = expected_size_bytes_per_database(args.expected_size_bytes, length(target_databases))
+      target_database_names = Enum.map(target_databases, & &1.name)
 
-      print_parallel_database_config(parallel_args, capabilities, target_databases, session_prefix, per_database_expected_size_bytes)
+      print_parallel_database_config(parallel_args, capabilities, target_databases, session_prefix, args.expected_size_bytes)
 
       stage_specs =
-        target_databases
+        target_database_names
         |> Enum.map(fn database_name ->
           %{name: database_name, activity_label: "stream", parallelism: 1}
         end)
 
       progress_display = start_progress_display("backup paralelo por database", stage_specs)
-      initial_stage_states = Map.new(target_databases, &{&1, {:running, nil}})
+      initial_stage_states = Map.new(target_database_names, &{&1, {:running, nil}})
 
       result =
         target_databases
         |> Task.async_stream(
-          fn database_name ->
+          fn database ->
             run_parallel_database_pipeline(
               parallel_args,
               capabilities,
               session_prefix,
-              database_name,
-              per_database_expected_size_bytes
+              database,
+              expected_size_bytes_for_database(args.expected_size_bytes, target_databases, database)
             )
           end,
           max_concurrency: parallel_args.database_concurrency,
@@ -608,14 +608,14 @@ defmodule DocdbStreamBackup do
   end
 
   defp resolve_target_databases(%{database_names: database_names}) do
-    {:ok, database_names}
+    {:ok, Enum.map(database_names, &%{name: &1, size_on_disk: nil})}
   end
 
   defp discover_databases(uri, extra_connection_args) do
     with {:ok, discovery_command} <- database_discovery_command(uri, extra_connection_args),
          {output, 0} <- run_database_discovery(discovery_command),
-         {:ok, database_names} <- parse_discovered_databases(output) do
-      case filter_discovered_databases(database_names) do
+         {:ok, databases} <- parse_discovered_databases(output) do
+      case filter_discovered_databases(databases) do
         [] -> {:error, "nenhum database de usuário encontrado para o modo --parallel-databases"}
         discovered_databases -> {:ok, discovered_databases}
       end
@@ -629,7 +629,7 @@ defmodule DocdbStreamBackup do
   end
 
   defp database_discovery_command(uri, extra_connection_args) do
-    script = "db.adminCommand({ listDatabases: 1, nameOnly: true }).databases.forEach((item) => console.log(item.name))"
+    script = "db.adminCommand({ listDatabases: 1 }).databases.forEach((item) => console.log([item.name, item.sizeOnDisk || 0].join('\\t')))"
 
     cond do
       System.find_executable("mongosh") ->
@@ -638,7 +638,7 @@ defmodule DocdbStreamBackup do
         {:ok, {"mongosh", ["--quiet", discovery_uri] ++ discovery_args ++ ["--eval", script]}}
 
       System.find_executable("mongo") ->
-        legacy_script = "db.adminCommand({ listDatabases: 1, nameOnly: true }).databases.forEach(function(item) { print(item.name) })"
+        legacy_script = "db.adminCommand({ listDatabases: 1 }).databases.forEach(function(item) { print(item.name + '\\t' + (item.sizeOnDisk || 0)) })"
         discovery_uri = normalize_discovery_uri_query(uri, :mongo)
         discovery_args = discovery_connection_args(extra_connection_args, :mongo)
         {:ok, {"mongo", ["--quiet", discovery_uri] ++ discovery_args ++ ["--eval", legacy_script]}}
@@ -729,19 +729,56 @@ defmodule DocdbStreamBackup do
   end
 
   defp parse_discovered_databases(output) do
-    database_names =
+    databases =
       output
       |> String.split("\n", trim: true)
       |> Enum.map(&String.trim/1)
       |> Enum.reject(&(&1 == "" or &1 == "undefined"))
-      |> Enum.uniq()
+      |> Enum.map(&parse_discovered_database_line/1)
+      |> Enum.reject(&is_nil/1)
+      |> Enum.uniq_by(& &1.name)
 
-    {:ok, database_names}
+    {:ok, databases}
   end
 
-  defp filter_discovered_databases(database_names) do
-    database_names
-    |> Enum.reject(&(&1 in ["admin", "config", "local"]))
+  defp parse_discovered_database_line(line) do
+    case String.split(line, "\t", parts: 2) do
+      [database_name, size_text] ->
+        %{
+          name: database_name,
+          size_on_disk: parse_database_size_on_disk(size_text)
+        }
+
+      [database_name] ->
+        %{
+          name: database_name,
+          size_on_disk: nil
+        }
+
+      _ ->
+        nil
+    end
+  end
+
+  defp parse_database_size_on_disk(value) do
+    value
+    |> String.trim()
+    |> case do
+      "" ->
+        nil
+
+      normalized ->
+        case Integer.parse(normalized) do
+          {parsed_size, ""} when parsed_size >= 0 -> parsed_size
+          _ -> nil
+        end
+    end
+  end
+
+  defp filter_discovered_databases(databases) do
+    databases
+    |> Enum.reject(&(&1.name in ["admin", "config", "local"]))
+    |> Enum.sort_by(fn database -> {-normalized_database_size(database), database.name} end)
   end
 
   defp apply_parallel_database_runtime_tuning(args, target_databases) do
@@ -757,10 +794,23 @@ defmodule DocdbStreamBackup do
   end
 
   defp effective_parallel_database_concurrency(args, target_databases) do
-    target_databases
-    |> length()
-    |> min(max(args.database_concurrency, 1))
-    |> max(1)
+    requested_concurrency =
+      target_databases
+      |> length()
+      |> min(max(args.database_concurrency, 1))
+      |> max(1)
+
+    case requested_concurrency do
+      1 ->
+        1
+
+      _ ->
+        if should_reduce_parallel_database_concurrency?(target_databases) do
+          1
+        else
+          requested_concurrency
+        end
+    end
   end
 
   defp distribute_parallel_database_runtime_budgets(args) do
@@ -789,23 +839,77 @@ defmodule DocdbStreamBackup do
   defp parallel_database_pigz_threads(%{pigz_threads_source: :auto} = args), do: args.pigz_threads
   defp parallel_database_pigz_threads(args), do: args.pigz_threads
 
-  defp expected_size_bytes_per_database(expected_size_bytes, database_count) do
-    expected_size_bytes
-    |> div(max(database_count, 1))
-    |> max(1_048_576)
+  defp should_reduce_parallel_database_concurrency?(target_databases) do
+    sorted_sizes =
+      target_databases
+      |> Enum.map(&normalized_database_size/1)
+      |> Enum.sort(:desc)
+
+    case sorted_sizes do
+      [largest, second_largest | _rest] ->
+        total_size = Enum.sum(sorted_sizes)
+        dominance_ratio = safe_divide(largest, total_size)
+        imbalance_ratio = safe_divide(largest, max(second_largest, 1))
+        dominance_ratio >= 0.70 or imbalance_ratio >= 4.0
+
+      _ ->
+        false
+    end
   end
 
-  defp print_parallel_database_config(args, capabilities, target_databases, session_prefix, per_database_expected_size_bytes) do
+  defp expected_size_bytes_for_database(expected_size_bytes, target_databases, database) do
+    total_size = target_databases |> Enum.map(&normalized_database_size/1) |> Enum.sum()
+    database_size = normalized_database_size(database)
+
+    if total_size > 0 do
+      expected_size_bytes
+      |> Kernel.*(database_size)
+      |> div(total_size)
+      |> max(1_048_576)
+    else
+      expected_size_bytes
+      |> div(max(length(target_databases), 1))
+      |> max(1_048_576)
+    end
+  end
+
+  defp normalized_database_size(database) do
+    case Map.get(database, :size_on_disk) do
+      size when is_integer(size) and size >= 0 -> size
+      _ -> 0
+    end
+  end
+
+  defp safe_divide(_numerator, 0), do: 0.0
+  defp safe_divide(numerator, denominator), do: numerator / denominator
+
+  defp print_parallel_database_config(args, capabilities, target_databases, session_prefix, expected_size_bytes) do
     print_config(args, capabilities)
     IO.puts(
       "modo: parallel_databases database_concurrency=#{args.database_concurrency} databases=#{length(target_databases)} per_pipeline=#{format_parallel_runtime(args, capabilities)}"
     )
     IO.puts("destino-base: s3://#{args.bucket}/#{session_prefix}")
-    IO.puts("expected_size_por_database: #{format_bytes_binary(per_database_expected_size_bytes)}")
-    IO.puts("databases: #{Enum.join(target_databases, ", ")}")
+    IO.puts("expected_size_total: #{format_bytes_binary(expected_size_bytes)}")
+    IO.puts("databases: #{format_target_databases(target_databases)}")
   end
 
-  defp run_parallel_database_pipeline(args, capabilities, session_prefix, database_name, per_database_expected_size_bytes) do
+  defp format_target_databases(target_databases) do
+    target_databases
+    |> Enum.map(fn database ->
+      "#{database.name}(#{format_database_size_label(database)})"
+    end)
+    |> Enum.join(", ")
+  end
+
+  defp format_database_size_label(database) do
+    case Map.get(database, :size_on_disk) do
+      size when is_integer(size) and size >= 0 -> format_bytes_binary(size)
+      _ -> "desconhecido"
+    end
+  end
+
+  defp run_parallel_database_pipeline(args, capabilities, session_prefix, database, per_database_expected_size_bytes) do
+    database_name = database.name
     key = build_parallel_database_key(session_prefix, database_name)
 
     database_args = %{
