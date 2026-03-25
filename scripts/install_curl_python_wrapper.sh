@@ -74,9 +74,16 @@ export PATH="${INSTALL_DIR}:\$PATH"
 2) Para LazyVim/Mason (init.lua):
 vim.env.CURL_WRAPPER_REAL_CURL = "${REAL_CURL_BIN}"
 vim.env.PATH = "${INSTALL_DIR}:" .. vim.env.PATH
+vim.env.CURL_WRAPPER_RELEASE_FALLBACK_REPOS = "elixir-lsp/elixir-ls,luals/lua-language-server,omnisharp/omnisharp-roslyn"
 
 3) Pré-requisitos de fallback:
 - opcional: gh CLI autenticado para assets de release do GitHub (`gh auth status`)
+- para Mason em ambiente corporativo, releases de `elixir-ls`, `lua-language-server` e `omnisharp`
+- são tratadas por padrão como restritas e o wrapper pula o curl direto, usando `gh release`
+- para sobrescrever a lista:
+- export CURL_WRAPPER_RELEASE_FALLBACK_REPOS="elixir-lsp/elixir-ls,luals/lua-language-server,omnisharp/omnisharp-roslyn"
+- para reabilitar fallback direto de release explicitamente:
+- export CURL_WRAPPER_ALLOW_DIRECT_RELEASE_FALLBACK=1
 - python3 (usa requests quando disponível; sem requests cai para urllib nativo)
 - padrão do wrapper bloqueia download de .zip; libere se precisar:
 - export CURL_WRAPPER_ALLOW_ZIP_DOWNLOAD=1

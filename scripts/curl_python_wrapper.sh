@@ -23,6 +23,8 @@ is_truthy() {
 
 CURL_WRAPPER_ALLOW_ZIP_DOWNLOAD="${CURL_WRAPPER_ALLOW_ZIP_DOWNLOAD:-0}"
 CURL_WRAPPER_AUTO_INSECURE_ON_CERT_ERROR="${CURL_WRAPPER_AUTO_INSECURE_ON_CERT_ERROR:-0}"
+CURL_WRAPPER_RELEASE_FALLBACK_REPOS="${CURL_WRAPPER_RELEASE_FALLBACK_REPOS:-elixir-lsp/elixir-ls,luals/lua-language-server,omnisharp/omnisharp-roslyn}"
+CURL_WRAPPER_ALLOW_DIRECT_RELEASE_FALLBACK="${CURL_WRAPPER_ALLOW_DIRECT_RELEASE_FALLBACK:-0}"
 CURL_WRAPPER_ACTIVE_PROXY=""
 
 is_zip_extension() {
@@ -30,6 +32,48 @@ is_zip_extension() {
   value="${1%%\?*}"
   value="${value%%#*}"
   [[ "${value}" == *.zip ]]
+}
+
+normalize_repo_slug() {
+  printf '%s' "${1:-}" | tr '[:upper:]' '[:lower:]'
+}
+
+github_release_asset_slug() {
+  local url
+  url="${1%%\?*}"
+
+  if [[ "${url}" =~ ^https://github\.com/([^/]+)/([^/]+)/releases/download/[^/]+/.+$ ]]; then
+    printf '%s/%s\n' \
+      "$(normalize_repo_slug "${BASH_REMATCH[1]}")" \
+      "$(normalize_repo_slug "${BASH_REMATCH[2]}")"
+    return 0
+  fi
+
+  return 1
+}
+
+is_restricted_release_repo_slug() {
+  local slug candidate normalized_candidate
+  slug="$(normalize_repo_slug "${1:-}")"
+  [[ -n "${slug}" ]] || return 1
+
+  IFS=',' read -r -a restricted_repos <<< "${CURL_WRAPPER_RELEASE_FALLBACK_REPOS}"
+  for candidate in "${restricted_repos[@]}"; do
+    normalized_candidate="$(normalize_repo_slug "${candidate}")"
+    [[ -n "${normalized_candidate}" ]] || continue
+    if [[ "${normalized_candidate}" == "${slug}" ]]; then
+      return 0
+    fi
+  done
+
+  return 1
+}
+
+is_restricted_release_asset_url() {
+  local slug
+  slug="$(github_release_asset_slug "${1:-}" 2>/dev/null || true)"
+  [[ -n "${slug}" ]] || return 1
+  is_restricted_release_repo_slug "${slug}"
 }
 
 resolve_proxy_config() {
@@ -96,12 +140,12 @@ assert_non_zip_download_request() {
 
   if (( ${#positional[@]} > 0 )); then
     url_path="${positional[${#positional[@]} - 1]}"
-    if is_zip_extension "${url_path}"; then
+    if is_zip_extension "${url_path}" && ! is_restricted_release_asset_url "${url_path}"; then
       die "download bloqueado para URL .zip: ${url_path}. Defina CURL_WRAPPER_ALLOW_ZIP_DOWNLOAD=1 para permitir"
     fi
   fi
 
-  if [[ -n "${output_path:-}" ]] && is_zip_extension "${output_path}"; then
+  if [[ -n "${output_path:-}" ]] && is_zip_extension "${output_path}" && ! is_restricted_release_asset_url "${url_path:-}"; then
     die "download bloqueado para saída .zip: ${output_path}. Defina CURL_WRAPPER_ALLOW_ZIP_DOWNLOAD=1 para permitir"
   fi
 }
@@ -370,6 +414,10 @@ is_github_release_asset_url() {
   [[ "${url}" =~ ^https://github\.com/[^/]+/[^/]+/releases/download/[^/]+/.+ ]]
 }
 
+should_skip_direct_release_download() {
+  is_restricted_release_asset_url "${1:-}" && ! is_truthy "${CURL_WRAPPER_ALLOW_DIRECT_RELEASE_FALLBACK}"
+}
+
 download_with_gh_release() {
   command -v gh >/dev/null 2>&1 || return 1
 
@@ -570,6 +618,21 @@ main() {
 
   if [[ $# -eq 0 ]]; then
     exec "${real_curl}"
+  fi
+
+  if should_skip_direct_release_download "${CURL_FALLBACK_URL:-}"; then
+    log "release corporativamente restrita detectada; pulando curl direto para ${CURL_FALLBACK_URL}"
+
+    if download_with_gh_release; then
+      if [[ -n "${CURL_FALLBACK_OUTPUT}" && ! -f "${CURL_FALLBACK_OUTPUT}" ]]; then
+        die "fallback gh não gerou arquivo esperado: ${CURL_FALLBACK_OUTPUT}"
+      fi
+
+      log "fallback gh release concluído com sucesso."
+      exit 0
+    fi
+
+    die "download direto de release bloqueado para ${CURL_FALLBACK_URL}. Garanta gh autenticado ou ajuste CURL_WRAPPER_RELEASE_FALLBACK_REPOS/CURL_WRAPPER_ALLOW_DIRECT_RELEASE_FALLBACK."
   fi
 
   if [[ -z "${CURL_FALLBACK_PROXY:-}" ]] && [[ -n "${resolved_proxy}" ]] && ! has_explicit_proxy_arg "$@"; then
