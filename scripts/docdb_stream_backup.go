@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"fmt"
@@ -321,21 +322,39 @@ func parseLongOption(token string, argv []string, index int) (string, string, bo
 func translateLegacyTLSArgs(args []string) []string {
 	helpOutput, err := getMongodumpHelp()
 	if err != nil {
-		return args
+		return appendQuietIfSupported(args, "")
 	}
 
 	supportsTLS := isFlagInHelp(helpOutput, "--tls")
 	supportsSSL := isFlagInHelp(helpOutput, "--ssl")
-	if supportsTLS || !supportsSSL {
+
+	translated := args
+	if !supportsTLS && supportsSSL {
+		translated = make([]string, 0, len(args))
+		for _, arg := range args {
+			translated = append(translated, translateLegacyTLSArg(arg))
+		}
+	}
+
+	return appendQuietIfSupported(translated, helpOutput)
+}
+
+func appendQuietIfSupported(args []string, helpText string) []string {
+	for _, arg := range args {
+		if arg == "--quiet" || strings.HasPrefix(arg, "--quiet=") {
+			return args
+		}
+	}
+
+	if helpText == "" {
 		return args
 	}
 
-	translated := make([]string, 0, len(args))
-	for _, arg := range args {
-		translated = append(translated, translateLegacyTLSArg(arg))
+	if isFlagInHelp(helpText, "--quiet") {
+		return append(args, "--quiet")
 	}
 
-	return translated
+	return args
 }
 
 func getMongodumpHelp() (string, error) {
@@ -509,6 +528,8 @@ func buildS3Key(prefix string) string {
 
 func runPipeline(args backupArgs, destination string) error {
 	ctx := context.Background()
+	stopSpinner, doneSpinner := startProgressSpinner()
+	defer stopProgressSpinner(stopSpinner, doneSpinner)
 
 	mongodumpArgs := make([]string, 0, len(args.extraMongodumpArgs)+3)
 	mongodumpArgs = append(mongodumpArgs, "--uri", args.docdbURI, "--archive", "--numParallelCollections", strconv.Itoa(args.numParallel))
@@ -520,6 +541,11 @@ func runPipeline(args backupArgs, destination string) error {
 	mongodumpCmd := exec.CommandContext(ctx, "mongodump", mongodumpArgs...)
 	pigzCmd := exec.CommandContext(ctx, "pigz", pigzArgs...)
 	awsCmd := exec.CommandContext(ctx, "aws", awsArgs...)
+	var (
+		mongodumpErr bytes.Buffer
+		pigzErr      bytes.Buffer
+		awsErr       bytes.Buffer
+	)
 
 	dumpOut, err := mongodumpCmd.StdoutPipe()
 	if err != nil {
@@ -536,24 +562,24 @@ func runPipeline(args backupArgs, destination string) error {
 		return err
 	}
 
-	mongodumpCmd.Stderr = os.Stderr
-	pigzCmd.Stderr = os.Stderr
-	awsCmd.Stderr = os.Stderr
+	mongodumpCmd.Stderr = &mongodumpErr
+	pigzCmd.Stderr = &pigzErr
+	awsCmd.Stderr = &awsErr
 	awsCmd.Stdin = pigzOut
 
 	if err := pigzCmd.Start(); err != nil {
-		return err
+		return runPipelineError(err, &pigzErr, &awsErr)
 	}
 
 	if err := awsCmd.Start(); err != nil {
 		_ = pigzCmd.Process.Kill()
-		return err
+		return runPipelineError(err, &pigzErr, &awsErr)
 	}
 
 	if err := mongodumpCmd.Start(); err != nil {
 		_ = pigzCmd.Process.Kill()
 		_ = awsCmd.Process.Kill()
-		return err
+		return runPipelineError(err, &mongodumpErr, &pigzErr, &awsErr)
 	}
 
 	copyDone := make(chan error, 1)
@@ -567,25 +593,72 @@ func runPipeline(args backupArgs, destination string) error {
 		_ = <-copyDone
 		_ = pigzCmd.Process.Kill()
 		_ = awsCmd.Process.Kill()
-		return err
+		return runPipelineError(err, &mongodumpErr, &pigzErr, &awsErr)
 	}
 
 	if copyErr := <-copyDone; copyErr != nil {
 		_ = pigzCmd.Process.Kill()
 		_ = awsCmd.Process.Kill()
-		return copyErr
+		return runPipelineError(copyErr, &pigzErr, &awsErr)
 	}
 
 	if err := pigzCmd.Wait(); err != nil {
 		_ = awsCmd.Process.Kill()
-		return err
+		return runPipelineError(err, &pigzErr, &awsErr, &mongodumpErr)
 	}
 
 	if err := awsCmd.Wait(); err != nil {
-		return err
+		return runPipelineError(err, &awsErr, &pigzErr, &mongodumpErr)
 	}
 
 	return nil
+}
+
+func runPipelineError(commandErr error, buffers ...*bytes.Buffer) error {
+	parts := make([]string, 0, len(buffers))
+	for _, buffer := range buffers {
+		text := strings.TrimSpace(buffer.String())
+		if text != "" {
+			parts = append(parts, text)
+		}
+	}
+
+	if len(parts) == 0 {
+		return commandErr
+	}
+
+	return fmt.Errorf("%w\n%s", commandErr, strings.Join(parts, "\n"))
+}
+
+func startProgressSpinner() (chan struct{}, chan struct{}) {
+	stop := make(chan struct{})
+	done := make(chan struct{})
+
+	go func() {
+		defer close(done)
+
+		frames := []string{"|", "/", "-", "\\"}
+		start := time.Now()
+		ticker := time.NewTicker(250 * time.Millisecond)
+		defer ticker.Stop()
+
+		for i := 0; ; i++ {
+			select {
+			case <-ticker.C:
+				fmt.Printf("\rbackup em andamento %s (%s)", frames[i%len(frames)], time.Since(start).Truncate(time.Second))
+			case <-stop:
+				fmt.Print("\r\033[2K")
+				return
+			}
+		}
+	}()
+
+	return stop, done
+}
+
+func stopProgressSpinner(stop chan struct{}, done chan struct{}) {
+	close(stop)
+	<-done
 }
 
 func defaultNumParallelCollections() int {

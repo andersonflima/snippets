@@ -143,14 +143,37 @@ defmodule DocdbStreamBackup do
     with {:ok, help_text} <- fetch_mongodump_help() do
       supports_tls? = flag_supported?(help_text, "--tls")
       supports_ssl? = flag_supported?(help_text, "--ssl")
+      supports_quiet? = flag_supported?(help_text, "--quiet")
 
-      if supports_tls? or !supports_ssl? do
-        args
+      translated_args =
+        if supports_tls? or !supports_ssl? do
+          args
+        else
+          Enum.map(args, &translate_legacy_tls_to_ssl_arg/1)
+        end
+
+      if supports_quiet? do
+        append_quiet_arg(translated_args)
       else
-        Enum.map(args, &translate_legacy_tls_to_ssl_arg/1)
+        translated_args
       end
     else
       _ -> args
+    end
+  end
+
+  defp append_quiet_arg(args) do
+    has_quiet_arg? =
+      args
+      |> Enum.any?(fn arg ->
+        normalized = String.trim(arg)
+        normalized == "--quiet" || String.starts_with?(normalized, "--quiet=")
+      end)
+
+    if has_quiet_arg? do
+      args
+    else
+      args ++ ["--quiet"]
     end
   end
 
@@ -393,6 +416,7 @@ defmodule DocdbStreamBackup do
 
   defp run_pipeline(args, key) do
     destination = "s3://#{args.bucket}/#{key}"
+    spinner = start_status_spinner("backup em andamento")
 
     mongodump_command =
       [
@@ -438,13 +462,46 @@ defmodule DocdbStreamBackup do
       "config: numParallelCollections=#{args.num_parallel_collections} pigz_threads=#{args.pigz_threads} compression_level=#{args.compression_level} expected_size_bytes=#{args.expected_size_bytes}"
     )
 
-    case System.cmd("bash", ["-o", "pipefail", "-c", command],
-           into: IO.binstream(:stdio, :line),
-           stderr_to_stdout: true
-         ) do
-      {_, 0} -> :ok
-      {_, status} -> {:error, "pipeline falhou com código #{status}"}
+    case System.cmd("bash", ["-o", "pipefail", "-c", command], stderr_to_stdout: true) do
+      {_, 0} ->
+        stop_status_spinner(spinner)
+        :ok
+
+      {output, status} ->
+        stop_status_spinner(spinner)
+
+        if String.trim(output) == "" do
+          {:error, "pipeline falhou com código #{status}"}
+        else
+          {:error, "pipeline falhou com código #{status}\n#{output}"}
+        end
     end
+  end
+
+  defp start_status_spinner(message) do
+    spawn(fn -> status_spinner_loop(message, 0) end)
+  end
+
+  defp status_spinner_loop(message, frame_idx) do
+    frames = ["|", "/", "-", "\\"]
+
+    receive do
+      :stop ->
+        IO.write("\r")
+        IO.write(String.duplicate(" ", 80))
+        IO.write("\r")
+        :ok
+    after
+      250 ->
+        frame = Enum.at(frames, rem(frame_idx, length(frames)))
+        IO.write("\r#{message} #{frame}")
+        status_spinner_loop(message, frame_idx + 1)
+    end
+  end
+
+  defp stop_status_spinner(pid) when is_pid(pid) do
+    send(pid, :stop)
+    :ok
   end
 
   defp shell_escape(value) do
