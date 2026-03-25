@@ -3,7 +3,6 @@ package main
 import (
 	"context"
 	"errors"
-	"flag"
 	"fmt"
 	"io"
 	"os"
@@ -23,6 +22,8 @@ var usageText = `Uso:
   go run scripts/docdb_stream_backup.go <docdb_uri> <bucket>
   go run scripts/docdb_stream_backup.go <docdb_uri> <bucket> <prefix>
   go run scripts/docdb_stream_backup.go <docdb_uri> <bucket> [--prefix docdb/prod] [--num-parallel-collections 16] [--pigz-threads 8] [--compression-level 1] [--expected-size-bytes 10737418240]
+  go run scripts/docdb_stream_backup.go <docdb_uri> <bucket> --mongodump-arg --tls --mongodump-arg --tlsCAFile=/path/ca.pem
+  go run scripts/docdb_stream_backup.go <docdb_uri> <bucket> --mongodump-arg='--tls' --mongodump-arg='--tlsCAFile=/path/ca.pem'
 
 Exemplos:
   go run scripts/docdb_stream_backup.go 'mongodb://user:pass@host:27017/?tls=true&replicaSet=rs0&readPreference=secondaryPreferred&retryWrites=false' meu-bucket
@@ -45,7 +46,17 @@ type backupArgs struct {
 	extraMongodumpArgs []string
 }
 
-type stringSliceFlag []string
+type parsedOptions struct {
+	help                   bool
+	prefix                 string
+	prefixAlias            string
+	numParallelCollections int
+	pigzThreads            int
+	compressionLevel       int
+	expectedSizeBytes      int64
+	expectedSizeGiB        int64
+	extraMongodumpArgs     []string
+}
 
 type argsParseError struct {
 	msg string
@@ -53,17 +64,17 @@ type argsParseError struct {
 
 func (e argsParseError) Error() string { return e.msg }
 
-func (f *stringSliceFlag) String() string {
-	return strings.Join(*f, ",")
-}
-
-func (f *stringSliceFlag) Set(value string) error {
-	trimmed := strings.TrimSpace(value)
-	if trimmed == "" {
-		return nil
-	}
-	*f = append(*f, trimmed)
-	return nil
+var legacyTLSAliases = map[string]string{
+	"--tls":                           "--ssl",
+	"--tlsAllowInvalidCertificates":   "--sslAllowInvalidCertificates",
+	"--tlsAllowInvalidHostnames":      "--sslAllowInvalidHostnames",
+	"--tlsCAFile":                     "--sslCAFile",
+	"--tlsCRLFile":                    "--sslCRLFile",
+	"--tlsCertificateKeyFile":         "--sslPEMKeyFile",
+	"--tlsCertificateKeyFilePassword": "--sslPEMKeyPassword",
+	"--tlsDisabledProtocols":          "--sslDisabledProtocols",
+	"--tlsInsecure":                   "--sslInsecure",
+	"--tlsFIPSMode":                   "--sslFIPSMode",
 }
 
 var errShowUsage = errors.New("show usage")
@@ -104,49 +115,15 @@ func run(argv []string) error {
 }
 
 func parseArgs(argv []string) (backupArgs, error) {
-	flagSet := flag.NewFlagSet("docdb-stream-backup", flag.ContinueOnError)
-	flagSet.SetOutput(io.Discard)
-
-	type options struct {
-		help                   bool
-		prefix                 string
-		prefixAlias            string
-		numParallelCollections int
-		pigzThreads            int
-		compressionLevel       int
-		expectedSizeBytes      int64
-		expectedSizeGiB        int64
-		extraMongodumpArgs     stringSliceFlag
-	}
-
-	parsed := options{
+	parsed := parsedOptions{
 		numParallelCollections: defaultNumParallelCollections(),
 		pigzThreads:            defaultPigzThreads(),
 		compressionLevel:       1,
 	}
 
-	flagSet.BoolVar(&parsed.help, "help", false, "show help")
-	flagSet.BoolVar(&parsed.help, "h", false, "show help")
-	flagSet.StringVar(&parsed.prefix, "prefix", "", "s3 prefix")
-	flagSet.StringVar(&parsed.prefixAlias, "p", "", "s3 prefix")
-	flagSet.IntVar(&parsed.numParallelCollections, "num-parallel-collections", parsed.numParallelCollections, "mongodump parallel collections")
-	flagSet.IntVar(&parsed.pigzThreads, "pigz-threads", parsed.pigzThreads, "pigz threads")
-	flagSet.IntVar(&parsed.compressionLevel, "compression-level", parsed.compressionLevel, "compression level")
-	flagSet.Int64Var(&parsed.expectedSizeBytes, "expected-size-bytes", 0, "expected size bytes")
-	flagSet.Int64Var(&parsed.expectedSizeGiB, "expected-size-gib", 0, "expected size gib")
-	flagSet.Var(&parsed.extraMongodumpArgs, "mongodump-arg", "additional mongodump arg")
-
-	if err := flagSet.Parse(argv); err != nil {
-		return backupArgs{}, err
-	}
-
-	if parsed.help {
-		return backupArgs{}, errShowUsage
-	}
-
-	positionals := flagSet.Args()
-	if len(positionals) < 2 || len(positionals) > 3 {
-		return backupArgs{}, argsParseError{msg: "argumentos inválidos"}
+	positionals, parseErr := parseArgv(argv, &parsed)
+	if parseErr != nil {
+		return backupArgs{}, parseErr
 	}
 
 	docdbURI, err := normalizeNonEmpty(positionals[0], "docdb_uri")
@@ -164,12 +141,8 @@ func parseArgs(argv []string) (backupArgs, error) {
 		prefixFromPositional = positionals[2]
 	}
 
-	if prefixFromPositional != "" && parsed.prefix != "" {
+	if prefixFromPositional != "" && (parsed.prefix != "" || parsed.prefixAlias != "") {
 		return backupArgs{}, argsParseError{msg: "use prefix posicional ou --prefix, não os dois"}
-	}
-
-	if parsed.prefix != "" && parsed.prefixAlias != "" && parsed.prefix != parsed.prefixAlias {
-		return backupArgs{}, argsParseError{msg: "opções --prefix e -p divergem"}
 	}
 
 	if parsed.prefix == "" {
@@ -200,6 +173,8 @@ func parseArgs(argv []string) (backupArgs, error) {
 		return backupArgs{}, argsParseError{msg: err.Error()}
 	}
 
+	extraMongodumpArgs := translateLegacyTLSArgs(parsed.extraMongodumpArgs)
+
 	return backupArgs{
 		docdbURI:           docdbURI,
 		bucket:             bucket,
@@ -208,8 +183,193 @@ func parseArgs(argv []string) (backupArgs, error) {
 		pigzThreads:        pigzThreads,
 		compressionLevel:   parsed.compressionLevel,
 		expectedSizeBytes:  expectedSizeBytes,
-		extraMongodumpArgs: parsed.extraMongodumpArgs,
+		extraMongodumpArgs: extraMongodumpArgs,
 	}, nil
+}
+
+func parseArgv(argv []string, parsed *parsedOptions) ([]string, error) {
+	positionals := make([]string, 0, 2)
+
+	for i := 0; i < len(argv); i++ {
+		token := argv[i]
+		if token == "--" {
+			positionals = append(positionals, argv[i+1:]...)
+			break
+		}
+
+		if token == "--help" || token == "-h" {
+			return nil, errShowUsage
+		}
+
+		if strings.HasPrefix(token, "--") {
+			name, value, hasValue, err := parseLongOption(token, argv, i)
+			if err != nil {
+				return nil, err
+			}
+
+			if hasValue {
+				switch name {
+				case "prefix":
+					parsed.prefix = value
+				case "num-parallel-collections":
+					numParallelCollections, err := strconv.Atoi(value)
+					if err != nil {
+						return nil, argsParseError{msg: "num-parallel-collections precisa ser inteiro"}
+					}
+					parsed.numParallelCollections = numParallelCollections
+				case "pigz-threads":
+					pigzThreads, err := strconv.Atoi(value)
+					if err != nil {
+						return nil, argsParseError{msg: "pigz-threads precisa ser inteiro"}
+					}
+					parsed.pigzThreads = pigzThreads
+				case "compression-level":
+					compressionLevel, err := strconv.Atoi(value)
+					if err != nil {
+						return nil, argsParseError{msg: "compression-level precisa ser inteiro"}
+					}
+					parsed.compressionLevel = compressionLevel
+				case "expected-size-bytes":
+					expectedSizeBytes, err := strconv.ParseInt(value, 10, 64)
+					if err != nil {
+						return nil, argsParseError{msg: "expected-size-bytes precisa ser inteiro"}
+					}
+					parsed.expectedSizeBytes = expectedSizeBytes
+				case "expected-size-gib":
+					expectedSizeGiB, err := strconv.ParseInt(value, 10, 64)
+					if err != nil {
+						return nil, argsParseError{msg: "expected-size-gib precisa ser inteiro"}
+					}
+					parsed.expectedSizeGiB = expectedSizeGiB
+				case "mongodump-arg":
+					parsed.extraMongodumpArgs = append(parsed.extraMongodumpArgs, value)
+				default:
+					return nil, argsParseError{msg: fmt.Sprintf("opção inválida: --%s", name)}
+				}
+
+				i++
+				continue
+			}
+
+			switch name {
+			case "help", "h":
+				return nil, errShowUsage
+			case "mongodump-arg", "p", "prefix", "num-parallel-collections", "pigz-threads", "compression-level", "expected-size-bytes", "expected-size-gib":
+				return nil, argsParseError{msg: fmt.Sprintf("opção --%s requer valor", name)}
+			default:
+				return nil, argsParseError{msg: fmt.Sprintf("opção inválida: --%s", name)}
+			}
+		}
+
+		if token == "-" || !strings.HasPrefix(token, "-") {
+			positionals = append(positionals, token)
+			continue
+		}
+
+		switch {
+		case token == "-p":
+			if i+1 >= len(argv) {
+				return nil, argsParseError{msg: "opção -p requer valor"}
+			}
+			parsed.prefixAlias = argv[i+1]
+			if strings.TrimSpace(parsed.prefixAlias) == "" {
+				return nil, argsParseError{msg: "opção -p não pode ser vazio"}
+			}
+			i++
+			continue
+		default:
+			return nil, argsParseError{msg: fmt.Sprintf("opção inválida: %s", token)}
+		}
+	}
+
+	if len(positionals) < 2 || len(positionals) > 3 {
+		return nil, argsParseError{msg: "argumentos inválidos"}
+	}
+
+	return positionals, nil
+}
+
+func parseLongOption(token string, argv []string, index int) (string, string, bool, error) {
+	option := strings.TrimPrefix(token, "--")
+	if option == "" {
+		return "", "", false, argsParseError{msg: "opção inválida: --"}
+	}
+
+	if strings.Contains(option, "=") {
+		split := strings.SplitN(option, "=", 2)
+		return split[0], split[1], true, nil
+	}
+
+	if index+1 >= len(argv) {
+		return option, "", false, nil
+	}
+
+	return option, argv[index+1], true, nil
+}
+
+func translateLegacyTLSArgs(args []string) []string {
+	helpOutput, err := getMongodumpHelp()
+	if err != nil {
+		return args
+	}
+
+	supportsTLS := isFlagInHelp(helpOutput, "--tls")
+	supportsSSL := isFlagInHelp(helpOutput, "--ssl")
+	if supportsTLS || !supportsSSL {
+		return args
+	}
+
+	translated := make([]string, 0, len(args))
+	for _, arg := range args {
+		translated = append(translated, translateLegacyTLSArg(arg))
+	}
+
+	return translated
+}
+
+func getMongodumpHelp() (string, error) {
+	output, err := exec.Command("mongodump", "--help").CombinedOutput()
+	if err != nil {
+		return "", err
+	}
+	return string(output), nil
+}
+
+func isFlagInHelp(helpText, flagName string) bool {
+	candidates := []string{
+		" " + flagName + " ",
+		"\n" + flagName + " ",
+		" " + flagName + "=",
+		"\n" + flagName + "=",
+	}
+
+	for _, candidate := range candidates {
+		if strings.Contains(helpText, candidate) {
+			return true
+		}
+	}
+	return false
+}
+
+func translateLegacyTLSArg(arg string) string {
+	name, value, hasValue := splitArgWithValue(arg)
+	replacement, ok := legacyTLSAliases[name]
+	if !ok {
+		return arg
+	}
+
+	if !hasValue {
+		return replacement
+	}
+	return replacement + "=" + value
+}
+
+func splitArgWithValue(arg string) (string, string, bool) {
+	parts := strings.SplitN(arg, "=", 2)
+	if len(parts) == 1 {
+		return arg, "", false
+	}
+	return parts[0], parts[1], true
 }
 
 func normalizeNonEmpty(value, label string) (string, error) {

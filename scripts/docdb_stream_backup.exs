@@ -15,6 +15,8 @@ defmodule DocdbStreamBackup do
     elixir scripts/docdb_stream_backup.exs 'mongodb://user:pass@host:27017/?tls=true&replicaSet=rs0&readPreference=secondaryPreferred&retryWrites=false' meu-bucket
     elixir scripts/docdb_stream_backup.exs 'mongodb://user:pass@host:27017/?tls=true&replicaSet=rs0' meu-bucket docdb/prod
     elixir scripts/docdb_stream_backup.exs 'mongodb://user:pass@host:27017/?tls=true&replicaSet=rs0' meu-bucket --num-parallel-collections 16 --pigz-threads 8 --compression-level 1 --expected-size-bytes 10737418240
+    elixir scripts/docdb_stream_backup.exs 'mongodb://user:pass@host:27017/?tls=true&replicaSet=rs0' meu-bucket --mongodump-arg --tls --mongodump-arg --tlsCAFile=/path/ca.pem
+    elixir scripts/docdb_stream_backup.exs 'mongodb://user:pass@host:27017/?tls=true&replicaSet=rs0' meu-bucket --mongodump-arg='--tls' --mongodump-arg='--tlsCAFile=/path/ca.pem'
 
   Observação:
     O upload acontece por stream em memória, sem gerar arquivo local no EC2.
@@ -52,6 +54,12 @@ defmodule DocdbStreamBackup do
   end
 
   defp parse_args(argv) do
+    with {:ok, normalized_argv} <- normalize_mongodump_arg_syntax(argv) do
+      do_parse_args(normalized_argv)
+    end
+  end
+
+  defp do_parse_args(argv) do
     {options, positional_args, invalid_options} =
       OptionParser.parse(argv,
         strict: [
@@ -106,6 +114,93 @@ defmodule DocdbStreamBackup do
              extra_mongodump_args: extra_mongodump_args
            }}
         end
+    end
+  end
+
+  defp normalize_mongodump_arg_syntax(argv) do
+    normalize_mongodump_arg_syntax(argv, [])
+  end
+
+  defp normalize_mongodump_arg_syntax([], acc), do: {:ok, Enum.reverse(acc)}
+
+  defp normalize_mongodump_arg_syntax(["--mongodump-arg" | tail], acc) do
+    case tail do
+      [] ->
+        {:error, "opção --mongodump-arg requer valor. Ex.: --mongodump-arg=--tls ou --mongodump-arg --tls"}
+
+      [value | rest] ->
+        normalize_mongodump_arg_syntax(rest, ["--mongodump-arg=#{value}" | acc])
+    end
+  end
+
+  defp normalize_mongodump_arg_syntax([arg | tail], acc),
+    do: normalize_mongodump_arg_syntax(tail, [arg | acc])
+
+  defp parse_mongodump_option_compatibility(args) do
+    with {:ok, help_text} <- fetch_mongodump_help() do
+      supports_tls? = flag_supported?(help_text, "--tls")
+      supports_ssl? = flag_supported?(help_text, "--ssl")
+
+      if supports_tls? or !supports_ssl? do
+        args
+      else
+        Enum.map(args, &translate_legacy_tls_to_ssl_arg/1)
+      end
+    else
+      _ -> args
+    end
+  end
+
+  defp fetch_mongodump_help do
+    try do
+      case System.cmd("mongodump", ["--help"], stderr_to_stdout: true) do
+        {text, 0} -> {:ok, text}
+        _ -> {:error, "não foi possível consultar --help do mongodump"}
+      end
+    rescue
+      _ ->
+        {:error, "não foi possível consultar --help do mongodump"}
+    end
+  end
+
+  defp flag_supported?(text, flag) do
+    regex = ~r/(^|\s)#{Regex.escape(flag)}(\s|=|,)/
+    String.contains?(text, flag) && Regex.match?(regex, text)
+  end
+
+  @legacy_tls_to_ssl %{
+    "--tls" => "--ssl",
+    "--tlsAllowInvalidCertificates" => "--sslAllowInvalidCertificates",
+    "--tlsAllowInvalidHostnames" => "--sslAllowInvalidHostnames",
+    "--tlsCAFile" => "--sslCAFile",
+    "--tlsCRLFile" => "--sslCRLFile",
+    "--tlsCertificateKeyFile" => "--sslPEMKeyFile",
+    "--tlsCertificateKeyFilePassword" => "--sslPEMKeyPassword",
+    "--tlsDisabledProtocols" => "--sslDisabledProtocols",
+    "--tlsInsecure" => "--sslInsecure",
+    "--tlsFIPSMode" => "--sslFIPSMode"
+  }
+
+  defp translate_legacy_tls_to_ssl_arg(arg) do
+    {flag, value} = split_arg_with_value(arg)
+
+    case Map.get(@legacy_tls_to_ssl, flag) do
+      nil ->
+        arg
+
+      replacement ->
+        if value == "" do
+          replacement
+        else
+          "#{replacement}=#{value}"
+        end
+    end
+  end
+
+  defp split_arg_with_value(arg) do
+    case String.split(arg, "=", parts: 2) do
+      [flag, value] -> {flag, value}
+      [flag] -> {flag, ""}
     end
   end
 
@@ -217,7 +312,8 @@ defmodule DocdbStreamBackup do
       |> Enum.map(&String.trim/1)
       |> Enum.reject(&(&1 == ""))
 
-    {:ok, extra_args}
+    translated_args = parse_mongodump_option_compatibility(extra_args)
+    {:ok, translated_args}
   end
 
   defp default_num_parallel_collections do
