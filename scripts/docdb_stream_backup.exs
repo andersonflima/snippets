@@ -9,7 +9,7 @@ defmodule DocdbStreamBackup do
   Uso:
     elixir scripts/docdb_stream_backup.exs <docdb_uri> <bucket>
     elixir scripts/docdb_stream_backup.exs <docdb_uri> <bucket> <prefix>
-    elixir scripts/docdb_stream_backup.exs <docdb_uri> <bucket> [--prefix docdb/prod] [--num-parallel-collections 16] [--pigz-threads 8] [--compression-level 1] [--expected-size-bytes 10737418240]
+    elixir scripts/docdb_stream_backup.exs <docdb_uri> <bucket> [--prefix docdb/prod] [--num-parallel-collections 16] [--pigz-threads 8] [--compression-level 1] [--s3-max-concurrent-requests 8] [--s3-multipart-chunksize-mib 32] [--expected-size-bytes 10737418240]
     elixir scripts/docdb_stream_backup.exs <docdb_uri> <bucket> --parallel-databases [--database app] [--database analytics] [--database-concurrency 2]
     elixir scripts/docdb_stream_backup.exs <docdb_uri> <bucket> --mongodump-arg --tls --mongodump-arg --tlsCAFile=/path/ca.pem
     elixir scripts/docdb_stream_backup.exs <docdb_uri> <bucket> --mongodump-arg='--tls' --mongodump-arg='--tlsCAFile=/path/ca.pem'
@@ -17,7 +17,7 @@ defmodule DocdbStreamBackup do
   Exemplos:
     elixir scripts/docdb_stream_backup.exs 'mongodb://user:pass@host:27017/?tls=true&replicaSet=rs0&readPreference=secondaryPreferred&retryWrites=false' meu-bucket
     elixir scripts/docdb_stream_backup.exs 'mongodb://user:pass@host:27017/?tls=true&replicaSet=rs0' meu-bucket docdb/prod
-    elixir scripts/docdb_stream_backup.exs 'mongodb://user:pass@host:27017/?tls=true&replicaSet=rs0' meu-bucket --num-parallel-collections 16 --pigz-threads 8 --compression-level 1 --expected-size-bytes 10737418240
+    elixir scripts/docdb_stream_backup.exs 'mongodb://user:pass@host:27017/?tls=true&replicaSet=rs0' meu-bucket --num-parallel-collections 16 --pigz-threads 8 --compression-level 1 --s3-max-concurrent-requests 8 --s3-multipart-chunksize-mib 32 --expected-size-bytes 10737418240
     elixir scripts/docdb_stream_backup.exs 'mongodb://user:pass@host:27017/?tls=true&replicaSet=rs0' meu-bucket --parallel-databases --database app --database analytics --database-concurrency 2
 
   Observação:
@@ -56,8 +56,12 @@ defmodule DocdbStreamBackup do
     "tlsFIPSMode" => "sslFIPSMode"
   }
 
-  @legacy_ssl_to_tls Map.new(@legacy_tls_to_ssl, fn {tls_flag, ssl_flag} -> {ssl_flag, tls_flag} end)
-  @legacy_ssl_query_to_tls Map.new(@legacy_tls_query_to_ssl, fn {tls_key, ssl_key} -> {ssl_key, tls_key} end)
+  @legacy_ssl_to_tls Map.new(@legacy_tls_to_ssl, fn {tls_flag, ssl_flag} ->
+                       {ssl_flag, tls_flag}
+                     end)
+  @legacy_ssl_query_to_tls Map.new(@legacy_tls_query_to_ssl, fn {tls_key, ssl_key} ->
+                             {ssl_key, tls_key}
+                           end)
 
   def main(argv) do
     case parse_args(argv) do
@@ -114,6 +118,10 @@ defmodule DocdbStreamBackup do
           num_parallel_collections: :integer,
           pigz_threads: :integer,
           compression_level: :integer,
+          s3_max_concurrent_requests: :integer,
+          s3_max_queue_size: :integer,
+          s3_multipart_chunksize_mib: :integer,
+          meter_block_size_mib: :integer,
           expected_size_bytes: :integer,
           expected_size_gib: :integer,
           mongodump_arg: :keep
@@ -131,7 +139,8 @@ defmodule DocdbStreamBackup do
         {:help, @usage}
 
       invalid_options != [] ->
-        {:error, "opções inválidas: #{Enum.map_join(invalid_options, ", ", &format_invalid_option/1)}"}
+        {:error,
+         "opções inválidas: #{Enum.map_join(invalid_options, ", ", &format_invalid_option/1)}"}
 
       true ->
         with {:ok, positional} <- parse_positional_args(positional_args),
@@ -142,7 +151,11 @@ defmodule DocdbStreamBackup do
              {:ok, database_names} <- resolve_database_names(options),
              {:ok, parallel_databases} <- resolve_parallel_databases(options, database_names),
              {:ok, database_concurrency} <-
-               resolve_database_concurrency(options[:database_concurrency], runtime_tuning, parallel_databases),
+               resolve_database_concurrency(
+                 options[:database_concurrency],
+                 runtime_tuning,
+                 parallel_databases
+               ),
              {:ok, num_parallel_collections} <-
                resolve_positive_integer(
                  options[:num_parallel_collections],
@@ -150,11 +163,45 @@ defmodule DocdbStreamBackup do
                  "num_parallel_collections"
                ),
              {:ok, pigz_threads} <-
-               resolve_positive_integer(options[:pigz_threads], runtime_tuning.pigz_threads, "pigz_threads"),
-             {:ok, compression_level} <- resolve_compression_level(options[:compression_level], runtime_tuning),
+               resolve_positive_integer(
+                 options[:pigz_threads],
+                 runtime_tuning.pigz_threads,
+                 "pigz_threads"
+               ),
+             {:ok, compression_level} <-
+               resolve_compression_level(options[:compression_level], runtime_tuning),
+             {:ok, s3_max_concurrent_requests} <-
+               resolve_positive_integer(
+                 options[:s3_max_concurrent_requests],
+                 runtime_tuning.s3_max_concurrent_requests,
+                 "s3_max_concurrent_requests"
+               ),
+             {:ok, s3_max_queue_size} <-
+               resolve_positive_integer(
+                 options[:s3_max_queue_size],
+                 runtime_tuning.s3_max_queue_size,
+                 "s3_max_queue_size"
+               ),
+             {:ok, s3_multipart_chunksize_mib} <-
+               resolve_positive_integer(
+                 options[:s3_multipart_chunksize_mib],
+                 runtime_tuning.s3_multipart_chunksize_mib,
+                 "s3_multipart_chunksize_mib"
+               ),
+             {:ok, meter_block_size_mib} <-
+               resolve_positive_integer(
+                 options[:meter_block_size_mib],
+                 runtime_tuning.meter_block_size_mib,
+                 "meter_block_size_mib"
+               ),
              {:ok, expected_size_bytes} <- resolve_expected_size_bytes(options),
              {:ok, extra_mongodump_args} <- resolve_mongodump_args(options),
-             :ok <- validate_parallel_database_args(parallel_databases, database_names, extra_mongodump_args) do
+             :ok <-
+               validate_parallel_database_args(
+                 parallel_databases,
+                 database_names,
+                 extra_mongodump_args
+               ) do
           {:ok,
            %{
              uri: validated_uri,
@@ -166,12 +213,22 @@ defmodule DocdbStreamBackup do
              num_parallel_collections: num_parallel_collections,
              pigz_threads: pigz_threads,
              compression_level: compression_level,
+             s3_max_concurrent_requests: s3_max_concurrent_requests,
+             s3_max_queue_size: s3_max_queue_size,
+             s3_multipart_chunksize_mib: s3_multipart_chunksize_mib,
+             meter_block_size_mib: meter_block_size_mib,
              expected_size_bytes: expected_size_bytes,
              extra_mongodump_args: extra_mongodump_args,
              runtime_tuning: runtime_tuning,
              num_parallel_collections_source: option_source(options[:num_parallel_collections]),
              pigz_threads_source: option_source(options[:pigz_threads]),
-             compression_level_source: option_source(options[:compression_level])
+             compression_level_source: option_source(options[:compression_level]),
+             s3_max_concurrent_requests_source:
+               option_source(options[:s3_max_concurrent_requests]),
+             s3_max_queue_size_source: option_source(options[:s3_max_queue_size]),
+             s3_multipart_chunksize_mib_source:
+               option_source(options[:s3_multipart_chunksize_mib]),
+             meter_block_size_mib_source: option_source(options[:meter_block_size_mib])
            }}
         end
     end
@@ -184,7 +241,8 @@ defmodule DocdbStreamBackup do
   defp normalize_mongodump_arg_syntax(["--mongodump-arg" | tail], acc) do
     case tail do
       [] ->
-        {:error, "opção --mongodump-arg requer valor. Ex.: --mongodump-arg=--tls ou --mongodump-arg --tls"}
+        {:error,
+         "opção --mongodump-arg requer valor. Ex.: --mongodump-arg=--tls ou --mongodump-arg --tls"}
 
       [value | rest] ->
         normalize_mongodump_arg_syntax(rest, ["--mongodump-arg=#{value}" | acc])
@@ -195,7 +253,10 @@ defmodule DocdbStreamBackup do
     do: normalize_mongodump_arg_syntax(tail, [arg | acc])
 
   defp parse_positional_args([uri, bucket]), do: {:ok, %{uri: uri, bucket: bucket, prefix: nil}}
-  defp parse_positional_args([uri, bucket, prefix]), do: {:ok, %{uri: uri, bucket: bucket, prefix: prefix}}
+
+  defp parse_positional_args([uri, bucket, prefix]),
+    do: {:ok, %{uri: uri, bucket: bucket, prefix: prefix}}
+
   defp parse_positional_args(_), do: {:error, "argumentos inválidos"}
 
   defp resolve_database_names(options) do
@@ -210,7 +271,9 @@ defmodule DocdbStreamBackup do
   end
 
   defp resolve_parallel_databases(options, database_names) do
-    {:ok, options[:parallel_databases] == true or database_names != [] or not is_nil(options[:database_concurrency])}
+    {:ok,
+     options[:parallel_databases] == true or database_names != [] or
+       not is_nil(options[:database_concurrency])}
   end
 
   defp resolve_database_concurrency(_database_concurrency, _runtime_tuning, false), do: {:ok, 1}
@@ -264,10 +327,12 @@ defmodule DocdbStreamBackup do
         {:ok, trimmed_uri}
 
       String.starts_with?(trimmed_uri, "mongodb+srv://") ->
-        {:error, "documentdb requer mongodb://, mas a URI recebida usa mongodb+srv://: #{trimmed_uri}"}
+        {:error,
+         "documentdb requer mongodb://, mas a URI recebida usa mongodb+srv://: #{trimmed_uri}"}
 
       String.contains?(trimmed_uri, "://") ->
-        {:error, "documentdb URI com formato inválido; esperado mongodb://..., recebido: #{preview(trimmed_uri)}"}
+        {:error,
+         "documentdb URI com formato inválido; esperado mongodb://..., recebido: #{preview(trimmed_uri)}"}
 
       true ->
         {:error, "documentdb URI inválida (esperado mongodb://): #{preview(trimmed_uri)}"}
@@ -285,7 +350,9 @@ defmodule DocdbStreamBackup do
   defp resolve_prefix(nil, nil), do: {:ok, @default_prefix}
   defp resolve_prefix(nil, prefix), do: normalize_prefix(prefix)
   defp resolve_prefix(prefix, nil), do: normalize_prefix(prefix)
-  defp resolve_prefix(_positional_prefix, _option_prefix), do: {:error, "use prefix posicional ou --prefix, não os dois"}
+
+  defp resolve_prefix(_positional_prefix, _option_prefix),
+    do: {:error, "use prefix posicional ou --prefix, não os dois"}
 
   defp normalize_prefix(value) do
     value
@@ -300,7 +367,9 @@ defmodule DocdbStreamBackup do
         |> String.trim_leading("/")
         |> String.replace(~r{/+}, "/")
         |> case do
-          "" -> {:ok, @default_prefix}
+          "" ->
+            {:ok, @default_prefix}
+
           sanitized ->
             if String.ends_with?(sanitized, "/") do
               {:ok, sanitized}
@@ -311,18 +380,22 @@ defmodule DocdbStreamBackup do
     end
   end
 
-  defp resolve_positive_integer(nil, default_value, label), do: resolve_positive_integer(default_value, default_value, label)
+  defp resolve_positive_integer(nil, default_value, label),
+    do: resolve_positive_integer(default_value, default_value, label)
 
-  defp resolve_positive_integer(value, _default_value, _label) when is_integer(value) and value > 0,
-    do: {:ok, value}
+  defp resolve_positive_integer(value, _default_value, _label)
+       when is_integer(value) and value > 0,
+       do: {:ok, value}
 
   defp resolve_positive_integer(_value, _default_value, label),
     do: {:error, "#{label} precisa ser inteiro positivo"}
 
-  defp resolve_compression_level(nil, runtime_tuning), do: {:ok, default_compression_level(runtime_tuning)}
+  defp resolve_compression_level(nil, runtime_tuning),
+    do: {:ok, default_compression_level(runtime_tuning)}
 
-  defp resolve_compression_level(level, _runtime_tuning) when is_integer(level) and level >= 0 and level <= 9,
-    do: {:ok, level}
+  defp resolve_compression_level(level, _runtime_tuning)
+       when is_integer(level) and level >= 0 and level <= 9,
+       do: {:ok, level}
 
   defp resolve_compression_level(_, _runtime_tuning),
     do: {:error, "compression_level precisa estar entre 0 e 9"}
@@ -336,10 +409,15 @@ defmodule DocdbStreamBackup do
         {:error, "use apenas expected_size_bytes ou expected_size_gib"}
 
       not is_nil(expected_size_bytes) ->
-        resolve_positive_integer(expected_size_bytes, @default_expected_size_bytes, "expected_size_bytes")
+        resolve_positive_integer(
+          expected_size_bytes,
+          @default_expected_size_bytes,
+          "expected_size_bytes"
+        )
 
       not is_nil(expected_size_gib) ->
-        with {:ok, parsed_gib} <- resolve_positive_integer(expected_size_gib, 10, "expected_size_gib") do
+        with {:ok, parsed_gib} <-
+               resolve_positive_integer(expected_size_gib, 10, "expected_size_gib") do
           {:ok, parsed_gib * 1024 * 1024 * 1024}
         end
 
@@ -391,7 +469,8 @@ defmodule DocdbStreamBackup do
           supports_quiet: flag_supported?(help_text, "--quiet"),
           supports_tls: flag_supported?(help_text, "--tls"),
           supports_ssl: flag_supported?(help_text, "--ssl"),
-          supports_num_parallel_collections: flag_supported?(help_text, "--numParallelCollections")
+          supports_num_parallel_collections:
+            flag_supported?(help_text, "--numParallelCollections")
         }
 
       _ ->
@@ -441,7 +520,8 @@ defmodule DocdbStreamBackup do
       original_query = URI.decode_query(parsed_uri.query)
 
       normalized_query =
-        Enum.reduce(@legacy_tls_query_to_ssl, original_query, fn {legacy_key, replacement_key}, query ->
+        Enum.reduce(@legacy_tls_query_to_ssl, original_query, fn {legacy_key, replacement_key},
+                                                                 query ->
           case Map.pop(query, legacy_key) do
             {nil, remaining_query} ->
               remaining_query
@@ -542,7 +622,13 @@ defmodule DocdbStreamBackup do
       parallel_args = apply_parallel_database_runtime_tuning(args, target_databases)
       target_database_names = Enum.map(target_databases, & &1.name)
 
-      print_parallel_database_config(parallel_args, capabilities, target_databases, session_prefix, args.expected_size_bytes)
+      print_parallel_database_config(
+        parallel_args,
+        capabilities,
+        target_databases,
+        session_prefix,
+        args.expected_size_bytes
+      )
 
       stage_specs =
         target_database_names
@@ -551,6 +637,7 @@ defmodule DocdbStreamBackup do
         end)
 
       progress_display = start_progress_display("backup paralelo por database", stage_specs)
+
       initial_state =
         build_parallel_scheduler_state(
           target_databases,
@@ -588,8 +675,7 @@ defmodule DocdbStreamBackup do
            }}
 
         errors ->
-          {:error,
-           format_parallel_database_errors(errors),
+          {:error, format_parallel_database_errors(errors),
            %{
              duration_us: System.monotonic_time(:microsecond) - started_at,
              raw_bytes: total_processed_bytes,
@@ -625,7 +711,8 @@ defmodule DocdbStreamBackup do
   end
 
   defp database_discovery_command(uri, extra_connection_args) do
-    script = "db.adminCommand({ listDatabases: 1 }).databases.forEach((item) => console.log([item.name, item.sizeOnDisk || 0].join('\\t')))"
+    script =
+      "db.adminCommand({ listDatabases: 1 }).databases.forEach((item) => console.log([item.name, item.sizeOnDisk || 0].join('\\t')))"
 
     cond do
       System.find_executable("mongosh") ->
@@ -634,10 +721,14 @@ defmodule DocdbStreamBackup do
         {:ok, {"mongosh", ["--quiet", discovery_uri] ++ discovery_args ++ ["--eval", script]}}
 
       System.find_executable("mongo") ->
-        legacy_script = "db.adminCommand({ listDatabases: 1 }).databases.forEach(function(item) { print(item.name + '\\t' + (item.sizeOnDisk || 0)) })"
+        legacy_script =
+          "db.adminCommand({ listDatabases: 1 }).databases.forEach(function(item) { print(item.name + '\\t' + (item.sizeOnDisk || 0)) })"
+
         discovery_uri = normalize_discovery_uri_query(uri, :mongo)
         discovery_args = discovery_connection_args(extra_connection_args, :mongo)
-        {:ok, {"mongo", ["--quiet", discovery_uri] ++ discovery_args ++ ["--eval", legacy_script]}}
+
+        {:ok,
+         {"mongo", ["--quiet", discovery_uri] ++ discovery_args ++ ["--eval", legacy_script]}}
 
       true ->
         {:error,
@@ -778,7 +869,8 @@ defmodule DocdbStreamBackup do
   end
 
   defp apply_parallel_database_runtime_tuning(args, target_databases) do
-    effective_database_concurrency = effective_parallel_database_concurrency(args, target_databases)
+    effective_database_concurrency =
+      effective_parallel_database_concurrency(args, target_databases)
 
     %{
       args
@@ -813,9 +905,29 @@ defmodule DocdbStreamBackup do
     %{
       args
       | num_parallel_collections:
-          distribute_parallel_budget(args.num_parallel_collections, args.database_concurrency, args.num_parallel_collections_source),
+          distribute_parallel_budget(
+            args.num_parallel_collections,
+            args.database_concurrency,
+            args.num_parallel_collections_source
+          ),
         pigz_threads:
-          distribute_parallel_budget(args.pigz_threads, args.database_concurrency, args.pigz_threads_source)
+          distribute_parallel_budget(
+            args.pigz_threads,
+            args.database_concurrency,
+            args.pigz_threads_source
+          ),
+        s3_max_concurrent_requests:
+          distribute_parallel_budget(
+            args.s3_max_concurrent_requests,
+            args.database_concurrency,
+            args.s3_max_concurrent_requests_source
+          ),
+        s3_max_queue_size:
+          distribute_parallel_budget(
+            args.s3_max_queue_size,
+            args.database_concurrency,
+            args.s3_max_queue_size_source
+          )
     }
   end
 
@@ -827,8 +939,10 @@ defmodule DocdbStreamBackup do
     |> max(1)
   end
 
-  defp parallel_database_num_parallel_collections(%{num_parallel_collections_source: :auto} = args),
-    do: args.num_parallel_collections
+  defp parallel_database_num_parallel_collections(
+         %{num_parallel_collections_source: :auto} = args
+       ),
+       do: args.num_parallel_collections
 
   defp parallel_database_num_parallel_collections(args), do: args.num_parallel_collections
 
@@ -879,11 +993,19 @@ defmodule DocdbStreamBackup do
   defp safe_divide(_numerator, 0), do: 0.0
   defp safe_divide(numerator, denominator), do: numerator / denominator
 
-  defp print_parallel_database_config(args, capabilities, target_databases, session_prefix, expected_size_bytes) do
+  defp print_parallel_database_config(
+         args,
+         capabilities,
+         target_databases,
+         session_prefix,
+         expected_size_bytes
+       ) do
     print_config(args, capabilities)
+
     IO.puts(
       "modo: parallel_databases database_concurrency=#{args.database_concurrency} databases=#{length(target_databases)} per_pipeline=#{format_parallel_runtime(args, capabilities)}"
     )
+
     IO.puts("destino-base: s3://#{args.bucket}/#{session_prefix}")
     IO.puts("expected_size_total: #{format_bytes_binary(expected_size_bytes)}")
     IO.puts("databases: #{format_target_databases(target_databases)}")
@@ -928,7 +1050,12 @@ defmodule DocdbStreamBackup do
            stream_progress_target: progress_target
          ) do
       {:ok, metrics} ->
-        {:ok, %{database_name: database_name, destination: "s3://#{args.bucket}/#{key}", metrics: metrics}}
+        {:ok,
+         %{
+           database_name: database_name,
+           destination: "s3://#{args.bucket}/#{key}",
+           metrics: metrics
+         }}
 
       {:error, message, metrics} ->
         {:error, %{database_name: database_name, message: message, metrics: metrics}}
@@ -948,7 +1075,8 @@ defmodule DocdbStreamBackup do
       Enum.map(target_databases, fn database ->
         %{
           database: database,
-          expected_size_bytes: expected_size_bytes_for_database(expected_size_bytes, target_databases, database)
+          expected_size_bytes:
+            expected_size_bytes_for_database(expected_size_bytes, target_databases, database)
         }
       end)
 
@@ -1004,12 +1132,20 @@ defmodule DocdbStreamBackup do
             stage_states: Map.put(state.stage_states, work_item.database.name, stage_state)
         }
 
-        update_progress_display(updated_state.progress_display, work_item.database.name, stage_state)
+        update_progress_display(
+          updated_state.progress_display,
+          work_item.database.name,
+          stage_state
+        )
 
         updated_state
         |> register_live_metric(
           work_item.database.name,
-          build_stream_progress_snapshot(0, System.monotonic_time(:microsecond), work_item.expected_size_bytes)
+          build_stream_progress_snapshot(
+            0,
+            System.monotonic_time(:microsecond),
+            work_item.expected_size_bytes
+          )
         )
         |> fill_parallel_database_workers()
     end
@@ -1079,7 +1215,11 @@ defmodule DocdbStreamBackup do
           %{
             database_name: work_item.database.name,
             message: "task abortada: #{inspect(reason)}",
-            metrics: %{duration_us: 0, raw_bytes: 0, estimated_bytes: work_item.expected_size_bytes}
+            metrics: %{
+              duration_us: 0,
+              raw_bytes: 0,
+              estimated_bytes: work_item.expected_size_bytes
+            }
           }
 
         state
@@ -1135,7 +1275,9 @@ defmodule DocdbStreamBackup do
     end)
   end
 
-  defp maybe_reduce_runtime_database_concurrency(%{current_concurrency: current_concurrency} = state)
+  defp maybe_reduce_runtime_database_concurrency(
+         %{current_concurrency: current_concurrency} = state
+       )
        when current_concurrency <= 1,
        do: state
 
@@ -1202,8 +1344,7 @@ defmodule DocdbStreamBackup do
     %{
       aggregate:
         "agregado: #{format_bytes_binary(processed_bytes)}/#{format_bytes_binary(state.total_expected_bytes)} @ #{format_mib_per_sec(active_rate_mib_per_sec)} | ativos=#{map_size(state.live_metrics)}#{format_eta_detail(remaining_bytes, active_rate_mib_per_sec)}",
-      active:
-        "por database: #{format_active_database_rates(state.live_metrics)}"
+      active: "por database: #{format_active_database_rates(state.live_metrics)}"
     }
   end
 
@@ -1235,12 +1376,16 @@ defmodule DocdbStreamBackup do
     |> Enum.sum()
   end
 
-  defp format_active_database_rates(live_metrics) when map_size(live_metrics) == 0, do: "nenhum ativo"
+  defp format_active_database_rates(live_metrics) when map_size(live_metrics) == 0,
+    do: "nenhum ativo"
 
   defp format_active_database_rates(live_metrics) do
     {visible_entries, hidden_entries} =
       live_metrics
-      |> Enum.sort_by(fn {_database_name, snapshot} -> Map.get(snapshot, :throughput_mib_per_sec, 0.0) end, :desc)
+      |> Enum.sort_by(
+        fn {_database_name, snapshot} -> Map.get(snapshot, :throughput_mib_per_sec, 0.0) end,
+        :desc
+      )
       |> Enum.split(4)
 
     visible_text =
@@ -1259,7 +1404,8 @@ defmodule DocdbStreamBackup do
   defp format_mib_per_sec(value) when is_integer(value), do: format_mib_per_sec(value * 1.0)
   defp format_mib_per_sec(value), do: :erlang.float_to_binary(value, decimals: 1) <> " MiB/s"
 
-  defp format_eta_detail(_remaining_bytes, active_rate_mib_per_sec) when active_rate_mib_per_sec <= 0, do: ""
+  defp format_eta_detail(_remaining_bytes, active_rate_mib_per_sec)
+       when active_rate_mib_per_sec <= 0, do: ""
 
   defp format_eta_detail(remaining_bytes, active_rate_mib_per_sec) do
     seconds =
@@ -1323,6 +1469,7 @@ defmodule DocdbStreamBackup do
 
       true ->
         estimated_bytes = Map.get(metrics, :estimated_bytes, 0)
+
         "#{format_bytes_binary(estimated_bytes)} estimado @ #{:erlang.float_to_binary(estimated_throughput_mib_per_sec(metrics), decimals: 1)} MiB/s"
     end
   end
@@ -1373,7 +1520,13 @@ defmodule DocdbStreamBackup do
       |> Kernel.++(num_parallel_collections_flag(args.num_parallel_collections, capabilities))
       |> Kernel.++(args.extra_mongodump_args)
 
-    pigz_args = ["pigz", "-c", "-#{args.compression_level}", "-p", Integer.to_string(args.pigz_threads)]
+    pigz_args = [
+      "pigz",
+      "-c",
+      "-#{args.compression_level}",
+      "-p",
+      Integer.to_string(args.pigz_threads)
+    ]
 
     aws_args = [
       "aws",
@@ -1394,6 +1547,7 @@ defmodule DocdbStreamBackup do
     ]
 
     status_probe = "__PIPESTATUS__"
+
     stderr_markers = [
       {"mongodump", "__STDERR_MONGODUMP_BEGIN__", "__STDERR_MONGODUMP_END__"},
       {"pigz", "__STDERR_PIGZ_BEGIN__", "__STDERR_PIGZ_END__"},
@@ -1415,7 +1569,7 @@ defmodule DocdbStreamBackup do
     trap cleanup EXIT
     : > #{shell_escape(meter_progress_file)}
     stream_meter_aws() {
-      LC_ALL=C dd bs=8M of=/dev/stdout status=progress 2>#{shell_escape(meter_progress_file)} | #{aws_command} 2>"${stderr_aws}"
+      LC_ALL=C dd bs=#{args.meter_block_size_mib}M of=/dev/stdout status=progress 2>#{shell_escape(meter_progress_file)} | #{aws_command} 2>"${stderr_aws}"
       meter_pipeline_status="${PIPESTATUS[*]}"
       meter_pipeline_exit=0
       for status_code in ${meter_pipeline_status}; do
@@ -1452,78 +1606,88 @@ defmodule DocdbStreamBackup do
     show_progress? = Keyword.get(opts, :show_progress?, true)
     print_output? = Keyword.get(opts, :print_output?, true)
 
-    if show_config? do
-      print_config(args, capabilities)
-      IO.puts("destino: #{destination}")
-      IO.puts("alvo: #{format_bytes_binary(@default_expected_size_bytes)} em até #{@default_target_duration_seconds}s")
-    end
+    with {:ok, aws_config_path} <- write_aws_cli_s3_config(args) do
+      if show_config? do
+        print_config(args, capabilities)
+        IO.puts("destino: #{destination}")
 
-    progress_display =
-      if show_progress? do
-        start_progress_display("backup em andamento", progress_stage_specs(args, capabilities))
-      else
-        nil
+        IO.puts(
+          "alvo: #{format_bytes_binary(args.expected_size_bytes)} em até #{@default_target_duration_seconds}s"
+        )
       end
 
-    stream_progress_target = resolve_stream_progress_target(opts, progress_display)
-
-    stream_progress_watcher =
-      start_stream_progress_watcher(
-        meter_progress_file,
-        stream_progress_target,
-        started_at,
-        args.expected_size_bytes
-      )
-
-    case System.cmd("bash", ["-c", command], stderr_to_stdout: true) do
-      {output, 0} ->
-        measured_bytes = read_streamed_bytes(meter_progress_file)
-        stop_stream_progress_watcher(stream_progress_watcher)
-        maybe_stop_progress_display(progress_display, success_stage_states())
-
-        if print_output? do
-          print_pipeline_output(output, status_probe, stderr_markers)
+      progress_display =
+        if show_progress? do
+          start_progress_display("backup em andamento", progress_stage_specs(args, capabilities))
+        else
+          nil
         end
 
-        cleanup_runtime_probe_file(meter_progress_file)
+      stream_progress_target = resolve_stream_progress_target(opts, progress_display)
 
-        {:ok,
-         %{
-           duration_us: System.monotonic_time(:microsecond) - started_at,
-           raw_bytes: measured_bytes,
-           estimated_bytes: args.expected_size_bytes
-         }}
+      stream_progress_watcher =
+        start_stream_progress_watcher(
+          meter_progress_file,
+          stream_progress_target,
+          started_at,
+          args.expected_size_bytes
+        )
 
-      {output, status} ->
-        measured_bytes = read_streamed_bytes(meter_progress_file)
-        stop_stream_progress_watcher(stream_progress_watcher)
-        pipeline_status = extract_pipeline_status(output, status_probe)
-        maybe_stop_progress_display(progress_display, final_stage_states(pipeline_status))
-        cleaned_output = remove_probe_sections(output, status_probe, stderr_markers)
-        failed_stages = failed_pipeline_stages(pipeline_status)
-        stderr_sections = extract_stderr_sections(output, stderr_markers)
+      system_cmd_opts = [
+        stderr_to_stdout: true,
+        env: [{"AWS_CONFIG_FILE", aws_config_path}]
+      ]
 
-        details =
-          [
-            "pipeline falhou com código #{status}",
-            format_pipeline_stage_details(failed_stages),
-            format_failed_commands(pipeline_summary, failed_stages),
-            format_stage_stderr(stderr_sections, failed_stages),
-            format_failure_hint(stderr_sections, failed_stages, args, capabilities),
-            format_pipeline_output(cleaned_output)
-          ]
-          |> Enum.reject(&(&1 == ""))
-          |> Enum.join("\n")
+      result =
+        case System.cmd("bash", ["-c", command], system_cmd_opts) do
+          {output, 0} ->
+            measured_bytes = read_streamed_bytes(meter_progress_file)
+            stop_stream_progress_watcher(stream_progress_watcher)
+            maybe_stop_progress_display(progress_display, success_stage_states())
 
-        cleanup_runtime_probe_file(meter_progress_file)
+            if print_output? do
+              print_pipeline_output(output, status_probe, stderr_markers)
+            end
 
-        {:error,
-         details,
-         %{
-           duration_us: System.monotonic_time(:microsecond) - started_at,
-           raw_bytes: measured_bytes,
-           estimated_bytes: 0
-         }}
+            {:ok,
+             %{
+               duration_us: System.monotonic_time(:microsecond) - started_at,
+               raw_bytes: measured_bytes,
+               estimated_bytes: args.expected_size_bytes
+             }}
+
+          {output, status} ->
+            measured_bytes = read_streamed_bytes(meter_progress_file)
+            stop_stream_progress_watcher(stream_progress_watcher)
+            pipeline_status = extract_pipeline_status(output, status_probe)
+            maybe_stop_progress_display(progress_display, final_stage_states(pipeline_status))
+            cleaned_output = remove_probe_sections(output, status_probe, stderr_markers)
+            failed_stages = failed_pipeline_stages(pipeline_status)
+            stderr_sections = extract_stderr_sections(output, stderr_markers)
+
+            details =
+              [
+                "pipeline falhou com código #{status}",
+                format_pipeline_stage_details(failed_stages),
+                format_failed_commands(pipeline_summary, failed_stages),
+                format_stage_stderr(stderr_sections, failed_stages),
+                format_failure_hint(stderr_sections, failed_stages, args, capabilities),
+                format_pipeline_output(cleaned_output)
+              ]
+              |> Enum.reject(&(&1 == ""))
+              |> Enum.join("\n")
+
+            {:error, details,
+             %{
+               duration_us: System.monotonic_time(:microsecond) - started_at,
+               raw_bytes: measured_bytes,
+               estimated_bytes: 0
+             }}
+        end
+
+      cleanup_runtime_probe_file(meter_progress_file)
+      cleanup_runtime_probe_file(aws_config_path)
+      result
     end
   end
 
@@ -1532,6 +1696,66 @@ defmodule DocdbStreamBackup do
       System.tmp_dir!(),
       "#{label}-#{System.system_time(:microsecond)}-#{System.unique_integer([:positive])}.log"
     )
+  end
+
+  defp write_aws_cli_s3_config(args) do
+    aws_config_path = build_runtime_probe_path("aws-config")
+    active_profile = System.get_env("AWS_PROFILE") || "default"
+    config_prefix = aws_cli_profile_prefix(active_profile)
+
+    base_config_path =
+      System.get_env("AWS_CONFIG_FILE") || Path.join(System.user_home!(), ".aws/config")
+
+    case copy_base_aws_config(base_config_path, aws_config_path) do
+      :ok ->
+        result =
+          [
+            {"#{config_prefix}.s3.max_concurrent_requests",
+             Integer.to_string(args.s3_max_concurrent_requests)},
+            {"#{config_prefix}.s3.max_queue_size", Integer.to_string(args.s3_max_queue_size)},
+            {"#{config_prefix}.s3.multipart_threshold", "#{args.s3_multipart_chunksize_mib}MB"},
+            {"#{config_prefix}.s3.multipart_chunksize", "#{args.s3_multipart_chunksize_mib}MB"}
+          ]
+          |> Enum.reduce_while({:ok, aws_config_path}, fn {key, value}, {:ok, path} ->
+            case System.cmd(
+                   "aws",
+                   ["configure", "set", key, value],
+                   stderr_to_stdout: true,
+                   env: [{"AWS_CONFIG_FILE", path}]
+                 ) do
+              {_output, 0} ->
+                {:cont, {:ok, path}}
+
+              {output, status} ->
+                {:halt,
+                 {:error,
+                  "falha ao preparar AWS CLI para upload multipart otimizado (status #{status}): #{String.trim(output)}"}}
+            end
+          end)
+
+        case result do
+          {:ok, path} ->
+            {:ok, path}
+
+          {:error, message} ->
+            cleanup_runtime_probe_file(aws_config_path)
+            {:error, message}
+        end
+
+      {:error, reason} ->
+        {:error, "falha ao preparar configuração temporária do AWS CLI: #{inspect(reason)}"}
+    end
+  end
+
+  defp aws_cli_profile_prefix("default"), do: "default"
+  defp aws_cli_profile_prefix(profile_name), do: "profile.#{profile_name}"
+
+  defp copy_base_aws_config(base_config_path, aws_config_path) do
+    case File.read(base_config_path) do
+      {:ok, config_content} -> File.write(aws_config_path, config_content)
+      {:error, :enoent} -> File.write(aws_config_path, "")
+      {:error, reason} -> {:error, reason}
+    end
   end
 
   defp cleanup_runtime_probe_file(path) do
@@ -1553,11 +1777,23 @@ defmodule DocdbStreamBackup do
     end
   end
 
-  defp start_stream_progress_watcher(_meter_progress_file, nil, _started_at, _target_bytes), do: nil
+  defp start_stream_progress_watcher(_meter_progress_file, nil, _started_at, _target_bytes),
+    do: nil
 
-  defp start_stream_progress_watcher(meter_progress_file, progress_target, started_at, target_bytes) do
+  defp start_stream_progress_watcher(
+         meter_progress_file,
+         progress_target,
+         started_at,
+         target_bytes
+       ) do
     spawn(fn ->
-      stream_progress_watcher_loop(meter_progress_file, progress_target, started_at, target_bytes, 0)
+      stream_progress_watcher_loop(
+        meter_progress_file,
+        progress_target,
+        started_at,
+        target_bytes,
+        0
+      )
     end)
   end
 
@@ -1568,7 +1804,13 @@ defmodule DocdbStreamBackup do
     :ok
   end
 
-  defp stream_progress_watcher_loop(meter_progress_file, progress_target, started_at, target_bytes, last_bytes) do
+  defp stream_progress_watcher_loop(
+         meter_progress_file,
+         progress_target,
+         started_at,
+         target_bytes,
+         last_bytes
+       ) do
     receive do
       :stop ->
         :ok
@@ -1649,7 +1891,10 @@ defmodule DocdbStreamBackup do
     end
   end
 
-  defp num_parallel_collections_flag(_num_parallel_collections, %{supports_num_parallel_collections: false}), do: []
+  defp num_parallel_collections_flag(_num_parallel_collections, %{
+         supports_num_parallel_collections: false
+       }),
+       do: []
 
   defp num_parallel_collections_flag(num_parallel_collections, _capabilities) do
     ["--numParallelCollections", Integer.to_string(num_parallel_collections)]
@@ -1862,6 +2107,7 @@ defmodule DocdbStreamBackup do
 
   defp print_config(args, capabilities) do
     runtime_tuning = Map.get(args, :runtime_tuning, default_runtime_tuning())
+
     num_parallel_display =
       if capabilities.supports_num_parallel_collections do
         Integer.to_string(args.num_parallel_collections)
@@ -1874,7 +2120,7 @@ defmodule DocdbStreamBackup do
     )
 
     IO.puts(
-      "config: numParallelCollections=#{num_parallel_display} (#{Map.get(args, :num_parallel_collections_source, :auto)}) pigz_threads=#{args.pigz_threads} (#{Map.get(args, :pigz_threads_source, :auto)}) compression_level=#{args.compression_level} (#{Map.get(args, :compression_level_source, :auto)}) expected_size=#{format_bytes_binary(args.expected_size_bytes)}"
+      "config: numParallelCollections=#{num_parallel_display} (#{Map.get(args, :num_parallel_collections_source, :auto)}) pigz_threads=#{args.pigz_threads} (#{Map.get(args, :pigz_threads_source, :auto)}) compression_level=#{args.compression_level} (#{Map.get(args, :compression_level_source, :auto)}) s3_max_concurrent_requests=#{args.s3_max_concurrent_requests} (#{Map.get(args, :s3_max_concurrent_requests_source, :auto)}) s3_max_queue_size=#{args.s3_max_queue_size} (#{Map.get(args, :s3_max_queue_size_source, :auto)}) s3_multipart_chunksize=#{args.s3_multipart_chunksize_mib}MiB (#{Map.get(args, :s3_multipart_chunksize_mib_source, :auto)}) meter_block_size=#{args.meter_block_size_mib}MiB (#{Map.get(args, :meter_block_size_mib_source, :auto)}) expected_size=#{format_bytes_binary(args.expected_size_bytes)}"
     )
   end
 
@@ -1889,7 +2135,7 @@ defmodule DocdbStreamBackup do
         "desativado"
       end
 
-    "numParallelCollections=#{num_parallel_display} pigz_threads=#{args.pigz_threads} compression_level=#{args.compression_level}"
+    "numParallelCollections=#{num_parallel_display} pigz_threads=#{args.pigz_threads} compression_level=#{args.compression_level} s3_max_concurrent_requests=#{args.s3_max_concurrent_requests} s3_max_queue_size=#{args.s3_max_queue_size} s3_multipart_chunksize=#{args.s3_multipart_chunksize_mib}MiB"
   end
 
   defp print_performance_report(metrics, expected_size_bytes) do
@@ -1902,11 +2148,17 @@ defmodule DocdbStreamBackup do
 
     if raw_bytes > 0 do
       throughput = raw_bytes / 1024.0 / 1024.0 / duration_seconds
-      IO.puts("volume processado: #{format_bytes_binary(raw_bytes)} (~#{:erlang.float_to_binary(throughput, decimals: 2)} MiB/s)")
+
+      IO.puts(
+        "volume processado: #{format_bytes_binary(raw_bytes)} (~#{:erlang.float_to_binary(throughput, decimals: 2)} MiB/s)"
+      )
     else
       if estimated_bytes > 0 do
         throughput = estimated_bytes / 1024.0 / 1024.0 / duration_seconds
-        IO.puts("volume estimado: #{format_bytes_binary(estimated_bytes)} (~#{:erlang.float_to_binary(throughput, decimals: 2)} MiB/s)")
+
+        IO.puts(
+          "volume estimado: #{format_bytes_binary(estimated_bytes)} (~#{:erlang.float_to_binary(throughput, decimals: 2)} MiB/s)"
+        )
       else
         IO.puts("volume processado: sem bytes (não foi possível mensurar)")
       end
@@ -1914,7 +2166,9 @@ defmodule DocdbStreamBackup do
 
     target_duration_seconds = @default_target_duration_seconds
     target_speed_mib_per_sec = expected_size_bytes / 1024.0 / 1024.0 / target_duration_seconds
-    target_gib_per_min = expected_size_bytes / 1024.0 / 1024.0 / 1024.0 / (target_duration_seconds / 60.0)
+
+    target_gib_per_min =
+      expected_size_bytes / 1024.0 / 1024.0 / 1024.0 / (target_duration_seconds / 60.0)
 
     result =
       if duration_us <= @default_target_duration_seconds * 1_000_000 do
@@ -1937,7 +2191,8 @@ defmodule DocdbStreamBackup do
   defp do_format_bytes_binary(value, [unit | _rest]) when value < 1024,
     do: "#{:erlang.float_to_binary(value, decimals: 2)} #{unit}"
 
-  defp do_format_bytes_binary(value, [_unit | rest]), do: do_format_bytes_binary(value / 1024.0, rest)
+  defp do_format_bytes_binary(value, [_unit | rest]),
+    do: do_format_bytes_binary(value / 1024.0, rest)
 
   defp format_duration(duration_us) do
     total_seconds = div(duration_us, 1_000_000)
@@ -1973,7 +2228,7 @@ defmodule DocdbStreamBackup do
     [
       %{name: "mongodump", activity_label: "workers", parallelism: mongodump_parallelism},
       %{name: "pigz", activity_label: "threads", parallelism: max(args.pigz_threads, 1)},
-      %{name: "aws", activity_label: "streams", parallelism: 1}
+      %{name: "aws", activity_label: "reqs", parallelism: max(args.s3_max_concurrent_requests, 1)}
     ]
   end
 
@@ -1984,6 +2239,7 @@ defmodule DocdbStreamBackup do
     |> Enum.map(fn {status, index} ->
       stage = Enum.at(["mongodump", "pigz", "aws"], index, "etapa-#{index + 1}")
       parsed_status = parse_stage_status(status)
+
       stage_state =
         if parsed_status == 0 do
           {:done, parsed_status}
@@ -2064,7 +2320,9 @@ defmodule DocdbStreamBackup do
   end
 
   defp maybe_stop_progress_display(nil, _stage_states), do: :ok
-  defp maybe_stop_progress_display(pid, stage_states), do: stop_progress_display(pid, stage_states)
+
+  defp maybe_stop_progress_display(pid, stage_states),
+    do: stop_progress_display(pid, stage_states)
 
   defp update_progress_display(nil, _stage_name, _stage_state), do: :ok
 
@@ -2088,6 +2346,7 @@ defmodule DocdbStreamBackup do
         IO.write(Enum.join(lines, "\n") <> "\n")
       else
         IO.write(IO.ANSI.cursor_up(state.rendered_line_count))
+
         Enum.each(lines, fn line ->
           IO.write(IO.ANSI.clear_line())
           IO.write(line <> "\n")
@@ -2111,7 +2370,11 @@ defmodule DocdbStreamBackup do
     |> Kernel.++(format_progress_summary_lines(Map.get(state, :summary)))
     |> Kernel.++(
       Enum.map(state.stage_specs, fn stage_spec ->
-          format_progress_stage_line(stage_spec, Map.get(state.stage_states, stage_spec.name, {:running, nil, ""}), state.frame)
+        format_progress_stage_line(
+          stage_spec,
+          Map.get(state.stage_states, stage_spec.name, {:running, nil, ""}),
+          state.frame
+        )
       end)
     )
   end
@@ -2219,15 +2482,37 @@ defmodule DocdbStreamBackup do
       mem_available_bytes: mem_available_bytes,
       tuning_profile: tuning_profile,
       num_parallel_collections:
-        recommended_num_parallel_collections(schedulers_online, mem_available_bytes, tuning_profile),
-      pigz_threads: recommended_pigz_threads(schedulers_online, mem_available_bytes, tuning_profile),
-      compression_level: recommended_compression_level(tuning_profile)
+        recommended_num_parallel_collections(
+          schedulers_online,
+          mem_available_bytes,
+          tuning_profile
+        ),
+      pigz_threads:
+        recommended_pigz_threads(schedulers_online, mem_available_bytes, tuning_profile),
+      compression_level: recommended_compression_level(tuning_profile),
+      s3_max_concurrent_requests:
+        recommended_s3_max_concurrent_requests(
+          schedulers_online,
+          mem_available_bytes,
+          tuning_profile
+        ),
+      s3_max_queue_size:
+        recommended_s3_max_queue_size(schedulers_online, mem_available_bytes, tuning_profile),
+      s3_multipart_chunksize_mib:
+        recommended_s3_multipart_chunksize_mib(
+          schedulers_online,
+          mem_available_bytes,
+          tuning_profile
+        ),
+      meter_block_size_mib:
+        recommended_meter_block_size_mib(schedulers_online, mem_available_bytes, tuning_profile)
     }
   end
 
   defp read_mem_available_bytes do
     with {:ok, meminfo} <- File.read("/proc/meminfo"),
-         [value_kib] <- Regex.run(~r/^MemAvailable:\s+(\d+)\s+kB$/m, meminfo, capture: :all_but_first),
+         [value_kib] <-
+           Regex.run(~r/^MemAvailable:\s+(\d+)\s+kB$/m, meminfo, capture: :all_but_first),
          {parsed_kib, ""} <- Integer.parse(value_kib) do
       parsed_kib * 1024
     else
@@ -2235,7 +2520,9 @@ defmodule DocdbStreamBackup do
     end
   end
 
-  defp infer_tuning_profile(schedulers_online, nil) when schedulers_online <= 2, do: :cpu_limited_balanced
+  defp infer_tuning_profile(schedulers_online, nil) when schedulers_online <= 2,
+    do: :cpu_limited_balanced
+
   defp infer_tuning_profile(_schedulers_online, nil), do: :balanced
 
   defp infer_tuning_profile(schedulers_online, mem_available_bytes) do
@@ -2293,7 +2580,11 @@ defmodule DocdbStreamBackup do
     |> min(4)
   end
 
-  defp recommended_num_parallel_collections(schedulers_online, mem_available_bytes, tuning_profile) do
+  defp recommended_num_parallel_collections(
+         schedulers_online,
+         mem_available_bytes,
+         tuning_profile
+       ) do
     case tuning_profile do
       :conservative ->
         1
@@ -2351,6 +2642,144 @@ defmodule DocdbStreamBackup do
         cond do
           mem_available_bytes < gib(12) -> min(max(schedulers_online - 1, 1), 4)
           true -> min(max(schedulers_online - 1, 1), 8)
+        end
+    end
+  end
+
+  defp recommended_s3_max_concurrent_requests(schedulers_online, nil, _tuning_profile) do
+    schedulers_online
+    |> Kernel.*(2)
+    |> max(4)
+    |> min(8)
+  end
+
+  defp recommended_s3_max_concurrent_requests(
+         schedulers_online,
+         mem_available_bytes,
+         tuning_profile
+       ) do
+    case tuning_profile do
+      :conservative ->
+        4
+
+      :cpu_limited_throughput ->
+        cond do
+          mem_available_bytes < gib(2.5) -> 4
+          true -> min(max(schedulers_online * 2, 4), 8)
+        end
+
+      :cpu_limited_balanced ->
+        min(max(schedulers_online * 2, 4), 6)
+
+      :balanced ->
+        cond do
+          mem_available_bytes < gib(6) -> min(max(schedulers_online * 2, 4), 8)
+          true -> min(max(schedulers_online * 3, 6), 12)
+        end
+
+      :throughput ->
+        cond do
+          mem_available_bytes < gib(12) -> min(max(schedulers_online * 3, 8), 16)
+          true -> min(max(schedulers_online * 4, 12), 24)
+        end
+    end
+  end
+
+  defp recommended_s3_max_queue_size(schedulers_online, nil, _tuning_profile) do
+    schedulers_online
+    |> Kernel.*(128)
+    |> max(256)
+    |> min(512)
+  end
+
+  defp recommended_s3_max_queue_size(schedulers_online, mem_available_bytes, tuning_profile) do
+    case tuning_profile do
+      :conservative ->
+        256
+
+      :cpu_limited_throughput ->
+        cond do
+          mem_available_bytes < gib(2.5) -> 256
+          true -> min(max(schedulers_online * 192, 256), 512)
+        end
+
+      :cpu_limited_balanced ->
+        min(max(schedulers_online * 160, 256), 512)
+
+      :balanced ->
+        cond do
+          mem_available_bytes < gib(6) -> min(max(schedulers_online * 192, 256), 768)
+          true -> min(max(schedulers_online * 256, 512), 1024)
+        end
+
+      :throughput ->
+        cond do
+          mem_available_bytes < gib(12) -> min(max(schedulers_online * 256, 512), 1024)
+          true -> min(max(schedulers_online * 384, 1024), 2048)
+        end
+    end
+  end
+
+  defp recommended_s3_multipart_chunksize_mib(_schedulers_online, nil, _tuning_profile), do: 32
+
+  defp recommended_s3_multipart_chunksize_mib(
+         _schedulers_online,
+         mem_available_bytes,
+         tuning_profile
+       ) do
+    case tuning_profile do
+      :conservative ->
+        16
+
+      :cpu_limited_throughput ->
+        cond do
+          mem_available_bytes < gib(2.5) -> 16
+          true -> 32
+        end
+
+      :cpu_limited_balanced ->
+        32
+
+      :balanced ->
+        cond do
+          mem_available_bytes < gib(6) -> 32
+          true -> 64
+        end
+
+      :throughput ->
+        cond do
+          mem_available_bytes < gib(12) -> 64
+          true -> 96
+        end
+    end
+  end
+
+  defp recommended_meter_block_size_mib(_schedulers_online, nil, _tuning_profile), do: 16
+
+  defp recommended_meter_block_size_mib(_schedulers_online, mem_available_bytes, tuning_profile) do
+    case tuning_profile do
+      :conservative ->
+        8
+
+      :cpu_limited_throughput ->
+        cond do
+          mem_available_bytes < gib(2.5) -> 8
+          true -> 16
+        end
+
+      :cpu_limited_balanced ->
+        16
+
+      :balanced ->
+        cond do
+          mem_available_bytes < gib(6) -> 16
+          true -> 32
+        end
+
+      :throughput ->
+        cond do
+          mem_available_bytes < gib(12) -> 32
+          true -> 64
         end
     end
   end
