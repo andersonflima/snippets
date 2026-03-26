@@ -28,6 +28,12 @@ Se você não quiser rodar instalador por instalador, use o bootstrap único:
 sh scripts/setup_restricted_dev_env.sh --s3-bucket "<bucket>"
 ```
 
+Ou, no atalho mais simples:
+
+```bash
+sh scripts/configure_restricted_dev_env.sh "<bucket>"
+```
+
 Esse fluxo instala e configura:
 
 - wrapper do `mix`
@@ -48,6 +54,12 @@ sh scripts/setup_restricted_dev_env.sh \
   --s3-bucket "<bucket>" \
   --apply-shell-rc \
   --shell-rc "$HOME/.zshrc"
+```
+
+Para zerar tudo depois:
+
+```bash
+sh scripts/reset_restricted_dev_env.sh
 ```
 
 Opcionalmente, ele também pode aplicar `mix hex.config`:

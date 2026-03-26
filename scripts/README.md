@@ -3,7 +3,9 @@
 Estrutura canônica:
 
 - `scripts/setup_restricted_dev_env.sh`: bootstrap único para instalar e configurar `mix`, `curl` e `git` com backend EC2 compartilhado
+- `scripts/configure_restricted_dev_env.sh`: atalho simples para o bootstrap completo, aceitando o bucket como primeiro argumento posicional
 - `scripts/activate_restricted_dev_env.sh`: carrega os env-files do ambiente restrito só na sessão atual
+- `scripts/reset_restricted_dev_env.sh`: remove wrappers, env-files e referências no shell rc para zerar o ambiente restrito
 - `scripts/docdb_stream_backup.exs`: backup DocumentDB em Elixir
 - `scripts/ec2/elixir/`: instalação e correção de runtime Elixir/Erlang no EC2
 - `scripts/ec2/elixir/configure_mix_hex_envs.sh`: configura proxy/CA/Hex/Mix para ambiente restrito
