@@ -35,7 +35,7 @@ USAGE
 
 INSTALL_DIR="${HOME}/.local/share/mix-ec2-wrapper/bin"
 WRAPPER_SOURCE="$(cd "$(dirname "$0")/.." && pwd)/wrappers/mix_ec2_wrapper.sh"
-ENTRYPOINT_SOURCE="$(cd "$(dirname "$0")/.." && pwd)/mix_via_ec2.sh"
+ENTRYPOINT_SOURCE="$(cd "$(dirname "$0")/.." && pwd)/ec2/elixir/mix_via_ec2.sh"
 REAL_MIX_BIN="${MIX_WRAPPER_REAL_MIX:-}"
 
 while [[ $# -gt 0 ]]; do
