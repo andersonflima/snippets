@@ -4,6 +4,7 @@ Estrutura canônica:
 
 - `scripts/docdb_stream_backup.exs`: backup DocumentDB em Elixir
 - `scripts/ec2/elixir/`: instalação e correção de runtime Elixir/Erlang no EC2
+- `scripts/ec2/elixir/configure_mix_hex_envs.sh`: configura proxy/CA/Hex/Mix para ambiente restrito
 - `scripts/ec2/go/`: instalação de Go no EC2
 - `scripts/ec2/mongodb/`: instalação de MongoDB Database Tools no EC2
 - `scripts/install/`: instaladores dos wrappers locais
