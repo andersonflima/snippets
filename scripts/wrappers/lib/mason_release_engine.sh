@@ -392,6 +392,76 @@ with zipfile.ZipFile(output_path, "w", zipfile.ZIP_DEFLATED) as archive:
 PY
 }
 
+prepare_mix_build_environment() {
+  local workspace_root proxy_value
+  workspace_root="$1"
+  proxy_value="${CURL_WRAPPER_ACTIVE_PROXY:-}"
+
+  export MIX_ENV="${MIX_ENV:-prod}"
+  export MIX_XDG=1
+  export MIX_HOME="${workspace_root}/.mix"
+  export HEX_HOME="${workspace_root}/.hex"
+  export HEX_HTTP_CONCURRENCY="${HEX_HTTP_CONCURRENCY:-${CURL_WRAPPER_HEX_HTTP_CONCURRENCY:-1}}"
+  export HEX_HTTP_TIMEOUT="${HEX_HTTP_TIMEOUT:-${CURL_WRAPPER_HEX_HTTP_TIMEOUT:-120}}"
+
+  mkdir -p "${MIX_HOME}" "${HEX_HOME}"
+
+  if [[ -n "${proxy_value}" ]]; then
+    export HTTP_PROXY="${HTTP_PROXY:-${proxy_value}}"
+    export HTTPS_PROXY="${HTTPS_PROXY:-${proxy_value}}"
+    export ALL_PROXY="${ALL_PROXY:-${proxy_value}}"
+  fi
+
+  if [[ -n "${GIT_ZIP_WRAPPER_CURL_CACERT:-}" && -z "${HEX_CACERTS_PATH:-}" ]]; then
+    export HEX_CACERTS_PATH="${GIT_ZIP_WRAPPER_CURL_CACERT}"
+  fi
+}
+
+enable_insecure_hex_fallback() {
+  if [[ "${HEX_UNSAFE_HTTPS:-0}" == "1" ]]; then
+    return 0
+  fi
+
+  if [[ "${CURL_WRAPPER_AUTO_INSECURE_ON_CERT_ERROR:-0}" != "1" ]]; then
+    return 1
+  fi
+
+  export HEX_UNSAFE_HTTPS=1
+  export HEX_UNSAFE_REGISTRY="${HEX_UNSAFE_REGISTRY:-1}"
+  export HEX_NO_VERIFY_REPO_ORIGIN="${HEX_NO_VERIFY_REPO_ORIGIN:-1}"
+  log "retry do Hex com verificação TLS desativada por política de recuperação"
+  return 0
+}
+
+run_mix_command_with_retry() {
+  local command_name
+  command_name="$1"
+  shift
+
+  if "$@"; then
+    return 0
+  fi
+
+  if enable_insecure_hex_fallback && "$@"; then
+    return 0
+  fi
+
+  log "falha ao executar etapa do mix: ${command_name}"
+  return 1
+}
+
+ensure_hex_and_rebar_available() {
+  if ! run_mix_command_with_retry "mix local.hex" mix local.hex --force --if-missing; then
+    run_mix_command_with_retry "mix archive.install github hexpm/hex" mix archive.install github hexpm/hex branch latest --force || return 1
+  fi
+
+  run_mix_command_with_retry "mix local.rebar" mix local.rebar --force || return 1
+}
+
+fetch_mix_dependencies() {
+  run_mix_command_with_retry "mix deps.get" mix deps.get
+}
+
 mason_release_repackage_archive_as_zip() {
   local owner repo tag requested_asset output_path resolved_asset tmp_dir archive_path extracted_dir package_root
   owner="$1"
@@ -455,9 +525,9 @@ build_elixir_ls_release_zip() {
 
   (
     cd "${source_root}"
-    mix local.hex --force >/dev/null 2>&1 || true
-    mix local.rebar --force >/dev/null 2>&1 || true
-    mix deps.get >/dev/null 2>&1 || true
+    prepare_mix_build_environment "${tmp_dir}"
+    ensure_hex_and_rebar_available
+    fetch_mix_dependencies
     case "${release_task}" in
       "elixir_ls.release2 --destination")
         mix elixir_ls.release2 --destination "${release_dir}"
