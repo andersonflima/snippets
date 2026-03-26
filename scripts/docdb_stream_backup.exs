@@ -217,6 +217,7 @@ defmodule DocdbStreamBackup do
              s3_multipart_chunksize_mib: s3_multipart_chunksize_mib,
              meter_block_size_mib: meter_block_size_mib,
              expected_size_bytes: expected_size_bytes,
+             expected_size_bytes_source: expected_size_bytes_source(options),
              extra_mongodump_args: extra_mongodump_args,
              runtime_tuning: runtime_tuning,
              num_parallel_collections_source: option_source(options[:num_parallel_collections]),
@@ -423,6 +424,16 @@ defmodule DocdbStreamBackup do
     end
   end
 
+  defp expected_size_bytes_source(options) do
+    cond do
+      not is_nil(options[:expected_size_bytes]) or not is_nil(options[:expected_size_gib]) ->
+        :cli
+
+      true ->
+        :default
+    end
+  end
+
   defp resolve_mongodump_args(options) do
     options
     |> Keyword.get_values(:mongodump_arg)
@@ -581,49 +592,56 @@ defmodule DocdbStreamBackup do
   defp run_backup(args, capabilities) do
     case resolve_execution_plan(args) do
       {:parallel, target_databases, strategy_label} ->
+        resolved_args = maybe_apply_cluster_expected_size(args, target_databases)
         IO.puts("plano: #{strategy_label}")
-        run_parallel_database_pipelines(args, capabilities, target_databases, strategy_label)
+        run_parallel_database_pipelines(
+          resolved_args,
+          capabilities,
+          target_databases,
+          strategy_label
+        )
 
-      {:single, strategy_label} ->
+      {:single, strategy_label, target_databases} ->
+        resolved_args = maybe_apply_cluster_expected_size(args, target_databases)
         IO.puts("plano: #{strategy_label}")
 
-        with {:ok, key} <- build_s3_key(args.prefix),
-             {:ok, metrics} <- run_pipeline(args, capabilities, key) do
+        with {:ok, key} <- build_s3_key(resolved_args.prefix),
+             {:ok, metrics} <- run_pipeline(resolved_args, capabilities, key) do
           {:ok,
            %{
              mode: :single,
              metrics: metrics,
-             destinations: ["s3://#{args.bucket}/#{key}"]
-           }}
+             destinations: ["s3://#{resolved_args.bucket}/#{key}"]
+            }}
         end
     end
   end
 
   defp resolve_execution_plan(%{parallel_databases: true} = args) do
     case resolve_target_databases(args) do
-      {:ok, [_single_database]} ->
-        {:single, "single_stream (1 database explícito)"}
+      {:ok, [single_database]} ->
+        {:single, "single_stream (1 database explícito)", [single_database]}
 
       {:ok, target_databases} ->
         {:parallel, target_databases, "parallel_databases (explícito)"}
 
       {:error, message} ->
-        {:single, "single_stream (fallback: #{message})"}
+        {:single, "single_stream (fallback: #{message})", nil}
     end
   end
 
   defp resolve_execution_plan(args) do
     cond do
       database_targeted_in_mongodump_args?(args.extra_mongodump_args) ->
-        {:single, "single_stream (mongodump já segmentado por --db/--collection)"}
+        {:single, "single_stream (mongodump já segmentado por --db/--collection)", nil}
 
       true ->
         case discover_databases(args.uri, args.extra_mongodump_args) do
           {:ok, []} ->
-            {:single, "single_stream (nenhum database elegível descoberto)"}
+            {:single, "single_stream (nenhum database elegível descoberto)", []}
 
-          {:ok, [_single_database]} ->
-            {:single, "single_stream (1 database descoberto)"}
+          {:ok, [single_database]} ->
+            {:single, "single_stream (1 database descoberto)", [single_database]}
 
           {:ok, target_databases} ->
             case effective_parallel_database_concurrency(args, target_databases) do
@@ -632,11 +650,12 @@ defmodule DocdbStreamBackup do
                  "parallel_databases (auto: #{length(target_databases)} databases, concurrency=#{concurrency})"}
 
               _ ->
-                {:single, "single_stream (auto: host/dados favorecem pipeline único)"}
+                {:single, "single_stream (auto: host/dados favorecem pipeline único)",
+                 target_databases}
             end
 
           {:error, _message} ->
-            {:single, "single_stream (fallback: descoberta automática indisponível)"}
+            {:single, "single_stream (fallback: descoberta automática indisponível)", nil}
         end
     end
   end
@@ -1034,6 +1053,38 @@ defmodule DocdbStreamBackup do
       expected_size_bytes
       |> div(max(length(target_databases), 1))
       |> max(1_048_576)
+    end
+  end
+
+  defp maybe_apply_cluster_expected_size(%{expected_size_bytes_source: :cli} = args, _target_databases),
+    do: args
+
+  defp maybe_apply_cluster_expected_size(args, target_databases) when is_list(target_databases) do
+    case estimate_expected_size_bytes_from_databases(target_databases) do
+      {:ok, estimated_expected_size_bytes} ->
+        %{
+          args
+          | expected_size_bytes: estimated_expected_size_bytes,
+            expected_size_bytes_source: :cluster_discovery
+        }
+
+      :error ->
+        args
+    end
+  end
+
+  defp maybe_apply_cluster_expected_size(args, _target_databases), do: args
+
+  defp estimate_expected_size_bytes_from_databases(target_databases) do
+    estimated_expected_size_bytes =
+      target_databases
+      |> Enum.map(&normalized_database_size/1)
+      |> Enum.sum()
+
+    if estimated_expected_size_bytes > 0 do
+      {:ok, max(estimated_expected_size_bytes, 1_048_576)}
+    else
+      :error
     end
   end
 
@@ -2207,7 +2258,7 @@ defmodule DocdbStreamBackup do
     )
 
     IO.puts(
-      "config: numParallelCollections=#{num_parallel_display} (#{Map.get(args, :num_parallel_collections_source, :auto)}) pigz_threads=#{args.pigz_threads} (#{Map.get(args, :pigz_threads_source, :auto)}) compression_level=#{args.compression_level} (#{Map.get(args, :compression_level_source, :auto)}) s3_max_concurrent_requests=#{args.s3_max_concurrent_requests} (#{Map.get(args, :s3_max_concurrent_requests_source, :auto)}) s3_max_queue_size=#{args.s3_max_queue_size} (#{Map.get(args, :s3_max_queue_size_source, :auto)}) s3_multipart_chunksize=#{args.s3_multipart_chunksize_mib}MiB (#{Map.get(args, :s3_multipart_chunksize_mib_source, :auto)}) meter_block_size=#{args.meter_block_size_mib}MiB (#{Map.get(args, :meter_block_size_mib_source, :auto)}) multipart_expected_size=#{format_bytes_binary(args.expected_size_bytes)}"
+      "config: numParallelCollections=#{num_parallel_display} (#{Map.get(args, :num_parallel_collections_source, :auto)}) pigz_threads=#{args.pigz_threads} (#{Map.get(args, :pigz_threads_source, :auto)}) compression_level=#{args.compression_level} (#{Map.get(args, :compression_level_source, :auto)}) s3_max_concurrent_requests=#{args.s3_max_concurrent_requests} (#{Map.get(args, :s3_max_concurrent_requests_source, :auto)}) s3_max_queue_size=#{args.s3_max_queue_size} (#{Map.get(args, :s3_max_queue_size_source, :auto)}) s3_multipart_chunksize=#{args.s3_multipart_chunksize_mib}MiB (#{Map.get(args, :s3_multipart_chunksize_mib_source, :auto)}) meter_block_size=#{args.meter_block_size_mib}MiB (#{Map.get(args, :meter_block_size_mib_source, :auto)}) multipart_expected_size=#{format_bytes_binary(args.expected_size_bytes)} (#{Map.get(args, :expected_size_bytes_source, :default)})"
     )
   end
 
