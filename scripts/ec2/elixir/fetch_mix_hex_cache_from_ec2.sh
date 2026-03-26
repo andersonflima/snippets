@@ -32,14 +32,17 @@ Opções:
   --destination <dir>         Diretório local de destino.
                               Padrão: $HOME/.cache/elixir-ec2-import
   --project-path <dir>        Caminho remoto do projeto Elixir no EC2.
-  --mode <modo>               Modo: archives, home, project, all
+  --mode <modo>               Modo: archives, home, project, all, portable
                               Padrão: all quando --project-path existe, senão home
   --ssh-option <opção>        Opção extra para ssh. Repetível.
   -h, --help                  Mostra esta ajuda.
 
 Estrutura local gerada:
+  <destination>/metadata/runtime.txt
   <destination>/home/.mix
   <destination>/home/.hex
+  <destination>/home/.cache/rebar3
+  <destination>/home/.config/rebar3
   <destination>/project/deps
   <destination>/project/_build
   <destination>/project/mix.lock
@@ -53,7 +56,7 @@ Exemplos:
     --host 10.0.0.10 \
     --identity ~/.ssh/minha-chave.pem \
     --project-path /home/ec2-user/app \
-    --mode all
+    --mode portable
 USAGE
 }
 
@@ -123,14 +126,14 @@ if [[ -z "${MODE}" ]]; then
 fi
 
 case "${MODE}" in
-  archives|home|project|all)
+  archives|home|project|all|portable)
     ;;
   *)
     die "--mode inválido: ${MODE}"
     ;;
 esac
 
-if [[ ("${MODE}" == "project" || "${MODE}" == "all") && -z "${PROJECT_PATH}" ]]; then
+if [[ ("${MODE}" == "project" || "${MODE}" == "all" || "${MODE}" == "portable") && -z "${PROJECT_PATH}" ]]; then
   die "--project-path é obrigatório quando --mode é project ou all"
 fi
 
@@ -148,7 +151,7 @@ fi
 
 SSH_CMD+=("${SSH_USER}@${HOST}")
 
-mkdir -p "${DESTINATION_DIR}/home" "${DESTINATION_DIR}/project"
+mkdir -p "${DESTINATION_DIR}/home" "${DESTINATION_DIR}/project" "${DESTINATION_DIR}/metadata"
 
 fetch_remote_tarball() {
   local remote_script local_extract_dir
@@ -163,7 +166,7 @@ EOF
 }
 
 fetch_home_cache() {
-  log "copiando ~/.mix e ~/.hex do EC2"
+  log "copiando ~/.mix, ~/.hex e cache do rebar3 do EC2"
   fetch_remote_tarball '
 home_dir="${HOME}"
 entries=()
@@ -176,8 +179,16 @@ if [[ -d "${home_dir}/.hex" ]]; then
   entries+=(".hex")
 fi
 
+if [[ -d "${home_dir}/.cache/rebar3" ]]; then
+  entries+=(".cache/rebar3")
+fi
+
+if [[ -d "${home_dir}/.config/rebar3" ]]; then
+  entries+=(".config/rebar3")
+fi
+
 if (( ${#entries[@]} == 0 )); then
-  printf "[fetch-mix-hex-cache] remoto sem ~/.mix e ~/.hex\n" >&2
+  printf "[fetch-mix-hex-cache] remoto sem ~/.mix, ~/.hex ou cache do rebar3\n" >&2
   exit 1
 fi
 
@@ -199,10 +210,16 @@ tar -czf - -C "${home_dir}" .mix/archives
 }
 
 fetch_project_cache() {
-  local remote_project_path
+  local remote_project_path include_build
   remote_project_path="$1"
+  include_build="$2"
 
-  log "copiando deps/_build/mix.lock do projeto remoto ${remote_project_path}"
+  if [[ "${include_build}" == "1" ]]; then
+    log "copiando deps/_build/mix.lock do projeto remoto ${remote_project_path}"
+  else
+    log "copiando deps/mix.lock do projeto remoto ${remote_project_path}"
+  fi
+
   fetch_remote_tarball "
 project_path=$(printf '%q' "${remote_project_path}")
 cd \"\${project_path}\"
@@ -212,7 +229,7 @@ if [[ -d deps ]]; then
   entries+=(deps)
 fi
 
-if [[ -d _build ]]; then
+if [[ \"${include_build}\" == \"1\" ]] && [[ -d _build ]]; then
   entries+=(_build)
 fi
 
@@ -221,7 +238,7 @@ if [[ -f mix.lock ]]; then
 fi
 
 if (( \${#entries[@]} == 0 )); then
-  printf '[fetch-mix-hex-cache] projeto remoto sem deps/_build/mix.lock\n' >&2
+  printf '[fetch-mix-hex-cache] projeto remoto sem deps/mix.lock%s\n' \"\$([[ \"${include_build}\" == \"1\" ]] && printf '/_build' || printf '')\" >&2
   exit 1
 fi
 
@@ -229,19 +246,41 @@ tar -czf - \"\${entries[@]}\"
 " "${DESTINATION_DIR}/project"
 }
 
+fetch_runtime_metadata() {
+  log "coletando metadados de runtime do EC2"
+  "${SSH_CMD[@]}" "bash -s" <<'EOF' > "${DESTINATION_DIR}/metadata/runtime.txt"
+set -euo pipefail
+printf 'uname=%s\n' "$(uname -a 2>/dev/null || true)"
+printf 'arch=%s\n' "$(uname -m 2>/dev/null || true)"
+printf 'kernel=%s\n' "$(uname -r 2>/dev/null || true)"
+printf 'elixir=%s\n' "$(elixir --version 2>/dev/null | tr '\n' ' ' | sed 's/[[:space:]]\\+/ /g' | sed 's/[[:space:]]$//')"
+printf 'mix=%s\n' "$(mix --version 2>/dev/null | tr '\n' ' ' | sed 's/[[:space:]]\\+/ /g' | sed 's/[[:space:]]$//')"
+printf 'erlang=%s\n' "$(erl -eval 'io:format(\"~s\", [erlang:system_info(system_architecture)]), halt().' -noshell 2>/dev/null || true)"
+EOF
+}
+
 case "${MODE}" in
   home)
+    fetch_runtime_metadata
     fetch_home_cache
     ;;
   archives)
+    fetch_runtime_metadata
     fetch_archives_only
     ;;
   project)
-    fetch_project_cache "${PROJECT_PATH}"
+    fetch_runtime_metadata
+    fetch_project_cache "${PROJECT_PATH}" "1"
     ;;
   all)
+    fetch_runtime_metadata
     fetch_home_cache
-    fetch_project_cache "${PROJECT_PATH}"
+    fetch_project_cache "${PROJECT_PATH}" "1"
+    ;;
+  portable)
+    fetch_runtime_metadata
+    fetch_home_cache
+    fetch_project_cache "${PROJECT_PATH}" "0"
     ;;
 esac
 
@@ -252,8 +291,11 @@ Destino local:
   ${DESTINATION_DIR}
 
 Conteúdo esperado:
+  ${DESTINATION_DIR}/metadata/runtime.txt
   ${DESTINATION_DIR}/home/.mix
   ${DESTINATION_DIR}/home/.hex
+  ${DESTINATION_DIR}/home/.cache/rebar3
+  ${DESTINATION_DIR}/home/.config/rebar3
   ${DESTINATION_DIR}/project/deps
   ${DESTINATION_DIR}/project/_build
   ${DESTINATION_DIR}/project/mix.lock
