@@ -636,11 +636,12 @@ upload_local_project_archive() {
 }
 
 generate_remote_script() {
-  local remote_script_path remote_mix_args_literal quoted_remote_project_path quoted_aws_region
+  local remote_script_path remote_mix_args_literal quoted_remote_project_path quoted_aws_region quoted_mix_first_arg
   remote_script_path="$1"
   remote_mix_args_literal="$(printf '%q ' "${MIX_ARGS[@]}")"
   quoted_remote_project_path="$(shell_quote "${REMOTE_PROJECT_PATH}")"
   quoted_aws_region="$(shell_quote "${AWS_REGION_NAME}")"
+  quoted_mix_first_arg="$(shell_quote "${MIX_ARGS[0]}")"
 
   cat > "${remote_script_path}" <<EOF
 #!/usr/bin/env bash
@@ -705,7 +706,13 @@ resolve_remote_path() {
 
 HOME_DIR="\$(resolve_home_dir)"
 RUN_ROOT="/tmp/mix-via-ec2/runs/${RUN_ID}"
+HOME_CACHE_ROOT="\${RUN_ROOT}/home-cache"
+REMOTE_MIX_HOME="\${HOME_CACHE_ROOT}/.mix"
+REMOTE_HEX_HOME="\${HOME_CACHE_ROOT}/.hex"
+REMOTE_REBAR_CACHE_DIR="\${HOME_CACHE_ROOT}/.cache/rebar3"
+REMOTE_REBAR_CONFIG_DIR="\${HOME_CACHE_ROOT}/.config/rebar3"
 COMMAND_TYPE="${COMMAND_TYPE}"
+MIX_FIRST_ARG=${quoted_mix_first_arg}
 SYNC_BUILD="${SYNC_BUILD}"
 SYNC_HOME_CACHE="${SYNC_HOME_CACHE}"
 REMOTE_PROJECT_PATH_RAW=${quoted_remote_project_path}
@@ -720,11 +727,35 @@ REMOTE_PROJECT_PARENT="\${REMOTE_PROJECT_PATH%/*}"
 
 mkdir -p "\${RUN_ROOT}"
 mkdir -p "\${REMOTE_PROJECT_PARENT}"
+mkdir -p "\${REMOTE_MIX_HOME}" "\${REMOTE_HEX_HOME}" "\${REMOTE_REBAR_CACHE_DIR}" "\${REMOTE_REBAR_CONFIG_DIR}"
 reset_aws_auth_env
 if [[ -n "\${REMOTE_AWS_REGION}" ]]; then
   export AWS_REGION="\${REMOTE_AWS_REGION}"
   export AWS_DEFAULT_REGION="\${REMOTE_AWS_REGION}"
 fi
+unset MIX_PATH MIX_ARCHIVES
+export MIX_HOME="\${REMOTE_MIX_HOME}"
+export HEX_HOME="\${REMOTE_HEX_HOME}"
+export REBAR_CACHE_DIR="\${REMOTE_REBAR_CACHE_DIR}"
+export REBAR_GLOBAL_CONFIG_DIR="\${REMOTE_REBAR_CONFIG_DIR}"
+
+bootstrap_mix_local_tooling() {
+  case "\${MIX_FIRST_ARG}" in
+    local.hex)
+      return 0
+      ;;
+  esac
+
+  mix local.hex --force --if-missing >/dev/null 2>&1 || true
+
+  case "\${MIX_FIRST_ARG}" in
+    local.rebar)
+      return 0
+      ;;
+  esac
+
+  mix local.rebar --force --if-missing >/dev/null 2>&1 || true
+}
 
 finish() {
   local exit_code="\$?"
@@ -757,6 +788,7 @@ else
   cd "\${HOME_DIR}"
 fi
 
+bootstrap_mix_local_tooling
 log "executando mix ${MIX_ARGS[*]}"
 mix ${remote_mix_args_literal}
 
@@ -773,7 +805,7 @@ if [[ "\${COMMAND_TYPE}" == "project" ]]; then
 fi
 
 if [[ "\${SYNC_HOME_CACHE}" == "1" ]]; then
-  cd "\${HOME_DIR}"
+  cd "\${HOME_CACHE_ROOT}"
   entries=()
   if [[ -d .mix ]]; then entries+=(.mix); fi
   if [[ -d .hex ]]; then entries+=(.hex); fi
