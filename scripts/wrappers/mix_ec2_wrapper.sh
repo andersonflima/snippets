@@ -1,13 +1,4 @@
-#!/bin/sh
-[ -n "${BASH_VERSION:-}" ] || {
-  if command -v bash >/dev/null 2>&1; then
-    exec bash "$0" "$@"
-  fi
-
-  printf '[mix-ec2-wrapper] erro: bash é obrigatório para executar o wrapper do mix\n' >&2
-  exit 1
-}
-
+#!/usr/bin/env bash
 set -euo pipefail
 
 log() {

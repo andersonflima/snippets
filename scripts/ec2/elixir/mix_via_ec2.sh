@@ -1,13 +1,4 @@
-#!/bin/sh
-[ -n "${BASH_VERSION:-}" ] || {
-  if command -v bash >/dev/null 2>&1; then
-    exec bash "$0" "$@"
-  fi
-
-  printf '[mix-via-ec2] erro: bash é obrigatório para executar mix via EC2\n' >&2
-  exit 1
-}
-
+#!/usr/bin/env bash
 set -euo pipefail
 
 log() {
