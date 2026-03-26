@@ -79,6 +79,8 @@ shell_quote() {
 
 HOST=""
 INSTANCE_ID=""
+INSTANCE_PROFILE_ARN=""
+INSTANCE_ROLE_ARN=""
 INSTANCE_NAME="${MIX_VIA_EC2_INSTANCE_NAME:-}"
 TRANSPORT="${MIX_VIA_EC2_TRANSPORT:-auto}"
 AWS_PROFILE_NAME="${MIX_VIA_EC2_AWS_PROFILE:-${AWS_PROFILE:-}}"
@@ -239,7 +241,7 @@ configure_aws_cmd() {
 }
 
 resolve_instance_from_aws() {
-  local output line_count selected_line resolved_host resolved_instance_id
+  local output line_count selected_line resolved_host resolved_instance_id resolved_instance_profile_arn
 
   [[ -n "${INSTANCE_NAME}" ]] || return 0
 
@@ -248,7 +250,7 @@ resolve_instance_from_aws() {
 
   output="$("${AWS_CMD[@]}" ec2 describe-instances \
     --filters "Name=tag:Name,Values=${INSTANCE_NAME}" "Name=instance-state-name,Values=running" \
-    --query 'Reservations[].Instances[].[InstanceId,PublicDnsName,PublicIpAddress,PrivateIpAddress]' \
+    --query 'Reservations[].Instances[].[InstanceId,PublicDnsName,PublicIpAddress,PrivateIpAddress,IamInstanceProfile.Arn]' \
     --output text)"
 
   [[ -n "${output}" ]] || die "nenhuma instância running encontrada com tag Name=${INSTANCE_NAME}"
@@ -262,6 +264,7 @@ resolve_instance_from_aws() {
   selected_line="$(printf '%s\n' "${output}" | awk 'NF {print; exit}')"
   resolved_instance_id="$(printf '%s\n' "${selected_line}" | awk '{print $1}')"
   resolved_host="$(printf '%s\n' "${selected_line}" | awk '{print $2}')"
+  resolved_instance_profile_arn="$(printf '%s\n' "${selected_line}" | awk '{print $5}')"
 
   if [[ -z "${resolved_host}" || "${resolved_host}" == "None" ]]; then
     resolved_host="$(printf '%s\n' "${selected_line}" | awk '{print $3}')"
@@ -271,6 +274,9 @@ resolve_instance_from_aws() {
   fi
 
   INSTANCE_ID="${resolved_instance_id}"
+  if [[ -n "${resolved_instance_profile_arn}" && "${resolved_instance_profile_arn}" != "None" ]]; then
+    INSTANCE_PROFILE_ARN="${resolved_instance_profile_arn}"
+  fi
   if [[ -n "${resolved_host}" && "${resolved_host}" != "None" ]]; then
     HOST="${resolved_host}"
   fi
@@ -364,6 +370,116 @@ ensure_s3_bucket() {
       --bucket "${S3_BUCKET}" \
       --create-bucket-configuration "${bucket_region}" >/dev/null
   fi
+}
+
+resolve_instance_role_arn() {
+  local instance_profile_name resolved_role_arn
+
+  if [[ -n "${INSTANCE_ROLE_ARN}" ]]; then
+    return 0
+  fi
+
+  [[ -n "${INSTANCE_PROFILE_ARN}" ]] || die "a instância ${INSTANCE_ID} não possui instance profile configurado"
+
+  instance_profile_name="${INSTANCE_PROFILE_ARN##*/}"
+  resolved_role_arn="$("${AWS_CMD[@]}" iam get-instance-profile \
+    --instance-profile-name "${instance_profile_name}" \
+    --query 'InstanceProfile.Roles[0].Arn' \
+    --output text 2>/dev/null || true)"
+
+  [[ -n "${resolved_role_arn}" && "${resolved_role_arn}" != "None" ]] || die "não foi possível resolver o role ARN do instance profile ${instance_profile_name}"
+
+  INSTANCE_ROLE_ARN="${resolved_role_arn}"
+}
+
+ensure_s3_bucket_policy_for_instance_role() {
+  local current_policy_file merged_policy_file current_policy prefix_root object_resource sid_bucket sid_object
+  local bucket_resource
+
+  resolve_instance_role_arn
+  require_command python3
+
+  current_policy_file="$(mktemp "/tmp/mix-via-ec2-bucket-policy-current.XXXXXX.json")"
+  merged_policy_file="$(mktemp "/tmp/mix-via-ec2-bucket-policy-merged.XXXXXX.json")"
+
+  current_policy="$("${AWS_CMD[@]}" s3api get-bucket-policy \
+    --bucket "${S3_BUCKET}" \
+    --query 'Policy' \
+    --output text 2>/dev/null || true)"
+
+  if [[ -n "${current_policy}" && "${current_policy}" != "None" ]]; then
+    printf '%s\n' "${current_policy}" > "${current_policy_file}"
+  else
+    printf '{}\n' > "${current_policy_file}"
+  fi
+
+  prefix_root="${S3_PREFIX%/}"
+  bucket_resource="arn:aws:s3:::${S3_BUCKET}"
+  if [[ -n "${prefix_root}" ]]; then
+    object_resource="arn:aws:s3:::${S3_BUCKET}/${prefix_root}/*"
+  else
+    object_resource="arn:aws:s3:::${S3_BUCKET}/*"
+  fi
+
+  sid_bucket="MixViaEc2ListBucket${INSTANCE_ID//-/}"
+  sid_object="MixViaEc2ObjectAccess${INSTANCE_ID//-/}"
+
+  python3 - "${current_policy_file}" "${merged_policy_file}" "${INSTANCE_ROLE_ARN}" "${bucket_resource}" "${object_resource}" "${sid_bucket}" "${sid_object}" <<'PY'
+import json
+import sys
+
+current_path, merged_path, role_arn, bucket_resource, object_resource, sid_bucket, sid_object = sys.argv[1:8]
+
+with open(current_path, "r", encoding="utf-8") as handle:
+    raw = handle.read().strip() or "{}"
+
+try:
+    policy = json.loads(raw)
+except json.JSONDecodeError:
+    policy = {}
+
+statements = policy.get("Statement", [])
+if isinstance(statements, dict):
+    statements = [statements]
+elif not isinstance(statements, list):
+    statements = []
+
+statements = [statement for statement in statements if statement.get("Sid") not in {sid_bucket, sid_object}]
+
+statements.extend([
+    {
+        "Sid": sid_bucket,
+        "Effect": "Allow",
+        "Principal": {"AWS": role_arn},
+        "Action": ["s3:GetBucketLocation", "s3:ListBucket"],
+        "Resource": bucket_resource,
+    },
+    {
+        "Sid": sid_object,
+        "Effect": "Allow",
+        "Principal": {"AWS": role_arn},
+        "Action": [
+            "s3:GetObject",
+            "s3:PutObject",
+            "s3:DeleteObject",
+            "s3:AbortMultipartUpload",
+        ],
+        "Resource": object_resource,
+    },
+])
+
+policy["Version"] = policy.get("Version", "2012-10-17")
+policy["Statement"] = statements
+
+with open(merged_path, "w", encoding="utf-8") as handle:
+    json.dump(policy, handle, indent=2)
+    handle.write("\n")
+PY
+
+  log "garantindo acesso do role ${INSTANCE_ROLE_ARN} ao bucket ${S3_BUCKET}"
+  "${AWS_CMD[@]}" s3api put-bucket-policy --bucket "${S3_BUCKET}" --policy "file://${merged_policy_file}" >/dev/null
+
+  rm -f "${current_policy_file}" "${merged_policy_file}"
 }
 
 assert_ssm_managed_instance() {
@@ -671,6 +787,7 @@ run_ssm_mix() {
 
   configure_aws_cmd
   ensure_s3_bucket
+  ensure_s3_bucket_policy_for_instance_role
   assert_ssm_managed_instance
   prepare_run_artifacts
 
