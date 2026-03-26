@@ -734,10 +734,29 @@ if [[ -n "\${REMOTE_AWS_REGION}" ]]; then
   export AWS_DEFAULT_REGION="\${REMOTE_AWS_REGION}"
 fi
 unset MIX_PATH MIX_ARCHIVES
+export HOME="\${HOME_DIR}"
+export MIX_XDG=1
 export MIX_HOME="\${REMOTE_MIX_HOME}"
 export HEX_HOME="\${REMOTE_HEX_HOME}"
 export REBAR_CACHE_DIR="\${REMOTE_REBAR_CACHE_DIR}"
 export REBAR_GLOBAL_CONFIG_DIR="\${REMOTE_REBAR_CONFIG_DIR}"
+export HEX_HTTP_TIMEOUT="\${HEX_HTTP_TIMEOUT:-120}"
+export HEX_HTTP_CONCURRENCY="\${HEX_HTTP_CONCURRENCY:-1}"
+
+run_bootstrap_command() {
+  local step_name log_file
+  step_name="\$1"
+  shift
+  log_file="\${RUN_ROOT}/\${step_name}.log"
+
+  if ! "\$@" > "\${log_file}" 2>&1; then
+    printf '[mix-via-ec2-remote] erro ao executar %s\n' "\${step_name}" >&2
+    if [[ -s "\${log_file}" ]]; then
+      tail -n 80 "\${log_file}" >&2 || cat "\${log_file}" >&2
+    fi
+    exit 1
+  fi
+}
 
 bootstrap_mix_local_tooling() {
   case "\${MIX_FIRST_ARG}" in
@@ -746,7 +765,7 @@ bootstrap_mix_local_tooling() {
       ;;
   esac
 
-  mix local.hex --force --if-missing >/dev/null 2>&1 || true
+  run_bootstrap_command local_hex mix local.hex --force --if-missing
 
   case "\${MIX_FIRST_ARG}" in
     local.rebar)
@@ -754,7 +773,7 @@ bootstrap_mix_local_tooling() {
       ;;
   esac
 
-  mix local.rebar --force --if-missing >/dev/null 2>&1 || true
+  run_bootstrap_command local_rebar mix local.rebar --force --if-missing
 }
 
 finish() {
