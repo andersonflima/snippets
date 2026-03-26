@@ -544,15 +544,17 @@ download_runtime_metadata_from_s3() {
 }
 
 build_ssm_parameters_file() {
-  local parameter_file remote_runner_path
+  local parameter_file remote_runner_path remote_run_dir remote_home_ref
   parameter_file="$1"
-  remote_runner_path="\${HOME}/.cache/mix-via-ec2/runs/${RUN_ID}/run.sh"
+  remote_home_ref='${HOME}'
+  remote_run_dir="${remote_home_ref}/.cache/mix-via-ec2/runs/${RUN_ID}"
+  remote_runner_path="${remote_run_dir}/run.sh"
 
   cat > "${parameter_file}" <<EOF
 {
   "commands": [
     "set -euo pipefail",
-    "mkdir -p \\\"\\\${HOME}/.cache/mix-via-ec2/runs/${RUN_ID}\\\"",
+    "mkdir -p \\\"${remote_run_dir}\\\"",
     "aws s3 cp \\\"s3://${S3_BUCKET}/${REMOTE_SCRIPT_KEY}\\\" \\\"${remote_runner_path}\\\" --only-show-errors >/dev/null",
     "chmod +x \\\"${remote_runner_path}\\\"",
     "bash \\\"${remote_runner_path}\\\""
