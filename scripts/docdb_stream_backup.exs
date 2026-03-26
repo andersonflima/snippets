@@ -1841,13 +1841,18 @@ defmodule DocdbStreamBackup do
          target_bytes
        ) do
     spawn(fn ->
-      stream_progress_watcher_loop(
-        meter_progress_file,
-        progress_target,
-        started_at,
-        target_bytes,
-        0
-      )
+      try do
+        stream_progress_watcher_loop(
+          meter_progress_file,
+          progress_target,
+          started_at,
+          target_bytes,
+          0
+        )
+      rescue
+        _exception ->
+          :ok
+      end
     end)
   end
 
@@ -1925,25 +1930,52 @@ defmodule DocdbStreamBackup do
 
   defp read_streamed_bytes(meter_progress_file) do
     case File.read(meter_progress_file) do
-      {:ok, contents} ->
-        contents
-        |> Regex.scan(~r/(\d+)\s+bytes\b/)
-        |> List.last()
-        |> case do
-          [_, bytes_text] ->
-            case Integer.parse(bytes_text) do
-              {bytes, ""} -> bytes
-              _ -> 0
-            end
-
-          _ ->
-            0
-        end
+      {:ok, contents} when is_binary(contents) ->
+        extract_last_streamed_bytes(contents)
 
       _ ->
         0
     end
   end
+
+  defp extract_last_streamed_bytes(contents) when is_binary(contents) do
+    contents
+    |> :binary.split(" bytes", [:global])
+    |> Enum.reduce(0, fn segment, last_bytes ->
+      case extract_trailing_integer(segment) do
+        {:ok, bytes} -> bytes
+        :error -> last_bytes
+      end
+    end)
+  end
+
+  defp extract_trailing_integer(segment) when is_binary(segment) do
+    segment
+    |> :binary.bin_to_list()
+    |> Enum.reverse()
+    |> Enum.take_while(&stream_meter_numeric_char?/1)
+    |> Enum.reverse()
+    |> to_string()
+    |> String.replace(~r/[^0-9]/, "")
+    |> case do
+      "" ->
+        :error
+
+      digits ->
+        case Integer.parse(digits) do
+          {value, ""} -> {:ok, value}
+          _ -> :error
+        end
+    end
+  end
+
+  defp stream_meter_numeric_char?(char) when char in ?0..?9, do: true
+  defp stream_meter_numeric_char?(?.), do: true
+  defp stream_meter_numeric_char?(?,), do: true
+  defp stream_meter_numeric_char?(?\s), do: true
+  defp stream_meter_numeric_char?(?\r), do: true
+  defp stream_meter_numeric_char?(?\n), do: true
+  defp stream_meter_numeric_char?(_char), do: false
 
   defp num_parallel_collections_flag(_num_parallel_collections, %{
          supports_num_parallel_collections: false
