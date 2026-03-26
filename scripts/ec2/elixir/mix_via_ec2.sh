@@ -379,7 +379,7 @@ resolve_instance_role_arn() {
     return 0
   fi
 
-  [[ -n "${INSTANCE_PROFILE_ARN}" ]] || die "a instância ${INSTANCE_ID} não possui instance profile configurado"
+  [[ -n "${INSTANCE_PROFILE_ARN}" ]] || return 1
 
   instance_profile_name="${INSTANCE_PROFILE_ARN##*/}"
   resolved_role_arn="$("${AWS_CMD[@]}" iam get-instance-profile \
@@ -392,11 +392,84 @@ resolve_instance_role_arn() {
   INSTANCE_ROLE_ARN="${resolved_role_arn}"
 }
 
+normalize_principal_arn() {
+  local raw_arn account_id role_name
+  raw_arn="$1"
+
+  case "${raw_arn}" in
+    arn:aws:sts::*:assumed-role/*)
+      account_id="$(printf '%s' "${raw_arn}" | cut -d: -f5)"
+      role_name="$(printf '%s' "${raw_arn}" | cut -d/ -f2)"
+      [[ -n "${account_id}" && -n "${role_name}" ]] || die "não foi possível normalizar o principal remoto: ${raw_arn}"
+      printf 'arn:aws:iam::%s:role/%s\n' "${account_id}" "${role_name}"
+      ;;
+    *)
+      printf '%s\n' "${raw_arn}"
+      ;;
+  esac
+}
+
+resolve_remote_principal_arn_via_ssm() {
+  local parameter_file command_id principal_arn
+
+  [[ -n "${INSTANCE_ID}" ]] || die "INSTANCE_ID ausente para resolver principal remoto"
+
+  assert_ssm_managed_instance
+
+  parameter_file="$(mktemp "/tmp/mix-via-ec2-identity-params.XXXXXX.json")"
+
+  require_command python3
+  python3 - "${parameter_file}" <<'PY'
+import json
+import sys
+
+parameter_file = sys.argv[1]
+payload = {
+    "commands": [
+        "set -euo pipefail",
+        "aws sts get-caller-identity --query Arn --output text",
+    ]
+}
+
+with open(parameter_file, "w", encoding="utf-8") as handle:
+    json.dump(payload, handle, indent=2)
+    handle.write("\n")
+PY
+
+  command_id="$("${AWS_CMD[@]}" ssm send-command \
+    --instance-ids "${INSTANCE_ID}" \
+    --document-name 'AWS-RunShellScript' \
+    --comment "mix-via-ec2 identity probe ${INSTANCE_ID}" \
+    --parameters "file://${parameter_file}" \
+    --query 'Command.CommandId' \
+    --output text)"
+
+  rm -f "${parameter_file}"
+
+  if ! poll_ssm_command "${command_id}"; then
+    show_ssm_command_output "${command_id}"
+    die "não foi possível resolver o principal AWS remoto via SSM"
+  fi
+
+  principal_arn="$("${AWS_CMD[@]}" ssm get-command-invocation \
+    --command-id "${command_id}" \
+    --instance-id "${INSTANCE_ID}" \
+    --query 'StandardOutputContent' \
+    --output text 2>/dev/null || true)"
+
+  principal_arn="$(printf '%s' "${principal_arn}" | tr -d '\r' | awk 'NF {print; exit}')"
+  [[ -n "${principal_arn}" && "${principal_arn}" != "None" ]] || die "o host remoto não retornou um principal AWS válido"
+
+  INSTANCE_ROLE_ARN="$(normalize_principal_arn "${principal_arn}")"
+}
+
 ensure_s3_bucket_policy_for_instance_role() {
   local current_policy_file merged_policy_file current_policy prefix_root object_resource sid_bucket sid_object
   local bucket_resource
 
-  resolve_instance_role_arn
+  if ! resolve_instance_role_arn; then
+    resolve_remote_principal_arn_via_ssm
+  fi
   require_command python3
 
   current_policy_file="$(mktemp "/tmp/mix-via-ec2-bucket-policy-current.XXXXXX.json")"
@@ -787,8 +860,8 @@ run_ssm_mix() {
 
   configure_aws_cmd
   ensure_s3_bucket
-  ensure_s3_bucket_policy_for_instance_role
   assert_ssm_managed_instance
+  ensure_s3_bucket_policy_for_instance_role
   prepare_run_artifacts
 
   trap cleanup_s3_run_artifacts EXIT
