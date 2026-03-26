@@ -549,18 +549,28 @@ build_ssm_parameters_file() {
   remote_home_ref='${HOME}'
   remote_run_dir="${remote_home_ref}/.cache/mix-via-ec2/runs/${RUN_ID}"
   remote_runner_path="${remote_run_dir}/run.sh"
+  require_command python3
 
-  cat > "${parameter_file}" <<EOF
-{
-  "commands": [
-    "set -euo pipefail",
-    "mkdir -p \\\"${remote_run_dir}\\\"",
-    "aws s3 cp \\\"s3://${S3_BUCKET}/${REMOTE_SCRIPT_KEY}\\\" \\\"${remote_runner_path}\\\" --only-show-errors >/dev/null",
-    "chmod +x \\\"${remote_runner_path}\\\"",
-    "bash \\\"${remote_runner_path}\\\""
-  ]
+  python3 - "${parameter_file}" "${remote_run_dir}" "${S3_BUCKET}" "${REMOTE_SCRIPT_KEY}" "${remote_runner_path}" <<'PY'
+import json
+import sys
+
+parameter_file, remote_run_dir, s3_bucket, remote_script_key, remote_runner_path = sys.argv[1:6]
+
+payload = {
+    "commands": [
+        "set -euo pipefail",
+        f'mkdir -p "{remote_run_dir}"',
+        f'aws s3 cp "s3://{s3_bucket}/{remote_script_key}" "{remote_runner_path}" --only-show-errors >/dev/null',
+        f'chmod +x "{remote_runner_path}"',
+        f'bash "{remote_runner_path}"',
+    ]
 }
-EOF
+
+with open(parameter_file, "w", encoding="utf-8") as handle:
+    json.dump(payload, handle, indent=2)
+    handle.write("\n")
+PY
 }
 
 poll_ssm_command() {
