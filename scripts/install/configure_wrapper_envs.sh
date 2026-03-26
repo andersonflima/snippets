@@ -33,6 +33,12 @@ Opções:
   --real-curl <path>           Caminho do curl real.
   --real-git <path>            Caminho do git real.
   --mason-seed-dir <dir>       Diretório com artefatos seed do Mason.
+  --instance-name <nome>       Instância EC2 compartilhada. Padrão: Dander
+  --aws-profile <profile>      Profile AWS para backend remoto dos wrappers.
+  --aws-region <region>        Region AWS do backend remoto. Padrão: sa-east-1
+  --s3-bucket <bucket>         Bucket compartilhado pelos wrappers no backend EC2.
+  --s3-prefix <prefixo>        Prefixo S3 compartilhado. Padrão: wrappers-via-ec2
+  --disable-ec2-backend        Desliga o backend remoto via EC2 nos wrappers.
   --proxy <url>                Define proxy para wrappers e env padrão.
   --ca-cert <arquivo>          Define CA customizada para o wrapper de git.
   --auto-insecure-on-cert-error
@@ -58,6 +64,12 @@ PROXY_URL=""
 CA_CERT_PATH=""
 AUTO_INSECURE_ON_CERT_ERROR="0"
 MASON_SEED_DIR="${CURL_WRAPPER_MASON_SEED_DIR:-}"
+INSTANCE_NAME="${WRAPPERS_VIA_EC2_INSTANCE_NAME:-${MIX_VIA_EC2_INSTANCE_NAME:-Dander}}"
+AWS_PROFILE_NAME="${WRAPPERS_VIA_EC2_AWS_PROFILE:-${MIX_VIA_EC2_AWS_PROFILE:-${AWS_PROFILE:-}}}"
+AWS_REGION_NAME="${WRAPPERS_VIA_EC2_AWS_REGION:-${MIX_VIA_EC2_AWS_REGION:-sa-east-1}}"
+S3_BUCKET_NAME="${WRAPPERS_VIA_EC2_S3_BUCKET:-${MIX_VIA_EC2_S3_BUCKET:-}}"
+S3_PREFIX_NAME="${WRAPPERS_VIA_EC2_S3_PREFIX:-${MIX_VIA_EC2_S3_PREFIX:-wrappers-via-ec2}}"
+ENABLE_EC2_BACKEND="${WRAPPERS_VIA_EC2_ENABLED:-1}"
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
@@ -92,6 +104,30 @@ while [[ $# -gt 0 ]]; do
     --mason-seed-dir)
       MASON_SEED_DIR="${2:-}"
       shift 2
+      ;;
+    --instance-name)
+      INSTANCE_NAME="${2:-}"
+      shift 2
+      ;;
+    --aws-profile)
+      AWS_PROFILE_NAME="${2:-}"
+      shift 2
+      ;;
+    --aws-region)
+      AWS_REGION_NAME="${2:-}"
+      shift 2
+      ;;
+    --s3-bucket)
+      S3_BUCKET_NAME="${2:-}"
+      shift 2
+      ;;
+    --s3-prefix)
+      S3_PREFIX_NAME="${2:-}"
+      shift 2
+      ;;
+    --disable-ec2-backend)
+      ENABLE_EC2_BACKEND="0"
+      shift
       ;;
     --proxy)
       PROXY_URL="${2:-}"
@@ -155,6 +191,21 @@ shell_quote() {
 }
 
 render_optional_exports() {
+  printf 'export WRAPPERS_VIA_EC2_ENABLED=%s\n' "$(shell_quote "${ENABLE_EC2_BACKEND}")"
+  if [[ "${ENABLE_EC2_BACKEND}" == "1" ]]; then
+    printf 'export WRAPPERS_VIA_EC2_INSTANCE_NAME=%s\n' "$(shell_quote "${INSTANCE_NAME}")"
+    printf 'export WRAPPERS_VIA_EC2_AWS_REGION=%s\n' "$(shell_quote "${AWS_REGION_NAME}")"
+    printf 'export WRAPPERS_VIA_EC2_S3_PREFIX=%s\n' "$(shell_quote "${S3_PREFIX_NAME}")"
+    printf 'export CURL_WRAPPER_USE_EC2=%s\n' "$(shell_quote "1")"
+    printf 'export GIT_ZIP_WRAPPER_USE_EC2=%s\n' "$(shell_quote "1")"
+    if [[ -n "${AWS_PROFILE_NAME}" ]]; then
+      printf 'export WRAPPERS_VIA_EC2_AWS_PROFILE=%s\n' "$(shell_quote "${AWS_PROFILE_NAME}")"
+    fi
+    if [[ -n "${S3_BUCKET_NAME}" ]]; then
+      printf 'export WRAPPERS_VIA_EC2_S3_BUCKET=%s\n' "$(shell_quote "${S3_BUCKET_NAME}")"
+    fi
+  fi
+
   if [[ -n "${PROXY_URL}" ]]; then
     cat <<EOF
 export HTTPS_PROXY=$(shell_quote "${PROXY_URL}")
@@ -244,6 +295,12 @@ Arquivo de ambiente:
 Wrapper dirs:
   curl: ${CURL_INSTALL_DIR}
   git:  ${GIT_INSTALL_DIR}
+
+Backend EC2:
+  enabled: ${ENABLE_EC2_BACKEND}
+  instance: ${INSTANCE_NAME}
+  region: ${AWS_REGION_NAME}
+  s3-prefix: ${S3_PREFIX_NAME}
 
 Binários reais:
   curl: ${REAL_CURL_BIN}

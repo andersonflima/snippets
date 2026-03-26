@@ -25,6 +25,10 @@ ALLOW_ZIP_FALLBACK="${GIT_ZIP_WRAPPER_ALLOW_ZIP_FALLBACK:-0}"
 GIT_ZIP_WRAPPER_CURL_INSECURE="${GIT_ZIP_WRAPPER_CURL_INSECURE:-0}"
 GIT_ZIP_WRAPPER_CURL_CACERT="${GIT_ZIP_WRAPPER_CURL_CACERT:-}"
 GIT_ZIP_WRAPPER_ACTIVE_PROXY=""
+WRAPPER_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+GIT_ZIP_WRAPPER_USE_EC2="${GIT_ZIP_WRAPPER_USE_EC2:-${WRAPPERS_VIA_EC2_ENABLED:-0}}"
+GIT_ZIP_WRAPPER_EC2_ALL_URLS="${GIT_ZIP_WRAPPER_EC2_ALL_URLS:-0}"
+GIT_ZIP_WRAPPER_EC2_HELPER="${GIT_ZIP_WRAPPER_EC2_HELPER:-${WRAPPER_DIR}/fetch-url-via-ec2}"
 
 resolve_proxy_config() {
   local proxy
@@ -339,6 +343,14 @@ download_url_with_retries() {
     log "download usando proxy: ${GIT_ZIP_WRAPPER_ACTIVE_PROXY}"
   fi
 
+  if should_use_ec2_backend_for_git_url "${url}" "${archive_path}"; then
+    log "delegando download para backend EC2: ${url}"
+    if download_with_ec2_backend "${url}" "${archive_path}" "${user_agent}"; then
+      return 0
+    fi
+    log "backend EC2 falhou; seguindo com tentativas locais"
+  fi
+
   for mode_name in default http1 ipv4 ipv4_http1; do
     mode_label="$(curl_mode_label "${mode_name}")"
     for attempt in 1 2 3; do
@@ -350,6 +362,50 @@ download_url_with_retries() {
     done
   done
   return 1
+}
+
+should_use_ec2_backend_for_git_url() {
+  local url archive_path url_without_query
+  url="$1"
+  archive_path="$2"
+
+  is_truthy "${GIT_ZIP_WRAPPER_USE_EC2}" || return 1
+  [[ -n "${url}" && -n "${archive_path}" ]] || return 1
+  [[ -x "${GIT_ZIP_WRAPPER_EC2_HELPER}" ]] || return 1
+
+  if is_truthy "${GIT_ZIP_WRAPPER_EC2_ALL_URLS}"; then
+    return 0
+  fi
+
+  url_without_query="${url%%\?*}"
+  case "${url_without_query}" in
+    https://github.com/*|https://codeload.github.com/*|https://api.github.com/*)
+      return 0
+      ;;
+  esac
+
+  return 1
+}
+
+download_with_ec2_backend() {
+  local url archive_path user_agent
+  url="$1"
+  archive_path="$2"
+  user_agent="$3"
+
+  local -a helper_cmd=("${GIT_ZIP_WRAPPER_EC2_HELPER}" --url "${url}" --output "${archive_path}" --create-dirs)
+
+  if [[ -n "${user_agent}" ]]; then
+    helper_cmd+=(--user-agent "${user_agent}")
+  fi
+  if [[ -n "${GIT_ZIP_WRAPPER_ACTIVE_PROXY}" ]]; then
+    helper_cmd+=(--proxy "${GIT_ZIP_WRAPPER_ACTIVE_PROXY}")
+  fi
+  if is_truthy "${GIT_ZIP_WRAPPER_CURL_INSECURE}"; then
+    helper_cmd+=(--insecure)
+  fi
+
+  "${helper_cmd[@]}"
 }
 
 curl_mode_label() {

@@ -8,6 +8,7 @@ Estrutura canônica:
 - `scripts/ec2/elixir/configure_hex_config.sh`: persiste proxy/TLS diretamente no Hex via `mix hex.config`
 - `scripts/ec2/elixir/fetch_mix_hex_cache_from_ec2.sh`: importa `~/.mix`, `~/.hex` e cache de projeto de um EC2
 - `scripts/ec2/elixir/mix_via_ec2.sh`: executa `mix` no EC2 e sincroniza de volta deps/cache úteis
+- `scripts/ec2/assets/fetch_url_via_ec2.sh`: baixa uma URL pelo EC2 via SSM e devolve o artefato por S3
 - `scripts/install/install_mix_ec2_wrapper.sh`: instala um wrapper `mix` que delega comandos de dependência para o EC2
 - `scripts/install/configure_mix_via_ec2_envs.sh`: configura as envs do wrapper `mix` via EC2
 - `scripts/ec2/go/`: instalação de Go no EC2

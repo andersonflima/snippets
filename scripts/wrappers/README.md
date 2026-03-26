@@ -6,6 +6,7 @@ Arquivos:
 
 - `curl_python_wrapper.sh`: wrapper de `curl` com fallback para Python, `gh release` e estratégias inteligentes para Mason
 - `git_zip_clone_wrapper.sh`: wrapper de `git clone` que baixa tarball/zip de repositório e monta o diretório localmente
+- `fetch-url-via-ec2`: helper instalado junto dos wrappers para buscar URLs via EC2 + S3 quando a máquina local estiver restrita
 
 Os entrypoints antigos em `scripts/` raiz continuam existindo como wrappers finos por compatibilidade.
 
@@ -111,6 +112,25 @@ Principais variáveis:
 - `CURL_WRAPPER_REAL_CURL`
   Caminho do `curl` real.
 
+- `CURL_WRAPPER_USE_EC2`
+  Quando `1`, delega downloads suportados para o helper remoto via EC2.
+  Padrão: herda `WRAPPERS_VIA_EC2_ENABLED`.
+
+- `WRAPPERS_VIA_EC2_INSTANCE_NAME`
+  Instância EC2 compartilhada usada pelos wrappers.
+  Padrão: `Dander`.
+
+- `WRAPPERS_VIA_EC2_AWS_REGION`
+  Region AWS do backend remoto compartilhado.
+  Padrão: `sa-east-1`.
+
+- `WRAPPERS_VIA_EC2_S3_BUCKET`
+  Bucket S3 intermediário compartilhado com o backend remoto.
+
+- `WRAPPERS_VIA_EC2_S3_PREFIX`
+  Prefixo S3 compartilhado.
+  Padrão: `wrappers-via-ec2`.
+
 - `CURL_WRAPPER_PROXY`
   Proxy explícito do wrapper. Tem precedência sobre `HTTPS_PROXY`, `ALL_PROXY` e `HTTP_PROXY`.
 
@@ -166,6 +186,10 @@ Principais variáveis:
 - `GIT_ZIP_WRAPPER_REAL_GIT`
   Caminho do `git` real.
 
+- `GIT_ZIP_WRAPPER_USE_EC2`
+  Quando `1`, delega downloads dos archives suportados para o helper remoto via EC2.
+  Padrão: herda `WRAPPERS_VIA_EC2_ENABLED`.
+
 - `GIT_ZIP_WRAPPER_PROXY`
   Proxy explícito para os downloads do wrapper.
 
@@ -187,6 +211,31 @@ Principais variáveis:
   Impede fallback para `git clone` normal.
 
 ## Mason inteligente
+
+## Backend compartilhado via EC2
+
+Os wrappers de `curl` e `git` agora podem usar o mesmo backend remoto do `mix`, compartilhando:
+
+- instância EC2
+- region AWS
+- bucket S3 intermediário
+- prefixo S3
+
+Isso é controlado pelas envs:
+
+```bash
+export WRAPPERS_VIA_EC2_ENABLED=1
+export WRAPPERS_VIA_EC2_INSTANCE_NAME="Dander"
+export WRAPPERS_VIA_EC2_AWS_REGION="sa-east-1"
+export WRAPPERS_VIA_EC2_S3_BUCKET="<bucket-compartilhado>"
+export WRAPPERS_VIA_EC2_S3_PREFIX="wrappers-via-ec2"
+```
+
+Quando esse backend está ativo:
+
+- o `curl` wrapper tenta buscar assets suportados via EC2 antes do download local
+- o `git` wrapper tenta baixar archives GitHub via EC2 antes das tentativas locais
+- o `curl` do Mason pode aproveitar o EC2 para baixar `.zip` oficiais de release quando a máquina local não consegue
 
 No `curl` wrapper existe uma engine adicional para pacotes do Mason que falham em ambiente corporativo por dependerem de asset `.zip` de release.
 

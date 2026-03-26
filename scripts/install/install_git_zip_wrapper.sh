@@ -22,17 +22,19 @@ die() {
 usage() {
   cat <<'USAGE'
 Uso:
-  scripts/install/install_git_zip_wrapper.sh [--install-dir <dir>] [--wrapper-source <file>] [--real-git <path>]
+  scripts/install/install_git_zip_wrapper.sh [--install-dir <dir>] [--wrapper-source <file>] [--ec2-helper-source <file>] [--real-git <path>]
 
 Padrões:
   --install-dir: $HOME/.local/share/git-zip-wrapper/bin
   --wrapper-source: scripts/wrappers/git_zip_clone_wrapper.sh
+  --ec2-helper-source: scripts/ec2/assets/fetch_url_via_ec2.sh
   --real-git: primeiro git encontrado no PATH
 USAGE
 }
 
 INSTALL_DIR="${HOME}/.local/share/git-zip-wrapper/bin"
 WRAPPER_SOURCE="$(cd "$(dirname "$0")/.." && pwd)/wrappers/git_zip_clone_wrapper.sh"
+EC2_HELPER_SOURCE="$(cd "$(dirname "$0")/.." && pwd)/ec2/assets/fetch_url_via_ec2.sh"
 REAL_GIT_BIN="${GIT_ZIP_WRAPPER_REAL_GIT:-}"
 
 while [[ $# -gt 0 ]]; do
@@ -43,6 +45,10 @@ while [[ $# -gt 0 ]]; do
       ;;
     --wrapper-source)
       WRAPPER_SOURCE="${2:-}"
+      shift 2
+      ;;
+    --ec2-helper-source)
+      EC2_HELPER_SOURCE="${2:-}"
       shift 2
       ;;
     --real-git)
@@ -62,6 +68,7 @@ done
 [[ -n "${INSTALL_DIR}" ]] || die "--install-dir não pode ser vazio"
 [[ -n "${WRAPPER_SOURCE}" ]] || die "--wrapper-source não pode ser vazio"
 [[ -f "${WRAPPER_SOURCE}" ]] || die "wrapper não encontrado: ${WRAPPER_SOURCE}"
+[[ -f "${EC2_HELPER_SOURCE}" ]] || die "helper EC2 não encontrado: ${EC2_HELPER_SOURCE}"
 
 if [[ -z "${REAL_GIT_BIN}" ]]; then
   REAL_GIT_BIN="$(command -v git || true)"
@@ -71,7 +78,9 @@ fi
 
 mkdir -p "${INSTALL_DIR}"
 cp "${WRAPPER_SOURCE}" "${INSTALL_DIR}/git"
+cp "${EC2_HELPER_SOURCE}" "${INSTALL_DIR}/fetch-url-via-ec2"
 chmod 0755 "${INSTALL_DIR}/git"
+chmod 0755 "${INSTALL_DIR}/fetch-url-via-ec2"
 
 cat <<EOF
 Instalação concluída.

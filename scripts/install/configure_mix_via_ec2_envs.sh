@@ -33,6 +33,8 @@ Opções:
   --instance-name <nome>       Nome da instância EC2. Padrão: Dander
   --aws-profile <profile>      Profile AWS.
   --aws-region <region>        Region AWS. Padrão: sa-east-1
+  --s3-bucket <bucket>         Bucket compartilhado com os demais wrappers.
+  --s3-prefix <prefixo>        Prefixo S3 compartilhado. Padrão: mix-via-ec2
   --ssh-identity <arquivo>     Chave SSH privada para o EC2.
   --remote-commands <csv>      Lista CSV de comandos do mix roteados para o EC2.
   -h, --help                   Mostra esta ajuda.
@@ -47,6 +49,8 @@ REAL_MIX_BIN="${MIX_WRAPPER_REAL_MIX:-}"
 INSTANCE_NAME="${MIX_VIA_EC2_INSTANCE_NAME:-Dander}"
 AWS_PROFILE_NAME="${MIX_VIA_EC2_AWS_PROFILE:-${AWS_PROFILE:-}}"
 AWS_REGION_NAME="${MIX_VIA_EC2_AWS_REGION:-sa-east-1}"
+S3_BUCKET_NAME="${MIX_VIA_EC2_S3_BUCKET:-}"
+S3_PREFIX_NAME="${MIX_VIA_EC2_S3_PREFIX:-mix-via-ec2}"
 SSH_IDENTITY_PATH="${MIX_VIA_EC2_SSH_IDENTITY:-}"
 REMOTE_COMMANDS="${MIX_WRAPPER_REMOTE_COMMANDS:-deps.get,deps.compile,deps.update,deps.unlock,local.hex,local.rebar,archive.install,archive.build,phx.new,hex.info}"
 
@@ -82,6 +86,14 @@ while [[ $# -gt 0 ]]; do
       ;;
     --aws-region)
       AWS_REGION_NAME="${2:-}"
+      shift 2
+      ;;
+    --s3-bucket)
+      S3_BUCKET_NAME="${2:-}"
+      shift 2
+      ;;
+    --s3-prefix)
+      S3_PREFIX_NAME="${2:-}"
       shift 2
       ;;
     --ssh-identity)
@@ -141,11 +153,22 @@ export MIX_WRAPPER_REAL_MIX=$(shell_quote "${REAL_MIX_BIN}")
 export PATH=$(shell_quote "${MIX_INSTALL_DIR}"):"\$PATH"
 export MIX_VIA_EC2_INSTANCE_NAME=$(shell_quote "${INSTANCE_NAME}")
 export MIX_VIA_EC2_AWS_REGION=$(shell_quote "${AWS_REGION_NAME}")
+export MIX_VIA_EC2_S3_PREFIX=$(shell_quote "${S3_PREFIX_NAME}")
 export MIX_WRAPPER_REMOTE_COMMANDS=$(shell_quote "${REMOTE_COMMANDS}")
+export WRAPPERS_VIA_EC2_ENABLED="1"
+export WRAPPERS_VIA_EC2_INSTANCE_NAME=$(shell_quote "${INSTANCE_NAME}")
+export WRAPPERS_VIA_EC2_AWS_REGION=$(shell_quote "${AWS_REGION_NAME}")
+export WRAPPERS_VIA_EC2_S3_PREFIX=$(shell_quote "${S3_PREFIX_NAME}")
 EOF
 
   if [[ -n "${AWS_PROFILE_NAME}" ]]; then
     printf 'export MIX_VIA_EC2_AWS_PROFILE=%s\n' "$(shell_quote "${AWS_PROFILE_NAME}")" >> "${ENV_FILE}"
+    printf 'export WRAPPERS_VIA_EC2_AWS_PROFILE=%s\n' "$(shell_quote "${AWS_PROFILE_NAME}")" >> "${ENV_FILE}"
+  fi
+
+  if [[ -n "${S3_BUCKET_NAME}" ]]; then
+    printf 'export MIX_VIA_EC2_S3_BUCKET=%s\n' "$(shell_quote "${S3_BUCKET_NAME}")" >> "${ENV_FILE}"
+    printf 'export WRAPPERS_VIA_EC2_S3_BUCKET=%s\n' "$(shell_quote "${S3_BUCKET_NAME}")" >> "${ENV_FILE}"
   fi
 
   if [[ -n "${SSH_IDENTITY_PATH}" ]]; then

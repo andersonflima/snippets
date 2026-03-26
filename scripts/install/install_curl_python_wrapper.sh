@@ -13,12 +13,13 @@ die() {
 usage() {
   cat <<'USAGE'
 Uso:
-  scripts/install/install_curl_python_wrapper.sh [--install-dir <dir>] [--wrapper-source <file>] [--lib-source-dir <dir>] [--real-curl <path>]
+  scripts/install/install_curl_python_wrapper.sh [--install-dir <dir>] [--wrapper-source <file>] [--lib-source-dir <dir>] [--ec2-helper-source <file>] [--real-curl <path>]
 
 Padrões:
   --install-dir: $HOME/.local/share/curl-python-wrapper/bin
   --wrapper-source: scripts/wrappers/curl_python_wrapper.sh
   --lib-source-dir: scripts/wrappers/lib
+  --ec2-helper-source: scripts/ec2/assets/fetch_url_via_ec2.sh
   --real-curl: primeiro curl encontrado no PATH
 USAGE
 }
@@ -26,6 +27,7 @@ USAGE
 INSTALL_DIR="${HOME}/.local/share/curl-python-wrapper/bin"
 WRAPPER_SOURCE="$(cd "$(dirname "$0")/.." && pwd)/wrappers/curl_python_wrapper.sh"
 LIB_SOURCE_DIR="$(cd "$(dirname "$0")/.." && pwd)/wrappers/lib"
+EC2_HELPER_SOURCE="$(cd "$(dirname "$0")/.." && pwd)/ec2/assets/fetch_url_via_ec2.sh"
 LIB_SOURCE_DIR_EXPLICIT="0"
 REAL_CURL_BIN="${CURL_WRAPPER_REAL_CURL:-}"
 
@@ -42,6 +44,10 @@ while [[ $# -gt 0 ]]; do
     --lib-source-dir)
       LIB_SOURCE_DIR="${2:-}"
       LIB_SOURCE_DIR_EXPLICIT="1"
+      shift 2
+      ;;
+    --ec2-helper-source)
+      EC2_HELPER_SOURCE="${2:-}"
       shift 2
       ;;
     --real-curl)
@@ -61,6 +67,7 @@ done
 [[ -n "${INSTALL_DIR}" ]] || die "--install-dir não pode ser vazio"
 [[ -n "${WRAPPER_SOURCE}" ]] || die "--wrapper-source não pode ser vazio"
 [[ -f "${WRAPPER_SOURCE}" ]] || die "wrapper não encontrado: ${WRAPPER_SOURCE}"
+[[ -f "${EC2_HELPER_SOURCE}" ]] || die "helper EC2 não encontrado: ${EC2_HELPER_SOURCE}"
 if [[ "${LIB_SOURCE_DIR_EXPLICIT}" != "1" ]]; then
   LIB_SOURCE_DIR="$(cd "$(dirname "${WRAPPER_SOURCE}")" && pwd)/lib"
 fi
@@ -77,6 +84,8 @@ fi
 mkdir -p "${INSTALL_DIR}"
 cp "${WRAPPER_SOURCE}" "${INSTALL_DIR}/curl"
 chmod 0755 "${INSTALL_DIR}/curl"
+cp "${EC2_HELPER_SOURCE}" "${INSTALL_DIR}/fetch-url-via-ec2"
+chmod 0755 "${INSTALL_DIR}/fetch-url-via-ec2"
 if [[ -n "${LIB_SOURCE_DIR}" ]]; then
   mkdir -p "${INSTALL_DIR}/lib"
   cp -R "${LIB_SOURCE_DIR}/." "${INSTALL_DIR}/lib/"
