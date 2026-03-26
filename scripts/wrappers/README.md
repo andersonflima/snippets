@@ -15,6 +15,7 @@ Os entrypoints antigos em `scripts/` raiz continuam existindo como wrappers fino
 - implementação real do `git`: `scripts/wrappers/git_zip_clone_wrapper.sh`
 - instalador do wrapper de `curl`: `scripts/install/install_curl_python_wrapper.sh`
 - instalador do wrapper de `git`: `scripts/install/install_git_zip_wrapper.sh`
+- configurador de ambiente: `scripts/install/configure_wrapper_envs.sh`
 
 ## Instalação
 
@@ -46,9 +47,26 @@ sh scripts/install/install_git_zip_wrapper.sh \
   --real-git "$(command -v git)"
 ```
 
+### Configurar envs do ambiente
+
+Depois de instalar os wrappers, gere e conecte as envs ao shell:
+
+```bash
+sh scripts/install/configure_wrapper_envs.sh
+```
+
+Opcionalmente:
+
+```bash
+sh scripts/install/configure_wrapper_envs.sh \
+  --shell-rc "$HOME/.zshrc" \
+  --proxy "http://proxy.seu-dominio:3128" \
+  --ca-cert "/etc/pki/ca-trust/source/anchors/corp-ca.pem"
+```
+
 ## Shell
 
-Depois da instalação, exporte os paths e variáveis principais no shell:
+Se você não usar o configurador automático, exporte manualmente os paths e variáveis principais no shell:
 
 ```bash
 export CURL_WRAPPER_REAL_CURL="$(command -v curl)"
