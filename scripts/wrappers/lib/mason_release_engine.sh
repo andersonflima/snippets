@@ -415,7 +415,7 @@ mason_release_repackage_archive_as_zip() {
 }
 
 build_elixir_ls_release_zip() {
-  local owner repo tag output_path tmp_dir source_tarball source_extract source_root release_dir release_task
+  local owner repo tag output_path tmp_dir source_tarball source_extract source_root release_dir release_task build_log
   owner="$1"
   repo="$2"
   tag="$3"
@@ -429,6 +429,7 @@ build_elixir_ls_release_zip() {
   source_tarball="${tmp_dir}/source.tar.gz"
   source_extract="${tmp_dir}/source"
   release_dir="${tmp_dir}/release"
+  build_log="${tmp_dir}/build.log"
   mkdir -p "${source_extract}" "${release_dir}"
 
   if ! download_source_tarball_for_tag "${owner}" "${repo}" "${tag}" "${source_tarball}"; then
@@ -458,7 +459,12 @@ build_elixir_ls_release_zip() {
         mix elixir_ls.release -o "${release_dir}"
         ;;
     esac
-  ) >/dev/null 2>&1 || {
+  ) >"${build_log}" 2>&1 || {
+    log "falha ao gerar elixir-ls localmente a partir do source tarball ${owner}/${repo}@${tag}"
+    if [[ -s "${build_log}" ]]; then
+      log "últimas linhas do builder de elixir-ls:"
+      tail -n 40 "${build_log}" >&2 || true
+    fi
     rm -rf "${tmp_dir}"
     return 1
   }
@@ -506,7 +512,7 @@ parse_omnisharp_requested_asset() {
 }
 
 build_omnisharp_source_zip() {
-  local owner repo tag requested_asset output_path tmp_dir source_tarball source_extract source_root release_dir runtime_id framework project_file
+  local owner repo tag requested_asset output_path tmp_dir source_tarball source_extract source_root release_dir runtime_id framework project_file build_log
   owner="$1"
   repo="$2"
   tag="$3"
@@ -524,6 +530,7 @@ EOF
   source_tarball="${tmp_dir}/source.tar.gz"
   source_extract="${tmp_dir}/source"
   release_dir="${tmp_dir}/release"
+  build_log="${tmp_dir}/build.log"
   mkdir -p "${source_extract}" "${release_dir}"
 
   if ! download_source_tarball_for_tag "${owner}" "${repo}" "${tag}" "${source_tarball}"; then
@@ -558,7 +565,12 @@ EOF
       -p:RollForward=LatestMajor
 
     cp license.md "${release_dir}/license.md" 2>/dev/null || true
-  ) >/dev/null 2>&1 || {
+  ) >"${build_log}" 2>&1 || {
+    log "falha ao gerar omnisharp localmente a partir do source tarball ${owner}/${repo}@${tag}"
+    if [[ -s "${build_log}" ]]; then
+      log "últimas linhas do builder de omnisharp:"
+      tail -n 40 "${build_log}" >&2 || true
+    fi
     rm -rf "${tmp_dir}"
     return 1
   }

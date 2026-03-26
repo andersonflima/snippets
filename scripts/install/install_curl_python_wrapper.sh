@@ -95,7 +95,8 @@ vim.env.PATH = "${INSTALL_DIR}:" .. vim.env.PATH
 vim.env.CURL_WRAPPER_RELEASE_FALLBACK_REPOS = "elixir-lsp/elixir-ls,luals/lua-language-server,omnisharp/omnisharp-roslyn"
 vim.env.CURL_WRAPPER_ENABLE_MASON_SMART_RELEASES = "1"
 vim.env.CURL_WRAPPER_RELEASE_CACHE_DIR = vim.fn.expand("~/.cache/curl-python-wrapper/releases")
-vim.env.CURL_WRAPPER_MASON_BUILDERS = "elixir-lsp/elixir-ls=elixir_ls_release"
+vim.env.CURL_WRAPPER_MASON_SOURCE_BUILD_REPOS = "elixir-lsp/elixir-ls,omnisharp/omnisharp-roslyn"
+vim.env.CURL_WRAPPER_MASON_BUILDERS = "elixir-lsp/elixir-ls=elixir_ls_release,omnisharp/omnisharp-roslyn=omnisharp_source_publish"
 
 3) Pré-requisitos de fallback:
 - opcional: gh CLI autenticado para assets de release do GitHub (gh auth status)
@@ -105,14 +106,17 @@ vim.env.CURL_WRAPPER_MASON_BUILDERS = "elixir-lsp/elixir-ls=elixir_ls_release"
 - preferir .tar.gz/.tgz/.tar quando o Mason pede .zip
 - reempacotar localmente em .zip para preservar o contrato esperado pelo Mason
 - usar builders registrados quando não houver asset alternativo equivalente
-- builder padrão atual:
+- builders padrão atuais:
 - elixir-lsp/elixir-ls=elixir_ls_release
+- omnisharp/omnisharp-roslyn=omnisharp_source_publish
 - quando o pacote só publica .zip, o wrapper também tenta o endpoint de assets da API do GitHub
 - se a estratégia inteligente falhar, o wrapper ainda tenta `gh release`
 - para sobrescrever a lista:
 - export CURL_WRAPPER_RELEASE_FALLBACK_REPOS="elixir-lsp/elixir-ls,luals/lua-language-server,omnisharp/omnisharp-roslyn"
 - para sobrescrever o registro de builders:
-- export CURL_WRAPPER_MASON_BUILDERS="elixir-lsp/elixir-ls=elixir_ls_release"
+- export CURL_WRAPPER_MASON_BUILDERS="elixir-lsp/elixir-ls=elixir_ls_release,omnisharp/omnisharp-roslyn=omnisharp_source_publish"
+- para sobrescrever os repositórios que devem buildar from scratch:
+- export CURL_WRAPPER_MASON_SOURCE_BUILD_REPOS="elixir-lsp/elixir-ls,omnisharp/omnisharp-roslyn"
 - para sobrescrever o cache local:
 - export CURL_WRAPPER_RELEASE_CACHE_DIR="\$HOME/.cache/curl-python-wrapper/releases"
 - para sobrescrever extensões reempacotáveis:

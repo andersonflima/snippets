@@ -155,7 +155,7 @@ assert_non_zip_download_request() {
 
 normalize_curl_args_for_parser() {
   PARSED_ARGS=()
-  local arg payload ch i len
+  local arg payload ch
 
   for arg in "$@"; do
     if [[ "${arg}" == --* ]] || [[ "${arg}" == "-" ]] || [[ "${arg}" != -* ]]; then
@@ -163,24 +163,26 @@ normalize_curl_args_for_parser() {
       continue
     fi
 
-    case "${arg}" in
-      -o*|-A*|-H*|-d*|-X*|-F*|-T*|-x*)
-        PARSED_ARGS+=("${arg}")
-        continue
-        ;;
-    esac
-
     payload="${arg:1}"
-    len="${#payload}"
-    if [[ "${arg}" =~ ^-[fsS4kIL]+$ ]]; then
-      for (( i = 0; i < len; i++ )); do
-        ch="${payload:i:1}"
-        PARSED_ARGS+=("-${ch}")
-      done
-      continue
-    fi
 
-    PARSED_ARGS+=("${arg}")
+    while [[ -n "${payload}" ]]; do
+      ch="${payload:0:1}"
+      payload="${payload:1}"
+
+      case "${ch}" in
+        o|A|H|d|X|F|T|x)
+          PARSED_ARGS+=("-${ch}")
+          if [[ -n "${payload}" ]]; then
+            PARSED_ARGS+=("${payload}")
+            payload=""
+          fi
+          ;;
+
+        *)
+          PARSED_ARGS+=("-${ch}")
+          ;;
+      esac
+    done
   done
 }
 
@@ -440,6 +442,132 @@ parse_github_release_asset_url() {
 release_asset_prefers_source_builder() {
   parse_github_release_asset_url "${1:-}" >/dev/null 2>&1 || return 1
   mason_release_prefers_source_builder "${GITHUB_RELEASE_SLUG:-}"
+}
+
+RELEASE_REQUEST_URL=""
+RELEASE_REQUEST_OUTPUT=""
+
+extract_release_request_from_args() {
+  local args=("$@")
+  local arg candidate output_path output_dir remote_name index
+
+  RELEASE_REQUEST_URL=""
+  RELEASE_REQUEST_OUTPUT=""
+  output_path=""
+  output_dir=""
+  remote_name="0"
+  index=0
+
+  while (( index < ${#args[@]} )); do
+    arg="${args[index]}"
+    case "${arg}" in
+      -o)
+        (( index + 1 < ${#args[@]} )) || return 1
+        output_path="${args[index + 1]}"
+        index=$((index + 2))
+        ;;
+      -o*)
+        output_path="${arg#-o}"
+        index=$((index + 1))
+        ;;
+      --output)
+        (( index + 1 < ${#args[@]} )) || return 1
+        output_path="${args[index + 1]}"
+        index=$((index + 2))
+        ;;
+      --output=*)
+        output_path="${arg#--output=}"
+        index=$((index + 1))
+        ;;
+      --output-dir)
+        (( index + 1 < ${#args[@]} )) || return 1
+        output_dir="${args[index + 1]}"
+        index=$((index + 2))
+        ;;
+      --output-dir=*)
+        output_dir="${arg#--output-dir=}"
+        index=$((index + 1))
+        ;;
+      -O|--remote-name|--remote-name-all|-J|--remote-header-name)
+        remote_name="1"
+        index=$((index + 1))
+        ;;
+      --url)
+        (( index + 1 < ${#args[@]} )) || return 1
+        candidate="${args[index + 1]}"
+        if is_github_release_asset_url "${candidate}"; then
+          RELEASE_REQUEST_URL="${candidate}"
+        fi
+        index=$((index + 2))
+        ;;
+      --url=*)
+        candidate="${arg#--url=}"
+        if is_github_release_asset_url "${candidate}"; then
+          RELEASE_REQUEST_URL="${candidate}"
+        fi
+        index=$((index + 1))
+        ;;
+      -x|--proxy|-A|--user-agent|-H|--header|--connect-timeout|--max-time|--retry|--retry-delay|--retry-max-time|-C|--continue-at)
+        (( index + 1 < ${#args[@]} )) || return 1
+        index=$((index + 2))
+        ;;
+      --proxy=*|--user-agent=*|--header=*|--connect-timeout=*|--max-time=*|--retry=*|--retry-delay=*|--retry-max-time=*|--continue-at=*)
+        index=$((index + 1))
+        ;;
+      --)
+        index=$((index + 1))
+        while (( index < ${#args[@]} )); do
+          candidate="${args[index]}"
+          if is_github_release_asset_url "${candidate}"; then
+            RELEASE_REQUEST_URL="${candidate}"
+          fi
+          index=$((index + 1))
+        done
+        ;;
+      -*)
+        candidate="${arg#-}"
+        if [[ "${candidate}" == *o* ]]; then
+          output_path="${candidate#*o}"
+          if [[ "${output_path}" == "${candidate}" ]]; then
+            output_path=""
+          fi
+
+          if [[ -z "${output_path}" ]]; then
+            (( index + 1 < ${#args[@]} )) || return 1
+            output_path="${args[index + 1]}"
+            index=$((index + 2))
+            continue
+          fi
+        fi
+
+        if [[ "${candidate}" == *O* ]] || [[ "${candidate}" == *J* ]]; then
+          remote_name="1"
+        fi
+
+        index=$((index + 1))
+        ;;
+      *)
+        if is_github_release_asset_url "${arg}"; then
+          RELEASE_REQUEST_URL="${arg}"
+        fi
+        index=$((index + 1))
+        ;;
+    esac
+  done
+
+  [[ -n "${RELEASE_REQUEST_URL}" ]] || return 1
+
+  if [[ -z "${output_path}" && "${remote_name}" == "1" ]]; then
+    output_path="${RELEASE_REQUEST_URL%%\?*}"
+    output_path="${output_path##*/}"
+  fi
+
+  if [[ -n "${output_dir}" && -n "${output_path}" ]]; then
+    output_path="${output_dir%/}/${output_path}"
+  fi
+
+  RELEASE_REQUEST_OUTPUT="${output_path}"
+  return 0
 }
 
 download_url_with_python_fallback() {
@@ -809,6 +937,15 @@ main() {
   is_truthy "${CURL_WRAPPER_ALLOW_ZIP_DOWNLOAD}" || assert_non_zip_download_request "$@"
   normalize_curl_args_for_parser "$@"
   normalized_args=("${PARSED_ARGS[@]}")
+
+  if extract_release_request_from_args "$@"; then
+    if [[ -z "${CURL_FALLBACK_URL:-}" ]]; then
+      CURL_FALLBACK_URL="${RELEASE_REQUEST_URL}"
+    fi
+    if [[ -z "${CURL_FALLBACK_OUTPUT:-}" && -n "${RELEASE_REQUEST_OUTPUT}" ]]; then
+      CURL_FALLBACK_OUTPUT="${RELEASE_REQUEST_OUTPUT}"
+    fi
+  fi
 
   if parse_curl_arguments_for_python_fallback "${normalized_args[@]}"; then
     parsed_fallback=1
