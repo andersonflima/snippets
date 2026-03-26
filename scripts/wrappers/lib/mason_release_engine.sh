@@ -1,6 +1,7 @@
 CURL_WRAPPER_RELEASE_CACHE_DIR="${CURL_WRAPPER_RELEASE_CACHE_DIR:-${XDG_CACHE_HOME:-${HOME:-/tmp}/.cache}/curl-python-wrapper/releases}"
-CURL_WRAPPER_MASON_BUILDERS="${CURL_WRAPPER_MASON_BUILDERS:-elixir-lsp/elixir-ls=elixir_ls_release}"
+CURL_WRAPPER_MASON_BUILDERS="${CURL_WRAPPER_MASON_BUILDERS:-elixir-lsp/elixir-ls=elixir_ls_release,omnisharp/omnisharp-roslyn=omnisharp_source_publish}"
 CURL_WRAPPER_MASON_REPACKAGE_EXTENSIONS="${CURL_WRAPPER_MASON_REPACKAGE_EXTENSIONS:-tar.gz,tgz,tar}"
+CURL_WRAPPER_MASON_SOURCE_BUILD_REPOS="${CURL_WRAPPER_MASON_SOURCE_BUILD_REPOS:-elixir-lsp/elixir-ls,omnisharp/omnisharp-roslyn}"
 
 mason_release_cache_path() {
   local slug tag asset cache_root asset_name
@@ -466,6 +467,106 @@ build_elixir_ls_release_zip() {
   rm -rf "${tmp_dir}"
 }
 
+mason_release_prefers_source_builder() {
+  local slug candidate normalized_candidate
+  slug="$(normalize_repo_slug "${1:-}")"
+  [[ -n "${slug}" ]] || return 1
+
+  IFS=',' read -r -a source_build_repos <<< "${CURL_WRAPPER_MASON_SOURCE_BUILD_REPOS}"
+  for candidate in "${source_build_repos[@]}"; do
+    normalized_candidate="$(normalize_repo_slug "${candidate}")"
+    [[ -n "${normalized_candidate}" ]] || continue
+    if [[ "${normalized_candidate}" == "${slug}" ]]; then
+      return 0
+    fi
+  done
+
+  return 1
+}
+
+parse_omnisharp_requested_asset() {
+  local requested_asset base_without_extension framework runtime_id
+  requested_asset="$1"
+
+  case "${requested_asset}" in
+    omnisharp-*-net*.zip)
+      base_without_extension="${requested_asset%.zip}"
+      framework="${base_without_extension##*-}"
+      runtime_id="${base_without_extension#omnisharp-}"
+      runtime_id="${runtime_id%-${framework}}"
+      ;;
+
+    *)
+      return 1
+      ;;
+  esac
+
+  [[ -n "${runtime_id}" && -n "${framework}" ]] || return 1
+  printf '%s\t%s\n' "${runtime_id}" "${framework}"
+}
+
+build_omnisharp_source_zip() {
+  local owner repo tag requested_asset output_path tmp_dir source_tarball source_extract source_root release_dir runtime_id framework project_file
+  owner="$1"
+  repo="$2"
+  tag="$3"
+  requested_asset="$4"
+  output_path="$5"
+
+  command -v dotnet >/dev/null 2>&1 || return 1
+  command -v tar >/dev/null 2>&1 || return 1
+
+  read -r runtime_id framework <<EOF
+$(parse_omnisharp_requested_asset "${requested_asset}" 2>/dev/null || printf 'linux-x64\tnet6.0')
+EOF
+
+  tmp_dir="$(mktemp -d -t curl-wrapper-omnisharp-XXXXXX)"
+  source_tarball="${tmp_dir}/source.tar.gz"
+  source_extract="${tmp_dir}/source"
+  release_dir="${tmp_dir}/release"
+  mkdir -p "${source_extract}" "${release_dir}"
+
+  if ! download_source_tarball_for_tag "${owner}" "${repo}" "${tag}" "${source_tarball}"; then
+    rm -rf "${tmp_dir}"
+    return 1
+  fi
+
+  tar -xzf "${source_tarball}" -C "${source_extract}"
+  source_root="$(resolve_single_extracted_root "${source_extract}")"
+  project_file="${source_root}/src/OmniSharp.Stdio.Driver/OmniSharp.Stdio.Driver.csproj"
+  [[ -f "${project_file}" ]] || {
+    rm -rf "${tmp_dir}"
+    return 1
+  }
+
+  (
+    cd "${source_root}"
+    export DOTNET_CLI_TELEMETRY_OPTOUT=1
+    export DOTNET_SKIP_FIRST_TIME_EXPERIENCE=1
+    export NUGET_XMLDOC_MODE=skip
+
+    dotnet restore "${project_file}" --runtime "${runtime_id}" >/dev/null 2>&1 || true
+
+    dotnet publish "${project_file}" \
+      --configuration Release \
+      --framework "${framework}" \
+      --runtime "${runtime_id}" \
+      --output "${release_dir}" \
+      --self-contained false \
+      -p:PublishReadyToRun=false \
+      -p:UseAppHost=false \
+      -p:RollForward=LatestMajor
+
+    cp license.md "${release_dir}/license.md" 2>/dev/null || true
+  ) >/dev/null 2>&1 || {
+    rm -rf "${tmp_dir}"
+    return 1
+  }
+
+  pack_directory_as_zip "${release_dir}" "${output_path}"
+  rm -rf "${tmp_dir}"
+}
+
 mason_release_resolve_builder() {
   local slug entry repo_part builder_part normalized_repo
   slug="$(normalize_repo_slug "${1:-}")"
@@ -487,16 +588,22 @@ mason_release_resolve_builder() {
 }
 
 mason_release_run_builder() {
-  local builder_id owner repo tag output_path
+  local builder_id owner repo tag output_path requested_asset
   builder_id="$1"
   owner="$2"
   repo="$3"
   tag="$4"
   output_path="$5"
+  requested_asset="${6:-}"
 
   case "${builder_id}" in
     elixir_ls_release)
       build_elixir_ls_release_zip "${owner}" "${repo}" "${tag}" "${output_path}"
+      return $?
+      ;;
+
+    omnisharp_source_publish)
+      build_omnisharp_source_zip "${owner}" "${repo}" "${tag}" "${requested_asset}" "${output_path}"
       return $?
       ;;
   esac
@@ -505,7 +612,7 @@ mason_release_run_builder() {
 }
 
 handle_smart_release_asset() {
-  local output_path tmp_dir generated_artifact builder_id
+  local output_path tmp_dir generated_artifact builder_id prefer_source_builder
   output_path="${CURL_FALLBACK_OUTPUT:-}"
 
   [[ -n "${output_path}" ]] || return 1
@@ -523,6 +630,37 @@ handle_smart_release_asset() {
 
   tmp_dir="$(mktemp -d -t mason-release-smart-XXXXXX)"
   generated_artifact="${tmp_dir}/$(basename "${output_path}")"
+
+  builder_id="$(mason_release_resolve_builder "${GITHUB_RELEASE_SLUG}" 2>/dev/null || true)"
+  prefer_source_builder="0"
+
+  if mason_release_prefers_source_builder "${GITHUB_RELEASE_SLUG}"; then
+    prefer_source_builder="1"
+  fi
+
+  if [[ -n "${builder_id}" ]] && [[ "${prefer_source_builder}" == "1" ]] && mason_release_run_builder \
+    "${builder_id}" \
+    "${GITHUB_RELEASE_OWNER}" \
+    "${GITHUB_RELEASE_REPO}" \
+    "${GITHUB_RELEASE_TAG}" \
+    "${generated_artifact}" \
+    "${GITHUB_RELEASE_ASSET}"; then
+    mkdir -p "$(dirname "${output_path}")"
+    cp "${generated_artifact}" "${output_path}"
+    mason_release_store_cached_artifact \
+      "${GITHUB_RELEASE_SLUG}" \
+      "${GITHUB_RELEASE_TAG}" \
+      "${GITHUB_RELEASE_ASSET}" \
+      "${generated_artifact}"
+    rm -rf "${tmp_dir}"
+    log "artefato zip gerado localmente por builder ${builder_id} para ${GITHUB_RELEASE_SLUG}"
+    return 0
+  fi
+
+  if [[ "${prefer_source_builder}" == "1" ]]; then
+    rm -rf "${tmp_dir}"
+    return 1
+  fi
 
   if mason_release_repackage_archive_as_zip \
     "${GITHUB_RELEASE_OWNER}" \
@@ -542,13 +680,13 @@ handle_smart_release_asset() {
     return 0
   fi
 
-  builder_id="$(mason_release_resolve_builder "${GITHUB_RELEASE_SLUG}" 2>/dev/null || true)"
   if [[ -n "${builder_id}" ]] && mason_release_run_builder \
     "${builder_id}" \
     "${GITHUB_RELEASE_OWNER}" \
     "${GITHUB_RELEASE_REPO}" \
     "${GITHUB_RELEASE_TAG}" \
-    "${generated_artifact}"; then
+    "${generated_artifact}" \
+    "${GITHUB_RELEASE_ASSET}"; then
     mkdir -p "$(dirname "${output_path}")"
     cp "${generated_artifact}" "${output_path}"
     mason_release_store_cached_artifact \

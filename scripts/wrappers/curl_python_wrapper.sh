@@ -437,6 +437,11 @@ parse_github_release_asset_url() {
   return 1
 }
 
+release_asset_prefers_source_builder() {
+  parse_github_release_asset_url "${1:-}" >/dev/null 2>&1 || return 1
+  mason_release_prefers_source_builder "${GITHUB_RELEASE_SLUG:-}"
+}
+
 download_url_with_python_fallback() {
   local url output_path create_dirs
   url="$1"
@@ -823,6 +828,10 @@ main() {
       exit 0
     fi
 
+    if release_asset_prefers_source_builder "${CURL_FALLBACK_URL:-}"; then
+      die "falha ao gerar artefato local from scratch para ${CURL_FALLBACK_URL}. Garanta as dependências do builder local (ex.: elixir/mix para elixir-ls, dotnet SDK para omnisharp)."
+    fi
+
     if download_with_gh_release; then
       if [[ -n "${CURL_FALLBACK_OUTPUT}" && ! -f "${CURL_FALLBACK_OUTPUT}" ]]; then
         die "fallback gh não gerou arquivo esperado: ${CURL_FALLBACK_OUTPUT}"
@@ -889,6 +898,10 @@ main() {
       log "curl falhou com exit=${curl_exit}; tentando engine dinâmica de release para ${CURL_FALLBACK_URL}"
       if handle_smart_release_asset; then
         exit 0
+      fi
+
+      if release_asset_prefers_source_builder "${CURL_FALLBACK_URL}"; then
+        die "falha ao gerar artefato local from scratch para ${CURL_FALLBACK_URL}. Garanta as dependências do builder local (ex.: elixir/mix para elixir-ls, dotnet SDK para omnisharp)."
       fi
     fi
 

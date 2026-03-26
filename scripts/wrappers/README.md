@@ -91,7 +91,8 @@ vim.env.PATH = table.concat({
 vim.env.CURL_WRAPPER_RELEASE_FALLBACK_REPOS = "elixir-lsp/elixir-ls,luals/lua-language-server,omnisharp/omnisharp-roslyn"
 vim.env.CURL_WRAPPER_ENABLE_MASON_SMART_RELEASES = "1"
 vim.env.CURL_WRAPPER_RELEASE_CACHE_DIR = vim.fn.expand("~/.cache/curl-python-wrapper/releases")
-vim.env.CURL_WRAPPER_MASON_BUILDERS = "elixir-lsp/elixir-ls=elixir_ls_release"
+vim.env.CURL_WRAPPER_MASON_BUILDERS = "elixir-lsp/elixir-ls=elixir_ls_release,omnisharp/omnisharp-roslyn=omnisharp_source_publish"
+vim.env.CURL_WRAPPER_MASON_SOURCE_BUILD_REPOS = "elixir-lsp/elixir-ls,omnisharp/omnisharp-roslyn"
 vim.env.GIT_ZIP_WRAPPER_ARCHIVE_FORMAT = "tar.gz"
 ```
 
@@ -134,7 +135,11 @@ Principais variáveis:
 
 - `CURL_WRAPPER_MASON_BUILDERS`
   Registro CSV `repo=builder` para builders especiais quando não houver asset alternativo.
-  Padrão: `elixir-lsp/elixir-ls=elixir_ls_release`.
+  Padrão: `elixir-lsp/elixir-ls=elixir_ls_release,omnisharp/omnisharp-roslyn=omnisharp_source_publish`.
+
+- `CURL_WRAPPER_MASON_SOURCE_BUILD_REPOS`
+  Lista CSV de repositórios que devem preferir build local a partir do source tarball, sem cair em asset de release.
+  Padrão: `elixir-lsp/elixir-ls,omnisharp/omnisharp-roslyn`.
 
 - `CURL_WRAPPER_MASON_REPACKAGE_EXTENSIONS`
   Extensões candidatas que a engine dinâmica pode baixar e reempacotar em `.zip`.
@@ -177,10 +182,13 @@ No `curl` wrapper existe uma engine adicional para pacotes do Mason que falham e
 Comportamento atual:
 
 - quando a URL é de GitHub release e o Mason pede `.zip`, a engine tenta descobrir assets equivalentes da release via API
+- para repositórios marcados em `CURL_WRAPPER_MASON_SOURCE_BUILD_REPOS`, a engine tenta primeiro gerar o artefato localmente a partir do source tarball (`archive/refs/tags/*.tar.gz`)
 - se existir twin exato em `.tar.gz`, `.tgz` ou `.tar`, ele é preferido antes da heurística de similaridade
 - se encontrar `.tar.gz`, `.tgz` ou `.tar` compatível, baixa, extrai e reempacota localmente em `.zip`
 - se não encontrar asset equivalente, consulta o registro de builders especiais
-- o builder padrão atual cobre `elixir-lsp/elixir-ls`, gerando o release localmente com `mix elixir_ls.release2` ou caindo para `mix elixir_ls.release` quando necessário
+- os builders padrão atuais cobrem:
+  - `elixir-lsp/elixir-ls`, gerando o release localmente com `mix elixir_ls.release2` ou caindo para `mix elixir_ls.release`
+  - `omnisharp/omnisharp-roslyn`, gerando o pacote localmente com `dotnet publish` a partir do source tarball
 - quando o pacote só publica `.zip`, o wrapper também tenta o endpoint de assets da API do GitHub antes de desistir
 - o artefato gerado fica em cache local para reutilização automática nas próximas instalações
 
@@ -200,6 +208,10 @@ Para a engine dinâmica do `elixir-ls`:
 
 - `elixir`
 - `mix`
+
+Para a engine dinâmica do `omnisharp`:
+
+- `dotnet` SDK
 
 Opcional:
 
