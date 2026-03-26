@@ -396,12 +396,10 @@ upload_local_project_archive() {
 }
 
 generate_remote_script() {
-  local remote_script_path remote_mix_args_literal remote_project_parent quoted_remote_project_path quoted_remote_project_parent
+  local remote_script_path remote_mix_args_literal quoted_remote_project_path
   remote_script_path="$1"
   remote_mix_args_literal="$(printf '%q ' "${MIX_ARGS[@]}")"
-  remote_project_parent="${REMOTE_PROJECT_PATH%/*}"
   quoted_remote_project_path="$(shell_quote "${REMOTE_PROJECT_PATH}")"
-  quoted_remote_project_parent="$(shell_quote "${remote_project_parent}")"
 
   cat > "${remote_script_path}" <<EOF
 #!/usr/bin/env bash
@@ -419,19 +417,59 @@ upload_if_exists() {
   aws s3 cp "\${source_path}" "s3://${S3_BUCKET}/\${target_key}" --only-show-errors >/dev/null
 }
 
-RUN_ROOT="\${HOME}/.cache/mix-via-ec2/runs/${RUN_ID}"
+resolve_home_dir() {
+  local detected_home
+
+  if [[ -n "\${HOME:-}" ]]; then
+    printf '%s\n' "\${HOME}"
+    return 0
+  fi
+
+  detected_home="\$(getent passwd "\$(id -un)" 2>/dev/null | cut -d: -f6 || true)"
+  if [[ -n "\${detected_home}" ]]; then
+    printf '%s\n' "\${detected_home}"
+    return 0
+  fi
+
+  detected_home="\$(cd ~ && pwd 2>/dev/null || true)"
+  [[ -n "\${detected_home}" ]] || {
+    printf '[mix-via-ec2-remote] erro: não foi possível resolver o diretório HOME do usuário remoto\n' >&2
+    exit 1
+  }
+
+  printf '%s\n' "\${detected_home}"
+}
+
+resolve_remote_path() {
+  local raw_path
+  raw_path="\$1"
+
+  case "\${raw_path}" in
+    "~/"*)
+      printf '%s/%s\n' "\${HOME_DIR}" "\${raw_path#~/}"
+      ;;
+    *)
+      printf '%s\n' "\${raw_path}"
+      ;;
+  esac
+}
+
+HOME_DIR="\$(resolve_home_dir)"
+RUN_ROOT="/tmp/mix-via-ec2/runs/${RUN_ID}"
 COMMAND_TYPE="${COMMAND_TYPE}"
 SYNC_BUILD="${SYNC_BUILD}"
 SYNC_HOME_CACHE="${SYNC_HOME_CACHE}"
-REMOTE_PROJECT_PATH=${quoted_remote_project_path}
+REMOTE_PROJECT_PATH_RAW=${quoted_remote_project_path}
 PROJECT_ARCHIVE_KEY="${PROJECT_ARCHIVE_KEY}"
 PROJECT_RESULT_KEY="${PROJECT_RESULT_KEY}"
 HOME_CACHE_KEY="${HOME_CACHE_KEY}"
 RUNTIME_METADATA_KEY="${RUNTIME_METADATA_KEY}"
 STATUS_KEY="${STATUS_KEY}"
+REMOTE_PROJECT_PATH="\$(resolve_remote_path "\${REMOTE_PROJECT_PATH_RAW}")"
+REMOTE_PROJECT_PARENT="\${REMOTE_PROJECT_PATH%/*}"
 
 mkdir -p "\${RUN_ROOT}"
-mkdir -p ${quoted_remote_project_parent}
+mkdir -p "\${REMOTE_PROJECT_PARENT}"
 
 finish() {
   local exit_code="\$?"
@@ -461,7 +499,7 @@ if [[ "\${COMMAND_TYPE}" == "project" ]]; then
   aws s3 cp "s3://${S3_BUCKET}/\${PROJECT_ARCHIVE_KEY}" - --only-show-errors | tar -xzf - -C "\${REMOTE_PROJECT_PATH}"
   cd "\${REMOTE_PROJECT_PATH}"
 else
-  cd "\${HOME}"
+  cd "\${HOME_DIR}"
 fi
 
 log "executando mix ${MIX_ARGS[*]}"
@@ -480,7 +518,7 @@ if [[ "\${COMMAND_TYPE}" == "project" ]]; then
 fi
 
 if [[ "\${SYNC_HOME_CACHE}" == "1" ]]; then
-  cd "\${HOME}"
+  cd "\${HOME_DIR}"
   entries=()
   if [[ -d .mix ]]; then entries+=(.mix); fi
   if [[ -d .hex ]]; then entries+=(.hex); fi
@@ -544,10 +582,9 @@ download_runtime_metadata_from_s3() {
 }
 
 build_ssm_parameters_file() {
-  local parameter_file remote_runner_path remote_run_dir remote_home_ref
+  local parameter_file remote_runner_path remote_run_dir
   parameter_file="$1"
-  remote_home_ref='${HOME}'
-  remote_run_dir="${remote_home_ref}/.cache/mix-via-ec2/runs/${RUN_ID}"
+  remote_run_dir="/tmp/mix-via-ec2/runs/${RUN_ID}"
   remote_runner_path="${remote_run_dir}/run.sh"
   require_command python3
 
