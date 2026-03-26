@@ -27,8 +27,9 @@ GIT_ZIP_WRAPPER_CURL_CACERT="${GIT_ZIP_WRAPPER_CURL_CACERT:-}"
 GIT_ZIP_WRAPPER_ACTIVE_PROXY=""
 WRAPPER_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 GIT_ZIP_WRAPPER_USE_EC2="${GIT_ZIP_WRAPPER_USE_EC2:-${WRAPPERS_VIA_EC2_ENABLED:-0}}"
-GIT_ZIP_WRAPPER_EC2_ALL_URLS="${GIT_ZIP_WRAPPER_EC2_ALL_URLS:-0}"
+GIT_ZIP_WRAPPER_EC2_ALL_URLS="${GIT_ZIP_WRAPPER_EC2_ALL_URLS:-${WRAPPERS_VIA_EC2_ALL_URLS:-1}}"
 GIT_ZIP_WRAPPER_EC2_HELPER="${GIT_ZIP_WRAPPER_EC2_HELPER:-${WRAPPER_DIR}/fetch-url-via-ec2}"
+GIT_ZIP_WRAPPER_EC2_REQUIRED="${GIT_ZIP_WRAPPER_EC2_REQUIRED:-${WRAPPERS_VIA_EC2_ENABLED:-0}}"
 
 resolve_proxy_config() {
   local proxy
@@ -344,11 +345,16 @@ download_url_with_retries() {
   fi
 
   if should_use_ec2_backend_for_git_url "${url}" "${archive_path}"; then
-    log "delegando download para backend EC2: ${url}"
+    log "backend selecionado: ec2 (${url})"
     if download_with_ec2_backend "${url}" "${archive_path}" "${user_agent}"; then
       return 0
     fi
+    if is_truthy "${GIT_ZIP_WRAPPER_EC2_REQUIRED}"; then
+      die "backend EC2 falhou para ${url} e o fallback local está desabilitado"
+    fi
     log "backend EC2 falhou; seguindo com tentativas locais"
+  else
+    log "backend selecionado: local (${url})"
   fi
 
   for mode_name in default http1 ipv4 ipv4_http1; do
@@ -369,9 +375,16 @@ should_use_ec2_backend_for_git_url() {
   url="$1"
   archive_path="$2"
 
-  is_truthy "${GIT_ZIP_WRAPPER_USE_EC2}" || return 1
+  if ! is_truthy "${GIT_ZIP_WRAPPER_USE_EC2}"; then
+    return 1
+  fi
   [[ -n "${url}" && -n "${archive_path}" ]] || return 1
-  [[ -x "${GIT_ZIP_WRAPPER_EC2_HELPER}" ]] || return 1
+  if [[ ! -x "${GIT_ZIP_WRAPPER_EC2_HELPER}" ]]; then
+    if is_truthy "${GIT_ZIP_WRAPPER_EC2_REQUIRED}"; then
+      die "helper do backend EC2 não encontrado/executável: ${GIT_ZIP_WRAPPER_EC2_HELPER}"
+    fi
+    return 1
+  fi
 
   if is_truthy "${GIT_ZIP_WRAPPER_EC2_ALL_URLS}"; then
     return 0

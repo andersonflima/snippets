@@ -30,8 +30,9 @@ CURL_WRAPPER_ACTIVE_PROXY=""
 CURL_WRAPPER_RESOLVED_REAL_CURL=""
 WRAPPER_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 CURL_WRAPPER_USE_EC2="${CURL_WRAPPER_USE_EC2:-${WRAPPERS_VIA_EC2_ENABLED:-0}}"
-CURL_WRAPPER_EC2_ALL_URLS="${CURL_WRAPPER_EC2_ALL_URLS:-0}"
+CURL_WRAPPER_EC2_ALL_URLS="${CURL_WRAPPER_EC2_ALL_URLS:-${WRAPPERS_VIA_EC2_ALL_URLS:-1}}"
 CURL_WRAPPER_EC2_HELPER="${CURL_WRAPPER_EC2_HELPER:-${WRAPPER_DIR}/fetch-url-via-ec2}"
+CURL_WRAPPER_EC2_REQUIRED="${CURL_WRAPPER_EC2_REQUIRED:-${WRAPPERS_VIA_EC2_ENABLED:-0}}"
 
 is_zip_extension() {
   local value
@@ -926,9 +927,16 @@ should_use_ec2_backend_for_url() {
   url="${1:-}"
   output="${2:-}"
 
-  is_truthy "${CURL_WRAPPER_USE_EC2}" || return 1
+  if ! is_truthy "${CURL_WRAPPER_USE_EC2}"; then
+    return 1
+  fi
   [[ -n "${url}" && -n "${output}" ]] || return 1
-  [[ -x "${CURL_WRAPPER_EC2_HELPER}" ]] || return 1
+  if [[ ! -x "${CURL_WRAPPER_EC2_HELPER}" ]]; then
+    if is_truthy "${CURL_WRAPPER_EC2_REQUIRED}"; then
+      die "helper do backend EC2 não encontrado/executável: ${CURL_WRAPPER_EC2_HELPER}"
+    fi
+    return 1
+  fi
 
   if is_truthy "${CURL_WRAPPER_EC2_ALL_URLS}"; then
     return 0
@@ -1021,11 +1029,16 @@ main() {
   fi
 
   if should_use_ec2_backend_for_url "${CURL_FALLBACK_URL:-}" "${CURL_FALLBACK_OUTPUT:-}"; then
-    log "delegando download para backend EC2: ${CURL_FALLBACK_URL}"
+    log "backend selecionado: ec2 (${CURL_FALLBACK_URL})"
     if download_with_ec2_backend "${CURL_FALLBACK_URL}" "${CURL_FALLBACK_OUTPUT}"; then
       exit 0
     fi
+    if is_truthy "${CURL_WRAPPER_EC2_REQUIRED}"; then
+      die "backend EC2 falhou para ${CURL_FALLBACK_URL} e o fallback local está desabilitado"
+    fi
     log "backend EC2 falhou; seguindo com fluxo local de fallback"
+  elif [[ -n "${CURL_FALLBACK_URL:-}" && -n "${CURL_FALLBACK_OUTPUT:-}" ]]; then
+    log "backend selecionado: local (${CURL_FALLBACK_URL})"
   fi
 
   if should_skip_direct_release_download "${CURL_FALLBACK_URL:-}"; then

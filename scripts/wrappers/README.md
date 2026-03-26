@@ -288,6 +288,12 @@ Quando esse backend está ativo:
 - o `git` wrapper tenta baixar archives GitHub via EC2 antes das tentativas locais
 - o `curl` do Mason pode aproveitar o EC2 para baixar `.zip` oficiais de release quando a máquina local não consegue
 
+No modo configurado pelo bootstrap atual:
+
+- `curl` usa EC2 por padrão para qualquer URL suportada e falha se o backend remoto falhar
+- `git` usa EC2 por padrão para os clones GitHub suportados e falha se o backend remoto falhar
+- o fallback local deixa de ser silencioso
+
 No `curl` wrapper existe uma engine adicional para pacotes do Mason que falham em ambiente corporativo por dependerem de asset `.zip` de release.
 
 Comportamento atual:

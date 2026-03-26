@@ -242,8 +242,13 @@ render_optional_exports() {
     printf 'export WRAPPERS_VIA_EC2_INSTANCE_NAME=%s\n' "$(shell_quote "${INSTANCE_NAME}")"
     printf 'export WRAPPERS_VIA_EC2_AWS_REGION=%s\n' "$(shell_quote "${AWS_REGION_NAME}")"
     printf 'export WRAPPERS_VIA_EC2_S3_PREFIX=%s\n' "$(shell_quote "${S3_PREFIX_NAME}")"
+    printf 'export WRAPPERS_VIA_EC2_ALL_URLS=%s\n' "$(shell_quote "1")"
     printf 'export CURL_WRAPPER_USE_EC2=%s\n' "$(shell_quote "1")"
+    printf 'export CURL_WRAPPER_EC2_ALL_URLS=%s\n' "$(shell_quote "1")"
+    printf 'export CURL_WRAPPER_EC2_REQUIRED=%s\n' "$(shell_quote "1")"
     printf 'export GIT_ZIP_WRAPPER_USE_EC2=%s\n' "$(shell_quote "1")"
+    printf 'export GIT_ZIP_WRAPPER_EC2_ALL_URLS=%s\n' "$(shell_quote "1")"
+    printf 'export GIT_ZIP_WRAPPER_EC2_REQUIRED=%s\n' "$(shell_quote "1")"
     if [[ -n "${AWS_PROFILE_NAME}" ]]; then
       printf 'export WRAPPERS_VIA_EC2_AWS_PROFILE=%s\n' "$(shell_quote "${AWS_PROFILE_NAME}")"
     fi
