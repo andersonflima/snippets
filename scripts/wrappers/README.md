@@ -147,6 +147,11 @@ Principais variáveis:
   Lista CSV de repositórios que devem preferir build local a partir do source tarball, sem cair em asset de release.
   Padrão: `elixir-lsp/elixir-ls,omnisharp/omnisharp-roslyn`.
 
+- `CURL_WRAPPER_MASON_SEED_DIR`
+  Diretório opcional com artefatos `.zip` já gerados fora da máquina restrita.
+  Formato esperado: `<seed-dir>/<owner>/<repo>/<tag>/<asset>` ou `<seed-dir>/<asset>`.
+  Quando definido, o wrapper tenta esse diretório antes de buildar localmente.
+
 - `CURL_WRAPPER_MASON_REPACKAGE_EXTENSIONS`
   Extensões candidatas que a engine dinâmica pode baixar e reempacotar em `.zip`.
   Padrão: `tar.gz,tgz,tar`.
@@ -222,6 +227,33 @@ Para a engine dinâmica do `omnisharp`:
 Opcional:
 
 - `gh` autenticado (`gh auth status`)
+
+### Seed local para hosts restritos
+
+Se a máquina do serviço não consegue rodar `mix deps.get` ou `dotnet restore` de forma confiável, gere o artefato em outra máquina e copie para o host restrito.
+
+Gerando o seed:
+
+```bash
+sh scripts/build_mason_seed_artifact.sh \
+  --release-url https://github.com/elixir-lsp/elixir-ls/releases/download/v0.30.0/elixir-ls-v0.30.0.zip \
+  --seed-dir "$HOME/.cache/mason-seeds"
+```
+
+No host restrito:
+
+```bash
+export CURL_WRAPPER_MASON_SEED_DIR="$HOME/.cache/mason-seeds"
+```
+
+Depois disso, o wrapper tenta o seed local antes de chamar o builder.
+
+Se quiser persistir isso no `zsh`:
+
+```bash
+sh scripts/configure_wrapper_envs_zsh.sh \
+  --mason-seed-dir "$HOME/.cache/mason-seeds"
+```
 
 ## Ambientes com proxy/certificado
 

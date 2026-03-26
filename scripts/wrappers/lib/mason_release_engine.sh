@@ -2,6 +2,7 @@ CURL_WRAPPER_RELEASE_CACHE_DIR="${CURL_WRAPPER_RELEASE_CACHE_DIR:-${XDG_CACHE_HO
 CURL_WRAPPER_MASON_BUILDERS="${CURL_WRAPPER_MASON_BUILDERS:-elixir-lsp/elixir-ls=elixir_ls_release,omnisharp/omnisharp-roslyn=omnisharp_source_publish}"
 CURL_WRAPPER_MASON_REPACKAGE_EXTENSIONS="${CURL_WRAPPER_MASON_REPACKAGE_EXTENSIONS:-tar.gz,tgz,tar}"
 CURL_WRAPPER_MASON_SOURCE_BUILD_REPOS="${CURL_WRAPPER_MASON_SOURCE_BUILD_REPOS:-elixir-lsp/elixir-ls,omnisharp/omnisharp-roslyn}"
+CURL_WRAPPER_MASON_SEED_DIR="${CURL_WRAPPER_MASON_SEED_DIR:-}"
 
 mason_release_cache_path() {
   local slug tag asset cache_root asset_name
@@ -10,6 +11,44 @@ mason_release_cache_path() {
   asset_name="$(basename "${3:-}")"
   cache_root="${CURL_WRAPPER_RELEASE_CACHE_DIR%/}"
   printf '%s/%s/%s/%s\n' "${cache_root}" "${slug}" "${tag}" "${asset_name}"
+}
+
+mason_release_seed_path() {
+  local slug tag asset seed_root asset_name
+  slug="$(normalize_repo_slug "${1:-}")"
+  tag="${2:-}"
+  asset_name="$(basename "${3:-}")"
+  seed_root="${CURL_WRAPPER_MASON_SEED_DIR%/}"
+
+  [[ -n "${seed_root}" ]] || return 1
+  printf '%s/%s/%s/%s\n' "${seed_root}" "${slug}" "${tag}" "${asset_name}"
+}
+
+mason_release_restore_seeded_artifact() {
+  local slug tag asset output_path seeded_path flat_seeded_path
+  slug="$1"
+  tag="$2"
+  asset="$3"
+  output_path="$4"
+
+  [[ -n "${CURL_WRAPPER_MASON_SEED_DIR}" ]] || return 1
+
+  seeded_path="$(mason_release_seed_path "${slug}" "${tag}" "${asset}" 2>/dev/null || true)"
+  flat_seeded_path="${CURL_WRAPPER_MASON_SEED_DIR%/}/$(basename "${asset}")"
+
+  if [[ -n "${seeded_path}" && -s "${seeded_path}" ]]; then
+    mkdir -p "$(dirname "${output_path}")"
+    cp "${seeded_path}" "${output_path}"
+    return 0
+  fi
+
+  if [[ -s "${flat_seeded_path}" ]]; then
+    mkdir -p "$(dirname "${output_path}")"
+    cp "${flat_seeded_path}" "${output_path}"
+    return 0
+  fi
+
+  return 1
 }
 
 mason_release_restore_cached_artifact() {
@@ -33,8 +72,8 @@ mason_release_store_cached_artifact() {
   source_path="$4"
   cache_path="$(mason_release_cache_path "${slug}" "${tag}" "${asset}")"
 
-  mkdir -p "$(dirname "${cache_path}")"
-  cp "${source_path}" "${cache_path}"
+  mkdir -p "$(dirname "${cache_path}")" 2>/dev/null || return 1
+  cp "${source_path}" "${cache_path}" 2>/dev/null || return 1
 }
 
 mason_release_fetch_metadata_json() {
@@ -708,6 +747,20 @@ handle_smart_release_asset() {
   [[ -n "${output_path}" ]] || return 1
   [[ "${output_path}" == *.zip ]] || return 1
   parse_github_release_asset_url "${CURL_FALLBACK_URL:-}" || return 1
+
+  if mason_release_restore_seeded_artifact \
+    "${GITHUB_RELEASE_SLUG}" \
+    "${GITHUB_RELEASE_TAG}" \
+    "${GITHUB_RELEASE_ASSET}" \
+    "${output_path}"; then
+    mason_release_store_cached_artifact \
+      "${GITHUB_RELEASE_SLUG}" \
+      "${GITHUB_RELEASE_TAG}" \
+      "${GITHUB_RELEASE_ASSET}" \
+      "${output_path}"
+    log "artefato Mason restaurado do seed local para ${GITHUB_RELEASE_SLUG}"
+    return 0
+  fi
 
   if mason_release_restore_cached_artifact \
     "${GITHUB_RELEASE_SLUG}" \

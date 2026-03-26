@@ -32,6 +32,7 @@ Opções:
   --git-install-dir <dir>      Diretório do wrapper instalado de git.
   --real-curl <path>           Caminho do curl real.
   --real-git <path>            Caminho do git real.
+  --mason-seed-dir <dir>       Diretório com artefatos seed do Mason.
   --proxy <url>                Define proxy para wrappers e env padrão.
   --ca-cert <arquivo>          Define CA customizada para o wrapper de git.
   --auto-insecure-on-cert-error
@@ -56,6 +57,7 @@ REAL_GIT_BIN="${GIT_ZIP_WRAPPER_REAL_GIT:-}"
 PROXY_URL=""
 CA_CERT_PATH=""
 AUTO_INSECURE_ON_CERT_ERROR="0"
+MASON_SEED_DIR="${CURL_WRAPPER_MASON_SEED_DIR:-}"
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
@@ -85,6 +87,10 @@ while [[ $# -gt 0 ]]; do
       ;;
     --real-git)
       REAL_GIT_BIN="${2:-}"
+      shift 2
+      ;;
+    --mason-seed-dir)
+      MASON_SEED_DIR="${2:-}"
       shift 2
       ;;
     --proxy)
@@ -165,6 +171,10 @@ EOF
 
   if [[ "${AUTO_INSECURE_ON_CERT_ERROR}" == "1" ]]; then
     printf 'export CURL_WRAPPER_AUTO_INSECURE_ON_CERT_ERROR=%s\n' "$(shell_quote "1")"
+  fi
+
+  if [[ -n "${MASON_SEED_DIR}" ]]; then
+    printf 'export CURL_WRAPPER_MASON_SEED_DIR=%s\n' "$(shell_quote "${MASON_SEED_DIR}")"
   fi
 }
 
