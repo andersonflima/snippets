@@ -27,6 +27,7 @@ Uso:
 Opções:
   --env-file <arquivo>         Arquivo com exports persistidos.
   --shell-rc <arquivo>         Arquivo rc do shell que vai carregar o env-file.
+  --apply-shell-rc             Persiste o source do env-file no shell rc.
   --no-shell-rc                Não altera arquivo rc do shell.
   --mix-install-dir <dir>      Diretório do wrapper instalado. Padrão: $HOME/.local/share/mix-ec2-wrapper/bin
   --real-mix <path>            Caminho do mix real.
@@ -43,7 +44,7 @@ USAGE
 
 ENV_FILE="${HOME}/.config/mix-via-ec2-envs.sh"
 SHELL_RC=""
-APPLY_SHELL_RC="1"
+APPLY_SHELL_RC="0"
 MIX_INSTALL_DIR="${HOME}/.local/share/mix-ec2-wrapper/bin"
 REAL_MIX_BIN="${MIX_WRAPPER_REAL_MIX:-}"
 INSTANCE_NAME="${MIX_VIA_EC2_INSTANCE_NAME:-Dander}"
@@ -62,7 +63,12 @@ while [[ $# -gt 0 ]]; do
       ;;
     --shell-rc)
       SHELL_RC="${2:-}"
+      APPLY_SHELL_RC="1"
       shift 2
+      ;;
+    --apply-shell-rc)
+      APPLY_SHELL_RC="1"
+      shift
       ;;
     --no-shell-rc)
       APPLY_SHELL_RC="0"

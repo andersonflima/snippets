@@ -31,7 +31,8 @@ Opções:
   --aws-profile <profile>      Profile AWS.
   --s3-prefix <prefixo>        Prefixo compartilhado para os wrappers. Padrão: wrappers-via-ec2
   --mix-s3-prefix <prefixo>    Prefixo específico do mix. Padrão: mix-via-ec2
-  --shell-rc <arquivo>         Arquivo rc do shell. Padrão: $HOME/.zshrc
+  --shell-rc <arquivo>         Arquivo rc do shell.
+  --apply-shell-rc             Persiste os env-files no shell rc.
   --real-mix <path>            Binário real do mix.
   --real-curl <path>           Binário real do curl.
   --real-git <path>            Binário real do git.
@@ -58,7 +59,7 @@ AWS_PROFILE_NAME=""
 WRAPPERS_S3_PREFIX="wrappers-via-ec2"
 MIX_S3_PREFIX="mix-via-ec2"
 SHELL_RC_PATH="${HOME}/.zshrc"
-APPLY_SHELL_RC="1"
+APPLY_SHELL_RC="0"
 REAL_MIX_BIN=""
 REAL_CURL_BIN=""
 REAL_GIT_BIN=""
@@ -98,7 +99,12 @@ while [[ $# -gt 0 ]]; do
       ;;
     --shell-rc)
       SHELL_RC_PATH="${2:-}"
+      APPLY_SHELL_RC="1"
       shift 2
+      ;;
+    --apply-shell-rc)
+      APPLY_SHELL_RC="1"
+      shift
       ;;
     --real-mix)
       REAL_MIX_BIN="${2:-}"

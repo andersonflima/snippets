@@ -27,6 +27,7 @@ Uso:
 Opções:
   --env-file <arquivo>         Arquivo com exports persistidos.
   --shell-rc <arquivo>         Arquivo rc do shell que vai carregar o env-file.
+  --apply-shell-rc             Persiste o source do env-file no shell rc.
   --no-shell-rc                Não altera arquivo rc do shell.
   --curl-install-dir <dir>     Diretório do wrapper instalado de curl.
   --git-install-dir <dir>      Diretório do wrapper instalado de git.
@@ -47,7 +48,7 @@ Opções:
 
 Padrões:
   --env-file: $HOME/.config/wrapper-envs.sh
-  --shell-rc: detectado a partir de $SHELL (.zshrc ou .bashrc)
+  --shell-rc: só usado quando combinado com --apply-shell-rc
   --curl-install-dir: $HOME/.local/share/curl-python-wrapper/bin
   --git-install-dir: $HOME/.local/share/git-zip-wrapper/bin
 USAGE
@@ -55,7 +56,7 @@ USAGE
 
 ENV_FILE="${HOME}/.config/wrapper-envs.sh"
 SHELL_RC=""
-APPLY_SHELL_RC="1"
+APPLY_SHELL_RC="0"
 CURL_INSTALL_DIR="${HOME}/.local/share/curl-python-wrapper/bin"
 GIT_INSTALL_DIR="${HOME}/.local/share/git-zip-wrapper/bin"
 REAL_CURL_BIN="${CURL_WRAPPER_REAL_CURL:-}"
@@ -79,7 +80,12 @@ while [[ $# -gt 0 ]]; do
       ;;
     --shell-rc)
       SHELL_RC="${2:-}"
+      APPLY_SHELL_RC="1"
       shift 2
+      ;;
+    --apply-shell-rc)
+      APPLY_SHELL_RC="1"
+      shift
       ;;
     --no-shell-rc)
       APPLY_SHELL_RC="0"

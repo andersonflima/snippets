@@ -35,6 +35,21 @@ Esse fluxo instala e configura:
 - wrapper do `git`
 - envs compartilhadas do EC2/S3
 
+Por padrão, o bootstrap não altera mais o `~/.zshrc`. Para ativar na sessão atual:
+
+```bash
+. scripts/activate_restricted_dev_env.sh
+```
+
+Se você quiser persistir no shell rc de propósito:
+
+```bash
+sh scripts/setup_restricted_dev_env.sh \
+  --s3-bucket "<bucket>" \
+  --apply-shell-rc \
+  --shell-rc "$HOME/.zshrc"
+```
+
 Opcionalmente, ele também pode aplicar `mix hex.config`:
 
 ```bash
