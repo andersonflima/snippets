@@ -419,14 +419,25 @@ resolve_remote_principal_arn_via_ssm() {
   parameter_file="$(mktemp "/tmp/mix-via-ec2-identity-params.XXXXXX.json")"
 
   require_command python3
-  python3 - "${parameter_file}" <<'PY'
+  python3 - "${parameter_file}" "${AWS_REGION_NAME}" <<'PY'
 import json
 import sys
 
 parameter_file = sys.argv[1]
+aws_region = sys.argv[2]
+
+commands = [
+    "set -euo pipefail",
+    "unset AWS_ACCESS_KEY_ID AWS_SECRET_ACCESS_KEY AWS_SESSION_TOKEN AWS_PROFILE AWS_DEFAULT_PROFILE",
+    "unset AWS_SHARED_CREDENTIALS_FILE AWS_CONFIG_FILE AWS_WEB_IDENTITY_TOKEN_FILE AWS_ROLE_ARN AWS_ROLE_SESSION_NAME",
+    "unset AWS_EC2_METADATA_DISABLED",
+]
+
+if aws_region:
+    commands.append(f'export AWS_REGION="{aws_region}" AWS_DEFAULT_REGION="{aws_region}"')
+
 payload = {
-    "commands": [
-        "set -euo pipefail",
+    "commands": commands + [
         "aws sts get-caller-identity --query Arn --output text",
     ]
 }
@@ -585,10 +596,11 @@ upload_local_project_archive() {
 }
 
 generate_remote_script() {
-  local remote_script_path remote_mix_args_literal quoted_remote_project_path
+  local remote_script_path remote_mix_args_literal quoted_remote_project_path quoted_aws_region
   remote_script_path="$1"
   remote_mix_args_literal="$(printf '%q ' "${MIX_ARGS[@]}")"
   quoted_remote_project_path="$(shell_quote "${REMOTE_PROJECT_PATH}")"
+  quoted_aws_region="$(shell_quote "${AWS_REGION_NAME}")"
 
   cat > "${remote_script_path}" <<EOF
 #!/usr/bin/env bash
@@ -604,6 +616,12 @@ upload_if_exists() {
 
   [[ -e "\${source_path}" ]] || return 0
   aws s3 cp "\${source_path}" "s3://${S3_BUCKET}/\${target_key}" --only-show-errors >/dev/null
+}
+
+reset_aws_auth_env() {
+  unset AWS_ACCESS_KEY_ID AWS_SECRET_ACCESS_KEY AWS_SESSION_TOKEN AWS_PROFILE AWS_DEFAULT_PROFILE
+  unset AWS_SHARED_CREDENTIALS_FILE AWS_CONFIG_FILE AWS_WEB_IDENTITY_TOKEN_FILE AWS_ROLE_ARN AWS_ROLE_SESSION_NAME
+  unset AWS_EC2_METADATA_DISABLED
 }
 
 resolve_home_dir() {
@@ -649,6 +667,7 @@ COMMAND_TYPE="${COMMAND_TYPE}"
 SYNC_BUILD="${SYNC_BUILD}"
 SYNC_HOME_CACHE="${SYNC_HOME_CACHE}"
 REMOTE_PROJECT_PATH_RAW=${quoted_remote_project_path}
+REMOTE_AWS_REGION=${quoted_aws_region}
 PROJECT_ARCHIVE_KEY="${PROJECT_ARCHIVE_KEY}"
 PROJECT_RESULT_KEY="${PROJECT_RESULT_KEY}"
 HOME_CACHE_KEY="${HOME_CACHE_KEY}"
@@ -659,6 +678,11 @@ REMOTE_PROJECT_PARENT="\${REMOTE_PROJECT_PATH%/*}"
 
 mkdir -p "\${RUN_ROOT}"
 mkdir -p "\${REMOTE_PROJECT_PARENT}"
+reset_aws_auth_env
+if [[ -n "\${REMOTE_AWS_REGION}" ]]; then
+  export AWS_REGION="\${REMOTE_AWS_REGION}"
+  export AWS_DEFAULT_REGION="\${REMOTE_AWS_REGION}"
+fi
 
 finish() {
   local exit_code="\$?"
@@ -777,15 +801,24 @@ build_ssm_parameters_file() {
   remote_runner_path="${remote_run_dir}/run.sh"
   require_command python3
 
-  python3 - "${parameter_file}" "${remote_run_dir}" "${S3_BUCKET}" "${REMOTE_SCRIPT_KEY}" "${remote_runner_path}" <<'PY'
+  python3 - "${parameter_file}" "${remote_run_dir}" "${S3_BUCKET}" "${REMOTE_SCRIPT_KEY}" "${remote_runner_path}" "${AWS_REGION_NAME}" <<'PY'
 import json
 import sys
 
-parameter_file, remote_run_dir, s3_bucket, remote_script_key, remote_runner_path = sys.argv[1:6]
+parameter_file, remote_run_dir, s3_bucket, remote_script_key, remote_runner_path, aws_region = sys.argv[1:7]
+
+commands = [
+    "set -euo pipefail",
+    "unset AWS_ACCESS_KEY_ID AWS_SECRET_ACCESS_KEY AWS_SESSION_TOKEN AWS_PROFILE AWS_DEFAULT_PROFILE",
+    "unset AWS_SHARED_CREDENTIALS_FILE AWS_CONFIG_FILE AWS_WEB_IDENTITY_TOKEN_FILE AWS_ROLE_ARN AWS_ROLE_SESSION_NAME",
+    "unset AWS_EC2_METADATA_DISABLED",
+]
+
+if aws_region:
+    commands.append(f'export AWS_REGION="{aws_region}" AWS_DEFAULT_REGION="{aws_region}"')
 
 payload = {
-    "commands": [
-        "set -euo pipefail",
+    "commands": commands + [
         f'mkdir -p "{remote_run_dir}"',
         f'aws s3 cp "s3://{s3_bucket}/{remote_script_key}" "{remote_runner_path}" --only-show-errors >/dev/null',
         f'chmod +x "{remote_runner_path}"',
