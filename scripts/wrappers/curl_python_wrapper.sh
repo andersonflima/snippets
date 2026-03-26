@@ -472,9 +472,50 @@ download_release_asset_by_name() {
     fi
   fi
 
+  if download_release_asset_by_api_endpoint "${owner}" "${repo}" "${tag}" "${asset}" "${output_path}"; then
+    return 0
+  fi
+
   download_url_with_python_fallback \
     "https://github.com/${owner}/${repo}/releases/download/${tag}/${asset}" \
     "${output_path}"
+}
+
+download_release_asset_by_api_endpoint() {
+  local owner repo tag asset output_path asset_id api_url
+  owner="$1"
+  repo="$2"
+  tag="$3"
+  asset="$4"
+  output_path="$5"
+  asset_id="$(mason_release_fetch_asset_id "${owner}" "${repo}" "${tag}" "${asset}" 2>/dev/null || true)"
+  [[ -n "${asset_id}" ]] || return 1
+
+  mkdir -p "$(dirname "${output_path}")"
+  api_url="https://api.github.com/repos/${owner}/${repo}/releases/assets/${asset_id}"
+
+  if command -v gh >/dev/null 2>&1; then
+    if gh api \
+      -H "Accept: application/octet-stream" \
+      -H "X-GitHub-Api-Version: 2022-11-28" \
+      "/repos/${owner}/${repo}/releases/assets/${asset_id}" > "${output_path}" 2>/dev/null; then
+      return 0
+    fi
+  fi
+
+  (
+    CURL_FALLBACK_URL="${api_url}"
+    CURL_FALLBACK_OUTPUT="${output_path}"
+    CURL_FALLBACK_USER_AGENT="${CURL_FALLBACK_USER_AGENT:-curl-python-wrapper}"
+    CURL_FALLBACK_CONNECT_TIMEOUT="${CURL_FALLBACK_CONNECT_TIMEOUT:-20}"
+    CURL_FALLBACK_MAX_TIME="${CURL_FALLBACK_MAX_TIME:-300}"
+    CURL_FALLBACK_HEADERS=$'Accept: application/octet-stream\nX-GitHub-Api-Version: 2022-11-28'
+    CURL_FALLBACK_PROXY="${CURL_FALLBACK_PROXY:-${CURL_WRAPPER_ACTIVE_PROXY:-}}"
+    CURL_FALLBACK_ALLOW_REDIRECTS="1"
+    CURL_FALLBACK_CREATE_DIRS="1"
+    CURL_FALLBACK_INSECURE="${CURL_FALLBACK_INSECURE:-0}"
+    download_with_python_requests
+  )
 }
 
 download_source_tarball_for_tag() {
@@ -499,8 +540,6 @@ download_source_tarball_for_tag() {
 }
 
 download_with_gh_release() {
-  command -v gh >/dev/null 2>&1 || return 1
-
   local url owner repo tag asset target_dir
   url="${CURL_FALLBACK_URL%%\?*}"
   if [[ "${url}" =~ ^https://github\.com/([^/]+)/([^/]+)/releases/download/([^/]+)/(.+)$ ]]; then
@@ -518,18 +557,21 @@ download_with_gh_release() {
       mkdir -p "${target_dir}"
     fi
 
-    gh release download "${tag}" \
-      -R "${owner}/${repo}" \
-      -p "${asset}" \
-      -O "${CURL_FALLBACK_OUTPUT}" \
-      --clobber >/dev/null 2>&1
+    if command -v gh >/dev/null 2>&1; then
+      if gh release download "${tag}" \
+        -R "${owner}/${repo}" \
+        -p "${asset}" \
+        -O "${CURL_FALLBACK_OUTPUT}" \
+        --clobber >/dev/null 2>&1; then
+        return 0
+      fi
+    fi
+
+    download_release_asset_by_api_endpoint "${owner}" "${repo}" "${tag}" "${asset}" "${CURL_FALLBACK_OUTPUT}"
     return $?
   fi
 
-  gh release download "${tag}" \
-    -R "${owner}/${repo}" \
-    -p "${asset}" \
-    --clobber >/dev/null 2>&1
+  return 1
 }
 
 download_with_python_requests() {

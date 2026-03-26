@@ -101,11 +101,13 @@ vim.env.CURL_WRAPPER_MASON_BUILDERS = "elixir-lsp/elixir-ls=elixir_ls_release"
 - opcional: gh CLI autenticado para assets de release do GitHub (gh auth status)
 - para Mason em ambiente corporativo, o wrapper agora tenta automaticamente:
 - descobrir assets alternativos da release via API do GitHub
+- preferir twin exato do asset pedido quando existir variante equivalente em tarball
 - preferir .tar.gz/.tgz/.tar quando o Mason pede .zip
 - reempacotar localmente em .zip para preservar o contrato esperado pelo Mason
 - usar builders registrados quando não houver asset alternativo equivalente
 - builder padrão atual:
 - elixir-lsp/elixir-ls=elixir_ls_release
+- quando o pacote só publica .zip, o wrapper também tenta o endpoint de assets da API do GitHub
 - se a estratégia inteligente falhar, o wrapper ainda tenta `gh release`
 - para sobrescrever a lista:
 - export CURL_WRAPPER_RELEASE_FALLBACK_REPOS="elixir-lsp/elixir-ls,luals/lua-language-server,omnisharp/omnisharp-roslyn"

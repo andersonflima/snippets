@@ -71,6 +71,53 @@ mason_release_fetch_metadata_json() {
   )
 }
 
+mason_release_extract_asset_id_from_metadata() {
+  local metadata_path asset_name
+  metadata_path="$1"
+  asset_name="$2"
+
+  python3 - "${metadata_path}" "${asset_name}" <<'PY'
+import json
+import sys
+
+metadata_path, asset_name = sys.argv[1:3]
+
+with open(metadata_path, "r", encoding="utf-8") as handle:
+    payload = json.load(handle)
+
+for asset in payload.get("assets", []) if isinstance(payload, dict) else []:
+    if not isinstance(asset, dict):
+        continue
+    if str(asset.get("name", "")).strip() == asset_name:
+        print(asset.get("id", ""))
+        raise SystemExit(0)
+
+raise SystemExit(1)
+PY
+}
+
+mason_release_fetch_asset_id() {
+  local owner repo tag asset_name tmp_dir metadata_path asset_id
+  owner="$1"
+  repo="$2"
+  tag="$3"
+  asset_name="$4"
+  tmp_dir="$(mktemp -d -t mason-release-asset-id-XXXXXX)"
+  metadata_path="${tmp_dir}/release.json"
+
+  if ! mason_release_fetch_metadata_json "${owner}" "${repo}" "${tag}" "${metadata_path}"; then
+    rm -rf "${tmp_dir}"
+    return 1
+  fi
+
+  asset_id="$(
+    mason_release_extract_asset_id_from_metadata "${metadata_path}" "${asset_name}" 2>/dev/null || true
+  )"
+  rm -rf "${tmp_dir}"
+  [[ -n "${asset_id}" ]] || return 1
+  printf '%s\n' "${asset_id}"
+}
+
 mason_release_discover_archive_asset_name() {
   local owner repo tag requested_asset slug tmp_dir metadata_path discovered_asset derived_asset
   owner="$1"
@@ -166,6 +213,21 @@ requested_token_set = set(requested_tokens)
 requested_categories = categorize(requested_tokens)
 
 assets = payload.get("assets", []) if isinstance(payload, dict) else []
+asset_names = {}
+
+for asset in assets:
+    if not isinstance(asset, dict):
+        continue
+    candidate_name = str(asset.get("name", "")).strip()
+    if candidate_name:
+        asset_names[candidate_name.lower()] = candidate_name
+
+for extension in allowed_extensions:
+    direct_twin = f"{requested_base}.{extension}".lower()
+    if direct_twin in asset_names:
+        print(asset_names[direct_twin])
+        raise SystemExit(0)
+
 best_name = ""
 best_score = None
 
@@ -336,7 +398,7 @@ mason_release_repackage_archive_as_zip() {
 }
 
 build_elixir_ls_release_zip() {
-  local owner repo tag output_path tmp_dir source_tarball source_extract source_root release_dir
+  local owner repo tag output_path tmp_dir source_tarball source_extract source_root release_dir release_task
   owner="$1"
   repo="$2"
   tag="$3"
@@ -359,13 +421,26 @@ build_elixir_ls_release_zip() {
 
   tar -xzf "${source_tarball}" -C "${source_extract}"
   source_root="$(resolve_single_extracted_root "${source_extract}")"
+  release_task="elixir_ls.release"
+
+  if [[ -f "${source_root}/apps/elixir_ls_utils/lib/mix.tasks.elixir_ls.release2.ex" ]]; then
+    release_task="elixir_ls.release2 --destination"
+  fi
 
   (
     cd "${source_root}"
     mix local.hex --force >/dev/null 2>&1 || true
     mix local.rebar --force >/dev/null 2>&1 || true
-    mix deps.get
-    mix elixir_ls.release -o "${release_dir}"
+    mix deps.get >/dev/null 2>&1 || true
+    case "${release_task}" in
+      "elixir_ls.release2 --destination")
+        mix elixir_ls.release2 --destination "${release_dir}"
+        ;;
+
+      *)
+        mix elixir_ls.release -o "${release_dir}"
+        ;;
+    esac
   ) >/dev/null 2>&1 || {
     rm -rf "${tmp_dir}"
     return 1

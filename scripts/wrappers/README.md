@@ -159,9 +159,11 @@ No `curl` wrapper existe uma engine adicional para pacotes do Mason que falham e
 Comportamento atual:
 
 - quando a URL é de GitHub release e o Mason pede `.zip`, a engine tenta descobrir assets equivalentes da release via API
+- se existir twin exato em `.tar.gz`, `.tgz` ou `.tar`, ele é preferido antes da heurística de similaridade
 - se encontrar `.tar.gz`, `.tgz` ou `.tar` compatível, baixa, extrai e reempacota localmente em `.zip`
 - se não encontrar asset equivalente, consulta o registro de builders especiais
-- o builder padrão atual cobre `elixir-lsp/elixir-ls`, gerando o release localmente com `mix elixir_ls.release`
+- o builder padrão atual cobre `elixir-lsp/elixir-ls`, gerando o release localmente com `mix elixir_ls.release2` ou caindo para `mix elixir_ls.release` quando necessário
+- quando o pacote só publica `.zip`, o wrapper também tenta o endpoint de assets da API do GitHub antes de desistir
 - o artefato gerado fica em cache local para reutilização automática nas próximas instalações
 
 Se a estratégia inteligente falhar:
