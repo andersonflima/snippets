@@ -3,6 +3,7 @@
 defmodule DocdbStreamBackup do
   @default_prefix "docdb/"
   @default_expected_size_bytes 10 * 1024 * 1024 * 1024
+  @target_volume_bytes 10 * 1024 * 1024 * 1024
   @default_target_duration_seconds 60
 
   @usage """
@@ -23,7 +24,7 @@ defmodule DocdbStreamBackup do
     O script decide automaticamente entre pipeline único e paralelismo por database conforme CPU, RAM, número de databases e distribuição de volume do cluster.
     Os defaults de paralelismo, compressão, tuning do multipart do S3 e medição do stream são ajustados automaticamente por RAM/CPU do host para reduzir risco de OOM e maximizar throughput.
     Quando fizer sentido, cada database gera um objeto separado sob o prefixo docdb-backup-<timestamp>/.
-    Meta de desempenho: 10 GiB em até 60 segundos.
+    Meta de desempenho: 10 GiB em até 60 segundos (throughput). Isso não representa o tamanho real do export.
     A string de conexão principal é o primeiro argumento posicional.
     Não passe --uri novamente em --mongodump-arg.
   """
@@ -1061,7 +1062,7 @@ defmodule DocdbStreamBackup do
     )
 
     IO.puts("destino-base: s3://#{args.bucket}/#{session_prefix}")
-    IO.puts("expected_size_total: #{format_bytes_binary(expected_size_bytes)}")
+    IO.puts("estimativa_multipart_total: #{format_bytes_binary(expected_size_bytes)}")
     IO.puts("databases: #{format_target_databases(target_databases)}")
   end
 
@@ -1397,7 +1398,7 @@ defmodule DocdbStreamBackup do
 
     %{
       aggregate:
-        "agregado: #{format_bytes_binary(processed_bytes)}/#{format_bytes_binary(state.total_expected_bytes)} @ #{format_mib_per_sec(active_rate_mib_per_sec)} | ativos=#{map_size(state.live_metrics)}#{format_eta_detail(remaining_bytes, active_rate_mib_per_sec)}",
+        "agregado: #{format_bytes_binary(processed_bytes)}/#{format_bytes_binary(state.total_expected_bytes)} estimado @ #{format_mib_per_sec(active_rate_mib_per_sec)} | ativos=#{map_size(state.live_metrics)}#{format_eta_detail(remaining_bytes, active_rate_mib_per_sec)}",
       active: "por database: #{format_active_database_rates(state.live_metrics)}"
     }
   end
@@ -1666,7 +1667,7 @@ defmodule DocdbStreamBackup do
         IO.puts("destino: #{destination}")
 
         IO.puts(
-          "alvo: #{format_bytes_binary(args.expected_size_bytes)} em até #{@default_target_duration_seconds}s"
+          "estimativa multipart: #{format_bytes_binary(args.expected_size_bytes)} | meta throughput: #{format_mib_per_sec(target_throughput_mib_per_sec())} (#{format_gib_per_min(target_gib_per_min())})"
         )
       end
 
@@ -2206,7 +2207,7 @@ defmodule DocdbStreamBackup do
     )
 
     IO.puts(
-      "config: numParallelCollections=#{num_parallel_display} (#{Map.get(args, :num_parallel_collections_source, :auto)}) pigz_threads=#{args.pigz_threads} (#{Map.get(args, :pigz_threads_source, :auto)}) compression_level=#{args.compression_level} (#{Map.get(args, :compression_level_source, :auto)}) s3_max_concurrent_requests=#{args.s3_max_concurrent_requests} (#{Map.get(args, :s3_max_concurrent_requests_source, :auto)}) s3_max_queue_size=#{args.s3_max_queue_size} (#{Map.get(args, :s3_max_queue_size_source, :auto)}) s3_multipart_chunksize=#{args.s3_multipart_chunksize_mib}MiB (#{Map.get(args, :s3_multipart_chunksize_mib_source, :auto)}) meter_block_size=#{args.meter_block_size_mib}MiB (#{Map.get(args, :meter_block_size_mib_source, :auto)}) expected_size=#{format_bytes_binary(args.expected_size_bytes)}"
+      "config: numParallelCollections=#{num_parallel_display} (#{Map.get(args, :num_parallel_collections_source, :auto)}) pigz_threads=#{args.pigz_threads} (#{Map.get(args, :pigz_threads_source, :auto)}) compression_level=#{args.compression_level} (#{Map.get(args, :compression_level_source, :auto)}) s3_max_concurrent_requests=#{args.s3_max_concurrent_requests} (#{Map.get(args, :s3_max_concurrent_requests_source, :auto)}) s3_max_queue_size=#{args.s3_max_queue_size} (#{Map.get(args, :s3_max_queue_size_source, :auto)}) s3_multipart_chunksize=#{args.s3_multipart_chunksize_mib}MiB (#{Map.get(args, :s3_multipart_chunksize_mib_source, :auto)}) meter_block_size=#{args.meter_block_size_mib}MiB (#{Map.get(args, :meter_block_size_mib_source, :auto)}) multipart_expected_size=#{format_bytes_binary(args.expected_size_bytes)}"
     )
   end
 
@@ -2224,11 +2225,12 @@ defmodule DocdbStreamBackup do
     "numParallelCollections=#{num_parallel_display} pigz_threads=#{args.pigz_threads} compression_level=#{args.compression_level} s3_max_concurrent_requests=#{args.s3_max_concurrent_requests} s3_max_queue_size=#{args.s3_max_queue_size} s3_multipart_chunksize=#{args.s3_multipart_chunksize_mib}MiB"
   end
 
-  defp print_performance_report(metrics, expected_size_bytes) do
+  defp print_performance_report(metrics, _expected_size_bytes) do
     duration_us = Map.get(metrics, :duration_us, 0)
-    duration_seconds = max(1, div(duration_us, 1_000_000))
+    duration_seconds = max(duration_us / 1_000_000, 1.0)
     raw_bytes = Map.get(metrics, :raw_bytes, 0)
     estimated_bytes = Map.get(metrics, :estimated_bytes, 0)
+    observed_bytes = if raw_bytes > 0, do: raw_bytes, else: estimated_bytes
 
     IO.puts("tempo total: #{format_duration(duration_us)}")
 
@@ -2250,23 +2252,42 @@ defmodule DocdbStreamBackup do
       end
     end
 
-    target_duration_seconds = @default_target_duration_seconds
-    target_speed_mib_per_sec = expected_size_bytes / 1024.0 / 1024.0 / target_duration_seconds
+    observed_throughput_mib_per_sec =
+      if observed_bytes > 0 do
+        observed_bytes / 1024.0 / 1024.0 / duration_seconds
+      else
+        0.0
+      end
 
-    target_gib_per_min =
-      expected_size_bytes / 1024.0 / 1024.0 / 1024.0 / (target_duration_seconds / 60.0)
+    evaluation_basis =
+      cond do
+        raw_bytes > 0 -> "real"
+        estimated_bytes > 0 -> "estimada"
+        true -> "indisponível"
+      end
 
     result =
-      if duration_us <= @default_target_duration_seconds * 1_000_000 do
-        "atingido"
-      else
-        "não atingido"
+      cond do
+        observed_bytes <= 0 -> "indeterminado"
+        observed_throughput_mib_per_sec >= target_throughput_mib_per_sec() -> "atingido"
+        true -> "não atingido"
       end
 
     IO.puts(
-      "meta de throughput: #{:erlang.float_to_binary(target_speed_mib_per_sec, decimals: 2)} MiB/s (#{:erlang.float_to_binary(target_gib_per_min, decimals: 2)} GiB/min) | resultado: #{result}"
+      "meta de throughput: #{format_mib_per_sec(target_throughput_mib_per_sec())} (#{format_gib_per_min(target_gib_per_min())}) | throughput observado: #{format_mib_per_sec(observed_throughput_mib_per_sec)} | base=#{evaluation_basis} | resultado: #{result}"
     )
   end
+
+  defp target_throughput_mib_per_sec do
+    @target_volume_bytes / 1024.0 / 1024.0 / @default_target_duration_seconds
+  end
+
+  defp target_gib_per_min do
+    @target_volume_bytes / 1024.0 / 1024.0 / 1024.0 / (@default_target_duration_seconds / 60.0)
+  end
+
+  defp format_gib_per_min(value) when is_number(value),
+    do: "#{:erlang.float_to_binary(value * 1.0, decimals: 2)} GiB/min"
 
   defp format_bytes_binary(bytes) when is_integer(bytes) and bytes <= 0, do: "0 B"
 
