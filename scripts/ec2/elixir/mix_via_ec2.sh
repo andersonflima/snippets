@@ -81,6 +81,7 @@ HOST=""
 INSTANCE_ID=""
 INSTANCE_PROFILE_ARN=""
 INSTANCE_ROLE_ARN=""
+INSTANCE_REMOTE_PRINCIPAL_ARN=""
 INSTANCE_NAME="${MIX_VIA_EC2_INSTANCE_NAME:-}"
 TRANSPORT="${MIX_VIA_EC2_TRANSPORT:-auto}"
 AWS_PROFILE_NAME="${MIX_VIA_EC2_AWS_PROFILE:-${AWS_PROFILE:-}}"
@@ -390,6 +391,7 @@ resolve_instance_role_arn() {
   [[ -n "${resolved_role_arn}" && "${resolved_role_arn}" != "None" ]] || die "não foi possível resolver o role ARN do instance profile ${instance_profile_name}"
 
   INSTANCE_ROLE_ARN="${resolved_role_arn}"
+  INSTANCE_REMOTE_PRINCIPAL_ARN="${resolved_role_arn}"
 }
 
 normalize_principal_arn() {
@@ -472,17 +474,27 @@ PY
   principal_arn="$(printf '%s' "${principal_arn}" | tr -d '\r' | awk 'NF {print; exit}')"
   [[ -n "${principal_arn}" && "${principal_arn}" != "None" ]] || die "o host remoto não retornou um principal AWS válido"
 
+  INSTANCE_REMOTE_PRINCIPAL_ARN="${principal_arn}"
   INSTANCE_ROLE_ARN="$(normalize_principal_arn "${principal_arn}")"
 }
 
 ensure_s3_bucket_policy_for_instance_role() {
   local current_policy_file merged_policy_file current_policy prefix_root object_resource sid_bucket sid_object
   local bucket_resource
+  local principal_patterns=()
 
   if ! resolve_instance_role_arn; then
     resolve_remote_principal_arn_via_ssm
   fi
   require_command python3
+
+  if [[ -n "${INSTANCE_ROLE_ARN}" ]]; then
+    principal_patterns+=("${INSTANCE_ROLE_ARN}")
+  fi
+  if [[ -n "${INSTANCE_REMOTE_PRINCIPAL_ARN}" && "${INSTANCE_REMOTE_PRINCIPAL_ARN}" != "${INSTANCE_ROLE_ARN}" ]]; then
+    principal_patterns+=("${INSTANCE_REMOTE_PRINCIPAL_ARN}")
+  fi
+  (( ${#principal_patterns[@]} > 0 )) || die "não foi possível determinar um principal AWS remoto para a política do bucket"
 
   current_policy_file="$(mktemp "/tmp/mix-via-ec2-bucket-policy-current.XXXXXX.json")"
   merged_policy_file="$(mktemp "/tmp/mix-via-ec2-bucket-policy-merged.XXXXXX.json")"
@@ -509,11 +521,12 @@ ensure_s3_bucket_policy_for_instance_role() {
   sid_bucket="MixViaEc2ListBucket${INSTANCE_ID//-/}"
   sid_object="MixViaEc2ObjectAccess${INSTANCE_ID//-/}"
 
-  python3 - "${current_policy_file}" "${merged_policy_file}" "${INSTANCE_ROLE_ARN}" "${bucket_resource}" "${object_resource}" "${sid_bucket}" "${sid_object}" <<'PY'
+  python3 - "${current_policy_file}" "${merged_policy_file}" "${bucket_resource}" "${object_resource}" "${sid_bucket}" "${sid_object}" "${principal_patterns[@]}" <<'PY'
 import json
 import sys
 
-current_path, merged_path, role_arn, bucket_resource, object_resource, sid_bucket, sid_object = sys.argv[1:8]
+current_path, merged_path, bucket_resource, object_resource, sid_bucket, sid_object = sys.argv[1:7]
+principal_patterns = [pattern for pattern in sys.argv[7:] if pattern]
 
 with open(current_path, "r", encoding="utf-8") as handle:
     raw = handle.read().strip() or "{}"
@@ -531,18 +544,21 @@ elif not isinstance(statements, list):
 
 statements = [statement for statement in statements if statement.get("Sid") not in {sid_bucket, sid_object}]
 
+condition_value = principal_patterns[0] if len(principal_patterns) == 1 else principal_patterns
+
 statements.extend([
     {
         "Sid": sid_bucket,
         "Effect": "Allow",
-        "Principal": {"AWS": role_arn},
+        "Principal": "*",
         "Action": ["s3:GetBucketLocation", "s3:ListBucket"],
         "Resource": bucket_resource,
+        "Condition": {"StringLike": {"aws:PrincipalArn": condition_value}},
     },
     {
         "Sid": sid_object,
         "Effect": "Allow",
-        "Principal": {"AWS": role_arn},
+        "Principal": "*",
         "Action": [
             "s3:GetObject",
             "s3:PutObject",
@@ -550,6 +566,7 @@ statements.extend([
             "s3:AbortMultipartUpload",
         ],
         "Resource": object_resource,
+        "Condition": {"StringLike": {"aws:PrincipalArn": condition_value}},
     },
 ])
 
@@ -561,7 +578,7 @@ with open(merged_path, "w", encoding="utf-8") as handle:
     handle.write("\n")
 PY
 
-  log "garantindo acesso do role ${INSTANCE_ROLE_ARN} ao bucket ${S3_BUCKET}"
+  log "garantindo acesso do principal remoto ao bucket ${S3_BUCKET}"
   "${AWS_CMD[@]}" s3api put-bucket-policy --bucket "${S3_BUCKET}" --policy "file://${merged_policy_file}" >/dev/null
 
   rm -f "${current_policy_file}" "${merged_policy_file}"
