@@ -19,6 +19,29 @@ die() {
   exit 1
 }
 
+is_wrapper_binary_path() {
+  local candidate_path
+  candidate_path="$1"
+  [[ "${candidate_path}" == "${INSTALL_DIR}/mix" ]]
+}
+
+resolve_real_mix() {
+  local candidate
+
+  while IFS= read -r candidate; do
+    [[ -n "${candidate}" ]] || continue
+    if is_wrapper_binary_path "${candidate}"; then
+      continue
+    fi
+    printf '%s\n' "${candidate}"
+    return 0
+  done <<EOF
+$(which -a mix 2>/dev/null || true)
+EOF
+
+  return 1
+}
+
 usage() {
   cat <<'USAGE'
 Uso:
@@ -70,11 +93,12 @@ done
 [[ -f "${ENTRYPOINT_SOURCE}" ]] || die "entrypoint não encontrado: ${ENTRYPOINT_SOURCE}"
 
 if [[ -z "${REAL_MIX_BIN}" ]]; then
-  REAL_MIX_BIN="$(command -v mix || true)"
+  REAL_MIX_BIN="$(resolve_real_mix || true)"
 fi
 
 [[ -n "${REAL_MIX_BIN}" ]] || die "não foi possível localizar mix no PATH"
 [[ -x "${REAL_MIX_BIN}" ]] || die "mix inválido/não executável: ${REAL_MIX_BIN}"
+is_wrapper_binary_path "${REAL_MIX_BIN}" && die "mix real não pode apontar para o wrapper instalado: ${REAL_MIX_BIN}"
 
 mkdir -p "${INSTALL_DIR}"
 cp "${WRAPPER_SOURCE}" "${INSTALL_DIR}/mix"

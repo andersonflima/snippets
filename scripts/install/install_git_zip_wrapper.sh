@@ -19,6 +19,29 @@ die() {
   exit 1
 }
 
+is_wrapper_binary_path() {
+  local candidate_path
+  candidate_path="$1"
+  [[ "${candidate_path}" == "${INSTALL_DIR}/git" ]]
+}
+
+resolve_real_git() {
+  local candidate
+
+  while IFS= read -r candidate; do
+    [[ -n "${candidate}" ]] || continue
+    if is_wrapper_binary_path "${candidate}"; then
+      continue
+    fi
+    printf '%s\n' "${candidate}"
+    return 0
+  done <<EOF
+$(which -a git 2>/dev/null || true)
+EOF
+
+  return 1
+}
+
 usage() {
   cat <<'USAGE'
 Uso:
@@ -71,10 +94,11 @@ done
 [[ -f "${EC2_HELPER_SOURCE}" ]] || die "helper EC2 não encontrado: ${EC2_HELPER_SOURCE}"
 
 if [[ -z "${REAL_GIT_BIN}" ]]; then
-  REAL_GIT_BIN="$(command -v git || true)"
+  REAL_GIT_BIN="$(resolve_real_git || true)"
 fi
 [[ -n "${REAL_GIT_BIN}" ]] || die "não foi possível localizar git no PATH"
 [[ -x "${REAL_GIT_BIN}" ]] || die "git inválido/não executável: ${REAL_GIT_BIN}"
+is_wrapper_binary_path "${REAL_GIT_BIN}" && die "git real não pode apontar para o wrapper instalado: ${REAL_GIT_BIN}"
 
 mkdir -p "${INSTALL_DIR}"
 cp "${WRAPPER_SOURCE}" "${INSTALL_DIR}/git"

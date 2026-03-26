@@ -19,6 +19,44 @@ die() {
   exit 1
 }
 
+is_wrapper_binary_path() {
+  local binary_name candidate_path wrapper_path
+  binary_name="$1"
+  candidate_path="$2"
+
+  case "${binary_name}" in
+    curl)
+      wrapper_path="${CURL_INSTALL_DIR}/curl"
+      ;;
+    git)
+      wrapper_path="${GIT_INSTALL_DIR}/git"
+      ;;
+    *)
+      return 1
+      ;;
+  esac
+
+  [[ "${candidate_path}" == "${wrapper_path}" ]]
+}
+
+resolve_real_binary() {
+  local binary_name candidate
+  binary_name="$1"
+
+  while IFS= read -r candidate; do
+    [[ -n "${candidate}" ]] || continue
+    if is_wrapper_binary_path "${binary_name}" "${candidate}"; then
+      continue
+    fi
+    printf '%s\n' "${candidate}"
+    return 0
+  done <<EOF
+$(which -a "${binary_name}" 2>/dev/null || true)
+EOF
+
+  return 1
+}
+
 usage() {
   cat <<'USAGE'
 Uso:
@@ -162,17 +200,19 @@ done
 [[ -n "${GIT_INSTALL_DIR}" ]] || die "--git-install-dir não pode ser vazio"
 
 if [[ -z "${REAL_CURL_BIN}" ]]; then
-  REAL_CURL_BIN="$(command -v curl || true)"
+  REAL_CURL_BIN="$(resolve_real_binary curl || true)"
 fi
 
 if [[ -z "${REAL_GIT_BIN}" ]]; then
-  REAL_GIT_BIN="$(command -v git || true)"
+  REAL_GIT_BIN="$(resolve_real_binary git || true)"
 fi
 
 [[ -n "${REAL_CURL_BIN}" ]] || die "não foi possível localizar curl no PATH"
 [[ -x "${REAL_CURL_BIN}" ]] || die "curl inválido/não executável: ${REAL_CURL_BIN}"
 [[ -n "${REAL_GIT_BIN}" ]] || die "não foi possível localizar git no PATH"
 [[ -x "${REAL_GIT_BIN}" ]] || die "git inválido/não executável: ${REAL_GIT_BIN}"
+is_wrapper_binary_path curl "${REAL_CURL_BIN}" && die "curl real não pode apontar para o wrapper instalado: ${REAL_CURL_BIN}"
+is_wrapper_binary_path git "${REAL_GIT_BIN}" && die "git real não pode apontar para o wrapper instalado: ${REAL_GIT_BIN}"
 
 detect_shell_rc() {
   local active_shell shell_name

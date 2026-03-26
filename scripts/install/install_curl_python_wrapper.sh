@@ -10,6 +10,29 @@ die() {
   exit 1
 }
 
+is_wrapper_binary_path() {
+  local candidate_path
+  candidate_path="$1"
+  [[ "${candidate_path}" == "${INSTALL_DIR}/curl" ]]
+}
+
+resolve_real_curl() {
+  local candidate
+
+  while IFS= read -r candidate; do
+    [[ -n "${candidate}" ]] || continue
+    if is_wrapper_binary_path "${candidate}"; then
+      continue
+    fi
+    printf '%s\n' "${candidate}"
+    return 0
+  done <<EOF
+$(which -a curl 2>/dev/null || true)
+EOF
+
+  return 1
+}
+
 usage() {
   cat <<'USAGE'
 Uso:
@@ -76,10 +99,11 @@ if [[ -n "${LIB_SOURCE_DIR}" && ! -d "${LIB_SOURCE_DIR}" ]]; then
 fi
 
 if [[ -z "${REAL_CURL_BIN}" ]]; then
-  REAL_CURL_BIN="$(command -v curl || true)"
+  REAL_CURL_BIN="$(resolve_real_curl || true)"
 fi
 [[ -n "${REAL_CURL_BIN}" ]] || die "não foi possível localizar curl no PATH"
 [[ -x "${REAL_CURL_BIN}" ]] || die "curl inválido/não executável: ${REAL_CURL_BIN}"
+is_wrapper_binary_path "${REAL_CURL_BIN}" && die "curl real não pode apontar para o wrapper instalado: ${REAL_CURL_BIN}"
 
 mkdir -p "${INSTALL_DIR}"
 cp "${WRAPPER_SOURCE}" "${INSTALL_DIR}/curl"

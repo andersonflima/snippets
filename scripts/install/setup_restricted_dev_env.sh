@@ -19,6 +19,47 @@ die() {
   exit 1
 }
 
+is_wrapper_binary_path() {
+  local binary_name candidate_path wrapper_path
+  binary_name="$1"
+  candidate_path="$2"
+
+  case "${binary_name}" in
+    mix)
+      wrapper_path="${HOME}/.local/share/mix-ec2-wrapper/bin/mix"
+      ;;
+    curl)
+      wrapper_path="${HOME}/.local/share/curl-python-wrapper/bin/curl"
+      ;;
+    git)
+      wrapper_path="${HOME}/.local/share/git-zip-wrapper/bin/git"
+      ;;
+    *)
+      return 1
+      ;;
+  esac
+
+  [[ "${candidate_path}" == "${wrapper_path}" ]]
+}
+
+resolve_real_binary() {
+  local binary_name candidate
+  binary_name="$1"
+
+  while IFS= read -r candidate; do
+    [[ -n "${candidate}" ]] || continue
+    if is_wrapper_binary_path "${binary_name}" "${candidate}"; then
+      continue
+    fi
+    printf '%s\n' "${candidate}"
+    return 0
+  done <<EOF
+$(which -a "${binary_name}" 2>/dev/null || true)
+EOF
+
+  return 1
+}
+
 usage() {
   cat <<'USAGE'
 Uso:
@@ -164,18 +205,21 @@ done
 [[ -n "${S3_BUCKET}" ]] || die "--s3-bucket é obrigatório"
 
 if [[ -z "${REAL_MIX_BIN}" ]]; then
-  REAL_MIX_BIN="$(command -v mix || true)"
+  REAL_MIX_BIN="$(resolve_real_binary mix || true)"
 fi
 if [[ -z "${REAL_CURL_BIN}" ]]; then
-  REAL_CURL_BIN="$(command -v curl || true)"
+  REAL_CURL_BIN="$(resolve_real_binary curl || true)"
 fi
 if [[ -z "${REAL_GIT_BIN}" ]]; then
-  REAL_GIT_BIN="$(command -v git || true)"
+  REAL_GIT_BIN="$(resolve_real_binary git || true)"
 fi
 
 [[ -n "${REAL_MIX_BIN}" ]] || die "não foi possível localizar mix no PATH"
 [[ -n "${REAL_CURL_BIN}" ]] || die "não foi possível localizar curl no PATH"
 [[ -n "${REAL_GIT_BIN}" ]] || die "não foi possível localizar git no PATH"
+is_wrapper_binary_path mix "${REAL_MIX_BIN}" && die "mix real não pode apontar para o wrapper instalado: ${REAL_MIX_BIN}"
+is_wrapper_binary_path curl "${REAL_CURL_BIN}" && die "curl real não pode apontar para o wrapper instalado: ${REAL_CURL_BIN}"
+is_wrapper_binary_path git "${REAL_GIT_BIN}" && die "git real não pode apontar para o wrapper instalado: ${REAL_GIT_BIN}"
 
 run_step() {
   local description
