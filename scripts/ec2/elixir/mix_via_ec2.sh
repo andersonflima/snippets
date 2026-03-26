@@ -77,6 +77,28 @@ shell_quote() {
   printf '%q' "$1"
 }
 
+make_temp_file() {
+  local prefix extension temp_path target_path
+  prefix="$1"
+  extension="${2:-}"
+
+  if temp_path="$(mktemp "/tmp/${prefix}.XXXXXX" 2>/dev/null)"; then
+    :
+  elif temp_path="$(mktemp -t "${prefix}" 2>/dev/null)"; then
+    :
+  else
+    die "não foi possível criar arquivo temporário para ${prefix}"
+  fi
+
+  if [[ -n "${extension}" ]]; then
+    target_path="${temp_path}${extension}"
+    mv "${temp_path}" "${target_path}" || die "não foi possível renomear arquivo temporário para ${target_path}"
+    temp_path="${target_path}"
+  fi
+
+  printf '%s\n' "${temp_path}"
+}
+
 HOST=""
 INSTANCE_ID=""
 INSTANCE_PROFILE_ARN=""
@@ -418,7 +440,7 @@ resolve_remote_principal_arn_via_ssm() {
 
   assert_ssm_managed_instance
 
-  parameter_file="$(mktemp "/tmp/mix-via-ec2-identity-params.XXXXXX.json")"
+  parameter_file="$(make_temp_file "mix-via-ec2-identity-params" ".json")"
 
   require_command python3
   python3 - "${parameter_file}" "${AWS_REGION_NAME}" <<'PY'
@@ -496,8 +518,8 @@ ensure_s3_bucket_policy_for_instance_role() {
   fi
   (( ${#principal_patterns[@]} > 0 )) || die "não foi possível determinar um principal AWS remoto para a política do bucket"
 
-  current_policy_file="$(mktemp "/tmp/mix-via-ec2-bucket-policy-current.XXXXXX.json")"
-  merged_policy_file="$(mktemp "/tmp/mix-via-ec2-bucket-policy-merged.XXXXXX.json")"
+  current_policy_file="$(make_temp_file "mix-via-ec2-bucket-policy-current" ".json")"
+  merged_policy_file="$(make_temp_file "mix-via-ec2-bucket-policy-merged" ".json")"
 
   current_policy="$("${AWS_CMD[@]}" s3api get-bucket-policy \
     --bucket "${S3_BUCKET}" \
@@ -597,7 +619,7 @@ assert_ssm_managed_instance() {
 
 upload_local_project_archive() {
   local archive_path
-  archive_path="$(mktemp "/tmp/mix-via-ec2-project-${RUN_ID}.XXXXXX.tgz")"
+  archive_path="$(make_temp_file "mix-via-ec2-project-${RUN_ID}" ".tgz")"
 
   tar -czf "${archive_path}" \
     --exclude=.git \
@@ -769,7 +791,7 @@ EOF
 
 upload_remote_script() {
   local remote_script_path
-  remote_script_path="$(mktemp "/tmp/mix-via-ec2-run-${RUN_ID}.XXXXXX.sh")"
+  remote_script_path="$(make_temp_file "mix-via-ec2-run-${RUN_ID}" ".sh")"
   generate_remote_script "${remote_script_path}"
   "${AWS_CMD[@]}" s3 cp "${remote_script_path}" "s3://${S3_BUCKET}/${REMOTE_SCRIPT_KEY}" --only-show-errors >/dev/null
   rm -f "${remote_script_path}"
@@ -788,7 +810,7 @@ download_project_result_from_s3() {
     return 0
   fi
 
-  result_archive="$(mktemp "/tmp/mix-via-ec2-project-result-${RUN_ID}.XXXXXX.tgz")"
+  result_archive="$(make_temp_file "mix-via-ec2-project-result-${RUN_ID}" ".tgz")"
   "${AWS_CMD[@]}" s3 cp "s3://${S3_BUCKET}/${PROJECT_RESULT_KEY}" "${result_archive}" --only-show-errors >/dev/null
   tar -xzf "${result_archive}" -C "${LOCAL_PROJECT_PATH}"
   rm -f "${result_archive}"
@@ -801,7 +823,7 @@ download_home_cache_from_s3() {
     return 0
   fi
 
-  home_archive="$(mktemp "/tmp/mix-via-ec2-home-${RUN_ID}.XXXXXX.tgz")"
+  home_archive="$(make_temp_file "mix-via-ec2-home-${RUN_ID}" ".tgz")"
   "${AWS_CMD[@]}" s3 cp "s3://${S3_BUCKET}/${HOME_CACHE_KEY}" "${home_archive}" --only-show-errors >/dev/null
   mkdir -p "${MANAGED_HOME_DIR}"
   tar -xzf "${home_archive}" -C "${MANAGED_HOME_DIR}"
@@ -926,7 +948,7 @@ run_ssm_mix() {
 
   upload_remote_script
 
-  parameter_file="$(mktemp "/tmp/mix-via-ec2-ssm-params-${RUN_ID}.XXXXXX.json")"
+  parameter_file="$(make_temp_file "mix-via-ec2-ssm-params-${RUN_ID}" ".json")"
   build_ssm_parameters_file "${parameter_file}"
 
   log "executando mix no EC2 via SSM: mix ${MIX_ARGS[*]}"
