@@ -345,13 +345,21 @@ mason_release_extract_archive() {
 }
 
 resolve_single_extracted_root() {
-  local base_dir
+  local base_dir entry first_entry entry_count
   base_dir="$1"
+  first_entry=""
+  entry_count=0
 
-  mapfile -t extracted_entries < <(find "${base_dir}" -mindepth 1 -maxdepth 1)
+  while IFS= read -r entry; do
+    [[ -n "${entry}" ]] || continue
+    entry_count=$((entry_count + 1))
+    if [[ "${entry_count}" -eq 1 ]]; then
+      first_entry="${entry}"
+    fi
+  done < <(find "${base_dir}" -mindepth 1 -maxdepth 1 -print)
 
-  if [[ "${#extracted_entries[@]}" -eq 1 && -d "${extracted_entries[0]}" ]]; then
-    printf '%s\n' "${extracted_entries[0]}"
+  if [[ "${entry_count}" -eq 1 && -d "${first_entry}" ]]; then
+    printf '%s\n' "${first_entry}"
     return 0
   fi
 
