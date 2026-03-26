@@ -27,6 +27,7 @@ CURL_WRAPPER_RELEASE_FALLBACK_REPOS="${CURL_WRAPPER_RELEASE_FALLBACK_REPOS:-elix
 CURL_WRAPPER_ALLOW_DIRECT_RELEASE_FALLBACK="${CURL_WRAPPER_ALLOW_DIRECT_RELEASE_FALLBACK:-0}"
 CURL_WRAPPER_ENABLE_MASON_SMART_RELEASES="${CURL_WRAPPER_ENABLE_MASON_SMART_RELEASES:-1}"
 CURL_WRAPPER_ACTIVE_PROXY=""
+CURL_WRAPPER_RESOLVED_REAL_CURL=""
 WRAPPER_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
 is_zip_extension() {
@@ -457,6 +458,55 @@ download_url_with_python_fallback() {
   )
 }
 
+download_url_with_real_curl() {
+  local url output_path create_dirs real_curl proxy
+  local -a curl_cmd=()
+  local -a curl_env=()
+
+  url="$1"
+  output_path="$2"
+  create_dirs="${3:-1}"
+  real_curl="${CURL_WRAPPER_RESOLVED_REAL_CURL:-$(resolve_real_curl)}"
+  proxy="${CURL_FALLBACK_PROXY:-${CURL_WRAPPER_ACTIVE_PROXY:-}}"
+
+  [[ "${create_dirs}" == "1" ]] && mkdir -p "$(dirname "${output_path}")"
+
+  curl_cmd=("${real_curl}" -fsSL --connect-timeout "${CURL_FALLBACK_CONNECT_TIMEOUT:-20}" --max-time "${CURL_FALLBACK_MAX_TIME:-300}")
+
+  if [[ "${CURL_FALLBACK_INSECURE:-0}" == "1" ]]; then
+    curl_cmd+=(-k)
+  fi
+
+  if [[ -n "${CURL_FALLBACK_USER_AGENT:-}" ]]; then
+    curl_cmd+=(-A "${CURL_FALLBACK_USER_AGENT}")
+  fi
+
+  if [[ -n "${CURL_FALLBACK_HEADERS:-}" ]]; then
+    while IFS= read -r header_line; do
+      [[ -n "${header_line}" ]] || continue
+      curl_cmd+=(-H "${header_line}")
+    done <<< "${CURL_FALLBACK_HEADERS}"
+  fi
+
+  if [[ -n "${proxy}" ]]; then
+    curl_cmd+=(--proxy "${proxy}")
+    curl_env=(
+      "HTTPS_PROXY=${proxy}" "https_proxy=${proxy}"
+      "HTTP_PROXY=${proxy}" "http_proxy=${proxy}"
+      "ALL_PROXY=${proxy}" "all_proxy=${proxy}"
+    )
+  fi
+
+  curl_cmd+=(-o "${output_path}" "${url}")
+
+  if (( ${#curl_env[@]} > 0 )); then
+    env "${curl_env[@]}" "${curl_cmd[@]}"
+    return $?
+  fi
+
+  "${curl_cmd[@]}"
+}
+
 download_release_asset_by_name() {
   local owner repo tag asset output_path
   owner="$1"
@@ -464,6 +514,15 @@ download_release_asset_by_name() {
   tag="$3"
   asset="$4"
   output_path="$5"
+
+  if [[ "${asset}" != *.zip ]] || is_truthy "${CURL_WRAPPER_ALLOW_DIRECT_RELEASE_FALLBACK}"; then
+    if download_url_with_real_curl \
+      "https://github.com/${owner}/${repo}/releases/download/${tag}/${asset}" \
+      "${output_path}" \
+      "1"; then
+      return 0
+    fi
+  fi
 
   if command -v gh >/dev/null 2>&1; then
     mkdir -p "$(dirname "${output_path}")"
@@ -493,6 +552,22 @@ download_release_asset_by_api_endpoint() {
 
   mkdir -p "$(dirname "${output_path}")"
   api_url="https://api.github.com/repos/${owner}/${repo}/releases/assets/${asset_id}"
+
+  if (
+       CURL_FALLBACK_URL="${api_url}"
+       CURL_FALLBACK_OUTPUT="${output_path}"
+       CURL_FALLBACK_USER_AGENT="${CURL_FALLBACK_USER_AGENT:-curl-python-wrapper}"
+       CURL_FALLBACK_CONNECT_TIMEOUT="${CURL_FALLBACK_CONNECT_TIMEOUT:-20}"
+       CURL_FALLBACK_MAX_TIME="${CURL_FALLBACK_MAX_TIME:-300}"
+       CURL_FALLBACK_HEADERS=$'Accept: application/octet-stream\nX-GitHub-Api-Version: 2022-11-28'
+       CURL_FALLBACK_PROXY="${CURL_FALLBACK_PROXY:-${CURL_WRAPPER_ACTIVE_PROXY:-}}"
+       CURL_FALLBACK_ALLOW_REDIRECTS="1"
+       CURL_FALLBACK_CREATE_DIRS="1"
+       CURL_FALLBACK_INSECURE="${CURL_FALLBACK_INSECURE:-0}"
+       download_url_with_real_curl "${api_url}" "${output_path}" "1"
+     ); then
+    return 0
+  fi
 
   if command -v gh >/dev/null 2>&1; then
     if gh api \
@@ -524,6 +599,13 @@ download_source_tarball_for_tag() {
   repo="$2"
   tag="$3"
   output_path="$4"
+
+  if download_url_with_real_curl \
+    "https://github.com/${owner}/${repo}/archive/refs/tags/${tag}.tar.gz" \
+    "${output_path}" \
+    "1"; then
+    return 0
+  fi
 
   if command -v gh >/dev/null 2>&1; then
     mkdir -p "$(dirname "${output_path}")"
@@ -557,17 +639,7 @@ download_with_gh_release() {
       mkdir -p "${target_dir}"
     fi
 
-    if command -v gh >/dev/null 2>&1; then
-      if gh release download "${tag}" \
-        -R "${owner}/${repo}" \
-        -p "${asset}" \
-        -O "${CURL_FALLBACK_OUTPUT}" \
-        --clobber >/dev/null 2>&1; then
-        return 0
-      fi
-    fi
-
-    download_release_asset_by_api_endpoint "${owner}" "${repo}" "${tag}" "${asset}" "${CURL_FALLBACK_OUTPUT}"
+    download_release_asset_by_name "${owner}" "${repo}" "${tag}" "${asset}" "${CURL_FALLBACK_OUTPUT}"
     return $?
   fi
 
@@ -718,6 +790,7 @@ source "${WRAPPER_DIR}/lib/mason_release_engine.sh"
 main() {
   local real_curl
   real_curl="$(resolve_real_curl)"
+  CURL_WRAPPER_RESOLVED_REAL_CURL="${real_curl}"
   local can_fallback=0
   local parsed_fallback=0
   local -a normalized_args=()

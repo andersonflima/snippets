@@ -47,6 +47,22 @@ mason_release_fetch_metadata_json() {
 
   mkdir -p "$(dirname "${output_path}")"
 
+  if (
+       CURL_FALLBACK_URL="${api_url}"
+       CURL_FALLBACK_OUTPUT="${output_path}"
+       CURL_FALLBACK_USER_AGENT="${CURL_FALLBACK_USER_AGENT:-curl-python-wrapper}"
+       CURL_FALLBACK_CONNECT_TIMEOUT="${CURL_FALLBACK_CONNECT_TIMEOUT:-20}"
+       CURL_FALLBACK_MAX_TIME="${CURL_FALLBACK_MAX_TIME:-300}"
+       CURL_FALLBACK_HEADERS=$'Accept: application/vnd.github+json\nX-GitHub-Api-Version: 2022-11-28'
+       CURL_FALLBACK_PROXY="${CURL_FALLBACK_PROXY:-${CURL_WRAPPER_ACTIVE_PROXY:-}}"
+       CURL_FALLBACK_ALLOW_REDIRECTS="1"
+       CURL_FALLBACK_CREATE_DIRS="1"
+       CURL_FALLBACK_INSECURE="${CURL_FALLBACK_INSECURE:-0}"
+       download_url_with_real_curl "${api_url}" "${output_path}" "1"
+     ); then
+    return 0
+  fi
+
   if command -v gh >/dev/null 2>&1; then
     if gh api \
       -H "Accept: application/vnd.github+json" \
