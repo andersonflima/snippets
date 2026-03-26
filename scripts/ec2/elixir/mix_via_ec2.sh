@@ -73,6 +73,10 @@ random_suffix() {
   printf '%s\n' "${suffix}"
 }
 
+shell_quote() {
+  printf '%q' "$1"
+}
+
 HOST=""
 INSTANCE_ID=""
 INSTANCE_NAME="${MIX_VIA_EC2_INSTANCE_NAME:-}"
@@ -311,8 +315,8 @@ write_managed_env_file() {
   mkdir -p "${CACHE_ROOT}"
   cat > "${MANAGED_ENV_FILE}" <<EOF
 #!/usr/bin/env sh
-export MIX_HOME=$(printf '%q' "${MANAGED_HOME_DIR}/.mix")
-export HEX_HOME=$(printf '%q' "${MANAGED_HOME_DIR}/.hex")
+export MIX_HOME=$(shell_quote "${MANAGED_HOME_DIR}/.mix")
+export HEX_HOME=$(shell_quote "${MANAGED_HOME_DIR}/.hex")
 EOF
   chmod 0644 "${MANAGED_ENV_FILE}"
 }
@@ -392,10 +396,12 @@ upload_local_project_archive() {
 }
 
 generate_remote_script() {
-  local remote_script_path remote_mix_args_literal remote_project_parent
+  local remote_script_path remote_mix_args_literal remote_project_parent quoted_remote_project_path quoted_remote_project_parent
   remote_script_path="$1"
   remote_mix_args_literal="$(printf '%q ' "${MIX_ARGS[@]}")"
   remote_project_parent="${REMOTE_PROJECT_PATH%/*}"
+  quoted_remote_project_path="$(shell_quote "${REMOTE_PROJECT_PATH}")"
+  quoted_remote_project_parent="$(shell_quote "${remote_project_parent}")"
 
   cat > "${remote_script_path}" <<EOF
 #!/usr/bin/env bash
@@ -417,7 +423,7 @@ RUN_ROOT="\${HOME}/.cache/mix-via-ec2/runs/${RUN_ID}"
 COMMAND_TYPE="${COMMAND_TYPE}"
 SYNC_BUILD="${SYNC_BUILD}"
 SYNC_HOME_CACHE="${SYNC_HOME_CACHE}"
-REMOTE_PROJECT_PATH=${REMOTE_PROJECT_PATH@Q}
+REMOTE_PROJECT_PATH=${quoted_remote_project_path}
 PROJECT_ARCHIVE_KEY="${PROJECT_ARCHIVE_KEY}"
 PROJECT_RESULT_KEY="${PROJECT_RESULT_KEY}"
 HOME_CACHE_KEY="${HOME_CACHE_KEY}"
@@ -425,7 +431,7 @@ RUNTIME_METADATA_KEY="${RUNTIME_METADATA_KEY}"
 STATUS_KEY="${STATUS_KEY}"
 
 mkdir -p "\${RUN_ROOT}"
-mkdir -p ${remote_project_parent@Q}
+mkdir -p ${quoted_remote_project_parent}
 
 finish() {
   local exit_code="\$?"
@@ -678,9 +684,11 @@ build_ssh_command() {
 }
 
 sync_project_to_remote_ssh() {
-  local remote_parent remote_project
+  local remote_parent remote_project quoted_remote_parent quoted_remote_project
   remote_project="$1"
   remote_parent="${remote_project%/*}"
+  quoted_remote_parent="$(shell_quote "${remote_parent}")"
+  quoted_remote_project="$(shell_quote "${remote_project}")"
 
   log "sincronizando fontes locais para o EC2 em ${remote_project}"
 
@@ -691,11 +699,11 @@ sync_project_to_remote_ssh() {
     --exclude=.elixir_ls \
     --exclude=node_modules \
     -C "${LOCAL_PROJECT_PATH}" . | \
-    "${SSH_CMD[@]}" "bash -lc 'set -euo pipefail; mkdir -p ${remote_parent@Q}; rm -rf ${remote_project@Q}; mkdir -p ${remote_project@Q}; tar -xzf - -C ${remote_project@Q}'"
+    "${SSH_CMD[@]}" "bash -lc 'set -euo pipefail; mkdir -p ${quoted_remote_parent}; rm -rf ${quoted_remote_project}; mkdir -p ${quoted_remote_project}; tar -xzf - -C ${quoted_remote_project}'"
 }
 
 run_remote_mix_ssh() {
-  local remote_project remote_mix_args_literal remote_work_dir
+  local remote_project remote_mix_args_literal remote_work_dir quoted_remote_work_dir
   remote_project="$1"
   remote_mix_args_literal="$(printf '%q ' "${MIX_ARGS[@]}")"
   remote_work_dir="${remote_project}"
@@ -703,25 +711,28 @@ run_remote_mix_ssh() {
   if [[ "${COMMAND_TYPE}" == "home" ]]; then
     remote_work_dir="\${HOME}"
   fi
+  quoted_remote_work_dir="$(shell_quote "${remote_work_dir}")"
 
   log "executando mix no EC2 via SSH: mix ${MIX_ARGS[*]}"
-  "${SSH_CMD[@]}" "bash -lc 'set -euo pipefail; cd ${remote_work_dir@Q}; mix ${remote_mix_args_literal}'"
+  "${SSH_CMD[@]}" "bash -lc 'set -euo pipefail; cd ${quoted_remote_work_dir}; mix ${remote_mix_args_literal}'"
 }
 
 sync_remote_project_back_ssh() {
-  local remote_project include_build
+  local remote_project include_build quoted_remote_project quoted_include_build
   remote_project="$1"
   include_build="$2"
+  quoted_remote_project="$(shell_quote "${remote_project}")"
+  quoted_include_build="$(shell_quote "${include_build}")"
 
   log "trazendo deps e mix.lock do EC2"
 
   "${SSH_CMD[@]}" "bash -lc '
 set -euo pipefail
-cd ${remote_project@Q}
+cd ${quoted_remote_project}
 entries=()
 if [[ -d deps ]]; then entries+=(deps); fi
 if [[ -f mix.lock ]]; then entries+=(mix.lock); fi
-if [[ ${include_build@Q} == 1 ]] && [[ -d _build ]]; then entries+=(_build); fi
+if [[ ${quoted_include_build} == 1 ]] && [[ -d _build ]]; then entries+=(_build); fi
 if (( \${#entries[@]} == 0 )); then
   printf \"[mix-via-ec2] remoto sem deps/mix.lock/_build\\n\" >&2
   exit 1
