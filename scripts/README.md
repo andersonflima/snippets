@@ -8,6 +8,7 @@ Estrutura canônica:
 - `scripts/ec2/mongodb/`: instalação de MongoDB Database Tools no EC2
 - `scripts/install/`: instaladores dos wrappers locais
 - `scripts/install/configure_wrapper_envs.sh`: gera e conecta as envs dos wrappers ao shell
+- `scripts/install/configure_wrapper_envs_zsh.sh`: gera e conecta as envs dos wrappers diretamente ao `~/.zshrc`
 - `scripts/wrappers/`: wrappers reais de `curl` e `git`
 
 Compatibilidade:

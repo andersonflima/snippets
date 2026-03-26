@@ -55,6 +55,12 @@ Depois de instalar os wrappers, gere e conecte as envs ao shell:
 sh scripts/install/configure_wrapper_envs.sh
 ```
 
+Se você usa `zsh` e quer aplicar direto no `~/.zshrc`:
+
+```bash
+sh scripts/configure_wrapper_envs_zsh.sh
+```
+
 Opcionalmente:
 
 ```bash
