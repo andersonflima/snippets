@@ -2749,7 +2749,7 @@ defmodule DocdbStreamBackup do
 
       :cpu_limited_throughput ->
         cond do
-          mem_available_bytes < gib(2.5) -> 1
+          mem_available_bytes < gib(1.75) -> 1
           true -> min(schedulers_online, 2)
         end
 
@@ -2822,8 +2822,9 @@ defmodule DocdbStreamBackup do
 
       :cpu_limited_throughput ->
         cond do
-          mem_available_bytes < gib(2.5) -> 4
-          true -> min(max(schedulers_online * 2, 4), 8)
+          mem_available_bytes < gib(1.75) -> 4
+          mem_available_bytes < gib(3.5) -> min(max(schedulers_online * 3, 6), 8)
+          true -> min(max(schedulers_online * 3, 6), 10)
         end
 
       :cpu_limited_balanced ->
@@ -2857,8 +2858,9 @@ defmodule DocdbStreamBackup do
 
       :cpu_limited_throughput ->
         cond do
-          mem_available_bytes < gib(2.5) -> 256
-          true -> min(max(schedulers_online * 192, 256), 512)
+          mem_available_bytes < gib(1.75) -> 256
+          mem_available_bytes < gib(3.5) -> min(max(schedulers_online * 192, 384), 640)
+          true -> min(max(schedulers_online * 256, 512), 768)
         end
 
       :cpu_limited_balanced ->
@@ -2891,7 +2893,8 @@ defmodule DocdbStreamBackup do
 
       :cpu_limited_throughput ->
         cond do
-          mem_available_bytes < gib(2.5) -> 16
+          mem_available_bytes < gib(1.75) -> 16
+          mem_available_bytes < gib(3.5) -> 24
           true -> 32
         end
 
@@ -2921,7 +2924,7 @@ defmodule DocdbStreamBackup do
 
       :cpu_limited_throughput ->
         cond do
-          mem_available_bytes < gib(2.5) -> 8
+          mem_available_bytes < gib(1.75) -> 8
           true -> 16
         end
 
