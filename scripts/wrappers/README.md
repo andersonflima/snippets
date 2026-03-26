@@ -20,6 +20,30 @@ Os entrypoints antigos em `scripts/` raiz continuam existindo como wrappers fino
 
 ## Instalação
 
+### Bootstrap único
+
+Se você não quiser rodar instalador por instalador, use o bootstrap único:
+
+```bash
+sh scripts/setup_restricted_dev_env.sh --s3-bucket "<bucket>"
+```
+
+Esse fluxo instala e configura:
+
+- wrapper do `mix`
+- wrapper do `curl`
+- wrapper do `git`
+- envs compartilhadas do EC2/S3
+
+Opcionalmente, ele também pode aplicar `mix hex.config`:
+
+```bash
+sh scripts/setup_restricted_dev_env.sh \
+  --s3-bucket "<bucket>" \
+  --configure-hex \
+  --hex-unsafe-https
+```
+
 ### Curl wrapper
 
 ```bash
