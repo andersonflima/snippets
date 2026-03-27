@@ -34,6 +34,9 @@ GIT_ZIP_WRAPPER_EC2_GIT_FETCH_HELPER="${GIT_ZIP_WRAPPER_EC2_GIT_FETCH_HELPER:-${
 GIT_ZIP_WRAPPER_EC2_GIT_CHECKOUT_HELPER="${GIT_ZIP_WRAPPER_EC2_GIT_CHECKOUT_HELPER:-${WRAPPER_DIR}/git-checkout-via-ec2}"
 GIT_ZIP_WRAPPER_EC2_REQUIRED="${GIT_ZIP_WRAPPER_EC2_REQUIRED:-${WRAPPERS_VIA_EC2_ENABLED:-0}}"
 GIT_ZIP_WRAPPER_EC2_PROXY="${GIT_ZIP_WRAPPER_EC2_PROXY:-${WRAPPERS_VIA_EC2_PROXY:-}}"
+GIT_ZIP_WRAPPER_LFS_AUTORUN="${GIT_ZIP_WRAPPER_LFS_AUTORUN:-1}"
+GIT_ZIP_WRAPPER_LFS_FORCE="${GIT_ZIP_WRAPPER_LFS_FORCE:-0}"
+GIT_ZIP_WRAPPER_LFS_STRICT="${GIT_ZIP_WRAPPER_LFS_STRICT:-0}"
 GIT_GLOBAL_ARGS=()
 GIT_SUBCOMMAND=""
 GIT_SUBCOMMAND_ARGS=()
@@ -823,6 +826,46 @@ extract_archive_to_destination() {
   rm -rf "${temp_extract}"
 }
 
+has_lfs_attributes() {
+  local destination
+  destination="$1"
+  [[ -f "${destination}/.gitattributes" ]] || return 1
+  grep -Eq '(^|[[:space:]])filter=lfs($|[[:space:]])' "${destination}/.gitattributes"
+}
+
+run_git_lfs_post_clone() {
+  local destination
+  destination="$1"
+
+  if ! is_truthy "${GIT_ZIP_WRAPPER_LFS_AUTORUN}"; then
+    return 0
+  fi
+
+  if ! is_truthy "${GIT_ZIP_WRAPPER_LFS_FORCE}" && ! has_lfs_attributes "${destination}"; then
+    return 0
+  fi
+
+  if ! "${real_git}" -C "${destination}" lfs env >/dev/null 2>&1; then
+    log "git lfs indisponível em ${destination}; pulando auto pull"
+    return 0
+  fi
+
+  if ! "${real_git}" -C "${destination}" lfs install --local >/dev/null 2>&1; then
+    if is_truthy "${GIT_ZIP_WRAPPER_LFS_STRICT}"; then
+      die "falha ao executar git lfs install em ${destination}"
+    fi
+    log "falha no git lfs install em ${destination}; seguindo sem LFS"
+    return 0
+  fi
+
+  if ! "${real_git}" -C "${destination}" lfs pull; then
+    if is_truthy "${GIT_ZIP_WRAPPER_LFS_STRICT}"; then
+      die "falha ao executar git lfs pull em ${destination}"
+    fi
+    log "falha no git lfs pull em ${destination}; seguindo sem LFS"
+  fi
+}
+
 first_forward_value_for_option() {
   local option_prefix option_name index current next_value
   option_name="$1"
@@ -931,6 +974,7 @@ main() {
       log "backend selecionado: ec2 git-clone (${normalized_repo_url})"
       if clone_with_ec2_backend "${normalized_repo_url}" "${clone_archive_path}"; then
         extract_archive_to_destination "${clone_archive_path}" "${destination}"
+        run_git_lfs_post_clone "${destination}"
         log "clone remoto(http) concluído: ${repo_url} -> ${destination} (source: ${normalized_repo_url})"
         return 0
       fi
@@ -978,6 +1022,7 @@ main() {
   fi
 
   extract_archive_to_destination "${archive_path}" "${destination}"
+  run_git_lfs_post_clone "${destination}"
   log "clone(${ARCHIVE_FORMAT}) concluído: ${repo_url} -> ${destination} (source: ${source_url})"
 }
 
