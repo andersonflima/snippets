@@ -191,6 +191,10 @@ class SnapshotAutomaticModeTests(unittest.TestCase):
         config = self.build_config()
         if isinstance(config_override, dict):
             config = {**config, **config_override}
+        checkpoint_store = {
+            "ddb": types.SimpleNamespace(put_item=lambda **kwargs: None),
+            "table_name": "snapshot-checkpoints",
+        }
 
         with ExitStack() as stack:
             stack.enter_context(
@@ -240,7 +244,7 @@ class SnapshotAutomaticModeTests(unittest.TestCase):
             return snapshot_lambda._process_table(
                 config=config,
                 base_session=base_session,
-                checkpoint_store={},
+                checkpoint_store=checkpoint_store,
                 raw_target_ref="orders",
                 ignore_set=set(),
                 assume_session_cache={},
@@ -531,6 +535,57 @@ class SnapshotAutomaticModeTests(unittest.TestCase):
         self.assertEqual(result["mode_selection_reason"], "incremental_cycle_limit_reached")
         self.assertEqual(result["checkpoint_state"]["incremental_seq"], 0)
         self.assertEqual(result["checkpoint_state"]["last_mode"], "FULL")
+
+    def test_completed_full_persists_checkpoint_immediately(self) -> None:
+        checkpoint_payloads: list[dict[str, Any]] = []
+
+        def fake_start_full_export(**kwargs: Any) -> dict:
+            return {
+                "table_name": "orders",
+                "table_arn": TABLE_ARN,
+                "mode": "FULL",
+                "status": "COMPLETED",
+                "source": "native",
+                "export_arn": f"{TABLE_ARN}/export/full-003",
+                "checkpoint_to": "2026-03-23T00:00:00Z",
+                "item_count": 17,
+            }
+
+        def capture_checkpoint_save(_store: dict[str, Any], payload: dict[str, Any]) -> None:
+            checkpoint_payloads.append(payload)
+
+        with patch.object(snapshot_lambda, "checkpoint_save", capture_checkpoint_save):
+            result = self.run_process_table(
+                previous_state={
+                    "table_name": "orders",
+                    "table_arn": TABLE_ARN,
+                    "last_to": "2026-03-22T00:00:00Z",
+                    "last_mode": "INCREMENTAL",
+                    "last_export_arn": f"{TABLE_ARN}/export/041",
+                    "last_export_item_count": 2,
+                    "incremental_seq": 6,
+                },
+                ddb_client=FakeDescribeExportClient(),
+                start_full_export=fake_start_full_export,
+            )
+
+        self.assertEqual(result["mode"], "FULL")
+        self.assertEqual(len(checkpoint_payloads), 1)
+        self.assertEqual(
+            checkpoint_payloads[0]["tables"][TABLE_ARN],
+            {
+                "table_name": "orders",
+                "table_arn": TABLE_ARN,
+                "table_created_at": "2026-03-01T00:00:00Z",
+                "last_to": "2026-03-23T00:00:00Z",
+                "last_mode": "FULL",
+                "source": "native",
+                "last_export_arn": f"{TABLE_ARN}/export/full-003",
+                "last_export_item_count": 17,
+                "pending_exports": [],
+                "incremental_seq": 0,
+            },
+        )
 
     def test_reaches_configured_incremental_limit_and_starts_new_full(self) -> None:
         captured: dict[str, Any] = {"full_calls": 0}

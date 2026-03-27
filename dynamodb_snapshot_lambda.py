@@ -806,7 +806,8 @@ def _normalize_checkpoint_state(state: Dict[str, Any], *, table_name: str, table
         field_name="state.incremental_seq",
         default=0,
     )
-    if last_mode == "FULL":
+    pending_exports = _normalize_pending_exports(state.get("pending_exports"))
+    if last_mode == "FULL" and not pending_exports:
         incremental_seq = 0
     return {
         "table_name": _safe_str_field(state.get("table_name"), field_name="state.table_name", required=False) or table_name,
@@ -820,7 +821,7 @@ def _normalize_checkpoint_state(state: Dict[str, Any], *, table_name: str, table
             state.get("last_export_item_count"),
             field_name="state.last_export_item_count",
         ),
-        "pending_exports": _normalize_pending_exports(state.get("pending_exports")),
+        "pending_exports": pending_exports,
         "incremental_seq": incremental_seq,
     }
 
@@ -1084,6 +1085,79 @@ def checkpoint_save(store: Dict[str, Any], payload: Dict[str, Any]) -> None:
             "UpdatedAt": observed_at,
         }
         ddb_client.put_item(TableName=table_name, Item=_ddb_encode_item(item))
+
+
+def _extract_checkpoint_state_from_result(result: Dict[str, Any]) -> Optional[Tuple[str, Dict[str, Any]]]:
+    if not isinstance(result, dict):
+        return None
+
+    checkpoint_state = result.get("checkpoint_state")
+    if not isinstance(checkpoint_state, dict):
+        return None
+
+    normalized_state = _normalize_checkpoint_state(
+        checkpoint_state,
+        table_name=_safe_str_field(result.get("table_name"), field_name="table_name"),
+        table_arn=_safe_str_field(result.get("table_arn"), field_name="table_arn"),
+    )
+    state_key = _safe_str_field(
+        normalized_state.get("table_arn"),
+        field_name="state.table_arn",
+        required=False,
+    ) or _safe_str_field(normalized_state.get("table_name"), field_name="state.table_name")
+    return state_key, normalized_state
+
+
+def _persist_checkpoint_state_result(
+    checkpoint_store: Dict[str, Any],
+    result: Dict[str, Any],
+) -> Optional[Tuple[str, Dict[str, Any]]]:
+    extracted_state = _extract_checkpoint_state_from_result(result)
+    if extracted_state is None:
+        return None
+
+    state_key, normalized_state = extracted_state
+    checkpoint_save(
+        checkpoint_store,
+        {
+            "version": 2,
+            "tables": {
+                state_key: normalized_state,
+            },
+        },
+    )
+    result["checkpoint_state"] = normalized_state
+    return state_key, normalized_state
+
+
+def _persist_checkpoint_results(
+    checkpoint_store: Dict[str, Any],
+    results: List[Dict[str, Any]],
+) -> List[Dict[str, Any]]:
+    persistence_errors: List[Dict[str, Any]] = []
+
+    for result in results:
+        extracted_state = _extract_checkpoint_state_from_result(result)
+        if extracted_state is None:
+            continue
+
+        state_key, normalized_state = extracted_state
+        result["checkpoint_state"] = normalized_state
+
+        try:
+            _persist_checkpoint_state_result(checkpoint_store, result)
+        except Exception as exc:
+            persistence_errors.append(
+                {
+                    "state_key": state_key,
+                    "table_name": normalized_state["table_name"],
+                    "table_arn": normalized_state["table_arn"],
+                    "error": str(exc),
+                    "exception": exc,
+                }
+            )
+
+    return persistence_errors
 
 
 def _validate_output_table_schema(table_name: str, description: Dict[str, Any]) -> None:
@@ -2210,9 +2284,26 @@ def _process_table(
     )
     checkpoint_state = automatic_plan["checkpoint_state"]
 
+    def finalize_result(result: Dict[str, Any]) -> Dict[str, Any]:
+        result["checkpoint_state"] = checkpoint_state
+        if bool(config.get("dry_run")):
+            return result
+
+        persistence_errors = _persist_checkpoint_results(checkpoint_store, [result])
+        for persistence_error in persistence_errors:
+            _log_event(
+                "checkpoint.persist.immediate_failed",
+                table_name=persistence_error["table_name"],
+                table_arn=persistence_error["table_arn"],
+                state_key=persistence_error["state_key"],
+                error=persistence_error["error"],
+                level=logging.ERROR,
+            )
+        return result
+
     if bool(config.get("dry_run")):
         planned_mode = _safe_str_field(automatic_plan.get("mode"), field_name="automatic_plan.mode").upper()
-        return {
+        return finalize_result({
             "table_name": target.table_name,
             "table_arn": target.table_arn,
             "mode": planned_mode,
@@ -2225,7 +2316,7 @@ def _process_table(
             "table_region": target.region,
             "mode_selection_reason": automatic_plan.get("reason"),
             "message": "Execução em dry_run: nenhum export foi iniciado.",
-        }
+        })
 
     if _normalize_pending_exports(checkpoint_state.get("pending_exports")):
         result = _build_pending_result(
@@ -2237,9 +2328,8 @@ def _process_table(
             assume_role_arn=assume_role_arn,
             checkpoint_state=checkpoint_state,
         )
-        result["checkpoint_state"] = checkpoint_state
         result["mode_selection_reason"] = "pending_export_tracking"
-        return result
+        return finalize_result(result)
 
     selected_mode = _safe_str_field(automatic_plan.get("mode"), field_name="automatic_plan.mode")
 
@@ -2307,9 +2397,8 @@ def _process_table(
                 "incremental_seq": 0,
             }
 
-        result["checkpoint_state"] = checkpoint_state
         result["mode_selection_reason"] = automatic_plan.get("reason")
-        return result
+        return finalize_result(result)
 
     last_to_candidate = automatic_plan.get("last_to")
     if not isinstance(last_to_candidate, datetime):
@@ -2335,8 +2424,7 @@ def _process_table(
             checkpoint_from=export_from,
             checkpoint_to=export_to,
         )
-        result["checkpoint_state"] = checkpoint_state
-        return result
+        return finalize_result(result)
 
     if (export_to - export_from) < INCREMENTAL_EXPORT_MIN_WINDOW:
         result = _build_pending_result(
@@ -2350,8 +2438,7 @@ def _process_table(
             checkpoint_from=export_from,
             checkpoint_to=export_to,
         )
-        result["checkpoint_state"] = checkpoint_state
-        return result
+        return finalize_result(result)
 
     if (export_to - export_from) > INCREMENTAL_EXPORT_MAX_WINDOW:
         export_to = export_from + INCREMENTAL_EXPORT_MAX_WINDOW
@@ -2451,9 +2538,8 @@ def _process_table(
             "incremental_seq": next_incremental_index,
         }
 
-    incremental_result["checkpoint_state"] = checkpoint_state
     incremental_result["mode_selection_reason"] = automatic_plan.get("reason")
-    return incremental_result
+    return finalize_result(incremental_result)
 
 
 def _dedupe_pending_exports(items: List[Dict[str, str]]) -> List[Dict[str, str]]:
@@ -2588,32 +2674,23 @@ def _run_snapshot(config: Dict[str, Any], event: Optional[Dict[str, Any]]) -> Di
     checkpoint_error_feedback: Dict[str, str] = {}
 
     if not bool(config.get("dry_run")):
-        tables_payload: Dict[str, Dict[str, Any]] = {}
-        for result in results:
-            checkpoint_state = result.get("checkpoint_state")
-            if not isinstance(checkpoint_state, dict):
-                continue
-            state = _normalize_checkpoint_state(
-                checkpoint_state,
-                table_name=_safe_str_field(result.get("table_name"), field_name="table_name"),
-                table_arn=_safe_str_field(result.get("table_arn"), field_name="table_arn"),
+        persistence_errors = _persist_checkpoint_results(checkpoint_store, results)
+        if persistence_errors:
+            first_exception = persistence_errors[0]["exception"]
+            checkpoint_error = "; ".join(
+                f"{item['table_name']}: {item['error']}"
+                for item in persistence_errors
             )
-            state_key = _safe_str_field(state.get("table_arn"), field_name="state.table_arn", required=False) or _safe_str_field(state.get("table_name"), field_name="state.table_name")
-            tables_payload[state_key] = state
-
-        if tables_payload:
-            try:
-                checkpoint_save(
-                    checkpoint_store,
-                    {
-                        "version": 2,
-                        "tables": tables_payload,
-                    },
+            checkpoint_error_feedback = _build_error_response_fields(first_exception)
+            for item in persistence_errors:
+                _log_event(
+                    "snapshot.checkpoint.failed",
+                    table_name=item["table_name"],
+                    table_arn=item["table_arn"],
+                    state_key=item["state_key"],
+                    error=item["error"],
+                    level=logging.ERROR,
                 )
-            except Exception as exc:
-                checkpoint_error = str(exc)
-                checkpoint_error_feedback = _build_error_response_fields(exc)
-                _log_event("snapshot.checkpoint.failed", error=checkpoint_error, level=logging.ERROR)
 
     failed_count = sum(
         1

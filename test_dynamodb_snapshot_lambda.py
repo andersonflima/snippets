@@ -329,6 +329,56 @@ class SnapshotCheckpointPersistenceTests(unittest.TestCase):
             result_payload["checkpoint_state"],
         )
 
+    def test_persist_checkpoint_results_isolates_failures_per_table(self) -> None:
+        payments_table_arn = "arn:aws:dynamodb:us-east-1:111111111111:table/payments"
+        persisted_payloads: list[dict[str, Any]] = []
+
+        def save_checkpoint(_store: dict[str, Any], payload: dict[str, Any]) -> None:
+            state_key = next(iter(payload["tables"]))
+            if state_key == TABLE_ARN:
+                raise RuntimeError("checkpoint write failed for orders")
+            persisted_payloads.append(payload)
+
+        results = [
+            {
+                "table_name": "orders",
+                "table_arn": TABLE_ARN,
+                "checkpoint_state": {
+                    "table_name": "orders",
+                    "table_arn": TABLE_ARN,
+                    "last_to": "2026-03-09T00:00:00Z",
+                    "last_mode": "FULL",
+                    "source": "native",
+                },
+            },
+            {
+                "table_name": "payments",
+                "table_arn": payments_table_arn,
+                "checkpoint_state": {
+                    "table_name": "payments",
+                    "table_arn": payments_table_arn,
+                    "last_to": "2026-03-09T00:00:00Z",
+                    "last_mode": "FULL",
+                    "source": "native",
+                },
+            },
+        ]
+
+        with patch.object(snapshot_lambda, "checkpoint_save", save_checkpoint):
+            persistence_errors = snapshot_lambda._persist_checkpoint_results({}, results)
+
+        self.assertEqual(len(persistence_errors), 1)
+        self.assertEqual(persistence_errors[0]["table_name"], "orders")
+        self.assertEqual(len(persisted_payloads), 1)
+        persisted_state = persisted_payloads[0]["tables"][payments_table_arn]
+        self.assertEqual(persisted_state["table_name"], "payments")
+        self.assertEqual(persisted_state["table_arn"], payments_table_arn)
+        self.assertEqual(persisted_state["last_to"], "2026-03-09T00:00:00Z")
+        self.assertEqual(persisted_state["last_mode"], "FULL")
+        self.assertEqual(persisted_state["source"], "native")
+        self.assertEqual(persisted_state["pending_exports"], [])
+        self.assertEqual(persisted_state["incremental_seq"], 0)
+
 
 class SnapshotPendingExportTrackingTests(unittest.TestCase):
     def test_started_incremental_is_tracked_as_pending_export(self) -> None:

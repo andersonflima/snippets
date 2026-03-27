@@ -57,6 +57,7 @@ Observações:
 - `s3_prefix`, `checkpoint_dynamodb_table_arn`, `output_cloudwatch_enabled`, `output_dynamodb_enabled`, `output_dynamodb_table` e `output_dynamodb_region` também podem ser enviados no payload da Lambda, mas só são usados quando a env correspondente não existir.
 - Para persistir os dados da execução em DynamoDB, configure no mínimo `OUTPUT_DYNAMODB_ENABLED=true` e `OUTPUT_DYNAMODB_TABLE=<nome-da-tabela>`.
 - A Lambda salva o estado do checkpoint por tabela em DynamoDB, usando chave composta com `PK=TableName` e `SK=RecordType`. O valor de `TableName` é o `TableArn` para evitar colisão entre tabelas homônimas de contas/regiões diferentes, e `TargetTableName` mantém o nome legível da tabela. Se a tabela não existir, a Lambda cria automaticamente com `BillingMode=PAY_PER_REQUEST`.
+- O checkpoint de cada tabela é persistido imediatamente após a Lambda decidir o resultado daquela tabela (`FULL`, `INCREMENTAL` ou `PENDING`) e é tentado novamente no fechamento da execução. Isso reduz o risco de repetir `FULL` por perda de estado entre o término do export e o save final do checkpoint.
 - A Lambda também registra `TableCreatedAt` no checkpoint para detectar recriação de tabela; se o timestamp atual divergir do checkpoint, o estado antigo é invalidado e o bootstrap `FULL_EXPORT` é reexecutado.
 - A escolha entre `FULL_EXPORT` e `INCREMENTAL_EXPORT` agora é automática por tabela. Não é mais necessário enviar `mode` no evento nem configurar `SNAPSHOT_MODE`.
 - O `ClientToken` do export é gerado com um salt único por execução da Lambda para evitar deduplicação idempotente indesejada entre execuções diferentes no mesmo dia.
@@ -149,6 +150,13 @@ Sem receber `mode`, a Lambda decide automaticamente assim:
 6. quando a contagem incremental já saiu de `0`, a Lambda valida o `ItemCount` do export incremental anterior;
 7. se o export anterior teve `ItemCount > 0`, a contagem avança para o próximo incremental;
 8. se o export anterior não exportou itens, a contagem não avança e o próximo export reutiliza o mesmo índice incremental.
+
+Garantias operacionais do checkpoint:
+
+- após um `FULL` concluído, a Lambda já persiste o novo `last_to/last_mode` da tabela antes de seguir para as demais tabelas do ciclo;
+- o fechamento da execução tenta persistir novamente o estado por tabela, de forma isolada;
+- uma falha de checkpoint em uma tabela não interrompe a persistência das demais;
+- se ainda assim houver falha de persistência, a resposta final volta com `checkpoint_error` e `status=partial_ok`.
 
 Regras da janela incremental nativa:
 
