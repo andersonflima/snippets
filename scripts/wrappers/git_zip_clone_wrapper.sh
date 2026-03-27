@@ -575,6 +575,92 @@ fetch_with_ec2_backend() {
   "${helper_cmd[@]}"
 }
 
+path_looks_like_mix_install_git_dir() {
+  local git_dir
+  git_dir="$1"
+  [[ "${git_dir}" == *"/.cache/mix/installs/"*"/.git" ]]
+}
+
+resolve_fetch_worktree_dir() {
+  local real_git worktree_dir
+  real_git="$1"
+
+  worktree_dir="$("${real_git}" "${GIT_GLOBAL_ARGS[@]}" rev-parse --show-toplevel 2>/dev/null || true)"
+  [[ -n "${worktree_dir}" ]] || return 1
+  [[ -d "${worktree_dir}" ]] || return 1
+  printf '%s\n' "${worktree_dir}"
+}
+
+resolve_fetch_origin_url() {
+  local real_git origin_url
+  real_git="$1"
+
+  origin_url="$("${real_git}" "${GIT_GLOBAL_ARGS[@]}" config --get remote.origin.url 2>/dev/null || true)"
+  [[ -n "${origin_url}" ]] || return 1
+  printf '%s\n' "${origin_url}"
+}
+
+extract_requested_fetch_ref() {
+  local arg
+  for arg in "${GIT_SUBCOMMAND_ARGS[@]}"; do
+    case "${arg}" in
+      -*)
+        ;;
+      origin)
+        ;;
+      *)
+        printf '%s\n' "${arg}"
+        return 0
+        ;;
+    esac
+  done
+  return 1
+}
+
+overlay_directory_tree() {
+  local source_dir destination_dir
+  source_dir="$1"
+  destination_dir="$2"
+  cp -a "${source_dir}/." "${destination_dir}/"
+}
+
+replace_mix_install_repo_with_clone() {
+  local real_git git_dir worktree_dir origin_url ref archive_path temp_dir extracted_repo_dir
+  real_git="$1"
+  git_dir="$2"
+
+  path_looks_like_mix_install_git_dir "${git_dir}" || return 1
+  worktree_dir="$(resolve_fetch_worktree_dir "${real_git}" || true)"
+  origin_url="$(resolve_fetch_origin_url "${real_git}" || true)"
+  [[ -n "${worktree_dir}" && -n "${origin_url}" ]] || return 1
+
+  temp_dir="$(mktemp -d -t git-zip-fetch-clone-XXXXXX)"
+  archive_path="${temp_dir}/repo-clone.tar.gz"
+
+  local -a helper_cmd=("${GIT_ZIP_WRAPPER_EC2_CLONE_HELPER}" --repo-url "${origin_url}" --output "${archive_path}" --create-dirs)
+  ref="$(extract_requested_fetch_ref || true)"
+  if [[ -n "${ref}" ]]; then
+    helper_cmd+=(--git-arg --branch --git-arg "${ref}" --git-arg --single-branch)
+  fi
+  if [[ -n "${GIT_ZIP_WRAPPER_EC2_PROXY}" ]]; then
+    helper_cmd+=(--proxy "${GIT_ZIP_WRAPPER_EC2_PROXY}")
+  fi
+  if is_truthy "${GIT_ZIP_WRAPPER_CURL_INSECURE}"; then
+    helper_cmd+=(--insecure)
+  fi
+
+  "${helper_cmd[@]}" || {
+    rm -rf "${temp_dir}"
+    return 1
+  }
+
+  extracted_repo_dir="${temp_dir}/repo"
+  mkdir -p "${extracted_repo_dir}"
+  tar -xzf "${archive_path}" -C "${extracted_repo_dir}" --strip-components=1
+  overlay_directory_tree "${extracted_repo_dir}" "${worktree_dir}"
+  rm -rf "${temp_dir}"
+}
+
 curl_mode_label() {
   case "$1" in
     default) printf '%s\n' "default" ;;
@@ -715,6 +801,10 @@ main() {
           log "backend selecionado: ec2 git-fetch (${fetch_git_dir})"
           if fetch_with_ec2_backend "${fetch_git_dir}"; then
             log "fetch remoto concluído: ${fetch_git_dir}"
+            return 0
+          fi
+          if replace_mix_install_repo_with_clone "${real_git}" "${fetch_git_dir}"; then
+            log "fallback por clone remoto concluído para cache do Mix.install: ${fetch_git_dir}"
             return 0
           fi
           if is_truthy "${GIT_ZIP_WRAPPER_EC2_REQUIRED}"; then
