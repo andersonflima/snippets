@@ -413,10 +413,15 @@ cleanup_s3_run_artifacts() {
 
 build_ssm_parameters_file() {
   local parameter_file
+  local python_args
   parameter_file="$1"
   require_command python3
+  python_args=("${parameter_file}" "${AWS_REGION_NAME}" "${URL}" "${OUTPUT_KEY}" "${S3_BUCKET}" "${CONNECT_TIMEOUT}" "${MAX_TIME}" "${USER_AGENT}" "${PROXY_URL}" "${INSECURE}")
+  if [[ ${#HEADERS[@]} -gt 0 ]]; then
+    python_args+=("${HEADERS[@]}")
+  fi
 
-  python3 - "${parameter_file}" "${AWS_REGION_NAME}" "${URL}" "${OUTPUT_KEY}" "${S3_BUCKET}" "${CONNECT_TIMEOUT}" "${MAX_TIME}" "${USER_AGENT}" "${PROXY_URL}" "${INSECURE}" "${HEADERS[@]}" <<'PY'
+  python3 - "${python_args[@]}" <<'PY'
 import json
 import shlex
 import sys
