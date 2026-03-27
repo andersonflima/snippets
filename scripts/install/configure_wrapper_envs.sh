@@ -28,6 +28,9 @@ is_wrapper_binary_path() {
     curl)
       wrapper_path="${CURL_INSTALL_DIR}/curl"
       ;;
+    wget)
+      wrapper_path="${CURL_INSTALL_DIR}/wget"
+      ;;
     git)
       wrapper_path="${GIT_INSTALL_DIR}/git"
       ;;
@@ -70,6 +73,7 @@ Opções:
   --curl-install-dir <dir>     Diretório do wrapper instalado de curl.
   --git-install-dir <dir>      Diretório do wrapper instalado de git.
   --real-curl <path>           Caminho do curl real.
+  --real-wget <path>           Caminho do wget real.
   --real-git <path>            Caminho do git real.
   --mason-seed-dir <dir>       Diretório com artefatos seed do Mason.
   --instance-name <nome>       Instância EC2 compartilhada. Padrão: Dander
@@ -99,6 +103,7 @@ APPLY_SHELL_RC="0"
 CURL_INSTALL_DIR="${HOME}/.local/share/curl-python-wrapper/bin"
 GIT_INSTALL_DIR="${HOME}/.local/share/git-zip-wrapper/bin"
 REAL_CURL_BIN="${CURL_WRAPPER_REAL_CURL:-}"
+REAL_WGET_BIN="${WGET_WRAPPER_REAL_WGET:-}"
 REAL_GIT_BIN="${GIT_ZIP_WRAPPER_REAL_GIT:-}"
 PROXY_URL=""
 EC2_PROXY_URL="${WRAPPERS_VIA_EC2_PROXY:-}"
@@ -141,6 +146,10 @@ while [[ $# -gt 0 ]]; do
       ;;
     --real-curl)
       REAL_CURL_BIN="${2:-}"
+      shift 2
+      ;;
+    --real-wget)
+      REAL_WGET_BIN="${2:-}"
       shift 2
       ;;
     --real-git)
@@ -208,6 +217,9 @@ done
 if [[ -z "${REAL_CURL_BIN}" ]]; then
   REAL_CURL_BIN="$(resolve_real_binary curl || true)"
 fi
+if [[ -z "${REAL_WGET_BIN}" ]]; then
+  REAL_WGET_BIN="$(resolve_real_binary wget || true)"
+fi
 
 if [[ -z "${REAL_GIT_BIN}" ]]; then
   REAL_GIT_BIN="$(resolve_real_binary git || true)"
@@ -219,6 +231,9 @@ fi
 [[ -x "${REAL_GIT_BIN}" ]] || die "git inválido/não executável: ${REAL_GIT_BIN}"
 is_wrapper_binary_path curl "${REAL_CURL_BIN}" && die "curl real não pode apontar para o wrapper instalado: ${REAL_CURL_BIN}"
 is_wrapper_binary_path git "${REAL_GIT_BIN}" && die "git real não pode apontar para o wrapper instalado: ${REAL_GIT_BIN}"
+if [[ -n "${REAL_WGET_BIN}" && ! -x "${REAL_WGET_BIN}" ]]; then
+  die "wget inválido/não executável: ${REAL_WGET_BIN}"
+fi
 
 detect_shell_rc() {
   local active_shell shell_name
@@ -252,6 +267,9 @@ render_optional_exports() {
     printf 'export CURL_WRAPPER_USE_EC2=%s\n' "$(shell_quote "1")"
     printf 'export CURL_WRAPPER_EC2_ALL_URLS=%s\n' "$(shell_quote "1")"
     printf 'export CURL_WRAPPER_EC2_REQUIRED=%s\n' "$(shell_quote "1")"
+    printf 'export WGET_WRAPPER_USE_EC2=%s\n' "$(shell_quote "1")"
+    printf 'export WGET_WRAPPER_EC2_ALL_URLS=%s\n' "$(shell_quote "1")"
+    printf 'export WGET_WRAPPER_EC2_REQUIRED=%s\n' "$(shell_quote "1")"
     printf 'export GIT_ZIP_WRAPPER_USE_EC2=%s\n' "$(shell_quote "1")"
     printf 'export GIT_ZIP_WRAPPER_EC2_ALL_URLS=%s\n' "$(shell_quote "1")"
     printf 'export GIT_ZIP_WRAPPER_EC2_REQUIRED=%s\n' "$(shell_quote "1")"
@@ -264,6 +282,7 @@ render_optional_exports() {
     if [[ -n "${EC2_PROXY_URL}" ]]; then
       printf 'export WRAPPERS_VIA_EC2_PROXY=%s\n' "$(shell_quote "${EC2_PROXY_URL}")"
       printf 'export CURL_WRAPPER_EC2_PROXY=%s\n' "$(shell_quote "${EC2_PROXY_URL}")"
+      printf 'export WGET_WRAPPER_EC2_PROXY=%s\n' "$(shell_quote "${EC2_PROXY_URL}")"
       printf 'export GIT_ZIP_WRAPPER_EC2_PROXY=%s\n' "$(shell_quote "${EC2_PROXY_URL}")"
     fi
   fi
@@ -274,6 +293,7 @@ export HTTPS_PROXY=$(shell_quote "${PROXY_URL}")
 export HTTP_PROXY=$(shell_quote "${PROXY_URL}")
 export ALL_PROXY=$(shell_quote "${PROXY_URL}")
 export CURL_WRAPPER_PROXY=$(shell_quote "${PROXY_URL}")
+export WGET_WRAPPER_PROXY=$(shell_quote "${PROXY_URL}")
 export GIT_ZIP_WRAPPER_PROXY=$(shell_quote "${PROXY_URL}")
 EOF
   fi
@@ -302,8 +322,10 @@ write_env_file() {
 # Gerado por scripts/install/configure_wrapper_envs.sh
 
 export CURL_WRAPPER_REAL_CURL=$(shell_quote "${REAL_CURL_BIN}")
+export WGET_WRAPPER_REAL_WGET=$(shell_quote "${REAL_WGET_BIN}")
 export GIT_ZIP_WRAPPER_REAL_GIT=$(shell_quote "${REAL_GIT_BIN}")
 export CURL=$(shell_quote "${CURL_INSTALL_DIR}/curl")
+export WGET=$(shell_quote "${CURL_INSTALL_DIR}/wget")
 export GIT=$(shell_quote "${GIT_INSTALL_DIR}/git")
 export CURL_WRAPPER_ENABLE_MASON_SMART_RELEASES="1"
 export CURL_WRAPPER_RELEASE_FALLBACK_REPOS="elixir-lsp/elixir-ls,luals/lua-language-server,omnisharp/omnisharp-roslyn"

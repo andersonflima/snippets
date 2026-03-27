@@ -31,6 +31,9 @@ is_wrapper_binary_path() {
     curl)
       wrapper_path="${HOME}/.local/share/curl-python-wrapper/bin/curl"
       ;;
+    wget)
+      wrapper_path="${HOME}/.local/share/curl-python-wrapper/bin/wget"
+      ;;
     git)
       wrapper_path="${HOME}/.local/share/git-zip-wrapper/bin/git"
       ;;
@@ -104,6 +107,7 @@ SHELL_RC_PATH="${HOME}/.zshrc"
 APPLY_SHELL_RC="0"
 REAL_MIX_BIN=""
 REAL_CURL_BIN=""
+REAL_WGET_BIN=""
 REAL_GIT_BIN=""
 SSH_IDENTITY_PATH=""
 PROXY_URL=""
@@ -155,6 +159,10 @@ while [[ $# -gt 0 ]]; do
       ;;
     --real-curl)
       REAL_CURL_BIN="${2:-}"
+      shift 2
+      ;;
+    --real-wget)
+      REAL_WGET_BIN="${2:-}"
       shift 2
       ;;
     --real-git)
@@ -216,6 +224,9 @@ fi
 if [[ -z "${REAL_CURL_BIN}" ]]; then
   REAL_CURL_BIN="$(resolve_real_binary curl || true)"
 fi
+if [[ -z "${REAL_WGET_BIN}" ]]; then
+  REAL_WGET_BIN="$(resolve_real_binary wget || true)"
+fi
 if [[ -z "${REAL_GIT_BIN}" ]]; then
   REAL_GIT_BIN="$(resolve_real_binary git || true)"
 fi
@@ -248,6 +259,7 @@ WRAPPER_ENV_ARGS=(
   --s3-bucket "${S3_BUCKET}"
   --s3-prefix "${WRAPPERS_S3_PREFIX}"
   --real-curl "${REAL_CURL_BIN}"
+  --real-wget "${REAL_WGET_BIN}"
   --real-git "${REAL_GIT_BIN}"
 )
 

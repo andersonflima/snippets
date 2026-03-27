@@ -13,6 +13,7 @@ set -eu
 
 unset WRAPPERS_VIA_EC2_PROXY 2>/dev/null || true
 unset CURL_WRAPPER_EC2_PROXY 2>/dev/null || true
+unset WGET_WRAPPER_EC2_PROXY 2>/dev/null || true
 unset GIT_ZIP_WRAPPER_EC2_PROXY 2>/dev/null || true
 
 . "${HOME}/.config/mix-via-ec2-envs.sh"

@@ -38,6 +38,7 @@ export PATH
 
 unset MIX 2>/dev/null || true
 unset CURL 2>/dev/null || true
+unset WGET 2>/dev/null || true
 unset GIT 2>/dev/null || true
 unset NVIM 2>/dev/null || true
 
@@ -81,6 +82,12 @@ unset CURL_WRAPPER_EC2_REQUIRED 2>/dev/null || true
 unset CURL_WRAPPER_EC2_PROXY 2>/dev/null || true
 unset CURL_WRAPPER_PROXY 2>/dev/null || true
 unset CURL_WRAPPER_AUTO_INSECURE_ON_CERT_ERROR 2>/dev/null || true
+unset WGET_WRAPPER_REAL_WGET 2>/dev/null || true
+unset WGET_WRAPPER_USE_EC2 2>/dev/null || true
+unset WGET_WRAPPER_EC2_ALL_URLS 2>/dev/null || true
+unset WGET_WRAPPER_EC2_REQUIRED 2>/dev/null || true
+unset WGET_WRAPPER_EC2_PROXY 2>/dev/null || true
+unset WGET_WRAPPER_PROXY 2>/dev/null || true
 
 unset GIT_ZIP_WRAPPER_REAL_GIT 2>/dev/null || true
 unset GIT_ZIP_WRAPPER_ARCHIVE_FORMAT 2>/dev/null || true

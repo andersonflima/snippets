@@ -13,7 +13,7 @@ die() {
 is_wrapper_binary_path() {
   local candidate_path
   candidate_path="$1"
-  [[ "${candidate_path}" == "${INSTALL_DIR}/curl" ]]
+  [[ "${candidate_path}" == "${INSTALL_DIR}/curl" || "${candidate_path}" == "${INSTALL_DIR}/wget" ]]
 }
 
 resolve_real_curl() {
@@ -33,26 +33,47 @@ EOF
   return 1
 }
 
+resolve_real_wget() {
+  local candidate
+
+  while IFS= read -r candidate; do
+    [[ -n "${candidate}" ]] || continue
+    if is_wrapper_binary_path "${candidate}"; then
+      continue
+    fi
+    printf '%s\n' "${candidate}"
+    return 0
+  done <<EOF
+$(which -a wget 2>/dev/null || true)
+EOF
+
+  return 1
+}
+
 usage() {
   cat <<'USAGE'
 Uso:
-  scripts/install/install_curl_python_wrapper.sh [--install-dir <dir>] [--wrapper-source <file>] [--lib-source-dir <dir>] [--ec2-helper-source <file>] [--real-curl <path>]
+  scripts/install/install_curl_python_wrapper.sh [--install-dir <dir>] [--wrapper-source <file>] [--wget-wrapper-source <file>] [--lib-source-dir <dir>] [--ec2-helper-source <file>] [--real-curl <path>] [--real-wget <path>]
 
 Padrões:
   --install-dir: $HOME/.local/share/curl-python-wrapper/bin
   --wrapper-source: scripts/wrappers/curl_python_wrapper.sh
+  --wget-wrapper-source: scripts/wrappers/wget_ec2_wrapper.sh
   --lib-source-dir: scripts/wrappers/lib
   --ec2-helper-source: scripts/ec2/assets/fetch_url_via_ec2.sh
   --real-curl: primeiro curl encontrado no PATH
+  --real-wget: primeiro wget encontrado no PATH, se existir
 USAGE
 }
 
 INSTALL_DIR="${HOME}/.local/share/curl-python-wrapper/bin"
 WRAPPER_SOURCE="$(cd "$(dirname "$0")/.." && pwd)/wrappers/curl_python_wrapper.sh"
+WGET_WRAPPER_SOURCE="$(cd "$(dirname "$0")/.." && pwd)/wrappers/wget_ec2_wrapper.sh"
 LIB_SOURCE_DIR="$(cd "$(dirname "$0")/.." && pwd)/wrappers/lib"
 EC2_HELPER_SOURCE="$(cd "$(dirname "$0")/.." && pwd)/ec2/assets/fetch_url_via_ec2.sh"
 LIB_SOURCE_DIR_EXPLICIT="0"
 REAL_CURL_BIN="${CURL_WRAPPER_REAL_CURL:-}"
+REAL_WGET_BIN="${WGET_WRAPPER_REAL_WGET:-}"
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
@@ -62,6 +83,10 @@ while [[ $# -gt 0 ]]; do
       ;;
     --wrapper-source)
       WRAPPER_SOURCE="${2:-}"
+      shift 2
+      ;;
+    --wget-wrapper-source)
+      WGET_WRAPPER_SOURCE="${2:-}"
       shift 2
       ;;
     --lib-source-dir)
@@ -77,6 +102,10 @@ while [[ $# -gt 0 ]]; do
       REAL_CURL_BIN="${2:-}"
       shift 2
       ;;
+    --real-wget)
+      REAL_WGET_BIN="${2:-}"
+      shift 2
+      ;;
     -h|--help)
       usage
       exit 0
@@ -90,6 +119,7 @@ done
 [[ -n "${INSTALL_DIR}" ]] || die "--install-dir não pode ser vazio"
 [[ -n "${WRAPPER_SOURCE}" ]] || die "--wrapper-source não pode ser vazio"
 [[ -f "${WRAPPER_SOURCE}" ]] || die "wrapper não encontrado: ${WRAPPER_SOURCE}"
+[[ -f "${WGET_WRAPPER_SOURCE}" ]] || die "wrapper wget não encontrado: ${WGET_WRAPPER_SOURCE}"
 [[ -f "${EC2_HELPER_SOURCE}" ]] || die "helper EC2 não encontrado: ${EC2_HELPER_SOURCE}"
 if [[ "${LIB_SOURCE_DIR_EXPLICIT}" != "1" ]]; then
   LIB_SOURCE_DIR="$(cd "$(dirname "${WRAPPER_SOURCE}")" && pwd)/lib"
@@ -101,13 +131,22 @@ fi
 if [[ -z "${REAL_CURL_BIN}" ]]; then
   REAL_CURL_BIN="$(resolve_real_curl || true)"
 fi
+if [[ -z "${REAL_WGET_BIN}" ]]; then
+  REAL_WGET_BIN="$(resolve_real_wget || true)"
+fi
 [[ -n "${REAL_CURL_BIN}" ]] || die "não foi possível localizar curl no PATH"
 [[ -x "${REAL_CURL_BIN}" ]] || die "curl inválido/não executável: ${REAL_CURL_BIN}"
 is_wrapper_binary_path "${REAL_CURL_BIN}" && die "curl real não pode apontar para o wrapper instalado: ${REAL_CURL_BIN}"
+if [[ -n "${REAL_WGET_BIN}" ]]; then
+  [[ -x "${REAL_WGET_BIN}" ]] || die "wget inválido/não executável: ${REAL_WGET_BIN}"
+  is_wrapper_binary_path "${REAL_WGET_BIN}" && die "wget real não pode apontar para o wrapper instalado: ${REAL_WGET_BIN}"
+fi
 
 mkdir -p "${INSTALL_DIR}"
 cp "${WRAPPER_SOURCE}" "${INSTALL_DIR}/curl"
+cp "${WGET_WRAPPER_SOURCE}" "${INSTALL_DIR}/wget"
 chmod 0755 "${INSTALL_DIR}/curl"
+chmod 0755 "${INSTALL_DIR}/wget"
 cp "${EC2_HELPER_SOURCE}" "${INSTALL_DIR}/fetch-url-via-ec2"
 chmod 0755 "${INSTALL_DIR}/fetch-url-via-ec2"
 if [[ -n "${LIB_SOURCE_DIR}" ]]; then
@@ -120,10 +159,12 @@ Instalação concluída.
 
 1) Exporte no shell:
 export CURL_WRAPPER_REAL_CURL="${REAL_CURL_BIN}"
+export WGET_WRAPPER_REAL_WGET="${REAL_WGET_BIN}"
 export PATH="${INSTALL_DIR}:\$PATH"
 
 2) Para LazyVim/Mason (init.lua):
 vim.env.CURL_WRAPPER_REAL_CURL = "${REAL_CURL_BIN}"
+vim.env.WGET_WRAPPER_REAL_WGET = "${REAL_WGET_BIN}"
 vim.env.PATH = "${INSTALL_DIR}:" .. vim.env.PATH
 vim.env.CURL_WRAPPER_RELEASE_FALLBACK_REPOS = "elixir-lsp/elixir-ls,luals/lua-language-server,omnisharp/omnisharp-roslyn"
 vim.env.CURL_WRAPPER_ENABLE_MASON_SMART_RELEASES = "1"
