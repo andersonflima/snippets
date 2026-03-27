@@ -499,6 +499,28 @@ remote_output = f"{remote_dir}/output.tar.gz"
 remote_extract_dir = f"{remote_dir}/extract"
 remote_git_dir = f"{remote_extract_dir}/{git_basename}"
 remote_home_dir = f"{remote_dir}/home"
+remote_url_sh = (
+    "remote_url=\"$(git --git-dir "
+    + shlex.quote(remote_git_dir)
+    + " config --get remote.origin.url || true)\"; "
+    + "case \"$remote_url\" in "
+    + "git@github.com:*) remote_url=\"https://github.com/${remote_url#git@github.com:}\" ;; "
+    + "ssh://git@github.com/*) remote_url=\"https://github.com/${remote_url#ssh://git@github.com/}\" ;; "
+    + "git://github.com/*) remote_url=\"https://github.com/${remote_url#git://github.com/}\" ;; "
+    + "esac; "
+    + "[ -n \"$remote_url\" ] || { echo \"remote.origin.url não encontrado\" >&2; exit 1; }; "
+    + "git --git-dir "
+    + shlex.quote(remote_git_dir)
+    + " remote set-url origin \"$remote_url\" >/dev/null 2>&1 || true"
+)
+cleanup_extraheaders_sh = (
+    "git --git-dir "
+    + shlex.quote(remote_git_dir)
+    + " config --local --name-only --get-regexp '^http\\..*\\.extraheader$' 2>/dev/null | "
+    + "while IFS= read -r key; do git --git-dir "
+    + shlex.quote(remote_git_dir)
+    + " config --local --unset-all \"$key\" >/dev/null 2>&1 || true; done"
+)
 
 commands = [
     "set -euo pipefail",
@@ -522,10 +544,20 @@ commands.append(f'export HOME={shlex.quote(remote_home_dir)}')
 commands.append(f'aws s3 cp {shlex.quote(f"s3://{s3_bucket}/{input_key}")} {shlex.quote(remote_input)} --only-show-errors >/dev/null')
 commands.append(f'tar -xzf {shlex.quote(remote_input)} -C {shlex.quote(remote_extract_dir)}')
 commands.append(f'test -d {shlex.quote(remote_git_dir)}')
+commands.append(remote_url_sh)
 commands.append(f'git --git-dir {shlex.quote(remote_git_dir)} config --local --unset-all http.proxy >/dev/null 2>&1 || true')
 commands.append(f'git --git-dir {shlex.quote(remote_git_dir)} config --local --unset-all https.proxy >/dev/null 2>&1 || true')
+commands.append(f'git --git-dir {shlex.quote(remote_git_dir)} config --local --unset-all http.extraheader >/dev/null 2>&1 || true')
+commands.append(cleanup_extraheaders_sh)
+commands.append(f'git --git-dir {shlex.quote(remote_git_dir)} config --local credential.helper \"\" >/dev/null 2>&1 || true')
 
-fetch_cmd = ["git", "-c", "http.version=HTTP/1.1"]
+fetch_cmd = [
+    "git",
+    "-c",
+    "http.version=HTTP/1.1",
+    "-c",
+    "credential.helper=",
+]
 if insecure:
     fetch_cmd.extend(["-c", "http.sslVerify=false"])
 fetch_cmd.extend(["--git-dir", remote_git_dir, "fetch"])
