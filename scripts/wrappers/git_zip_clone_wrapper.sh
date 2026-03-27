@@ -31,6 +31,7 @@ GIT_ZIP_WRAPPER_EC2_ALL_URLS="${GIT_ZIP_WRAPPER_EC2_ALL_URLS:-${WRAPPERS_VIA_EC2
 GIT_ZIP_WRAPPER_EC2_FETCH_HELPER="${GIT_ZIP_WRAPPER_EC2_HELPER:-${WRAPPER_DIR}/fetch-url-via-ec2}"
 GIT_ZIP_WRAPPER_EC2_CLONE_HELPER="${GIT_ZIP_WRAPPER_EC2_CLONE_HELPER:-${WRAPPER_DIR}/git-clone-via-ec2}"
 GIT_ZIP_WRAPPER_EC2_GIT_FETCH_HELPER="${GIT_ZIP_WRAPPER_EC2_GIT_FETCH_HELPER:-${WRAPPER_DIR}/git-fetch-via-ec2}"
+GIT_ZIP_WRAPPER_EC2_GIT_CHECKOUT_HELPER="${GIT_ZIP_WRAPPER_EC2_GIT_CHECKOUT_HELPER:-${WRAPPER_DIR}/git-checkout-via-ec2}"
 GIT_ZIP_WRAPPER_EC2_REQUIRED="${GIT_ZIP_WRAPPER_EC2_REQUIRED:-${WRAPPERS_VIA_EC2_ENABLED:-0}}"
 GIT_ZIP_WRAPPER_EC2_PROXY="${GIT_ZIP_WRAPPER_EC2_PROXY:-${WRAPPERS_VIA_EC2_PROXY:-}}"
 GIT_GLOBAL_ARGS=()
@@ -504,6 +505,21 @@ should_use_ec2_backend_for_fetch() {
   return 0
 }
 
+should_use_ec2_backend_for_checkout() {
+  if ! is_truthy "${GIT_ZIP_WRAPPER_USE_EC2}"; then
+    return 1
+  fi
+
+  if [[ ! -x "${GIT_ZIP_WRAPPER_EC2_GIT_CHECKOUT_HELPER}" ]]; then
+    if is_truthy "${GIT_ZIP_WRAPPER_EC2_REQUIRED}"; then
+      die "helper de checkout do backend EC2 não encontrado/executável: ${GIT_ZIP_WRAPPER_EC2_GIT_CHECKOUT_HELPER}"
+    fi
+    return 1
+  fi
+
+  return 0
+}
+
 download_with_ec2_backend() {
   local url archive_path user_agent
   url="$1"
@@ -575,6 +591,26 @@ fetch_with_ec2_backend() {
   "${helper_cmd[@]}"
 }
 
+checkout_with_ec2_backend() {
+  local repo_url archive_path checkout_arg
+  repo_url="$1"
+  archive_path="$2"
+
+  local -a helper_cmd=("${GIT_ZIP_WRAPPER_EC2_GIT_CHECKOUT_HELPER}" --repo-url "${repo_url}" --output "${archive_path}" --create-dirs)
+
+  for checkout_arg in "${GIT_SUBCOMMAND_ARGS[@]}"; do
+    helper_cmd+=(--git-arg "${checkout_arg}")
+  done
+  if [[ -n "${GIT_ZIP_WRAPPER_EC2_PROXY}" ]]; then
+    helper_cmd+=(--proxy "${GIT_ZIP_WRAPPER_EC2_PROXY}")
+  fi
+  if is_truthy "${GIT_ZIP_WRAPPER_CURL_INSECURE}"; then
+    helper_cmd+=(--insecure)
+  fi
+
+  "${helper_cmd[@]}"
+}
+
 path_looks_like_mix_install_git_dir() {
   local git_dir
   git_dir="$1"
@@ -589,6 +625,36 @@ resolve_fetch_worktree_dir() {
   [[ -n "${worktree_dir}" ]] || return 1
   [[ -d "${worktree_dir}" ]] || return 1
   printf '%s\n' "${worktree_dir}"
+}
+
+replace_mix_install_repo_with_checkout() {
+  local real_git git_dir worktree_dir origin_url archive_path temp_dir extracted_repo_dir normalized_origin_url
+  real_git="$1"
+  git_dir="$2"
+
+  path_looks_like_mix_install_git_dir "${git_dir}" || return 1
+  worktree_dir="$(resolve_fetch_worktree_dir "${real_git}" || true)"
+  origin_url="$(resolve_fetch_origin_url "${real_git}" || true)"
+  [[ -n "${worktree_dir}" && -n "${origin_url}" ]] || return 1
+
+  normalized_origin_url="$(normalize_clone_url_for_http_transport "${origin_url}" 2>/dev/null || true)"
+  [[ -n "${normalized_origin_url}" ]] || normalized_origin_url="${origin_url}"
+
+  temp_dir="$(mktemp -d -t git-zip-checkout-clone-XXXXXX)"
+  archive_path="${temp_dir}/repo-checkout.tar.gz"
+
+  checkout_with_ec2_backend "${normalized_origin_url}" "${archive_path}" || {
+    rm -rf "${temp_dir}"
+    return 1
+  }
+
+  extracted_repo_dir="${temp_dir}/repo"
+  mkdir -p "${extracted_repo_dir}"
+  tar -xzf "${archive_path}" -C "${extracted_repo_dir}" --strip-components=1
+  rm -rf "${worktree_dir}"
+  mkdir -p "$(dirname "${worktree_dir}")"
+  cp -a "${extracted_repo_dir}" "${worktree_dir}"
+  rm -rf "${temp_dir}"
 }
 
 resolve_fetch_origin_url() {
@@ -813,6 +879,18 @@ main() {
           log "backend EC2 do git fetch falhou; seguindo com fallback local"
         elif is_truthy "${GIT_ZIP_WRAPPER_EC2_REQUIRED}"; then
           die "não foi possível resolver o diretório git para o fetch remoto"
+        fi
+      fi
+      exec "${real_git}" "$@"
+      ;;
+    checkout)
+      resolve_proxy_config
+      local checkout_git_dir
+      if should_use_ec2_backend_for_checkout; then
+        checkout_git_dir="$(resolve_fetch_git_dir "${real_git}" || true)"
+        if [[ -n "${checkout_git_dir}" ]] && replace_mix_install_repo_with_checkout "${real_git}" "${checkout_git_dir}"; then
+          log "fallback por checkout remoto concluído para cache do Mix.install: ${checkout_git_dir}"
+          return 0
         fi
       fi
       exec "${real_git}" "$@"

@@ -45,7 +45,7 @@ EOF2
 usage() {
   cat <<'USAGE'
 Uso:
-  scripts/install/install_git_zip_wrapper.sh [--install-dir <dir>] [--wrapper-source <file>] [--ec2-helper-source <file>] [--clone-helper-source <file>] [--fetch-helper-source <file>] [--real-git <path>]
+  scripts/install/install_git_zip_wrapper.sh [--install-dir <dir>] [--wrapper-source <file>] [--ec2-helper-source <file>] [--clone-helper-source <file>] [--fetch-helper-source <file>] [--checkout-helper-source <file>] [--real-git <path>]
 
 Padrões:
   --install-dir: $HOME/.local/share/git-zip-wrapper/bin
@@ -53,6 +53,7 @@ Padrões:
   --ec2-helper-source: scripts/ec2/assets/fetch_url_via_ec2.sh
   --clone-helper-source: scripts/ec2/git/clone_via_ec2.sh
   --fetch-helper-source: scripts/ec2/git/fetch_via_ec2.sh
+  --checkout-helper-source: scripts/ec2/git/checkout_via_ec2.sh
   --real-git: primeiro git encontrado no PATH
 USAGE
 }
@@ -62,6 +63,7 @@ WRAPPER_SOURCE="$(cd "$(dirname "$0")/.." && pwd)/wrappers/git_zip_clone_wrapper
 EC2_HELPER_SOURCE="$(cd "$(dirname "$0")/.." && pwd)/ec2/assets/fetch_url_via_ec2.sh"
 CLONE_HELPER_SOURCE="$(cd "$(dirname "$0")/.." && pwd)/ec2/git/clone_via_ec2.sh"
 FETCH_HELPER_SOURCE="$(cd "$(dirname "$0")/.." && pwd)/ec2/git/fetch_via_ec2.sh"
+CHECKOUT_HELPER_SOURCE="$(cd "$(dirname "$0")/.." && pwd)/ec2/git/checkout_via_ec2.sh"
 REAL_GIT_BIN="${GIT_ZIP_WRAPPER_REAL_GIT:-}"
 
 while [[ $# -gt 0 ]]; do
@@ -86,6 +88,10 @@ while [[ $# -gt 0 ]]; do
       FETCH_HELPER_SOURCE="${2:-}"
       shift 2
       ;;
+    --checkout-helper-source)
+      CHECKOUT_HELPER_SOURCE="${2:-}"
+      shift 2
+      ;;
     --real-git)
       REAL_GIT_BIN="${2:-}"
       shift 2
@@ -106,6 +112,7 @@ done
 [[ -f "${EC2_HELPER_SOURCE}" ]] || die "helper EC2 não encontrado: ${EC2_HELPER_SOURCE}"
 [[ -f "${CLONE_HELPER_SOURCE}" ]] || die "helper de clone EC2 não encontrado: ${CLONE_HELPER_SOURCE}"
 [[ -f "${FETCH_HELPER_SOURCE}" ]] || die "helper de fetch EC2 não encontrado: ${FETCH_HELPER_SOURCE}"
+[[ -f "${CHECKOUT_HELPER_SOURCE}" ]] || die "helper de checkout EC2 não encontrado: ${CHECKOUT_HELPER_SOURCE}"
 
 if [[ -z "${REAL_GIT_BIN}" ]]; then
   REAL_GIT_BIN="$(resolve_real_git || true)"
@@ -119,10 +126,12 @@ cp "${WRAPPER_SOURCE}" "${INSTALL_DIR}/git"
 cp "${EC2_HELPER_SOURCE}" "${INSTALL_DIR}/fetch-url-via-ec2"
 cp "${CLONE_HELPER_SOURCE}" "${INSTALL_DIR}/git-clone-via-ec2"
 cp "${FETCH_HELPER_SOURCE}" "${INSTALL_DIR}/git-fetch-via-ec2"
+cp "${CHECKOUT_HELPER_SOURCE}" "${INSTALL_DIR}/git-checkout-via-ec2"
 chmod 0755 "${INSTALL_DIR}/git"
 chmod 0755 "${INSTALL_DIR}/fetch-url-via-ec2"
 chmod 0755 "${INSTALL_DIR}/git-clone-via-ec2"
 chmod 0755 "${INSTALL_DIR}/git-fetch-via-ec2"
+chmod 0755 "${INSTALL_DIR}/git-checkout-via-ec2"
 
 cat <<EOF2
 Instalação concluída.
