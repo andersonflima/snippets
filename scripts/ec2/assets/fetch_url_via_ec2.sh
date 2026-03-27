@@ -559,8 +559,41 @@ s3_object_exists() {
 }
 
 download_result_from_s3() {
-  [[ "${CREATE_DIRS}" == "1" ]] && mkdir -p "$(dirname "${OUTPUT_PATH}")"
-  "${AWS_CMD[@]}" s3 cp "s3://${S3_BUCKET}/${OUTPUT_KEY}" "${OUTPUT_PATH}" --only-show-errors >/dev/null
+  local output_dir get_object_error_file presigned_url
+  output_dir="$(dirname "${OUTPUT_PATH}")"
+  [[ "${CREATE_DIRS}" == "1" ]] && mkdir -p "${output_dir}"
+
+  get_object_error_file="$(make_temp_file "fetch-url-via-ec2-get-object" ".log")"
+  if "${AWS_CMD[@]}" s3api get-object \
+    --bucket "${S3_BUCKET}" \
+    --key "${OUTPUT_KEY}" \
+    "${OUTPUT_PATH}" >/dev/null 2>"${get_object_error_file}"; then
+    rm -f "${get_object_error_file}"
+    return 0
+  fi
+
+  presigned_url="$("${AWS_CMD[@]}" s3 presign "s3://${S3_BUCKET}/${OUTPUT_KEY}" --expires-in 300 2>/dev/null || true)"
+  if [[ -n "${presigned_url}" && "${presigned_url}" != "None" ]]; then
+    if python3 - "${presigned_url}" "${OUTPUT_PATH}" <<'PY'
+import os
+import sys
+import urllib.request
+
+url = sys.argv[1]
+output_path = sys.argv[2]
+os.makedirs(os.path.dirname(output_path) or ".", exist_ok=True)
+with urllib.request.urlopen(url) as response, open(output_path, "wb") as output_handle:
+    output_handle.write(response.read())
+PY
+    then
+      rm -f "${get_object_error_file}"
+      return 0
+    fi
+  fi
+
+  cat "${get_object_error_file}" >&2
+  rm -f "${get_object_error_file}"
+  die "falha ao baixar artefato do S3 para ${OUTPUT_PATH}"
 }
 
 run_remote_fetch() {
