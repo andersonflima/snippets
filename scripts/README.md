@@ -4,6 +4,8 @@ Interface pública para ambiente restrito:
 
 - `scripts/configure_restricted_dev_env.sh`: instala e configura `mix`, `curl` e `git` com backend EC2 compartilhado
 - `scripts/activate_restricted_dev_env.sh`: carrega os env-files do ambiente restrito só na sessão atual
+- `scripts/run_restricted_dev_nvim.sh`: abre o `nvim` já com o ambiente restrito carregado
+- `scripts/doctor_restricted_dev_env.sh`: valida se `mix`, `curl`, `git` e `nvim` estão vendo os wrappers
 - `scripts/reset_restricted_dev_env.sh`: remove wrappers, env-files e referências no shell rc para zerar o ambiente restrito
 
 Ferramentas operacionais:
@@ -28,4 +30,16 @@ Uso recomendado:
 ```bash
 sh scripts/configure_restricted_dev_env.sh "<bucket>"
 . scripts/activate_restricted_dev_env.sh
+```
+
+Para validar o ambiente:
+
+```bash
+sh scripts/doctor_restricted_dev_env.sh
+```
+
+Para abrir o `nvim` com o ambiente garantido:
+
+```bash
+sh scripts/run_restricted_dev_nvim.sh
 ```

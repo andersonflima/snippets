@@ -40,6 +40,18 @@ Por padrão, o bootstrap não altera mais o `~/.zshrc`. Para ativar na sessão a
 . scripts/activate_restricted_dev_env.sh
 ```
 
+Para abrir o `nvim` já com esse ambiente carregado:
+
+```bash
+sh scripts/run_restricted_dev_nvim.sh
+```
+
+Para diagnosticar se o Mason está vendo os wrappers:
+
+```bash
+sh scripts/doctor_restricted_dev_env.sh
+```
+
 Se você quiser persistir no shell rc de propósito:
 
 ```bash

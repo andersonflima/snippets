@@ -181,6 +181,7 @@ write_env_file() {
 
 export MIX_WRAPPER_REAL_MIX=$(shell_quote "${REAL_MIX_BIN}")
 export PATH=$(shell_quote "${MIX_INSTALL_DIR}"):"\$PATH"
+export MIX=$(shell_quote "${MIX_INSTALL_DIR}/mix")
 export MIX_VIA_EC2_INSTANCE_NAME=$(shell_quote "${INSTANCE_NAME}")
 export MIX_VIA_EC2_AWS_REGION=$(shell_quote "${AWS_REGION_NAME}")
 export MIX_VIA_EC2_S3_PREFIX=$(shell_quote "${S3_PREFIX_NAME}")

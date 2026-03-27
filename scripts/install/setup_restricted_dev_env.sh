@@ -320,4 +320,10 @@ Para aplicar na sessão atual:
   . "${HOME}/.config/wrapper-envs.sh"
   rehash 2>/dev/null || true
   hash -r 2>/dev/null || true
+
+Para abrir o nvim já com esse ambiente:
+  sh "${ROOT_DIR}/run_restricted_dev_nvim.sh"
+
+Para validar se o Mason está vendo os wrappers:
+  sh "${ROOT_DIR}/doctor_restricted_dev_env.sh"
 EOF

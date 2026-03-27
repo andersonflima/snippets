@@ -292,6 +292,8 @@ write_env_file() {
 
 export CURL_WRAPPER_REAL_CURL=$(shell_quote "${REAL_CURL_BIN}")
 export GIT_ZIP_WRAPPER_REAL_GIT=$(shell_quote "${REAL_GIT_BIN}")
+export CURL=$(shell_quote "${CURL_INSTALL_DIR}/curl")
+export GIT=$(shell_quote "${GIT_INSTALL_DIR}/git")
 export CURL_WRAPPER_ENABLE_MASON_SMART_RELEASES="1"
 export CURL_WRAPPER_RELEASE_FALLBACK_REPOS="elixir-lsp/elixir-ls,luals/lua-language-server,omnisharp/omnisharp-roslyn"
 export CURL_WRAPPER_RELEASE_CACHE_DIR=$(shell_quote "${HOME}/.cache/curl-python-wrapper/releases")
