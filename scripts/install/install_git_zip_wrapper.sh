@@ -35,9 +35,9 @@ resolve_real_git() {
     fi
     printf '%s\n' "${candidate}"
     return 0
-  done <<EOF
+  done <<EOF2
 $(which -a git 2>/dev/null || true)
-EOF
+EOF2
 
   return 1
 }
@@ -45,12 +45,13 @@ EOF
 usage() {
   cat <<'USAGE'
 Uso:
-  scripts/install/install_git_zip_wrapper.sh [--install-dir <dir>] [--wrapper-source <file>] [--ec2-helper-source <file>] [--real-git <path>]
+  scripts/install/install_git_zip_wrapper.sh [--install-dir <dir>] [--wrapper-source <file>] [--ec2-helper-source <file>] [--clone-helper-source <file>] [--real-git <path>]
 
 Padrões:
   --install-dir: $HOME/.local/share/git-zip-wrapper/bin
   --wrapper-source: scripts/wrappers/git_zip_clone_wrapper.sh
   --ec2-helper-source: scripts/ec2/assets/fetch_url_via_ec2.sh
+  --clone-helper-source: scripts/ec2/git/clone_via_ec2.sh
   --real-git: primeiro git encontrado no PATH
 USAGE
 }
@@ -58,6 +59,7 @@ USAGE
 INSTALL_DIR="${HOME}/.local/share/git-zip-wrapper/bin"
 WRAPPER_SOURCE="$(cd "$(dirname "$0")/.." && pwd)/wrappers/git_zip_clone_wrapper.sh"
 EC2_HELPER_SOURCE="$(cd "$(dirname "$0")/.." && pwd)/ec2/assets/fetch_url_via_ec2.sh"
+CLONE_HELPER_SOURCE="$(cd "$(dirname "$0")/.." && pwd)/ec2/git/clone_via_ec2.sh"
 REAL_GIT_BIN="${GIT_ZIP_WRAPPER_REAL_GIT:-}"
 
 while [[ $# -gt 0 ]]; do
@@ -72,6 +74,10 @@ while [[ $# -gt 0 ]]; do
       ;;
     --ec2-helper-source)
       EC2_HELPER_SOURCE="${2:-}"
+      shift 2
+      ;;
+    --clone-helper-source)
+      CLONE_HELPER_SOURCE="${2:-}"
       shift 2
       ;;
     --real-git)
@@ -92,6 +98,7 @@ done
 [[ -n "${WRAPPER_SOURCE}" ]] || die "--wrapper-source não pode ser vazio"
 [[ -f "${WRAPPER_SOURCE}" ]] || die "wrapper não encontrado: ${WRAPPER_SOURCE}"
 [[ -f "${EC2_HELPER_SOURCE}" ]] || die "helper EC2 não encontrado: ${EC2_HELPER_SOURCE}"
+[[ -f "${CLONE_HELPER_SOURCE}" ]] || die "helper de clone EC2 não encontrado: ${CLONE_HELPER_SOURCE}"
 
 if [[ -z "${REAL_GIT_BIN}" ]]; then
   REAL_GIT_BIN="$(resolve_real_git || true)"
@@ -103,10 +110,12 @@ is_wrapper_binary_path "${REAL_GIT_BIN}" && die "git real não pode apontar para
 mkdir -p "${INSTALL_DIR}"
 cp "${WRAPPER_SOURCE}" "${INSTALL_DIR}/git"
 cp "${EC2_HELPER_SOURCE}" "${INSTALL_DIR}/fetch-url-via-ec2"
+cp "${CLONE_HELPER_SOURCE}" "${INSTALL_DIR}/git-clone-via-ec2"
 chmod 0755 "${INSTALL_DIR}/git"
 chmod 0755 "${INSTALL_DIR}/fetch-url-via-ec2"
+chmod 0755 "${INSTALL_DIR}/git-clone-via-ec2"
 
-cat <<EOF
+cat <<EOF2
 Instalação concluída.
 
 1) Exporte no shell:
@@ -142,4 +151,4 @@ vim.env.GIT_ZIP_WRAPPER_ARCHIVE_FORMAT = "tar.gz"
 
 3) Teste:
 git clone https://github.com/neovim/neovim ~/tmp/neovim-zip-clone
-EOF
+EOF2

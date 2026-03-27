@@ -28,7 +28,8 @@ GIT_ZIP_WRAPPER_ACTIVE_PROXY=""
 WRAPPER_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 GIT_ZIP_WRAPPER_USE_EC2="${GIT_ZIP_WRAPPER_USE_EC2:-${WRAPPERS_VIA_EC2_ENABLED:-0}}"
 GIT_ZIP_WRAPPER_EC2_ALL_URLS="${GIT_ZIP_WRAPPER_EC2_ALL_URLS:-${WRAPPERS_VIA_EC2_ALL_URLS:-1}}"
-GIT_ZIP_WRAPPER_EC2_HELPER="${GIT_ZIP_WRAPPER_EC2_HELPER:-${WRAPPER_DIR}/fetch-url-via-ec2}"
+GIT_ZIP_WRAPPER_EC2_FETCH_HELPER="${GIT_ZIP_WRAPPER_EC2_HELPER:-${WRAPPER_DIR}/fetch-url-via-ec2}"
+GIT_ZIP_WRAPPER_EC2_CLONE_HELPER="${GIT_ZIP_WRAPPER_EC2_CLONE_HELPER:-${WRAPPER_DIR}/git-clone-via-ec2}"
 GIT_ZIP_WRAPPER_EC2_REQUIRED="${GIT_ZIP_WRAPPER_EC2_REQUIRED:-${WRAPPERS_VIA_EC2_ENABLED:-0}}"
 
 resolve_proxy_config() {
@@ -105,9 +106,9 @@ resolve_real_git() {
       printf '%s\n' "${candidate}"
       return
     fi
-  done <<EOF
+  done <<EOF2
 $(which -a git 2>/dev/null || true)
-EOF
+EOF2
 
   [[ -x "/usr/bin/git" ]] || die "não foi possível localizar o git real. Defina GIT_ZIP_WRAPPER_REAL_GIT."
   printf '%s\n' "/usr/bin/git"
@@ -125,8 +126,8 @@ default_destination_from_repo() {
 
 parse_clone_arguments() {
   CLONE_REPO_URL=""
-  CLONE_BRANCH=""
   CLONE_DESTINATION=""
+  CLONE_FORWARD_ARGS=()
 
   local arg positional_count positional_repo positional_destination
   positional_count=0
@@ -140,44 +141,21 @@ parse_clone_arguments() {
   while [[ $# -gt 0 ]]; do
     arg="$1"
     case "${arg}" in
-      -b|--branch)
+      -b|--branch|-c|--config|-o|--origin|-u|--upload-pack|-j|--jobs|--depth|--filter|--template|--reference|--reference-if-able|--server-option|--separate-git-dir|--bundle-uri)
         [[ $# -ge 2 ]] || die "faltou valor para ${arg}"
-        CLONE_BRANCH="$2"
+        CLONE_FORWARD_ARGS+=("$1" "$2")
         shift 2
         ;;
-      -c|--config)
-        [[ $# -ge 2 ]] || die "faltou valor para ${arg}"
-        shift 2
-        ;;
-      -c*)
+      --branch=*|--config=*|--jobs=*|--depth=*|--filter=*|--origin=*|--upload-pack=*|--template=*|--reference=*|--reference-if-able=*|--server-option=*|--separate-git-dir=*|--bundle-uri=*|--recurse-submodules=*)
+        CLONE_FORWARD_ARGS+=("$1")
         shift
         ;;
-      -o|--origin|-u|--upload-pack)
-        [[ $# -ge 2 ]] || die "faltou valor para ${arg}"
-        shift 2
-        ;;
-      -j|--jobs)
-        [[ $# -ge 2 ]] || die "faltou valor para ${arg}"
-        shift 2
-        ;;
-      --branch=*)
-        CLONE_BRANCH="${arg#--branch=}"
-        shift
-        ;;
-      --config=*|--jobs=*)
-        shift
-        ;;
-      --depth|--filter|--origin|--config|--upload-pack|--template|--reference|--reference-if-able|--server-option|--separate-git-dir)
-        [[ $# -ge 2 ]] || die "faltou valor para ${arg}"
-        shift 2
-        ;;
-      --depth=*|--filter=*|--origin=*|--config=*|--upload-pack=*|--template=*|--reference=*|--reference-if-able=*|--server-option=*|--separate-git-dir=*)
-        shift
-        ;;
-      --single-branch|--no-single-branch|--recurse-submodules|--shallow-submodules|--no-shallow-submodules|--no-tags|--tags|--quiet|--verbose|--progress|--no-checkout)
+      --single-branch|--no-single-branch|--recurse-submodules|--shallow-submodules|--no-shallow-submodules|--no-tags|--tags|--quiet|--verbose|--progress|--no-checkout|--bare|--mirror|--sparse|--reject-shallow|--dissociate|--local|--shared|--no-local|--hardlinks|--no-hardlinks)
+        CLONE_FORWARD_ARGS+=("$1")
         shift
         ;;
       --)
+        CLONE_FORWARD_ARGS+=("--")
         shift
         while [[ $# -gt 0 ]]; do
           positional_count=$((positional_count + 1))
@@ -185,11 +163,14 @@ parse_clone_arguments() {
             positional_repo="$1"
           elif [[ ${positional_count} -eq 2 ]]; then
             positional_destination="$1"
+          else
+            die "uso inválido: git clone <repo> [destino]"
           fi
           shift
         done
         ;;
       -*)
+        CLONE_FORWARD_ARGS+=("$1")
         shift
         ;;
       *)
@@ -198,6 +179,8 @@ parse_clone_arguments() {
           positional_repo="${arg}"
         elif [[ ${positional_count} -eq 2 ]]; then
           positional_destination="${arg}"
+        else
+          die "uso inválido: git clone <repo> [destino]"
         fi
         shift
         ;;
@@ -211,6 +194,38 @@ parse_clone_arguments() {
   else
     CLONE_DESTINATION="$(default_destination_from_repo "${CLONE_REPO_URL}")"
   fi
+}
+
+normalize_clone_url_for_http_transport() {
+  local repo_url host_and_path host path
+  repo_url="$1"
+
+  case "${repo_url}" in
+    https://*|http://*)
+      printf '%s\n' "${repo_url}"
+      ;;
+    git://*)
+      printf 'https://%s\n' "${repo_url#git://}"
+      ;;
+    ssh://*)
+      host_and_path="${repo_url#ssh://}"
+      host="${host_and_path%%/*}"
+      path="${host_and_path#*/}"
+      host="${host#*@}"
+      [[ -n "${host}" && -n "${path}" && "${path}" != "${host_and_path}" ]] || return 1
+      printf 'https://%s/%s\n' "${host}" "${path}"
+      ;;
+    *@*:* )
+      host_and_path="${repo_url#*@}"
+      host="${host_and_path%%:*}"
+      path="${host_and_path#*:}"
+      [[ -n "${host}" && -n "${path}" && "${path}" != "${host_and_path}" ]] || return 1
+      printf 'https://%s/%s\n' "${host}" "${path}"
+      ;;
+    *)
+      return 1
+      ;;
+  esac
 }
 
 extract_github_slug() {
@@ -379,9 +394,9 @@ should_use_ec2_backend_for_git_url() {
     return 1
   fi
   [[ -n "${url}" && -n "${archive_path}" ]] || return 1
-  if [[ ! -x "${GIT_ZIP_WRAPPER_EC2_HELPER}" ]]; then
+  if [[ ! -x "${GIT_ZIP_WRAPPER_EC2_FETCH_HELPER}" ]]; then
     if is_truthy "${GIT_ZIP_WRAPPER_EC2_REQUIRED}"; then
-      die "helper do backend EC2 não encontrado/executável: ${GIT_ZIP_WRAPPER_EC2_HELPER}"
+      die "helper do backend EC2 não encontrado/executável: ${GIT_ZIP_WRAPPER_EC2_FETCH_HELPER}"
     fi
     return 1
   fi
@@ -400,17 +415,66 @@ should_use_ec2_backend_for_git_url() {
   return 1
 }
 
+should_use_ec2_backend_for_clone_url() {
+  local url
+  url="$1"
+
+  if ! is_truthy "${GIT_ZIP_WRAPPER_USE_EC2}"; then
+    return 1
+  fi
+  [[ -n "${url}" ]] || return 1
+  if [[ ! -x "${GIT_ZIP_WRAPPER_EC2_CLONE_HELPER}" ]]; then
+    if is_truthy "${GIT_ZIP_WRAPPER_EC2_REQUIRED}"; then
+      die "helper de clone do backend EC2 não encontrado/executável: ${GIT_ZIP_WRAPPER_EC2_CLONE_HELPER}"
+    fi
+    return 1
+  fi
+
+  if is_truthy "${GIT_ZIP_WRAPPER_EC2_ALL_URLS}"; then
+    return 0
+  fi
+
+  case "${url}" in
+    https://*|http://*)
+      return 0
+      ;;
+  esac
+
+  return 1
+}
+
 download_with_ec2_backend() {
   local url archive_path user_agent
   url="$1"
   archive_path="$2"
   user_agent="$3"
 
-  local -a helper_cmd=("${GIT_ZIP_WRAPPER_EC2_HELPER}" --url "${url}" --output "${archive_path}" --create-dirs)
+  local -a helper_cmd=("${GIT_ZIP_WRAPPER_EC2_FETCH_HELPER}" --url "${url}" --output "${archive_path}" --create-dirs)
 
   if [[ -n "${user_agent}" ]]; then
     helper_cmd+=(--user-agent "${user_agent}")
   fi
+  if [[ -n "${GIT_ZIP_WRAPPER_ACTIVE_PROXY}" ]]; then
+    helper_cmd+=(--proxy "${GIT_ZIP_WRAPPER_ACTIVE_PROXY}")
+  fi
+  if is_truthy "${GIT_ZIP_WRAPPER_CURL_INSECURE}"; then
+    helper_cmd+=(--insecure)
+  fi
+
+  "${helper_cmd[@]}"
+}
+
+clone_with_ec2_backend() {
+  local repo_url archive_path
+  repo_url="$1"
+  archive_path="$2"
+
+  local -a helper_cmd=("${GIT_ZIP_WRAPPER_EC2_CLONE_HELPER}" --repo-url "${repo_url}" --output "${archive_path}" --create-dirs)
+  local clone_arg
+
+  for clone_arg in "${CLONE_FORWARD_ARGS[@]}"; do
+    helper_cmd+=(--git-arg "${clone_arg}")
+  done
   if [[ -n "${GIT_ZIP_WRAPPER_ACTIVE_PROXY}" ]]; then
     helper_cmd+=(--proxy "${GIT_ZIP_WRAPPER_ACTIVE_PROXY}")
   fi
@@ -517,6 +581,30 @@ extract_archive_to_destination() {
   rm -rf "${temp_extract}"
 }
 
+first_forward_value_for_option() {
+  local option_prefix option_name index current next_value
+  option_name="$1"
+  option_prefix="${option_name}="
+
+  for ((index = 0; index < ${#CLONE_FORWARD_ARGS[@]}; index++)); do
+    current="${CLONE_FORWARD_ARGS[index]}"
+    if [[ "${current}" == "${option_name}" ]]; then
+      if (( index + 1 < ${#CLONE_FORWARD_ARGS[@]} )); then
+        next_value="${CLONE_FORWARD_ARGS[index + 1]}"
+        printf '%s\n' "${next_value}"
+        return 0
+      fi
+      return 1
+    fi
+    if [[ "${current}" == ${option_prefix}* ]]; then
+      printf '%s\n' "${current#${option_prefix}}"
+      return 0
+    fi
+  done
+
+  return 1
+}
+
 main() {
   local real_git
   real_git="$(resolve_real_git)"
@@ -529,7 +617,6 @@ main() {
     exec "${real_git}" "$@"
   fi
 
-  command -v curl >/dev/null 2>&1 || die "curl não encontrado"
   command -v tar >/dev/null 2>&1 || die "tar não encontrado"
   command -v mktemp >/dev/null 2>&1 || die "mktemp não encontrado"
   if is_truthy "${ALLOW_ZIP_FALLBACK}"; then
@@ -537,25 +624,43 @@ main() {
   fi
 
   parse_clone_arguments "$@"
-  local repo_url branch destination
+  local repo_url destination branch normalized_repo_url
   repo_url="${CLONE_REPO_URL}"
-  branch="${CLONE_BRANCH}"
   destination="${CLONE_DESTINATION}"
+  branch="$(first_forward_value_for_option --branch || true)"
   resolve_proxy_config
   if [[ -n "${GIT_ZIP_WRAPPER_ACTIVE_PROXY}" ]]; then
     log "proxy ativo para wrapper git clone: ${GIT_ZIP_WRAPPER_ACTIVE_PROXY}"
   fi
 
+  validate_clone_destination "${destination}"
+  GIT_ZIP_WRAPPER_TMP_DIR="$(mktemp -d -t git-zip-clone-XXXXXX)"
+
+  if normalized_repo_url="$(normalize_clone_url_for_http_transport "${repo_url}" 2>/dev/null)"; then
+    local clone_archive_path
+    clone_archive_path="${GIT_ZIP_WRAPPER_TMP_DIR}/repo-clone.tar.gz"
+    if should_use_ec2_backend_for_clone_url "${normalized_repo_url}"; then
+      log "backend selecionado: ec2 git-clone (${normalized_repo_url})"
+      if clone_with_ec2_backend "${normalized_repo_url}" "${clone_archive_path}"; then
+        extract_archive_to_destination "${clone_archive_path}" "${destination}"
+        log "clone remoto(http) concluído: ${repo_url} -> ${destination} (source: ${normalized_repo_url})"
+        return 0
+      fi
+      if is_truthy "${GIT_ZIP_WRAPPER_EC2_REQUIRED}"; then
+        die "backend EC2 falhou para git clone ${repo_url} e o fallback local está desabilitado"
+      fi
+      log "backend EC2 do git clone falhou; seguindo com fallback local"
+    fi
+  fi
+
   local slug
   if ! slug="$(extract_github_slug "${repo_url}")"; then
-    log "host não suportado para clone por zip (${repo_url}); fallback para git clone normal."
+    log "host não suportado para clone por arquivo (${repo_url}); fallback para git clone normal."
     exec "${real_git}" "$@"
   fi
 
-  validate_clone_destination "${destination}"
-
+  command -v curl >/dev/null 2>&1 || die "curl não encontrado"
   local archive_path source_url
-  GIT_ZIP_WRAPPER_TMP_DIR="$(mktemp -d -t git-zip-clone-XXXXXX)"
   case "${ARCHIVE_FORMAT}" in
     tar.gz)
       archive_path="${GIT_ZIP_WRAPPER_TMP_DIR}/repo.tar.gz"
