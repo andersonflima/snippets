@@ -82,6 +82,7 @@ S3_BUCKET="${WRAPPERS_VIA_EC2_S3_BUCKET:-${MIX_VIA_EC2_S3_BUCKET:-}}"
 S3_PREFIX="${WRAPPERS_VIA_EC2_S3_PREFIX:-${MIX_VIA_EC2_S3_PREFIX:-wrappers-via-ec2}}"
 AWS_CMD=(aws)
 AWS_CMD_CONFIGURED="0"
+S3_AWS_CMD=(aws)
 RUN_ID=""
 RUN_S3_PREFIX=""
 OUTPUT_KEY=""
@@ -161,6 +162,38 @@ configure_aws_cmd() {
   fi
 
   AWS_CMD_CONFIGURED="1"
+  configure_s3_aws_cmd "${AWS_REGION_NAME}"
+}
+
+configure_s3_aws_cmd() {
+  local region="$1"
+  S3_AWS_CMD=(aws)
+  if [[ -n "${AWS_PROFILE_NAME}" ]]; then
+    S3_AWS_CMD+=(--profile "${AWS_PROFILE_NAME}")
+  fi
+  if [[ -n "${region}" ]]; then
+    S3_AWS_CMD+=(--region "${region}")
+  fi
+}
+
+resolve_s3_bucket_region() {
+  local bucket_region
+  local -a region_probe_cmd=(aws)
+
+  if [[ -n "${AWS_PROFILE_NAME}" ]]; then
+    region_probe_cmd+=(--profile "${AWS_PROFILE_NAME}")
+  fi
+
+  if ! bucket_region="$("${region_probe_cmd[@]}" s3api get-bucket-location --bucket "${S3_BUCKET}" --query 'LocationConstraint' --output text 2>/dev/null)"; then
+    return 1
+  fi
+
+  if [[ -z "${bucket_region}" || "${bucket_region}" == "None" || "${bucket_region}" == "null" ]]; then
+    bucket_region="us-east-1"
+  fi
+
+  configure_s3_aws_cmd "${bucket_region}"
+  return 0
 }
 
 resolve_instance_from_aws() {
@@ -207,7 +240,12 @@ ensure_s3_bucket() {
     S3_BUCKET="mix-via-ec2-${account_id}-${AWS_REGION_NAME}"
   fi
 
-  if ${AWS_CMD[@]} s3api head-bucket --bucket "${S3_BUCKET}" >/dev/null 2>&1; then
+  if ${S3_AWS_CMD[@]} s3api head-bucket --bucket "${S3_BUCKET}" >/dev/null 2>&1; then
+    resolve_s3_bucket_region || true
+    return 0
+  fi
+
+  if resolve_s3_bucket_region; then
     return 0
   fi
 
@@ -307,7 +345,7 @@ ensure_s3_bucket_policy_for_remote_principal() {
   current_policy_file="$(make_temp_file "git-checkout-via-ec2-policy-current" ".json")"
   merged_policy_file="$(make_temp_file "git-checkout-via-ec2-policy-merged" ".json")"
 
-  current_policy="$(${AWS_CMD[@]} s3api get-bucket-policy --bucket "${S3_BUCKET}" --query 'Policy' --output text 2>/dev/null || true)"
+  current_policy="$(${S3_AWS_CMD[@]} s3api get-bucket-policy --bucket "${S3_BUCKET}" --query 'Policy' --output text 2>/dev/null || true)"
   if [[ -n "${current_policy}" && "${current_policy}" != "None" ]]; then
     printf '%s\n' "${current_policy}" > "${current_policy_file}"
   else
@@ -368,7 +406,7 @@ with open(merged_path, 'w', encoding='utf-8') as handle:
     handle.write('\n')
 PY
 
-  ${AWS_CMD[@]} s3api put-bucket-policy --bucket "${S3_BUCKET}" --policy "file://${merged_policy_file}" >/dev/null
+  ${S3_AWS_CMD[@]} s3api put-bucket-policy --bucket "${S3_BUCKET}" --policy "file://${merged_policy_file}" >/dev/null
   rm -f "${current_policy_file}" "${merged_policy_file}"
 }
 
@@ -381,7 +419,7 @@ prepare_run_artifacts() {
 }
 
 cleanup_s3_run_artifacts() {
-  ${AWS_CMD[@]} s3 rm "s3://${S3_BUCKET}/${RUN_S3_PREFIX}/" --recursive >/dev/null 2>&1 || true
+  ${S3_AWS_CMD[@]} s3 rm "s3://${S3_BUCKET}/${RUN_S3_PREFIX}/" --recursive >/dev/null 2>&1 || true
 }
 
 build_ssm_parameters_file() {
@@ -446,12 +484,12 @@ PY
 }
 
 s3_object_exists() {
-  ${AWS_CMD[@]} s3api head-object --bucket "${S3_BUCKET}" --key "$1" >/dev/null 2>&1
+  ${S3_AWS_CMD[@]} s3api head-object --bucket "${S3_BUCKET}" --key "$1" >/dev/null 2>&1
 }
 
 download_result_from_s3() {
   [[ "${CREATE_DIRS}" == "1" ]] && mkdir -p "$(dirname "${OUTPUT_PATH}")"
-  ${AWS_CMD[@]} s3 cp "s3://${S3_BUCKET}/${OUTPUT_KEY}" "${OUTPUT_PATH}" --only-show-errors >/dev/null
+  ${S3_AWS_CMD[@]} s3 cp "s3://${S3_BUCKET}/${OUTPUT_KEY}" "${OUTPUT_PATH}" --only-show-errors >/dev/null
 }
 
 run_remote_checkout() {
