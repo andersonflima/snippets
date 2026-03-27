@@ -450,7 +450,11 @@ commands = [
 ]
 if aws_region:
     commands.append(f'export AWS_REGION="{aws_region}" AWS_DEFAULT_REGION="{aws_region}"')
+if proxy_url:
+    commands.append(f'export HTTPS_PROXY="{proxy_url}" HTTP_PROXY="{proxy_url}" ALL_PROXY="{proxy_url}"')
+    commands.append(f'export https_proxy="{proxy_url}" http_proxy="{proxy_url}" all_proxy="{proxy_url}"')
 commands.append(f'mkdir -p "{remote_dir}"')
+commands.append('if command -v wget >/dev/null 2>&1; then REMOTE_DOWNLOADER="wget"; elif command -v curl >/dev/null 2>&1; then REMOTE_DOWNLOADER="curl"; else echo "wget/curl não encontrados no EC2" >&2; exit 1; fi')
 
 curl_cmd = [
     "curl",
@@ -472,7 +476,26 @@ for header in headers:
     curl_cmd.extend(["-H", header])
 curl_cmd.extend(["--url", url, "-o", remote_output])
 
-commands.append(" ".join(shlex.quote(part) for part in curl_cmd))
+wget_cmd = [
+    "wget",
+    "-q",
+    "--tries=3",
+    "-O", remote_output,
+]
+if connect_timeout:
+    wget_cmd.extend(["--connect-timeout", connect_timeout])
+if max_time:
+    wget_cmd.extend(["--timeout", max_time])
+if insecure:
+    wget_cmd.append("--no-check-certificate")
+if user_agent:
+    wget_cmd.extend(["--user-agent", user_agent])
+for header in headers:
+    wget_cmd.extend(["--header", header])
+wget_cmd.append(url)
+
+commands.append('if [ "${REMOTE_DOWNLOADER}" = "wget" ]; then ' + " ".join(shlex.quote(part) for part in wget_cmd) + '; else ' + " ".join(shlex.quote(part) for part in curl_cmd) + '; fi')
+commands.append(f'test -s "{remote_output}"')
 commands.append(f'aws s3 cp "{remote_output}" "s3://{s3_bucket}/{output_key}" --only-show-errors >/dev/null')
 
 payload = {"commands": commands}
