@@ -79,6 +79,7 @@ Opções:
   --real-git <path>            Binário real do git.
   --ssh-identity <arquivo>     Chave SSH opcional para o mix via EC2.
   --proxy <url>                Proxy para wrappers e, opcionalmente, Hex.
+  --ec2-proxy <url>            Proxy exclusivo para o backend remoto no EC2.
   --ca-cert <arquivo>          CA customizada para wrappers/Hex.
   --auto-insecure-on-cert-error
                                Ativa retry inseguro no curl wrapper.
@@ -106,6 +107,7 @@ REAL_CURL_BIN=""
 REAL_GIT_BIN=""
 SSH_IDENTITY_PATH=""
 PROXY_URL=""
+EC2_PROXY_URL=""
 CA_CERT_PATH=""
 AUTO_INSECURE_ON_CERT_ERROR="0"
 CONFIGURE_HEX="0"
@@ -165,6 +167,10 @@ while [[ $# -gt 0 ]]; do
       ;;
     --proxy)
       PROXY_URL="${2:-}"
+      shift 2
+      ;;
+    --ec2-proxy)
+      EC2_PROXY_URL="${2:-}"
       shift 2
       ;;
     --ca-cert)
@@ -254,6 +260,9 @@ if [[ -n "${SSH_IDENTITY_PATH}" ]]; then
 fi
 if [[ -n "${PROXY_URL}" ]]; then
   WRAPPER_ENV_ARGS+=(--proxy "${PROXY_URL}")
+fi
+if [[ -n "${EC2_PROXY_URL}" ]]; then
+  WRAPPER_ENV_ARGS+=(--ec2-proxy "${EC2_PROXY_URL}")
 fi
 if [[ -n "${CA_CERT_PATH}" ]]; then
   WRAPPER_ENV_ARGS+=(--ca-cert "${CA_CERT_PATH}")

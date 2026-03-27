@@ -65,6 +65,7 @@ unset WRAPPERS_VIA_EC2_AWS_REGION 2>/dev/null || true
 unset WRAPPERS_VIA_EC2_S3_BUCKET 2>/dev/null || true
 unset WRAPPERS_VIA_EC2_S3_PREFIX 2>/dev/null || true
 unset WRAPPERS_VIA_EC2_ALL_URLS 2>/dev/null || true
+unset WRAPPERS_VIA_EC2_PROXY 2>/dev/null || true
 
 unset CURL_WRAPPER_REAL_CURL 2>/dev/null || true
 unset CURL_WRAPPER_ENABLE_MASON_SMART_RELEASES 2>/dev/null || true
@@ -77,6 +78,7 @@ unset CURL_WRAPPER_MASON_SEED_DIR 2>/dev/null || true
 unset CURL_WRAPPER_USE_EC2 2>/dev/null || true
 unset CURL_WRAPPER_EC2_ALL_URLS 2>/dev/null || true
 unset CURL_WRAPPER_EC2_REQUIRED 2>/dev/null || true
+unset CURL_WRAPPER_EC2_PROXY 2>/dev/null || true
 unset CURL_WRAPPER_PROXY 2>/dev/null || true
 unset CURL_WRAPPER_AUTO_INSECURE_ON_CERT_ERROR 2>/dev/null || true
 
@@ -85,6 +87,7 @@ unset GIT_ZIP_WRAPPER_ARCHIVE_FORMAT 2>/dev/null || true
 unset GIT_ZIP_WRAPPER_USE_EC2 2>/dev/null || true
 unset GIT_ZIP_WRAPPER_EC2_ALL_URLS 2>/dev/null || true
 unset GIT_ZIP_WRAPPER_EC2_REQUIRED 2>/dev/null || true
+unset GIT_ZIP_WRAPPER_EC2_PROXY 2>/dev/null || true
 unset GIT_ZIP_WRAPPER_PROXY 2>/dev/null || true
 unset GIT_ZIP_WRAPPER_CURL_CACERT 2>/dev/null || true
 unset GIT_ZIP_WRAPPER_CURL_INSECURE 2>/dev/null || true

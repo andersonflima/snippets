@@ -31,6 +31,7 @@ GIT_ZIP_WRAPPER_EC2_ALL_URLS="${GIT_ZIP_WRAPPER_EC2_ALL_URLS:-${WRAPPERS_VIA_EC2
 GIT_ZIP_WRAPPER_EC2_FETCH_HELPER="${GIT_ZIP_WRAPPER_EC2_HELPER:-${WRAPPER_DIR}/fetch-url-via-ec2}"
 GIT_ZIP_WRAPPER_EC2_CLONE_HELPER="${GIT_ZIP_WRAPPER_EC2_CLONE_HELPER:-${WRAPPER_DIR}/git-clone-via-ec2}"
 GIT_ZIP_WRAPPER_EC2_REQUIRED="${GIT_ZIP_WRAPPER_EC2_REQUIRED:-${WRAPPERS_VIA_EC2_ENABLED:-0}}"
+GIT_ZIP_WRAPPER_EC2_PROXY="${GIT_ZIP_WRAPPER_EC2_PROXY:-${WRAPPERS_VIA_EC2_PROXY:-}}"
 
 resolve_proxy_config() {
   local proxy
@@ -454,8 +455,8 @@ download_with_ec2_backend() {
   if [[ -n "${user_agent}" ]]; then
     helper_cmd+=(--user-agent "${user_agent}")
   fi
-  if [[ -n "${GIT_ZIP_WRAPPER_ACTIVE_PROXY}" ]]; then
-    helper_cmd+=(--proxy "${GIT_ZIP_WRAPPER_ACTIVE_PROXY}")
+  if [[ -n "${GIT_ZIP_WRAPPER_EC2_PROXY}" ]]; then
+    helper_cmd+=(--proxy "${GIT_ZIP_WRAPPER_EC2_PROXY}")
   fi
   if is_truthy "${GIT_ZIP_WRAPPER_CURL_INSECURE}"; then
     helper_cmd+=(--insecure)
@@ -475,8 +476,8 @@ clone_with_ec2_backend() {
   for clone_arg in "${CLONE_FORWARD_ARGS[@]}"; do
     helper_cmd+=(--git-arg "${clone_arg}")
   done
-  if [[ -n "${GIT_ZIP_WRAPPER_ACTIVE_PROXY}" ]]; then
-    helper_cmd+=(--proxy "${GIT_ZIP_WRAPPER_ACTIVE_PROXY}")
+  if [[ -n "${GIT_ZIP_WRAPPER_EC2_PROXY}" ]]; then
+    helper_cmd+=(--proxy "${GIT_ZIP_WRAPPER_EC2_PROXY}")
   fi
   if is_truthy "${GIT_ZIP_WRAPPER_CURL_INSECURE}"; then
     helper_cmd+=(--insecure)

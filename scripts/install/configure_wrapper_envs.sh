@@ -79,6 +79,7 @@ Opções:
   --s3-prefix <prefixo>        Prefixo S3 compartilhado. Padrão: wrappers-via-ec2
   --disable-ec2-backend        Desliga o backend remoto via EC2 nos wrappers.
   --proxy <url>                Define proxy para wrappers e env padrão.
+  --ec2-proxy <url>            Define proxy exclusivo para o backend remoto no EC2.
   --ca-cert <arquivo>          Define CA customizada para o wrapper de git.
   --auto-insecure-on-cert-error
                                Ativa retry inseguro no wrapper de curl.
@@ -100,6 +101,7 @@ GIT_INSTALL_DIR="${HOME}/.local/share/git-zip-wrapper/bin"
 REAL_CURL_BIN="${CURL_WRAPPER_REAL_CURL:-}"
 REAL_GIT_BIN="${GIT_ZIP_WRAPPER_REAL_GIT:-}"
 PROXY_URL=""
+EC2_PROXY_URL="${WRAPPERS_VIA_EC2_PROXY:-}"
 CA_CERT_PATH=""
 AUTO_INSECURE_ON_CERT_ERROR="0"
 MASON_SEED_DIR="${CURL_WRAPPER_MASON_SEED_DIR:-}"
@@ -175,6 +177,10 @@ while [[ $# -gt 0 ]]; do
       ;;
     --proxy)
       PROXY_URL="${2:-}"
+      shift 2
+      ;;
+    --ec2-proxy)
+      EC2_PROXY_URL="${2:-}"
       shift 2
       ;;
     --ca-cert)
@@ -254,6 +260,11 @@ render_optional_exports() {
     fi
     if [[ -n "${S3_BUCKET_NAME}" ]]; then
       printf 'export WRAPPERS_VIA_EC2_S3_BUCKET=%s\n' "$(shell_quote "${S3_BUCKET_NAME}")"
+    fi
+    if [[ -n "${EC2_PROXY_URL}" ]]; then
+      printf 'export WRAPPERS_VIA_EC2_PROXY=%s\n' "$(shell_quote "${EC2_PROXY_URL}")"
+      printf 'export CURL_WRAPPER_EC2_PROXY=%s\n' "$(shell_quote "${EC2_PROXY_URL}")"
+      printf 'export GIT_ZIP_WRAPPER_EC2_PROXY=%s\n' "$(shell_quote "${EC2_PROXY_URL}")"
     fi
   fi
 

@@ -33,6 +33,7 @@ CURL_WRAPPER_USE_EC2="${CURL_WRAPPER_USE_EC2:-${WRAPPERS_VIA_EC2_ENABLED:-0}}"
 CURL_WRAPPER_EC2_ALL_URLS="${CURL_WRAPPER_EC2_ALL_URLS:-${WRAPPERS_VIA_EC2_ALL_URLS:-1}}"
 CURL_WRAPPER_EC2_HELPER="${CURL_WRAPPER_EC2_HELPER:-${WRAPPER_DIR}/fetch-url-via-ec2}"
 CURL_WRAPPER_EC2_REQUIRED="${CURL_WRAPPER_EC2_REQUIRED:-${WRAPPERS_VIA_EC2_ENABLED:-0}}"
+CURL_WRAPPER_EC2_PROXY="${CURL_WRAPPER_EC2_PROXY:-${WRAPPERS_VIA_EC2_PROXY:-}}"
 
 is_zip_extension() {
   local value
@@ -965,8 +966,8 @@ download_with_ec2_backend() {
   if [[ -n "${CURL_FALLBACK_USER_AGENT}" ]]; then
     helper_cmd+=(--user-agent "${CURL_FALLBACK_USER_AGENT}")
   fi
-  if [[ -n "${CURL_FALLBACK_PROXY}" ]]; then
-    helper_cmd+=(--proxy "${CURL_FALLBACK_PROXY}")
+  if [[ -n "${CURL_WRAPPER_EC2_PROXY}" ]]; then
+    helper_cmd+=(--proxy "${CURL_WRAPPER_EC2_PROXY}")
   fi
   if [[ "${CURL_FALLBACK_INSECURE}" == "1" ]]; then
     helper_cmd+=(--insecure)
