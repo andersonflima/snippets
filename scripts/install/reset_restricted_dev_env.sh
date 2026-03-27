@@ -111,6 +111,7 @@ if [[ "${RESET_INSTALL_DIRS}" == "1" ]]; then
   remove_dir_if_exists "${HOME}/.local/share/mix-ec2-wrapper"
   remove_dir_if_exists "${HOME}/.local/share/curl-python-wrapper"
   remove_dir_if_exists "${HOME}/.local/share/git-zip-wrapper"
+  remove_dir_if_exists "${HOME}/.local/share/nvim-ec2-wrapper"
 fi
 
 cat <<EOF
