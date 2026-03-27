@@ -29,6 +29,14 @@ Uso recomendado:
 
 ```bash
 sh scripts/configure_restricted_dev_env.sh "<bucket>"
+```
+
+Esse entrypoint público já persiste automaticamente no `~/.zshrc`.
+
+Se você quiser carregar só na sessão atual, sem persistir:
+
+```bash
+sh scripts/configure_restricted_dev_env.sh "<bucket>" --no-shell-rc
 . scripts/activate_restricted_dev_env.sh
 ```
 

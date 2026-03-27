@@ -34,13 +34,17 @@ Esse fluxo instala e configura:
 - wrapper do `git`
 - envs compartilhadas do EC2/S3
 
-Por padrão, o bootstrap não altera mais o `~/.zshrc`. Para ativar na sessão atual:
+No entrypoint público, a configuração agora é persistida automaticamente no `~/.zshrc`.
+
+Se você quiser ativar só na sessão atual, sem persistir:
 
 ```bash
+. scripts/deactivate_restricted_dev_env.sh 2>/dev/null || true
+sh scripts/configure_restricted_dev_env.sh "<bucket>" --no-shell-rc
 . scripts/activate_restricted_dev_env.sh
 ```
 
-Depois disso, abra o `nvim` normalmente a partir da sessão onde você executou o `activate`.
+Depois disso, abra o `nvim` normalmente.
 
 Para diagnosticar se o Mason está vendo os wrappers:
 
@@ -48,13 +52,10 @@ Para diagnosticar se o Mason está vendo os wrappers:
 sh scripts/doctor_restricted_dev_env.sh
 ```
 
-Se você quiser persistir no shell rc de propósito:
+Se você quiser mudar o rc de destino:
 
 ```bash
-sh scripts/configure_restricted_dev_env.sh \
-  "<bucket>" \
-  --apply-shell-rc \
-  --shell-rc "$HOME/.zshrc"
+sh scripts/configure_restricted_dev_env.sh "<bucket>" --shell-rc "$HOME/.zshrc"
 ```
 
 Para zerar tudo depois:
