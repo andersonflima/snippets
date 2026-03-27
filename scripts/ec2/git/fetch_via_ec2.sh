@@ -498,14 +498,17 @@ remote_input = f"{remote_dir}/input.tar.gz"
 remote_output = f"{remote_dir}/output.tar.gz"
 remote_extract_dir = f"{remote_dir}/extract"
 remote_git_dir = f"{remote_extract_dir}/{git_basename}"
+remote_home_dir = f"{remote_dir}/home"
 
 commands = [
     "set -euo pipefail",
     "unset AWS_ACCESS_KEY_ID AWS_SECRET_ACCESS_KEY AWS_SESSION_TOKEN AWS_PROFILE AWS_DEFAULT_PROFILE",
     "unset AWS_WEB_IDENTITY_TOKEN_FILE AWS_ROLE_ARN AWS_ROLE_SESSION_NAME",
     "unset AWS_EC2_METADATA_DISABLED",
+    "unset HTTPS_PROXY HTTP_PROXY ALL_PROXY https_proxy http_proxy all_proxy",
     "export AWS_SHARED_CREDENTIALS_FILE=/dev/null AWS_CONFIG_FILE=/dev/null",
     'export GIT_TERMINAL_PROMPT=0',
+    "export GIT_CONFIG_GLOBAL=/dev/null GIT_CONFIG_NOSYSTEM=1",
 ]
 if aws_region:
     commands.append(f'export AWS_REGION="{aws_region}" AWS_DEFAULT_REGION="{aws_region}"')
@@ -514,12 +517,15 @@ if proxy_url:
     commands.append(f'export https_proxy="{proxy_url}" http_proxy="{proxy_url}" all_proxy="{proxy_url}"')
 commands.append('command -v git >/dev/null 2>&1 || { echo "git não encontrado no EC2" >&2; exit 1; }')
 commands.append(f'rm -rf {shlex.quote(remote_dir)}')
-commands.append(f'mkdir -p {shlex.quote(remote_extract_dir)}')
+commands.append(f'mkdir -p {shlex.quote(remote_extract_dir)} {shlex.quote(remote_home_dir)}')
+commands.append(f'export HOME={shlex.quote(remote_home_dir)}')
 commands.append(f'aws s3 cp {shlex.quote(f"s3://{s3_bucket}/{input_key}")} {shlex.quote(remote_input)} --only-show-errors >/dev/null')
 commands.append(f'tar -xzf {shlex.quote(remote_input)} -C {shlex.quote(remote_extract_dir)}')
 commands.append(f'test -d {shlex.quote(remote_git_dir)}')
+commands.append(f'git --git-dir {shlex.quote(remote_git_dir)} config --local --unset-all http.proxy >/dev/null 2>&1 || true')
+commands.append(f'git --git-dir {shlex.quote(remote_git_dir)} config --local --unset-all https.proxy >/dev/null 2>&1 || true')
 
-fetch_cmd = ["git"]
+fetch_cmd = ["git", "-c", "http.version=HTTP/1.1"]
 if insecure:
     fetch_cmd.extend(["-c", "http.sslVerify=false"])
 fetch_cmd.extend(["--git-dir", remote_git_dir, "fetch"])
