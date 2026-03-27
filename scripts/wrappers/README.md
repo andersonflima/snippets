@@ -6,9 +6,8 @@ Arquivos:
 
 - `curl_python_wrapper.sh`: wrapper de `curl` com fallback para Python, `gh release` e estratégias inteligentes para Mason
 - `git_zip_clone_wrapper.sh`: wrapper de `git clone` que baixa tarball/zip de repositório e monta o diretório localmente
+- `mix_ec2_wrapper.sh`: wrapper de `mix` para roteamento de comandos de dependência para o EC2
 - `fetch-url-via-ec2`: helper instalado junto dos wrappers para buscar URLs via EC2 + S3 quando a máquina local estiver restrita
-
-Os entrypoints antigos em `scripts/` raiz continuam existindo como wrappers finos por compatibilidade.
 
 ## Estrutura
 
@@ -22,13 +21,7 @@ Os entrypoints antigos em `scripts/` raiz continuam existindo como wrappers fino
 
 ### Bootstrap único
 
-Se você não quiser rodar instalador por instalador, use o bootstrap único:
-
-```bash
-sh scripts/setup_restricted_dev_env.sh --s3-bucket "<bucket>"
-```
-
-Ou, no atalho mais simples:
+Fluxo público recomendado:
 
 ```bash
 sh scripts/configure_restricted_dev_env.sh "<bucket>"
@@ -50,8 +43,8 @@ Por padrão, o bootstrap não altera mais o `~/.zshrc`. Para ativar na sessão a
 Se você quiser persistir no shell rc de propósito:
 
 ```bash
-sh scripts/setup_restricted_dev_env.sh \
-  --s3-bucket "<bucket>" \
+sh scripts/configure_restricted_dev_env.sh \
+  "<bucket>" \
   --apply-shell-rc \
   --shell-rc "$HOME/.zshrc"
 ```
@@ -65,8 +58,8 @@ sh scripts/reset_restricted_dev_env.sh
 Opcionalmente, ele também pode aplicar `mix hex.config`:
 
 ```bash
-sh scripts/setup_restricted_dev_env.sh \
-  --s3-bucket "<bucket>" \
+sh scripts/configure_restricted_dev_env.sh \
+  "<bucket>" \
   --configure-hex \
   --hex-unsafe-https
 ```
@@ -101,26 +94,13 @@ sh scripts/install/install_git_zip_wrapper.sh \
 
 ### Configurar envs do ambiente
 
-Depois de instalar os wrappers, gere e conecte as envs ao shell:
+O caminho público recomendado é usar só o bootstrap:
 
 ```bash
-sh scripts/install/configure_wrapper_envs.sh
+sh scripts/configure_restricted_dev_env.sh "<bucket>"
 ```
 
-Se você usa `zsh` e quer aplicar direto no `~/.zshrc`:
-
-```bash
-sh scripts/configure_wrapper_envs_zsh.sh
-```
-
-Opcionalmente:
-
-```bash
-sh scripts/install/configure_wrapper_envs.sh \
-  --shell-rc "$HOME/.zshrc" \
-  --proxy "http://proxy.seu-dominio:3128" \
-  --ca-cert "/etc/pki/ca-trust/source/anchors/corp-ca.pem"
-```
+Os configuradores individuais continuam existindo apenas em `scripts/install/` para manutenção interna e cenários avançados.
 
 ## Shell
 
@@ -354,12 +334,7 @@ export CURL_WRAPPER_MASON_SEED_DIR="$HOME/.cache/mason-seeds"
 
 Depois disso, o wrapper tenta o seed local antes de chamar o builder.
 
-Se quiser persistir isso no `zsh`:
-
-```bash
-sh scripts/configure_wrapper_envs_zsh.sh \
-  --mason-seed-dir "$HOME/.cache/mason-seeds"
-```
+Se quiser persistir isso no shell rc, use o bootstrap com `--apply-shell-rc`.
 
 ## Ambientes com proxy/certificado
 
