@@ -31,9 +31,6 @@ is_wrapper_binary_path() {
     git)
       wrapper_path="${GIT_INSTALL_DIR}/git"
       ;;
-    nvim)
-      wrapper_path="${NVIM_INSTALL_DIR}/nvim"
-      ;;
     *)
       return 1
       ;;
@@ -72,10 +69,8 @@ Opções:
   --no-shell-rc                Não altera arquivo rc do shell.
   --curl-install-dir <dir>     Diretório do wrapper instalado de curl.
   --git-install-dir <dir>      Diretório do wrapper instalado de git.
-  --nvim-install-dir <dir>     Diretório do wrapper instalado de nvim.
   --real-curl <path>           Caminho do curl real.
   --real-git <path>            Caminho do git real.
-  --real-nvim <path>           Caminho do nvim real.
   --mason-seed-dir <dir>       Diretório com artefatos seed do Mason.
   --instance-name <nome>       Instância EC2 compartilhada. Padrão: Dander
   --aws-profile <profile>      Profile AWS para backend remoto dos wrappers.
@@ -94,7 +89,6 @@ Padrões:
   --shell-rc: só usado quando combinado com --apply-shell-rc
   --curl-install-dir: $HOME/.local/share/curl-python-wrapper/bin
   --git-install-dir: $HOME/.local/share/git-zip-wrapper/bin
-  --nvim-install-dir: $HOME/.local/share/nvim-ec2-wrapper/bin
 USAGE
 }
 
@@ -103,10 +97,8 @@ SHELL_RC=""
 APPLY_SHELL_RC="0"
 CURL_INSTALL_DIR="${HOME}/.local/share/curl-python-wrapper/bin"
 GIT_INSTALL_DIR="${HOME}/.local/share/git-zip-wrapper/bin"
-NVIM_INSTALL_DIR="${HOME}/.local/share/nvim-ec2-wrapper/bin"
 REAL_CURL_BIN="${CURL_WRAPPER_REAL_CURL:-}"
 REAL_GIT_BIN="${GIT_ZIP_WRAPPER_REAL_GIT:-}"
-REAL_NVIM_BIN="${NVIM_WRAPPER_REAL_NVIM:-}"
 PROXY_URL=""
 CA_CERT_PATH=""
 AUTO_INSECURE_ON_CERT_ERROR="0"
@@ -145,20 +137,12 @@ while [[ $# -gt 0 ]]; do
       GIT_INSTALL_DIR="${2:-}"
       shift 2
       ;;
-    --nvim-install-dir)
-      NVIM_INSTALL_DIR="${2:-}"
-      shift 2
-      ;;
     --real-curl)
       REAL_CURL_BIN="${2:-}"
       shift 2
       ;;
     --real-git)
       REAL_GIT_BIN="${2:-}"
-      shift 2
-      ;;
-    --real-nvim)
-      REAL_NVIM_BIN="${2:-}"
       shift 2
       ;;
     --mason-seed-dir)
@@ -214,7 +198,6 @@ done
 [[ -n "${ENV_FILE}" ]] || die "--env-file não pode ser vazio"
 [[ -n "${CURL_INSTALL_DIR}" ]] || die "--curl-install-dir não pode ser vazio"
 [[ -n "${GIT_INSTALL_DIR}" ]] || die "--git-install-dir não pode ser vazio"
-[[ -n "${NVIM_INSTALL_DIR}" ]] || die "--nvim-install-dir não pode ser vazio"
 
 if [[ -z "${REAL_CURL_BIN}" ]]; then
   REAL_CURL_BIN="$(resolve_real_binary curl || true)"
@@ -224,19 +207,12 @@ if [[ -z "${REAL_GIT_BIN}" ]]; then
   REAL_GIT_BIN="$(resolve_real_binary git || true)"
 fi
 
-if [[ -z "${REAL_NVIM_BIN}" ]]; then
-  REAL_NVIM_BIN="$(resolve_real_binary nvim || true)"
-fi
-
 [[ -n "${REAL_CURL_BIN}" ]] || die "não foi possível localizar curl no PATH"
 [[ -x "${REAL_CURL_BIN}" ]] || die "curl inválido/não executável: ${REAL_CURL_BIN}"
 [[ -n "${REAL_GIT_BIN}" ]] || die "não foi possível localizar git no PATH"
 [[ -x "${REAL_GIT_BIN}" ]] || die "git inválido/não executável: ${REAL_GIT_BIN}"
-[[ -n "${REAL_NVIM_BIN}" ]] || die "não foi possível localizar nvim no PATH"
-[[ -x "${REAL_NVIM_BIN}" ]] || die "nvim inválido/não executável: ${REAL_NVIM_BIN}"
 is_wrapper_binary_path curl "${REAL_CURL_BIN}" && die "curl real não pode apontar para o wrapper instalado: ${REAL_CURL_BIN}"
 is_wrapper_binary_path git "${REAL_GIT_BIN}" && die "git real não pode apontar para o wrapper instalado: ${REAL_GIT_BIN}"
-is_wrapper_binary_path nvim "${REAL_NVIM_BIN}" && die "nvim real não pode apontar para o wrapper instalado: ${REAL_NVIM_BIN}"
 
 detect_shell_rc() {
   local active_shell shell_name
@@ -316,10 +292,8 @@ write_env_file() {
 
 export CURL_WRAPPER_REAL_CURL=$(shell_quote "${REAL_CURL_BIN}")
 export GIT_ZIP_WRAPPER_REAL_GIT=$(shell_quote "${REAL_GIT_BIN}")
-export NVIM_WRAPPER_REAL_NVIM=$(shell_quote "${REAL_NVIM_BIN}")
 export CURL=$(shell_quote "${CURL_INSTALL_DIR}/curl")
 export GIT=$(shell_quote "${GIT_INSTALL_DIR}/git")
-export NVIM=$(shell_quote "${NVIM_INSTALL_DIR}/nvim")
 export CURL_WRAPPER_ENABLE_MASON_SMART_RELEASES="1"
 export CURL_WRAPPER_RELEASE_FALLBACK_REPOS="elixir-lsp/elixir-ls,luals/lua-language-server,omnisharp/omnisharp-roslyn"
 export CURL_WRAPPER_RELEASE_CACHE_DIR=$(shell_quote "${HOME}/.cache/curl-python-wrapper/releases")
@@ -329,7 +303,7 @@ export CURL_WRAPPER_MASON_REPACKAGE_EXTENSIONS="tar.gz,tgz,tar"
 
 export GIT_ZIP_WRAPPER_ARCHIVE_FORMAT="tar.gz"
 EOF
-    printf 'export PATH=%s:"$PATH"\n' "$(shell_quote "${NVIM_INSTALL_DIR}:${CURL_INSTALL_DIR}:${GIT_INSTALL_DIR}")"
+    printf 'export PATH=%s:"$PATH"\n' "$(shell_quote "${CURL_INSTALL_DIR}:${GIT_INSTALL_DIR}")"
     render_optional_exports
   } > "${ENV_FILE}"
 
@@ -374,7 +348,6 @@ Arquivo de ambiente:
 Wrapper dirs:
   curl: ${CURL_INSTALL_DIR}
   git:  ${GIT_INSTALL_DIR}
-  nvim: ${NVIM_INSTALL_DIR}
 
 Backend EC2:
   enabled: ${ENABLE_EC2_BACKEND}
@@ -385,7 +358,6 @@ Backend EC2:
 Binários reais:
   curl: ${REAL_CURL_BIN}
   git:  ${REAL_GIT_BIN}
-  nvim: ${REAL_NVIM_BIN}
 EOF
 
 if [[ "${APPLY_SHELL_RC}" == "1" ]]; then

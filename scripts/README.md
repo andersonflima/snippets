@@ -2,9 +2,8 @@
 
 Interface pública para ambiente restrito:
 
-- `scripts/configure_restricted_dev_env.sh`: instala e configura `mix`, `curl`, `git` e `nvim` com backend EC2 compartilhado
+- `scripts/configure_restricted_dev_env.sh`: instala e configura `mix`, `curl` e `git` com backend EC2 compartilhado
 - `scripts/activate_restricted_dev_env.sh`: carrega os env-files do ambiente restrito só na sessão atual
-- `scripts/run_restricted_dev_nvim.sh`: abre o `nvim` já com o ambiente restrito carregado
 - `scripts/doctor_restricted_dev_env.sh`: valida se `mix`, `curl`, `git` e `nvim` estão vendo os wrappers
 - `scripts/reset_restricted_dev_env.sh`: remove wrappers, env-files e referências no shell rc para zerar o ambiente restrito
 
@@ -15,7 +14,6 @@ Ferramentas operacionais:
 - `scripts/fetch_url_via_ec2.sh`: baixa uma URL pelo EC2 via SSM e devolve o artefato por S3
 - `scripts/fetch_mix_hex_cache_from_ec2.sh`: importa `~/.mix`, `~/.hex` e cache de projeto de um EC2
 - `scripts/build_mason_seed_artifact.sh`: gera um artefato seed do Mason fora da máquina restrita
-- `scripts/install_nvim_ec2_wrapper.sh`: instala o wrapper de `nvim` que carrega o ambiente EC2 antes de abrir o editor
 
 Implementação interna:
 
@@ -37,10 +35,4 @@ Para validar o ambiente:
 
 ```bash
 sh scripts/doctor_restricted_dev_env.sh
-```
-
-Para abrir o `nvim` com o ambiente garantido:
-
-```bash
-sh scripts/run_restricted_dev_nvim.sh
 ```

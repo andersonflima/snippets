@@ -7,7 +7,6 @@ Arquivos:
 - `curl_python_wrapper.sh`: wrapper de `curl` com fallback para Python, `gh release` e estratégias inteligentes para Mason
 - `git_zip_clone_wrapper.sh`: wrapper de `git clone` que baixa tarball/zip de repositório e monta o diretório localmente
 - `mix_ec2_wrapper.sh`: wrapper de `mix` para roteamento de comandos de dependência para o EC2
-- `nvim_ec2_wrapper.sh`: wrapper de `nvim` para abrir LazyVim/Mason já com os wrappers EC2 ativos
 - `fetch-url-via-ec2`: helper instalado junto dos wrappers para buscar URLs via EC2 + S3 quando a máquina local estiver restrita
 
 ## Estrutura
@@ -33,7 +32,6 @@ Esse fluxo instala e configura:
 - wrapper do `mix`
 - wrapper do `curl`
 - wrapper do `git`
-- wrapper do `nvim`
 - envs compartilhadas do EC2/S3
 
 Por padrão, o bootstrap não altera mais o `~/.zshrc`. Para ativar na sessão atual:
@@ -42,17 +40,7 @@ Por padrão, o bootstrap não altera mais o `~/.zshrc`. Para ativar na sessão a
 . scripts/activate_restricted_dev_env.sh
 ```
 
-Para abrir o `nvim` já com esse ambiente carregado:
-
-```bash
-nvim
-```
-
-Ou explicitamente:
-
-```bash
-sh scripts/run_restricted_dev_nvim.sh
-```
+Depois disso, abra o `nvim` normalmente a partir da sessão onde você executou o `activate`.
 
 Para diagnosticar se o Mason está vendo os wrappers:
 

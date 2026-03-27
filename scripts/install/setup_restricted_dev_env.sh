@@ -34,9 +34,6 @@ is_wrapper_binary_path() {
     git)
       wrapper_path="${HOME}/.local/share/git-zip-wrapper/bin/git"
       ;;
-    nvim)
-      wrapper_path="${HOME}/.local/share/nvim-ec2-wrapper/bin/nvim"
-      ;;
     *)
       return 1
       ;;
@@ -80,7 +77,6 @@ Opções:
   --real-mix <path>            Binário real do mix.
   --real-curl <path>           Binário real do curl.
   --real-git <path>            Binário real do git.
-  --real-nvim <path>           Binário real do nvim.
   --ssh-identity <arquivo>     Chave SSH opcional para o mix via EC2.
   --proxy <url>                Proxy para wrappers e, opcionalmente, Hex.
   --ca-cert <arquivo>          CA customizada para wrappers/Hex.
@@ -108,7 +104,6 @@ APPLY_SHELL_RC="0"
 REAL_MIX_BIN=""
 REAL_CURL_BIN=""
 REAL_GIT_BIN=""
-REAL_NVIM_BIN=""
 SSH_IDENTITY_PATH=""
 PROXY_URL=""
 CA_CERT_PATH=""
@@ -162,10 +157,6 @@ while [[ $# -gt 0 ]]; do
       ;;
     --real-git)
       REAL_GIT_BIN="${2:-}"
-      shift 2
-      ;;
-    --real-nvim)
-      REAL_NVIM_BIN="${2:-}"
       shift 2
       ;;
     --ssh-identity)
@@ -222,18 +213,13 @@ fi
 if [[ -z "${REAL_GIT_BIN}" ]]; then
   REAL_GIT_BIN="$(resolve_real_binary git || true)"
 fi
-if [[ -z "${REAL_NVIM_BIN}" ]]; then
-  REAL_NVIM_BIN="$(resolve_real_binary nvim || true)"
-fi
 
 [[ -n "${REAL_MIX_BIN}" ]] || die "não foi possível localizar mix no PATH"
 [[ -n "${REAL_CURL_BIN}" ]] || die "não foi possível localizar curl no PATH"
 [[ -n "${REAL_GIT_BIN}" ]] || die "não foi possível localizar git no PATH"
-[[ -n "${REAL_NVIM_BIN}" ]] || die "não foi possível localizar nvim no PATH"
 is_wrapper_binary_path mix "${REAL_MIX_BIN}" && die "mix real não pode apontar para o wrapper instalado: ${REAL_MIX_BIN}"
 is_wrapper_binary_path curl "${REAL_CURL_BIN}" && die "curl real não pode apontar para o wrapper instalado: ${REAL_CURL_BIN}"
 is_wrapper_binary_path git "${REAL_GIT_BIN}" && die "git real não pode apontar para o wrapper instalado: ${REAL_GIT_BIN}"
-is_wrapper_binary_path nvim "${REAL_NVIM_BIN}" && die "nvim real não pode apontar para o wrapper instalado: ${REAL_NVIM_BIN}"
 
 run_step() {
   local description
@@ -257,7 +243,6 @@ WRAPPER_ENV_ARGS=(
   --s3-prefix "${WRAPPERS_S3_PREFIX}"
   --real-curl "${REAL_CURL_BIN}"
   --real-git "${REAL_GIT_BIN}"
-  --real-nvim "${REAL_NVIM_BIN}"
 )
 
 if [[ -n "${AWS_PROFILE_NAME}" ]]; then
@@ -290,8 +275,6 @@ run_step "instalando wrapper do curl" \
   sh "${ROOT_DIR}/install_curl_python_wrapper.sh" --real-curl "${REAL_CURL_BIN}"
 run_step "instalando wrapper do git" \
   sh "${ROOT_DIR}/install_git_zip_wrapper.sh" --real-git "${REAL_GIT_BIN}"
-run_step "instalando wrapper do nvim" \
-  sh "${ROOT_DIR}/install_nvim_ec2_wrapper.sh" --real-nvim "${REAL_NVIM_BIN}"
 run_step "configurando ambiente do mix via EC2" \
   sh "${ROOT_DIR}/install/configure_mix_via_ec2_envs.sh" "${MIX_ENV_ARGS[@]}"
 run_step "configurando ambiente compartilhado dos wrappers" \
@@ -337,9 +320,6 @@ Para aplicar na sessão atual:
   . "${HOME}/.config/wrapper-envs.sh"
   rehash 2>/dev/null || true
   hash -r 2>/dev/null || true
-
-Para abrir o nvim já com esse ambiente:
-  sh "${ROOT_DIR}/run_restricted_dev_nvim.sh"
 
 Para validar se o Mason está vendo os wrappers:
   sh "${ROOT_DIR}/doctor_restricted_dev_env.sh"
