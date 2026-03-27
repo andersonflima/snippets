@@ -478,7 +478,6 @@ curl_cmd.extend(["--url", url, "-o", remote_output])
 
 wget_cmd = [
     "wget",
-    "-q",
     "--tries=3",
     "-O", remote_output,
 ]
@@ -494,7 +493,10 @@ for header in headers:
     wget_cmd.extend(["--header", header])
 wget_cmd.append(url)
 
-commands.append('if [ "${REMOTE_DOWNLOADER}" = "wget" ]; then ' + " ".join(shlex.quote(part) for part in wget_cmd) + '; else ' + " ".join(shlex.quote(part) for part in curl_cmd) + '; fi')
+commands.append('remote_fetch_success=0')
+commands.append('if command -v wget >/dev/null 2>&1; then if ' + " ".join(shlex.quote(part) for part in wget_cmd) + '; then remote_fetch_success=1; else echo "wget remoto falhou para ' + shlex.quote(url) + '" >&2; fi; fi')
+commands.append('if [ "${remote_fetch_success}" -ne 1 ] && command -v curl >/dev/null 2>&1; then if ' + " ".join(shlex.quote(part) for part in curl_cmd) + '; then remote_fetch_success=1; else echo "curl remoto falhou para ' + shlex.quote(url) + '" >&2; fi; fi')
+commands.append('[ "${remote_fetch_success}" -eq 1 ] || { echo "nenhum downloader remoto conseguiu baixar a URL" >&2; exit 1; }')
 commands.append(f'test -s "{remote_output}"')
 commands.append(f'aws s3 cp "{remote_output}" "s3://{s3_bucket}/{output_key}" --only-show-errors >/dev/null')
 
