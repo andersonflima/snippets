@@ -63,6 +63,12 @@ Para zerar tudo depois:
 sh scripts/reset_restricted_dev_env.sh
 ```
 
+Para limpar a sessão atual sem abrir outro shell:
+
+```bash
+. scripts/deactivate_restricted_dev_env.sh
+```
+
 Opcionalmente, ele também pode aplicar `mix hex.config`:
 
 ```bash

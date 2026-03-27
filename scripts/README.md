@@ -4,6 +4,7 @@ Interface pública para ambiente restrito:
 
 - `scripts/configure_restricted_dev_env.sh`: instala e configura `mix`, `curl` e `git` com backend EC2 compartilhado
 - `scripts/activate_restricted_dev_env.sh`: carrega os env-files do ambiente restrito só na sessão atual
+- `scripts/deactivate_restricted_dev_env.sh`: remove da sessão atual as envs e paths do ambiente restrito
 - `scripts/doctor_restricted_dev_env.sh`: valida se `mix`, `curl`, `git` e `nvim` estão vendo os wrappers
 - `scripts/reset_restricted_dev_env.sh`: remove wrappers, env-files e referências no shell rc para zerar o ambiente restrito
 
@@ -29,6 +30,12 @@ Uso recomendado:
 ```bash
 sh scripts/configure_restricted_dev_env.sh "<bucket>"
 . scripts/activate_restricted_dev_env.sh
+```
+
+Para descarregar o ambiente da sessão atual:
+
+```bash
+. scripts/deactivate_restricted_dev_env.sh
 ```
 
 Para validar o ambiente:

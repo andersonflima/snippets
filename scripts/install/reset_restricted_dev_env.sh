@@ -74,7 +74,8 @@ remove_lines_from_shell_rc() {
   tmp_file="$(mktemp "/tmp/reset-restricted-dev-env.XXXXXX")"
   awk '
     index($0, ".config/mix-via-ec2-envs.sh") == 0 &&
-    index($0, ".config/wrapper-envs.sh") == 0
+    index($0, ".config/wrapper-envs.sh") == 0 &&
+    index($0, ".config/mix-hex-envs.sh") == 0
   ' "${rc_file}" > "${tmp_file}"
   mv "${tmp_file}" "${rc_file}"
 }
@@ -105,12 +106,14 @@ fi
 if [[ "${RESET_ENV_FILES}" == "1" ]]; then
   remove_file_if_exists "${HOME}/.config/mix-via-ec2-envs.sh"
   remove_file_if_exists "${HOME}/.config/wrapper-envs.sh"
+  remove_file_if_exists "${HOME}/.config/mix-hex-envs.sh"
 fi
 
 if [[ "${RESET_INSTALL_DIRS}" == "1" ]]; then
   remove_dir_if_exists "${HOME}/.local/share/mix-ec2-wrapper"
   remove_dir_if_exists "${HOME}/.local/share/curl-python-wrapper"
   remove_dir_if_exists "${HOME}/.local/share/git-zip-wrapper"
+  remove_dir_if_exists "${HOME}/.local/share/nvim-ec2-wrapper"
 fi
 
 cat <<EOF
@@ -121,4 +124,7 @@ Shell rc:
 
 Para abrir uma sessão limpa agora:
   zsh -f
+
+Para limpar a sessão atual:
+  . scripts/deactivate_restricted_dev_env.sh
 EOF
