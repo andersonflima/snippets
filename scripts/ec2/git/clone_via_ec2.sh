@@ -54,6 +54,10 @@ usage() {
 Uso:
   scripts/ec2/git/clone_via_ec2.sh --repo-url <url> --output <arquivo> [opções]
 
+Observação:
+  O clone remoto não materializa objetos Git LFS no EC2.
+  Se necessário, execute git lfs pull após extrair o repositório localmente.
+
 Opções:
   --repo-url <url>             URL do repositório para clone remoto via HTTP(S).
   --output <arquivo>           Arquivo local .tar.gz de destino.
@@ -460,6 +464,7 @@ commands = [
     "unset AWS_EC2_METADATA_DISABLED",
     "export AWS_SHARED_CREDENTIALS_FILE=/dev/null AWS_CONFIG_FILE=/dev/null",
     'export GIT_TERMINAL_PROMPT=0',
+    'export GIT_LFS_SKIP_SMUDGE=1',
 ]
 if aws_region:
     commands.append(f'export AWS_REGION="{aws_region}" AWS_DEFAULT_REGION="{aws_region}"')
@@ -470,7 +475,15 @@ commands.append('command -v git >/dev/null 2>&1 || { echo "git não encontrado n
 commands.append(f'rm -rf {shlex.quote(remote_dir)}')
 commands.append(f'mkdir -p {shlex.quote(remote_dir)}')
 
-clone_cmd = ["git"]
+clone_cmd = [
+    "git",
+    "-c",
+    "filter.lfs.required=false",
+    "-c",
+    "filter.lfs.smudge=",
+    "-c",
+    "filter.lfs.process=",
+]
 if insecure:
     clone_cmd.extend(["-c", "http.sslVerify=false"])
 clone_cmd.append("clone")

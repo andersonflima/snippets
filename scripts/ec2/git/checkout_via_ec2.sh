@@ -52,6 +52,10 @@ usage() {
 Uso:
   scripts/ec2/git/checkout_via_ec2.sh --repo-url <url> --output <arquivo> [opções]
 
+Observação:
+  O checkout remoto não materializa objetos Git LFS no EC2.
+  Se necessário, execute git lfs pull após extrair o repositório localmente.
+
 Opções:
   --repo-url <url>             URL do repositório para clone remoto via HTTP(S).
   --output <arquivo>           Arquivo local .tar.gz de destino.
@@ -452,6 +456,7 @@ commands = [
     'export AWS_SHARED_CREDENTIALS_FILE=/dev/null AWS_CONFIG_FILE=/dev/null',
     'export GIT_TERMINAL_PROMPT=0',
     'export GIT_CONFIG_GLOBAL=/dev/null GIT_CONFIG_NOSYSTEM=1',
+    'export GIT_LFS_SKIP_SMUDGE=1',
 ]
 if aws_region:
     commands.append(f'export AWS_REGION="{aws_region}" AWS_DEFAULT_REGION="{aws_region}"')
