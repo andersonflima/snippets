@@ -100,6 +100,7 @@ unset GIT_ZIP_WRAPPER_EC2_PROXY 2>/dev/null || true
 unset GIT_ZIP_WRAPPER_PROXY 2>/dev/null || true
 unset GIT_ZIP_WRAPPER_CURL_CACERT 2>/dev/null || true
 unset GIT_ZIP_WRAPPER_CURL_INSECURE 2>/dev/null || true
+unset GIT_ZIP_WRAPPER_LFS_MODE 2>/dev/null || true
 
 unset BREW_WRAPPER_REAL_BREW 2>/dev/null || true
 unset BREW_WRAPPER_CURL_BIN 2>/dev/null || true

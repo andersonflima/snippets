@@ -294,6 +294,11 @@ Principais variáveis:
 - `GIT_ZIP_WRAPPER_CURL_INSECURE`
   Desativa validação TLS do `curl` usado pelo wrapper.
 
+- `GIT_ZIP_WRAPPER_LFS_MODE`
+  Define onde os blobs do Git LFS serão materializados quando o clone usar o backend remoto.
+  Valores válidos: `local`, `ec2`.
+  Padrão no bootstrap com backend EC2: `ec2`.
+
 - `GIT_ZIP_WRAPPER_STRICT`
   Impede fallback para `git clone` normal.
 
@@ -322,13 +327,19 @@ Quando esse backend está ativo:
 
 - o `curl` wrapper tenta buscar assets suportados via EC2 antes do download local
 - o `git` wrapper tenta baixar archives GitHub via EC2 antes das tentativas locais
+- o `git` wrapper pode materializar Git LFS no EC2 antes de empacotar o repositório
 - o `curl` do Mason pode aproveitar o EC2 para baixar `.zip` oficiais de release quando a máquina local não consegue
 
 No modo configurado pelo bootstrap atual:
 
 - `curl` usa EC2 por padrão para qualquer URL suportada e falha se o backend remoto falhar
 - `git` usa EC2 por padrão para os clones GitHub suportados e falha se o backend remoto falhar
+- `git` exporta `GIT_ZIP_WRAPPER_LFS_MODE=ec2`, então o clone remoto tenta rodar `git lfs pull` no EC2 antes de gerar o `tar.gz`
 - o fallback local deixa de ser silencioso
+
+Pré-requisito adicional para esse modo:
+
+- `git-lfs` instalado na instância EC2 que executa o backend remoto
 
 No `curl` wrapper existe uma engine adicional para pacotes do Mason que falham em ambiente corporativo por dependerem de asset `.zip` de release.
 

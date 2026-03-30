@@ -38,6 +38,7 @@ GIT_ZIP_WRAPPER_LFS_AUTORUN="${GIT_ZIP_WRAPPER_LFS_AUTORUN:-1}"
 GIT_ZIP_WRAPPER_LFS_FORCE="${GIT_ZIP_WRAPPER_LFS_FORCE:-0}"
 GIT_ZIP_WRAPPER_LFS_STRICT="${GIT_ZIP_WRAPPER_LFS_STRICT:-0}"
 GIT_ZIP_WRAPPER_LFS_RETRY_NO_PROXY="${GIT_ZIP_WRAPPER_LFS_RETRY_NO_PROXY:-1}"
+GIT_ZIP_WRAPPER_LFS_MODE="${GIT_ZIP_WRAPPER_LFS_MODE:-local}"
 GIT_GLOBAL_ARGS=()
 GIT_SUBCOMMAND=""
 GIT_SUBCOMMAND_ARGS=()
@@ -93,7 +94,25 @@ normalize_archive_format() {
   esac
 }
 
+normalize_lfs_mode() {
+  local requested
+  requested="$(printf '%s' "${1:-}" | tr '[:upper:]' '[:lower:]')"
+
+  case "${requested}" in
+    ""|local)
+      printf '%s\n' "local"
+      ;;
+    ec2|remote)
+      printf '%s\n' "ec2"
+      ;;
+    *)
+      die "modo de LFS inválido: ${requested}. Valores válidos: local, ec2"
+      ;;
+  esac
+}
+
 ARCHIVE_FORMAT="$(normalize_archive_format "${ARCHIVE_FORMAT}")"
+GIT_ZIP_WRAPPER_LFS_MODE="$(normalize_lfs_mode "${GIT_ZIP_WRAPPER_LFS_MODE}")"
 
 resolve_real_git() {
   if [[ -n "${GIT_ZIP_WRAPPER_REAL_GIT:-}" ]]; then
@@ -556,6 +575,9 @@ clone_with_ec2_backend() {
   for clone_arg in "${CLONE_FORWARD_ARGS[@]}"; do
     helper_cmd+=(--git-arg "${clone_arg}")
   done
+  if [[ "${GIT_ZIP_WRAPPER_LFS_MODE}" == "ec2" ]]; then
+    helper_cmd+=(--materialize-lfs)
+  fi
   if [[ -n "${GIT_ZIP_WRAPPER_EC2_PROXY}" ]]; then
     helper_cmd+=(--proxy "${GIT_ZIP_WRAPPER_EC2_PROXY}")
   fi
@@ -605,6 +627,9 @@ checkout_with_ec2_backend() {
   for checkout_arg in "${GIT_SUBCOMMAND_ARGS[@]}"; do
     helper_cmd+=(--git-arg "${checkout_arg}")
   done
+  if [[ "${GIT_ZIP_WRAPPER_LFS_MODE}" == "ec2" ]]; then
+    helper_cmd+=(--materialize-lfs)
+  fi
   if [[ -n "${GIT_ZIP_WRAPPER_EC2_PROXY}" ]]; then
     helper_cmd+=(--proxy "${GIT_ZIP_WRAPPER_EC2_PROXY}")
   fi
@@ -711,6 +736,9 @@ replace_mix_install_repo_with_clone() {
   ref="$(extract_requested_fetch_ref || true)"
   if [[ -n "${ref}" ]]; then
     helper_cmd+=(--git-arg --branch --git-arg "${ref}" --git-arg --single-branch)
+  fi
+  if [[ "${GIT_ZIP_WRAPPER_LFS_MODE}" == "ec2" ]]; then
+    helper_cmd+=(--materialize-lfs)
   fi
   if [[ -n "${GIT_ZIP_WRAPPER_EC2_PROXY}" ]]; then
     helper_cmd+=(--proxy "${GIT_ZIP_WRAPPER_EC2_PROXY}")
@@ -1016,7 +1044,11 @@ main() {
       log "backend selecionado: ec2 git-clone (${normalized_repo_url})"
       if clone_with_ec2_backend "${normalized_repo_url}" "${clone_archive_path}"; then
         extract_archive_to_destination "${clone_archive_path}" "${destination}"
-        run_git_lfs_post_clone "${destination}"
+        if [[ "${GIT_ZIP_WRAPPER_LFS_MODE}" == "ec2" ]]; then
+          log "repositório extraído com Git LFS materializado no EC2"
+        else
+          run_git_lfs_post_clone "${destination}"
+        fi
         log "clone remoto(http) concluído: ${repo_url} -> ${destination} (source: ${normalized_repo_url})"
         return 0
       fi

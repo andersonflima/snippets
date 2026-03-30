@@ -113,6 +113,7 @@ REAL_CURL_BIN="${CURL_WRAPPER_REAL_CURL:-}"
 REAL_WGET_BIN="${WGET_WRAPPER_REAL_WGET:-}"
 REAL_GIT_BIN="${GIT_ZIP_WRAPPER_REAL_GIT:-}"
 REAL_BREW_BIN="${BREW_WRAPPER_REAL_BREW:-}"
+GIT_LFS_MODE="${GIT_ZIP_WRAPPER_LFS_MODE:-}"
 PROXY_URL=""
 EC2_PROXY_URL="${WRAPPERS_VIA_EC2_PROXY:-}"
 CA_CERT_PATH=""
@@ -300,7 +301,24 @@ render_path_prefix() {
 }
 
 render_optional_exports() {
+  GIT_LFS_MODE="$(printf '%s' "${GIT_LFS_MODE}" | tr '[:upper:]' '[:lower:]')"
+  if [[ -z "${GIT_LFS_MODE}" ]]; then
+    if [[ "${ENABLE_EC2_BACKEND}" == "1" ]]; then
+      GIT_LFS_MODE="ec2"
+    else
+      GIT_LFS_MODE="local"
+    fi
+  fi
+  case "${GIT_LFS_MODE}" in
+    local|ec2)
+      ;;
+    *)
+      die "GIT_ZIP_WRAPPER_LFS_MODE inválido: ${GIT_LFS_MODE}. Valores válidos: local, ec2"
+      ;;
+  esac
+
   printf 'export WRAPPERS_VIA_EC2_ENABLED=%s\n' "$(shell_quote "${ENABLE_EC2_BACKEND}")"
+  printf 'export GIT_ZIP_WRAPPER_LFS_MODE=%s\n' "$(shell_quote "${GIT_LFS_MODE}")"
   if [[ "${ENABLE_EC2_BACKEND}" == "1" ]]; then
     printf 'export WRAPPERS_VIA_EC2_INSTANCE_NAME=%s\n' "$(shell_quote "${INSTANCE_NAME}")"
     printf 'export WRAPPERS_VIA_EC2_AWS_REGION=%s\n' "$(shell_quote "${AWS_REGION_NAME}")"

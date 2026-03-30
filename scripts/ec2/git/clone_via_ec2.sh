@@ -55,14 +55,15 @@ Uso:
   scripts/ec2/git/clone_via_ec2.sh --repo-url <url> --output <arquivo> [opções]
 
 Observação:
-  O clone remoto não materializa objetos Git LFS no EC2.
-  Se necessário, execute git lfs pull após extrair o repositório localmente.
+  Por padrão, o clone remoto não materializa objetos Git LFS no EC2.
+  Use --materialize-lfs para trazer os blobs LFS já resolvidos no artefato.
 
 Opções:
   --repo-url <url>             URL do repositório para clone remoto via HTTP(S).
   --output <arquivo>           Arquivo local .tar.gz de destino.
   --create-dirs                Cria diretórios do destino local automaticamente.
   --git-arg <valor>            Argumento adicional repassado para git clone no EC2. Repetível.
+  --materialize-lfs            Executa git lfs pull no EC2 antes de empacotar o repositório.
   --proxy <url>                Proxy HTTP/HTTPS a ser usado no EC2.
   --insecure                   Desabilita validação TLS no git remoto.
   --instance-name <nome>       Instância EC2. Padrão: env compartilhada.
@@ -80,6 +81,7 @@ CREATE_DIRS="0"
 GIT_ARGS=()
 PROXY_URL=""
 INSECURE="0"
+MATERIALIZE_LFS="0"
 INSTANCE_ID=""
 INSTANCE_NAME="${WRAPPERS_VIA_EC2_INSTANCE_NAME:-${MIX_VIA_EC2_INSTANCE_NAME:-Dander}}"
 AWS_PROFILE_NAME="${WRAPPERS_VIA_EC2_AWS_PROFILE:-${MIX_VIA_EC2_AWS_PROFILE:-${AWS_PROFILE:-}}}"
@@ -111,6 +113,10 @@ while [[ $# -gt 0 ]]; do
     --git-arg)
       GIT_ARGS+=("${2:-}")
       shift 2
+      ;;
+    --materialize-lfs)
+      MATERIALIZE_LFS="1"
+      shift
       ;;
     --proxy)
       PROXY_URL="${2:-}"
@@ -438,7 +444,7 @@ build_ssm_parameters_file() {
   parameter_file="$1"
 
   require_command python3
-  python3 - "${parameter_file}" "${AWS_REGION_NAME}" "${REPO_URL}" "${OUTPUT_KEY}" "${S3_BUCKET}" "${PROXY_URL}" "${INSECURE}" "${RUN_ID}" "${GIT_ARGS[@]}" <<'PY'
+  python3 - "${parameter_file}" "${AWS_REGION_NAME}" "${REPO_URL}" "${OUTPUT_KEY}" "${S3_BUCKET}" "${PROXY_URL}" "${INSECURE}" "${MATERIALIZE_LFS}" "${RUN_ID}" "${GIT_ARGS[@]}" <<'PY'
 import json
 import shlex
 import sys
@@ -450,8 +456,9 @@ output_key = sys.argv[4]
 s3_bucket = sys.argv[5]
 proxy_url = sys.argv[6]
 insecure = sys.argv[7] == "1"
-run_id = sys.argv[8]
-git_args = [arg for arg in sys.argv[9:] if arg]
+materialize_lfs = sys.argv[8] == "1"
+run_id = sys.argv[9]
+git_args = [arg for arg in sys.argv[10:] if arg]
 
 remote_dir = f"/tmp/git-clone-via-ec2/{run_id}"
 remote_repo_dir = f"{remote_dir}/repo"
@@ -492,6 +499,25 @@ clone_cmd.extend([repo_url, remote_repo_dir])
 
 commands.append(" ".join(shlex.quote(part) for part in clone_cmd))
 commands.append(f'test -d {shlex.quote(remote_repo_dir)}')
+if materialize_lfs:
+    lfs_guard = (
+        f'test -f {shlex.quote(f"{remote_repo_dir}/.gitattributes")} && '
+        f'grep -Eq {shlex.quote(r"(^|[[:space:]])filter=lfs($|[[:space:]])")} '
+        f'{shlex.quote(f"{remote_repo_dir}/.gitattributes")}'
+    )
+    commands.append(
+        f'if {lfs_guard}; then '
+        'git -C '
+        f'{shlex.quote(remote_repo_dir)} lfs env >/dev/null 2>&1 || '
+        '{ echo "git lfs não está disponível no EC2 para materializar o clone" >&2; exit 1; }; '
+        'git -C '
+        f'{shlex.quote(remote_repo_dir)} lfs install --local >/dev/null 2>&1 || '
+        '{ echo "falha ao executar git lfs install no EC2" >&2; exit 1; }; '
+        'git -C '
+        f'{shlex.quote(remote_repo_dir)} lfs pull || '
+        '{ echo "falha ao executar git lfs pull no EC2" >&2; exit 1; }; '
+        'fi'
+    )
 commands.append(f'tar -czf {shlex.quote(remote_archive)} -C {shlex.quote(remote_dir)} repo')
 commands.append(f'test -s {shlex.quote(remote_archive)}')
 commands.append(f'aws s3 cp {shlex.quote(remote_archive)} {shlex.quote(f"s3://{s3_bucket}/{output_key}")} --only-show-errors >/dev/null')

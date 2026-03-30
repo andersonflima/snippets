@@ -147,6 +147,8 @@ export GIT_ZIP_WRAPPER_ARCHIVE_FORMAT=tar.gz
 # export GIT_ZIP_WRAPPER_PROXY=http://proxy.seu-dominio:3128
 # habilitar .zip somente quando necessário
 # export GIT_ZIP_WRAPPER_ALLOW_ZIP_FALLBACK=1
+# materializar Git LFS no EC2 quando usar o backend remoto
+# export GIT_ZIP_WRAPPER_LFS_MODE=ec2
 # resolver certificado em ambiente corporativo/proxy:
 # export GIT_ZIP_WRAPPER_CURL_CACERT=/etc/pki/ca-trust/source/anchors/corp-ca.pem
 # export GIT_ZIP_WRAPPER_CURL_INSECURE=0
@@ -162,6 +164,8 @@ vim.env.GIT_ZIP_WRAPPER_ARCHIVE_FORMAT = "tar.gz"
 -- vim.env.GIT_ZIP_WRAPPER_PROXY = "http://proxy.seu-dominio:3128"
 -- habilitar .zip somente quando necessário
 -- vim.env.GIT_ZIP_WRAPPER_ALLOW_ZIP_FALLBACK = "1"
+-- materializar Git LFS no EC2 quando usar o backend remoto
+-- vim.env.GIT_ZIP_WRAPPER_LFS_MODE = "ec2"
 -- opcional: informar CA intermediária personalizada
 -- vim.env.GIT_ZIP_WRAPPER_CURL_CACERT = "/etc/pki/ca-trust/source/anchors/corp-ca.pem"
 -- opcional: aceitar certs inválidos (apenas para ambiente controlado)
