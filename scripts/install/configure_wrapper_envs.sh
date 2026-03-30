@@ -34,6 +34,9 @@ is_wrapper_binary_path() {
     git)
       wrapper_path="${GIT_INSTALL_DIR}/git"
       ;;
+    brew)
+      wrapper_path="${BREW_INSTALL_DIR}/brew"
+      ;;
     *)
       return 1
       ;;
@@ -72,9 +75,11 @@ Opções:
   --no-shell-rc                Não altera arquivo rc do shell.
   --curl-install-dir <dir>     Diretório do wrapper instalado de curl.
   --git-install-dir <dir>      Diretório do wrapper instalado de git.
+  --brew-install-dir <dir>     Diretório do wrapper instalado de brew.
   --real-curl <path>           Caminho do curl real.
   --real-wget <path>           Caminho do wget real.
   --real-git <path>            Caminho do git real.
+  --real-brew <path>           Caminho do brew real.
   --mason-seed-dir <dir>       Diretório com artefatos seed do Mason.
   --instance-name <nome>       Instância EC2 compartilhada. Padrão: Dander
   --aws-profile <profile>      Profile AWS para backend remoto dos wrappers.
@@ -94,6 +99,7 @@ Padrões:
   --shell-rc: só usado quando combinado com --apply-shell-rc
   --curl-install-dir: $HOME/.local/share/curl-python-wrapper/bin
   --git-install-dir: $HOME/.local/share/git-zip-wrapper/bin
+  --brew-install-dir: $HOME/.local/share/homebrew-install-wrapper/bin
 USAGE
 }
 
@@ -102,9 +108,11 @@ SHELL_RC=""
 APPLY_SHELL_RC="0"
 CURL_INSTALL_DIR="${HOME}/.local/share/curl-python-wrapper/bin"
 GIT_INSTALL_DIR="${HOME}/.local/share/git-zip-wrapper/bin"
+BREW_INSTALL_DIR="${HOME}/.local/share/homebrew-install-wrapper/bin"
 REAL_CURL_BIN="${CURL_WRAPPER_REAL_CURL:-}"
 REAL_WGET_BIN="${WGET_WRAPPER_REAL_WGET:-}"
 REAL_GIT_BIN="${GIT_ZIP_WRAPPER_REAL_GIT:-}"
+REAL_BREW_BIN="${BREW_WRAPPER_REAL_BREW:-}"
 PROXY_URL=""
 EC2_PROXY_URL="${WRAPPERS_VIA_EC2_PROXY:-}"
 CA_CERT_PATH=""
@@ -144,6 +152,10 @@ while [[ $# -gt 0 ]]; do
       GIT_INSTALL_DIR="${2:-}"
       shift 2
       ;;
+    --brew-install-dir)
+      BREW_INSTALL_DIR="${2:-}"
+      shift 2
+      ;;
     --real-curl)
       REAL_CURL_BIN="${2:-}"
       shift 2
@@ -154,6 +166,10 @@ while [[ $# -gt 0 ]]; do
       ;;
     --real-git)
       REAL_GIT_BIN="${2:-}"
+      shift 2
+      ;;
+    --real-brew)
+      REAL_BREW_BIN="${2:-}"
       shift 2
       ;;
     --mason-seed-dir)
@@ -213,6 +229,7 @@ done
 [[ -n "${ENV_FILE}" ]] || die "--env-file não pode ser vazio"
 [[ -n "${CURL_INSTALL_DIR}" ]] || die "--curl-install-dir não pode ser vazio"
 [[ -n "${GIT_INSTALL_DIR}" ]] || die "--git-install-dir não pode ser vazio"
+[[ -n "${BREW_INSTALL_DIR}" ]] || die "--brew-install-dir não pode ser vazio"
 
 if [[ -z "${REAL_CURL_BIN}" ]]; then
   REAL_CURL_BIN="$(resolve_real_binary curl || true)"
@@ -225,6 +242,10 @@ if [[ -z "${REAL_GIT_BIN}" ]]; then
   REAL_GIT_BIN="$(resolve_real_binary git || true)"
 fi
 
+if [[ -z "${REAL_BREW_BIN}" ]]; then
+  REAL_BREW_BIN="$(resolve_real_binary brew || true)"
+fi
+
 [[ -n "${REAL_CURL_BIN}" ]] || die "não foi possível localizar curl no PATH"
 [[ -x "${REAL_CURL_BIN}" ]] || die "curl inválido/não executável: ${REAL_CURL_BIN}"
 [[ -n "${REAL_GIT_BIN}" ]] || die "não foi possível localizar git no PATH"
@@ -233,6 +254,10 @@ is_wrapper_binary_path curl "${REAL_CURL_BIN}" && die "curl real não pode apont
 is_wrapper_binary_path git "${REAL_GIT_BIN}" && die "git real não pode apontar para o wrapper instalado: ${REAL_GIT_BIN}"
 if [[ -n "${REAL_WGET_BIN}" && ! -x "${REAL_WGET_BIN}" ]]; then
   die "wget inválido/não executável: ${REAL_WGET_BIN}"
+fi
+if [[ -n "${REAL_BREW_BIN}" ]]; then
+  [[ -x "${REAL_BREW_BIN}" ]] || die "brew inválido/não executável: ${REAL_BREW_BIN}"
+  is_wrapper_binary_path brew "${REAL_BREW_BIN}" && die "brew real não pode apontar para o wrapper instalado: ${REAL_BREW_BIN}"
 fi
 
 detect_shell_rc() {
@@ -255,6 +280,23 @@ detect_shell_rc() {
 
 shell_quote() {
   printf "%q" "$1"
+}
+
+brew_wrapper_is_enabled() {
+  [[ -n "${REAL_BREW_BIN}" ]] && [[ -x "${REAL_BREW_BIN}" ]]
+}
+
+render_path_prefix() {
+  local -a entries=()
+  local joined
+
+  if brew_wrapper_is_enabled; then
+    entries+=("${BREW_INSTALL_DIR}")
+  fi
+  entries+=("${CURL_INSTALL_DIR}" "${GIT_INSTALL_DIR}")
+
+  joined="$(IFS=:; printf '%s' "${entries[*]}")"
+  printf '%s\n' "${joined}"
 }
 
 render_optional_exports() {
@@ -327,6 +369,16 @@ export GIT_ZIP_WRAPPER_REAL_GIT=$(shell_quote "${REAL_GIT_BIN}")
 export CURL=$(shell_quote "${CURL_INSTALL_DIR}/curl")
 export WGET=$(shell_quote "${CURL_INSTALL_DIR}/wget")
 export GIT=$(shell_quote "${GIT_INSTALL_DIR}/git")
+EOF
+    if brew_wrapper_is_enabled; then
+      cat <<EOF
+export BREW_WRAPPER_REAL_BREW=$(shell_quote "${REAL_BREW_BIN}")
+export BREW_WRAPPER_CURL_BIN=$(shell_quote "${CURL_INSTALL_DIR}/curl")
+export BREW_WRAPPER_GIT_BIN=$(shell_quote "${GIT_INSTALL_DIR}/git")
+export BREW=$(shell_quote "${BREW_INSTALL_DIR}/brew")
+EOF
+    fi
+    cat <<EOF
 export CURL_WRAPPER_ENABLE_MASON_SMART_RELEASES="1"
 export CURL_WRAPPER_RELEASE_FALLBACK_REPOS="elixir-lsp/elixir-ls,luals/lua-language-server,omnisharp/omnisharp-roslyn"
 export CURL_WRAPPER_RELEASE_CACHE_DIR=$(shell_quote "${HOME}/.cache/curl-python-wrapper/releases")
@@ -336,7 +388,7 @@ export CURL_WRAPPER_MASON_REPACKAGE_EXTENSIONS="tar.gz,tgz,tar"
 
 export GIT_ZIP_WRAPPER_ARCHIVE_FORMAT="tar.gz"
 EOF
-    printf 'export PATH=%s:"$PATH"\n' "$(shell_quote "${CURL_INSTALL_DIR}:${GIT_INSTALL_DIR}")"
+    printf 'export PATH=%s:"$PATH"\n' "$(shell_quote "$(render_path_prefix)")"
     render_optional_exports
   } > "${ENV_FILE}"
 
@@ -379,6 +431,7 @@ Arquivo de ambiente:
   ${ENV_FILE}
 
 Wrapper dirs:
+  brew: ${BREW_INSTALL_DIR}
   curl: ${CURL_INSTALL_DIR}
   git:  ${GIT_INSTALL_DIR}
 
@@ -389,6 +442,7 @@ Backend EC2:
   s3-prefix: ${S3_PREFIX_NAME}
 
 Binários reais:
+  brew: ${REAL_BREW_BIN:-não configurado}
   curl: ${REAL_CURL_BIN}
   git:  ${REAL_GIT_BIN}
 EOF

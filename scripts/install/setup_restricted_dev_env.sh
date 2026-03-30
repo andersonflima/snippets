@@ -37,6 +37,9 @@ is_wrapper_binary_path() {
     git)
       wrapper_path="${HOME}/.local/share/git-zip-wrapper/bin/git"
       ;;
+    brew)
+      wrapper_path="${HOME}/.local/share/homebrew-install-wrapper/bin/brew"
+      ;;
     *)
       return 1
       ;;
@@ -80,6 +83,7 @@ Opções:
   --real-mix <path>            Binário real do mix.
   --real-curl <path>           Binário real do curl.
   --real-git <path>            Binário real do git.
+  --real-brew <path>           Binário real do brew, quando houver Homebrew.
   --ssh-identity <arquivo>     Chave SSH opcional para o mix via EC2.
   --proxy <url>                Proxy para wrappers e, opcionalmente, Hex.
   --ec2-proxy <url>            Proxy exclusivo para o backend remoto no EC2.
@@ -96,6 +100,10 @@ USAGE
 
 SCRIPT_DIR="$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)"
 ROOT_DIR="$(cd "${SCRIPT_DIR}/.." && pwd)"
+STATE_HELPER="${SCRIPT_DIR}/restricted_dev_env_state.sh"
+
+# shellcheck disable=SC1090
+. "${STATE_HELPER}"
 
 S3_BUCKET=""
 INSTANCE_NAME="Dander"
@@ -109,6 +117,7 @@ REAL_MIX_BIN=""
 REAL_CURL_BIN=""
 REAL_WGET_BIN=""
 REAL_GIT_BIN=""
+REAL_BREW_BIN=""
 SSH_IDENTITY_PATH=""
 PROXY_URL=""
 EC2_PROXY_URL=""
@@ -117,6 +126,8 @@ AUTO_INSECURE_ON_CERT_ERROR="0"
 CONFIGURE_HEX="0"
 HEX_UNSAFE_HTTPS="0"
 HEX_RUN_TEST="1"
+MIX_ENV_FILE="${HOME}/.config/mix-via-ec2-envs.sh"
+WRAPPER_ENV_FILE="${HOME}/.config/wrapper-envs.sh"
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
@@ -169,6 +180,10 @@ while [[ $# -gt 0 ]]; do
       REAL_GIT_BIN="${2:-}"
       shift 2
       ;;
+    --real-brew)
+      REAL_BREW_BIN="${2:-}"
+      shift 2
+      ;;
     --ssh-identity)
       SSH_IDENTITY_PATH="${2:-}"
       shift 2
@@ -218,6 +233,13 @@ done
 
 [[ -n "${S3_BUCKET}" ]] || die "--s3-bucket é obrigatório"
 
+restricted_dev_env_load_state
+RESTRICTED_DEV_ENV_MANAGED_SHELL_RC="${RESTRICTED_DEV_ENV_MANAGED_SHELL_RC:-}"
+RESTRICTED_DEV_ENV_HEX_MANAGED="${RESTRICTED_DEV_ENV_HEX_MANAGED:-0}"
+RESTRICTED_DEV_ENV_HEX_CONFIG_PATH="${RESTRICTED_DEV_ENV_HEX_CONFIG_PATH:-}"
+RESTRICTED_DEV_ENV_HEX_BACKUP_PATH="${RESTRICTED_DEV_ENV_HEX_BACKUP_PATH:-${RESTRICTED_DEV_ENV_HEX_BACKUP_FILE}}"
+RESTRICTED_DEV_ENV_HEX_CONFIG_EXISTED_BEFORE="${RESTRICTED_DEV_ENV_HEX_CONFIG_EXISTED_BEFORE:-0}"
+
 if [[ -z "${REAL_MIX_BIN}" ]]; then
   REAL_MIX_BIN="$(resolve_real_binary mix || true)"
 fi
@@ -230,6 +252,9 @@ fi
 if [[ -z "${REAL_GIT_BIN}" ]]; then
   REAL_GIT_BIN="$(resolve_real_binary git || true)"
 fi
+if [[ -z "${REAL_BREW_BIN}" ]]; then
+  REAL_BREW_BIN="$(resolve_real_binary brew || true)"
+fi
 
 [[ -n "${REAL_MIX_BIN}" ]] || die "não foi possível localizar mix no PATH"
 [[ -n "${REAL_CURL_BIN}" ]] || die "não foi possível localizar curl no PATH"
@@ -237,6 +262,9 @@ fi
 is_wrapper_binary_path mix "${REAL_MIX_BIN}" && die "mix real não pode apontar para o wrapper instalado: ${REAL_MIX_BIN}"
 is_wrapper_binary_path curl "${REAL_CURL_BIN}" && die "curl real não pode apontar para o wrapper instalado: ${REAL_CURL_BIN}"
 is_wrapper_binary_path git "${REAL_GIT_BIN}" && die "git real não pode apontar para o wrapper instalado: ${REAL_GIT_BIN}"
+if [[ -n "${REAL_BREW_BIN}" ]]; then
+  is_wrapper_binary_path brew "${REAL_BREW_BIN}" && die "brew real não pode apontar para o wrapper instalado: ${REAL_BREW_BIN}"
+fi
 
 run_step() {
   local description
@@ -244,6 +272,64 @@ run_step() {
   shift
   log "${description}"
   "$@"
+}
+
+resolve_hex_config_path() {
+  local hex_dump config_home
+  hex_dump="$(mix hex.config 2>/dev/null || true)"
+  config_home="$(printf '%s\n' "${hex_dump}" | awk -F'"' '/^config_home:/ { print $2; exit }')"
+
+  if [[ -z "${config_home}" ]]; then
+    config_home="${HEX_HOME:-${HOME}/.hex}"
+  fi
+
+  printf '%s/hex.config\n' "${config_home}"
+}
+
+snapshot_hex_config_state_if_needed() {
+  local hex_config_path
+
+  if [[ "${CONFIGURE_HEX}" != "1" ]]; then
+    return 0
+  fi
+
+  if [[ "${RESTRICTED_DEV_ENV_HEX_MANAGED}" == "1" &&
+    -n "${RESTRICTED_DEV_ENV_HEX_BACKUP_PATH}" &&
+    -f "${RESTRICTED_DEV_ENV_HEX_BACKUP_PATH}" ]]; then
+    return 0
+  fi
+
+  hex_config_path="$(resolve_hex_config_path)"
+  RESTRICTED_DEV_ENV_HEX_MANAGED="1"
+  RESTRICTED_DEV_ENV_HEX_CONFIG_PATH="${hex_config_path}"
+  RESTRICTED_DEV_ENV_HEX_BACKUP_PATH="${RESTRICTED_DEV_ENV_HEX_BACKUP_FILE}"
+
+  if [[ -f "${hex_config_path}" ]]; then
+    restricted_dev_env_ensure_state_dir
+    cp "${hex_config_path}" "${RESTRICTED_DEV_ENV_HEX_BACKUP_PATH}"
+    RESTRICTED_DEV_ENV_HEX_CONFIG_EXISTED_BEFORE="1"
+    return 0
+  fi
+
+  rm -f "${RESTRICTED_DEV_ENV_HEX_BACKUP_PATH}"
+  RESTRICTED_DEV_ENV_HEX_CONFIG_EXISTED_BEFORE="0"
+}
+
+sync_shell_rc_state() {
+  local previous_shell_rc
+  previous_shell_rc="${RESTRICTED_DEV_ENV_MANAGED_SHELL_RC:-}"
+
+  if [[ -n "${previous_shell_rc}" ]]; then
+    restricted_dev_env_remove_shell_rc_block "${previous_shell_rc}"
+  fi
+
+  if [[ "${APPLY_SHELL_RC}" == "1" ]]; then
+    restricted_dev_env_apply_shell_rc_block "${SHELL_RC_PATH}" "${MIX_ENV_FILE}" "${WRAPPER_ENV_FILE}"
+    RESTRICTED_DEV_ENV_MANAGED_SHELL_RC="${SHELL_RC_PATH}"
+    return 0
+  fi
+
+  RESTRICTED_DEV_ENV_MANAGED_SHELL_RC=""
 }
 
 MIX_ENV_ARGS=(
@@ -282,13 +368,8 @@ fi
 if [[ "${AUTO_INSECURE_ON_CERT_ERROR}" == "1" ]]; then
   WRAPPER_ENV_ARGS+=(--auto-insecure-on-cert-error)
 fi
-if [[ "${APPLY_SHELL_RC}" == "1" ]]; then
-  MIX_ENV_ARGS+=(--shell-rc "${SHELL_RC_PATH}")
-  WRAPPER_ENV_ARGS+=(--shell-rc "${SHELL_RC_PATH}")
-else
-  MIX_ENV_ARGS+=(--no-shell-rc)
-  WRAPPER_ENV_ARGS+=(--no-shell-rc)
-fi
+MIX_ENV_ARGS+=(--no-shell-rc)
+WRAPPER_ENV_ARGS+=(--no-shell-rc)
 
 run_step "instalando wrapper do mix" \
   sh "${ROOT_DIR}/install_mix_ec2_wrapper.sh" --real-mix "${REAL_MIX_BIN}"
@@ -296,12 +377,23 @@ run_step "instalando wrapper do curl" \
   sh "${ROOT_DIR}/install_curl_python_wrapper.sh" --real-curl "${REAL_CURL_BIN}"
 run_step "instalando wrapper do git" \
   sh "${ROOT_DIR}/install_git_zip_wrapper.sh" --real-git "${REAL_GIT_BIN}"
+if [[ -n "${REAL_BREW_BIN}" ]]; then
+  run_step "instalando wrapper do brew" \
+    sh "${ROOT_DIR}/install_homebrew_wrapper.sh" --real-brew "${REAL_BREW_BIN}"
+else
+  log "brew não encontrado no PATH; pulando wrapper do brew"
+fi
 run_step "configurando ambiente do mix via EC2" \
   sh "${ROOT_DIR}/install/configure_mix_via_ec2_envs.sh" "${MIX_ENV_ARGS[@]}"
+if [[ -n "${REAL_BREW_BIN}" ]]; then
+  WRAPPER_ENV_ARGS+=(--real-brew "${REAL_BREW_BIN}")
+fi
 run_step "configurando ambiente compartilhado dos wrappers" \
   sh "${ROOT_DIR}/install/configure_wrapper_envs.sh" "${WRAPPER_ENV_ARGS[@]}"
 
 if [[ "${CONFIGURE_HEX}" == "1" ]]; then
+  snapshot_hex_config_state_if_needed
+
   HEX_ARGS=()
   if [[ -n "${PROXY_URL}" ]]; then
     HEX_ARGS+=(--proxy "${PROXY_URL}")
@@ -320,6 +412,9 @@ if [[ "${CONFIGURE_HEX}" == "1" ]]; then
     sh "${ROOT_DIR}/configure_hex_config.sh" "${HEX_ARGS[@]}"
 fi
 
+run_step "sincronizando persistência do ambiente restrito" sync_shell_rc_state
+run_step "persistindo estado do ambiente restrito" restricted_dev_env_write_state
+
 cat <<EOF
 Bootstrap concluído.
 
@@ -336,9 +431,13 @@ Prefixos:
   mix: ${MIX_S3_PREFIX}
   wrappers: ${WRAPPERS_S3_PREFIX}
 
+Persistência:
+  shell rc: ${RESTRICTED_DEV_ENV_MANAGED_SHELL_RC:-não alterado}
+  state: ${RESTRICTED_DEV_ENV_STATE_FILE}
+
 Para aplicar na sessão atual:
-  . "${HOME}/.config/mix-via-ec2-envs.sh"
-  . "${HOME}/.config/wrapper-envs.sh"
+  . "${MIX_ENV_FILE}"
+  . "${WRAPPER_ENV_FILE}"
   rehash 2>/dev/null || true
   hash -r 2>/dev/null || true
 

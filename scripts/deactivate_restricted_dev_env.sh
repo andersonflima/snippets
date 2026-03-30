@@ -31,12 +31,14 @@ strip_path_entry() {
 }
 
 PATH="$(strip_path_entry "${HOME}/.local/share/mix-ec2-wrapper/bin" "${PATH:-}")"
+PATH="$(strip_path_entry "${HOME}/.local/share/homebrew-install-wrapper/bin" "${PATH:-}")"
 PATH="$(strip_path_entry "${HOME}/.local/share/curl-python-wrapper/bin" "${PATH:-}")"
 PATH="$(strip_path_entry "${HOME}/.local/share/git-zip-wrapper/bin" "${PATH:-}")"
 PATH="$(strip_path_entry "${HOME}/.local/share/nvim-ec2-wrapper/bin" "${PATH:-}")"
 export PATH
 
 unset MIX 2>/dev/null || true
+unset BREW 2>/dev/null || true
 unset CURL 2>/dev/null || true
 unset WGET 2>/dev/null || true
 unset GIT 2>/dev/null || true
@@ -98,6 +100,11 @@ unset GIT_ZIP_WRAPPER_EC2_PROXY 2>/dev/null || true
 unset GIT_ZIP_WRAPPER_PROXY 2>/dev/null || true
 unset GIT_ZIP_WRAPPER_CURL_CACERT 2>/dev/null || true
 unset GIT_ZIP_WRAPPER_CURL_INSECURE 2>/dev/null || true
+
+unset BREW_WRAPPER_REAL_BREW 2>/dev/null || true
+unset BREW_WRAPPER_CURL_BIN 2>/dev/null || true
+unset BREW_WRAPPER_GIT_BIN 2>/dev/null || true
+unset BREW_WRAPPER_NO_AUTO_UPDATE 2>/dev/null || true
 
 unset NVIM_WRAPPER_REAL_NVIM 2>/dev/null || true
 

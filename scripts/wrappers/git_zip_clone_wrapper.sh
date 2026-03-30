@@ -37,6 +37,7 @@ GIT_ZIP_WRAPPER_EC2_PROXY="${GIT_ZIP_WRAPPER_EC2_PROXY:-${WRAPPERS_VIA_EC2_PROXY
 GIT_ZIP_WRAPPER_LFS_AUTORUN="${GIT_ZIP_WRAPPER_LFS_AUTORUN:-1}"
 GIT_ZIP_WRAPPER_LFS_FORCE="${GIT_ZIP_WRAPPER_LFS_FORCE:-0}"
 GIT_ZIP_WRAPPER_LFS_STRICT="${GIT_ZIP_WRAPPER_LFS_STRICT:-0}"
+GIT_ZIP_WRAPPER_LFS_RETRY_NO_PROXY="${GIT_ZIP_WRAPPER_LFS_RETRY_NO_PROXY:-1}"
 GIT_GLOBAL_ARGS=()
 GIT_SUBCOMMAND=""
 GIT_SUBCOMMAND_ARGS=()
@@ -833,6 +834,47 @@ has_lfs_attributes() {
   grep -Eq '(^|[[:space:]])filter=lfs($|[[:space:]])' "${destination}/.gitattributes"
 }
 
+git_lfs_error_looks_like_signed_url_failure() {
+  local log_file
+  log_file="$1"
+  grep -Eq 'SignatureDoesNotMatch|AuthorizationQueryParametersError|RequestTimeTooSkewed|Request has expired' "${log_file}"
+}
+
+run_git_lfs_pull_with_optional_no_proxy_retry() {
+  local destination initial_log retry_log
+  destination="$1"
+  initial_log="$(mktemp -t git-zip-lfs-pull-XXXXXX)"
+
+  if "${real_git}" -C "${destination}" lfs pull >"${initial_log}" 2>&1; then
+    rm -f "${initial_log}"
+    return 0
+  fi
+
+  if is_truthy "${GIT_ZIP_WRAPPER_LFS_RETRY_NO_PROXY}" &&
+    [[ -n "${GIT_ZIP_WRAPPER_ACTIVE_PROXY}" ]] &&
+    git_lfs_error_looks_like_signed_url_failure "${initial_log}"; then
+    log "git lfs pull falhou com URL assinada; tentando novamente sem proxy"
+    retry_log="$(mktemp -t git-zip-lfs-pull-noproxy-XXXXXX)"
+    if env -u HTTPS_PROXY -u https_proxy -u HTTP_PROXY -u http_proxy -u ALL_PROXY -u all_proxy \
+      "${real_git}" \
+        -c http.proxy= \
+        -c https.proxy= \
+        -C "${destination}" \
+        lfs pull >"${retry_log}" 2>&1; then
+      rm -f "${initial_log}" "${retry_log}"
+      return 0
+    fi
+    cat "${initial_log}" >&2
+    cat "${retry_log}" >&2
+    rm -f "${initial_log}" "${retry_log}"
+    return 1
+  fi
+
+  cat "${initial_log}" >&2
+  rm -f "${initial_log}"
+  return 1
+}
+
 run_git_lfs_post_clone() {
   local destination
   destination="$1"
@@ -858,7 +900,7 @@ run_git_lfs_post_clone() {
     return 0
   fi
 
-  if ! "${real_git}" -C "${destination}" lfs pull; then
+  if ! run_git_lfs_pull_with_optional_no_proxy_retry "${destination}"; then
     if is_truthy "${GIT_ZIP_WRAPPER_LFS_STRICT}"; then
       die "falha ao executar git lfs pull em ${destination}"
     fi
