@@ -87,6 +87,7 @@ Opções:
   --ssh-identity <arquivo>     Chave SSH opcional para o mix via EC2.
   --proxy <url>                Proxy para wrappers e, opcionalmente, Hex.
   --ec2-proxy <url>            Proxy exclusivo para o backend remoto no EC2.
+                               Padrão: herda --proxy quando não informado.
   --ca-cert <arquivo>          CA customizada para wrappers/Hex.
   --auto-insecure-on-cert-error
                                Ativa retry inseguro no curl wrapper.
@@ -232,6 +233,10 @@ while [[ $# -gt 0 ]]; do
 done
 
 [[ -n "${S3_BUCKET}" ]] || die "--s3-bucket é obrigatório"
+
+if [[ -n "${PROXY_URL}" && -z "${EC2_PROXY_URL}" ]]; then
+  EC2_PROXY_URL="${PROXY_URL}"
+fi
 
 restricted_dev_env_load_state
 RESTRICTED_DEV_ENV_MANAGED_SHELL_RC="${RESTRICTED_DEV_ENV_MANAGED_SHELL_RC:-}"
