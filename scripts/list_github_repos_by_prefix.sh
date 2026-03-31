@@ -14,6 +14,12 @@ log() {
   printf '[list-github-repos-by-prefix] %s\n' "$*" >&2
 }
 
+progress() {
+  if [[ "${SHOW_PROGRESS}" == "1" ]]; then
+    log "$*"
+  fi
+}
+
 die() {
   log "erro: $*"
   exit 1
@@ -29,6 +35,7 @@ Opcoes:
   --prefix <prefixo>      Prefixo usado para filtrar nome dos repositorios.
   --owner-type <tipo>     auto|org|user. Padrao: auto.
   --with-branches         Inclui branches de cada repositorio.
+  --quiet                 Nao mostra logs de progresso.
   --output <arquivo>      Salva saida em arquivo.
   -h, --help              Mostra esta ajuda.
 
@@ -60,6 +67,7 @@ parse_arguments() {
   PREFIX=""
   OWNER_TYPE="auto"
   WITH_BRANCHES="0"
+  SHOW_PROGRESS="1"
   OUTPUT_FILE=""
 
   while [[ $# -gt 0 ]]; do
@@ -78,6 +86,10 @@ parse_arguments() {
         ;;
       --with-branches)
         WITH_BRANCHES="1"
+        shift
+        ;;
+      --quiet)
+        SHOW_PROGRESS="0"
         shift
         ;;
       --output)
@@ -152,6 +164,12 @@ repositories_endpoint() {
   printf '/users/%s/repos?per_page=100&type=owner&sort=full_name&direction=asc\n' "${owner}"
 }
 
+cleanup() {
+  if [[ -n "${MATCHING_REPOSITORIES_FILE:-}" && -f "${MATCHING_REPOSITORIES_FILE}" ]]; then
+    rm -f "${MATCHING_REPOSITORIES_FILE}"
+  fi
+}
+
 list_repositories_matching_prefix() {
   local owner prefix owner_type authenticated_login endpoint
   owner="$1"
@@ -159,6 +177,7 @@ list_repositories_matching_prefix() {
   owner_type="$3"
   authenticated_login="$4"
   endpoint="$(repositories_endpoint "${owner}" "${owner_type}" "${authenticated_login}")"
+  progress "consultando repositorios via API: ${endpoint}"
 
   gh api --paginate "${endpoint}" \
     | jq -r --arg owner "${owner}" --arg prefix "${prefix}" '
@@ -168,6 +187,13 @@ list_repositories_matching_prefix() {
       | .name
     ' \
     | sort -u
+}
+
+prepare_matching_repositories() {
+  MATCHING_REPOSITORIES_FILE="$(mktemp "/tmp/list-github-repos-by-prefix.XXXXXX")"
+  list_repositories_matching_prefix "${OWNER}" "${PREFIX}" "${RESOLVED_OWNER_TYPE}" "${AUTHENTICATED_LOGIN}" > "${MATCHING_REPOSITORIES_FILE}"
+  MATCHING_REPOSITORIES_COUNT="$(awk 'NF { count += 1 } END { print count + 0 }' "${MATCHING_REPOSITORIES_FILE}")"
+  progress "repositorios encontrados com prefixo '${PREFIX}': ${MATCHING_REPOSITORIES_COUNT}"
 }
 
 list_repository_branches() {
@@ -182,21 +208,23 @@ list_repository_branches() {
 
 emit_repositories_only() {
   local repo_name
-  list_repositories_matching_prefix "${OWNER}" "${PREFIX}" "${RESOLVED_OWNER_TYPE}" "${AUTHENTICATED_LOGIN}" \
-    | while IFS= read -r repo_name; do
-      [[ -n "${repo_name}" ]] || continue
-      printf '%s/%s\n' "${OWNER}" "${repo_name}"
-    done
+  while IFS= read -r repo_name; do
+    [[ -n "${repo_name}" ]] || continue
+    printf '%s/%s\n' "${OWNER}" "${repo_name}"
+  done < "${MATCHING_REPOSITORIES_FILE}"
 }
 
 emit_repositories_with_branches() {
-  local repo_name branches_csv
-  list_repositories_matching_prefix "${OWNER}" "${PREFIX}" "${RESOLVED_OWNER_TYPE}" "${AUTHENTICATED_LOGIN}" \
-    | while IFS= read -r repo_name; do
-      [[ -n "${repo_name}" ]] || continue
-      branches_csv="$(list_repository_branches "${OWNER}" "${repo_name}" | paste -sd ',' -)"
-      printf '%s/%s\t%s\n' "${OWNER}" "${repo_name}" "${branches_csv}"
-    done
+  local repo_name branches_csv index
+  index=0
+
+  while IFS= read -r repo_name; do
+    [[ -n "${repo_name}" ]] || continue
+    index=$((index + 1))
+    progress "coletando branches [${index}/${MATCHING_REPOSITORIES_COUNT}]: ${OWNER}/${repo_name}"
+    branches_csv="$(list_repository_branches "${OWNER}" "${repo_name}" | paste -sd ',' -)"
+    printf '%s/%s\t%s\n' "${OWNER}" "${repo_name}" "${branches_csv}"
+  done < "${MATCHING_REPOSITORIES_FILE}"
 }
 
 emit_output() {
@@ -212,18 +240,28 @@ main() {
   parse_arguments "$@"
   require_command gh
   require_command jq
+  trap cleanup EXIT
+
+  progress "validando autenticacao do gh"
   assert_github_auth
 
   AUTHENTICATED_LOGIN="$(resolve_authenticated_login)"
+  progress "usuario autenticado no gh: ${AUTHENTICATED_LOGIN:-desconhecido}"
+
   RESOLVED_OWNER_TYPE="$(resolve_owner_type "${OWNER}" "${OWNER_TYPE}")"
+  progress "tipo de owner resolvido: ${RESOLVED_OWNER_TYPE}"
+
+  prepare_matching_repositories
 
   if [[ -n "${OUTPUT_FILE}" ]]; then
     mkdir -p "$(dirname "${OUTPUT_FILE}")"
+    progress "gravando resultado em arquivo: ${OUTPUT_FILE}"
     emit_output > "${OUTPUT_FILE}"
     log "arquivo gerado: ${OUTPUT_FILE}"
     exit 0
   fi
 
+  progress "emitindo resultado no stdout"
   emit_output
 }
 
