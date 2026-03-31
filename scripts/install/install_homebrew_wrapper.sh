@@ -107,6 +107,8 @@ export PATH="${INSTALL_DIR}:\$PATH"
 2) Para garantir que brew install use os wrappers de curl/git:
 export BREW_WRAPPER_CURL_BIN="\$HOME/.local/share/curl-python-wrapper/bin/curl"
 export BREW_WRAPPER_GIT_BIN="\$HOME/.local/share/git-zip-wrapper/bin/git"
+export BREW_WRAPPER_CURL_EC2_REQUIRED="0"
+export BREW_WRAPPER_GIT_EC2_REQUIRED="0"
 
 3) Testes:
 brew install jq

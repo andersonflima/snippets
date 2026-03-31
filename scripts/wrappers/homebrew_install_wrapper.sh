@@ -119,6 +119,16 @@ should_wrap_command() {
   [[ "${subcommand}" == "install" ]]
 }
 
+configure_backend_failopen_policy() {
+  local curl_ec2_required git_ec2_required
+
+  curl_ec2_required="$(resolve_wrapper_binary "${BREW_WRAPPER_CURL_EC2_REQUIRED:-}" "0")"
+  git_ec2_required="$(resolve_wrapper_binary "${BREW_WRAPPER_GIT_EC2_REQUIRED:-}" "0")"
+
+  export CURL_WRAPPER_EC2_REQUIRED="${curl_ec2_required}"
+  export GIT_ZIP_WRAPPER_EC2_REQUIRED="${git_ec2_required}"
+}
+
 configure_install_environment() {
   local curl_bin git_bin curl_dir git_dir
 
@@ -140,6 +150,7 @@ configure_install_environment() {
   fi
 
   export PATH
+  configure_backend_failopen_policy
 
   if is_truthy "${BREW_WRAPPER_NO_AUTO_UPDATE:-0}"; then
     export HOMEBREW_NO_AUTO_UPDATE="1"

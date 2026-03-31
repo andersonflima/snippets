@@ -189,6 +189,14 @@ Principais variáveis:
 - `BREW_WRAPPER_GIT_BIN`
   Caminho do wrapper de `git` a ser injetado em `brew install`.
 
+- `BREW_WRAPPER_CURL_EC2_REQUIRED`
+  Define se `brew install` deve falhar quando o backend EC2 do wrapper de `curl` falhar.
+  Padrão: `0` (fallback local habilitado).
+
+- `BREW_WRAPPER_GIT_EC2_REQUIRED`
+  Define se `brew install` deve falhar quando o backend EC2 do wrapper de `git` falhar.
+  Padrão: `0` (fallback local habilitado).
+
 - `BREW_WRAPPER_NO_AUTO_UPDATE`
   Quando `1`, exporta `HOMEBREW_NO_AUTO_UPDATE=1` ao rodar `brew install`.
 
