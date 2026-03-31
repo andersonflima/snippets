@@ -46,7 +46,13 @@ require_command() {
 }
 
 assert_github_auth() {
-  gh auth status >/dev/null 2>&1 || die "voce precisa autenticar no gh: gh auth login"
+  local auth_status_output
+  if auth_status_output="$(gh auth status 2>&1)"; then
+    return 0
+  fi
+
+  printf '%s\n' "${auth_status_output}" >&2
+  die "autenticacao da API do GitHub invalida no gh. SSH cobre git clone/push, mas este script usa API REST."
 }
 
 parse_arguments() {
