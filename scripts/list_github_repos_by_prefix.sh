@@ -35,6 +35,8 @@ Opcoes:
   --prefix <prefixo>      Prefixo usado para filtrar nome dos repositorios.
   --owner-type <tipo>     auto|org|user. Padrao: auto.
   --with-branches         Inclui branches de cada repositorio.
+  --max-api-retries <n>   Tentativas maximas para falhas transitórias da API. Padrao: 6.
+  --retry-delay <seg>     Delay inicial entre retries da API. Padrao: 2.
   --quiet                 Nao mostra logs de progresso.
   --output <arquivo>      Salva saida em arquivo.
   -h, --help              Mostra esta ajuda.
@@ -56,6 +58,78 @@ gh_api() {
   GH_PROMPT_DISABLED=1 gh api "$@"
 }
 
+is_positive_integer() {
+  case "${1:-}" in
+    ''|*[!0-9]*)
+      return 1
+      ;;
+    0)
+      return 1
+      ;;
+    *)
+      return 0
+      ;;
+  esac
+}
+
+should_retry_gh_error() {
+  local status message normalized
+  status="$1"
+  message="${2:-}"
+  normalized="$(printf '%s' "${message}" | tr '[:upper:]' '[:lower:]')"
+
+  if [[ "${status}" -eq 0 ]]; then
+    return 1
+  fi
+
+  case "${normalized}" in
+    *"http 429"*|*"secondary rate limit"*|*"rate limit"*|*"http 500"*|*"http 502"*|*"http 503"*|*"http 504"*|*"502"*|*"503"*|*"504"*|*"bad gateway"*|*"gateway timeout"*|*"timeout"*|*"timed out"*|*"connection reset"*|*"unexpected eof"*|*"eof"*|*"temporarily unavailable"*|*"temporary failure"*|*"try again"*)
+      return 0
+      ;;
+  esac
+
+  return 1
+}
+
+gh_api_with_retry() {
+  local endpoint attempt max_attempts delay_seconds error_file payload status error_message
+  endpoint="$1"
+  attempt=1
+  max_attempts="${MAX_API_RETRIES}"
+  delay_seconds="${RETRY_DELAY_SECONDS}"
+
+  while :; do
+    error_file="$(mktemp "/tmp/list-github-repos-by-prefix-gherr.XXXXXX")"
+
+    set +e
+    payload="$(gh_api "${endpoint}" 2>"${error_file}")"
+    status=$?
+    set -e
+
+    error_message="$(tr '\n' ' ' < "${error_file}")"
+    rm -f "${error_file}"
+
+    if [[ "${status}" -eq 0 ]]; then
+      printf '%s' "${payload}"
+      return 0
+    fi
+
+    if should_retry_gh_error "${status}" "${error_message}" && [[ "${attempt}" -lt "${max_attempts}" ]]; then
+      progress "falha transitória na API (tentativa ${attempt}/${max_attempts}) para ${endpoint}; retry em ${delay_seconds}s"
+      sleep "${delay_seconds}"
+      attempt=$((attempt + 1))
+      delay_seconds=$((delay_seconds * 2))
+      continue
+    fi
+
+    log "falha ao consultar API: ${endpoint}"
+    if [[ -n "${error_message}" ]]; then
+      printf '%s\n' "${error_message}" >&2
+    fi
+    return "${status}"
+  done
+}
+
 assert_github_auth() {
   local auth_status_output
   if auth_status_output="$(GH_PROMPT_DISABLED=1 gh auth status 2>&1)"; then
@@ -71,6 +145,8 @@ parse_arguments() {
   PREFIX=""
   OWNER_TYPE="auto"
   WITH_BRANCHES="0"
+  MAX_API_RETRIES="6"
+  RETRY_DELAY_SECONDS="2"
   SHOW_PROGRESS="1"
   OUTPUT_FILE=""
 
@@ -91,6 +167,14 @@ parse_arguments() {
       --with-branches)
         WITH_BRANCHES="1"
         shift
+        ;;
+      --max-api-retries)
+        MAX_API_RETRIES="${2:-}"
+        shift 2
+        ;;
+      --retry-delay)
+        RETRY_DELAY_SECONDS="${2:-}"
+        shift 2
         ;;
       --quiet)
         SHOW_PROGRESS="0"
@@ -120,6 +204,9 @@ parse_arguments() {
       die "--owner-type invalido: ${OWNER_TYPE}. Use auto, org ou user."
       ;;
   esac
+
+  is_positive_integer "${MAX_API_RETRIES}" || die "--max-api-retries deve ser inteiro > 0"
+  is_positive_integer "${RETRY_DELAY_SECONDS}" || die "--retry-delay deve ser inteiro > 0"
 }
 
 resolve_authenticated_login() {
@@ -187,7 +274,7 @@ list_repositories_matching_prefix() {
   while :; do
     page_endpoint="${endpoint}&page=${page}"
     progress "consultando repositorios via API: ${page_endpoint}"
-    page_payload="$(gh_api "${page_endpoint}")"
+    page_payload="$(gh_api_with_retry "${page_endpoint}")"
     page_count="$(printf '%s' "${page_payload}" | jq 'length')"
     progress "pagina ${page}: ${page_count} repositorios retornados"
 
@@ -227,7 +314,7 @@ list_repository_branches() {
 
   while :; do
     page_endpoint="/repos/${owner}/${repo}/branches?per_page=100&page=${page}"
-    page_payload="$(gh_api "${page_endpoint}")"
+    page_payload="$(gh_api_with_retry "${page_endpoint}")"
     page_count="$(printf '%s' "${page_payload}" | jq 'length')"
 
     if [[ "${page_count}" == "0" ]]; then
