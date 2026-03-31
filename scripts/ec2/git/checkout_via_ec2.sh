@@ -518,9 +518,38 @@ s3_object_exists() {
   ${S3_AWS_CMD[@]} s3api head-object --bucket "${S3_BUCKET}" --key "$1" >/dev/null 2>&1
 }
 
+proxy_env_is_set() {
+  [[ -n "${HTTPS_PROXY:-}" || -n "${https_proxy:-}" || -n "${HTTP_PROXY:-}" || -n "${http_proxy:-}" || -n "${ALL_PROXY:-}" || -n "${all_proxy:-}" ]]
+}
+
+s3_signature_error_looks_like_proxy_issue() {
+  local log_file
+  log_file="$1"
+  grep -Eq 'SignatureDoesNotMatch|AuthorizationQueryParametersError|RequestTimeTooSkewed|Request has expired' "${log_file}"
+}
+
 download_result_from_s3() {
+  local get_error_file
   [[ "${CREATE_DIRS}" == "1" ]] && mkdir -p "$(dirname "${OUTPUT_PATH}")"
-  ${S3_AWS_CMD[@]} s3 cp "s3://${S3_BUCKET}/${OUTPUT_KEY}" "${OUTPUT_PATH}" --only-show-errors >/dev/null
+  get_error_file="$(make_temp_file "git-checkout-via-ec2-s3-get" ".log")"
+
+  if ${S3_AWS_CMD[@]} s3 cp "s3://${S3_BUCKET}/${OUTPUT_KEY}" "${OUTPUT_PATH}" --only-show-errors >/dev/null 2>"${get_error_file}"; then
+    rm -f "${get_error_file}"
+    return 0
+  fi
+
+  if proxy_env_is_set && s3_signature_error_looks_like_proxy_issue "${get_error_file}"; then
+    log "download do S3 falhou com assinatura; retry sem proxy local"
+    if env -u HTTPS_PROXY -u https_proxy -u HTTP_PROXY -u http_proxy -u ALL_PROXY -u all_proxy \
+      ${S3_AWS_CMD[@]} s3 cp "s3://${S3_BUCKET}/${OUTPUT_KEY}" "${OUTPUT_PATH}" --only-show-errors >/dev/null 2>"${get_error_file}"; then
+      rm -f "${get_error_file}"
+      return 0
+    fi
+  fi
+
+  cat "${get_error_file}" >&2
+  rm -f "${get_error_file}"
+  die "falha ao baixar artefato do S3 para ${OUTPUT_PATH}"
 }
 
 run_remote_checkout() {
