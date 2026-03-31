@@ -167,10 +167,11 @@ vim.env.PATH = table.concat({
 }, ":")
 
 vim.env.CURL_WRAPPER_RELEASE_FALLBACK_REPOS = "elixir-lsp/elixir-ls,luals/lua-language-server,omnisharp/omnisharp-roslyn"
+vim.env.CURL_WRAPPER_ALLOW_DIRECT_RELEASE_FALLBACK = "1"
 vim.env.CURL_WRAPPER_ENABLE_MASON_SMART_RELEASES = "1"
 vim.env.CURL_WRAPPER_RELEASE_CACHE_DIR = vim.fn.expand("~/.cache/curl-python-wrapper/releases")
 vim.env.CURL_WRAPPER_MASON_BUILDERS = "elixir-lsp/elixir-ls=elixir_ls_release,omnisharp/omnisharp-roslyn=omnisharp_source_publish"
-vim.env.CURL_WRAPPER_MASON_SOURCE_BUILD_REPOS = "elixir-lsp/elixir-ls,omnisharp/omnisharp-roslyn"
+vim.env.CURL_WRAPPER_MASON_SOURCE_BUILD_REPOS = "omnisharp/omnisharp-roslyn"
 vim.env.GIT_ZIP_WRAPPER_ARCHIVE_FORMAT = "tar.gz"
 ```
 
@@ -260,7 +261,7 @@ Principais variáveis:
 
 - `CURL_WRAPPER_MASON_SOURCE_BUILD_REPOS`
   Lista CSV de repositórios que devem preferir build local a partir do source tarball, sem cair em asset de release.
-  Padrão: `elixir-lsp/elixir-ls,omnisharp/omnisharp-roslyn`.
+  Padrão: `omnisharp/omnisharp-roslyn`.
 
 - `CURL_WRAPPER_MASON_SEED_DIR`
   Diretório opcional com artefatos `.zip` já gerados fora da máquina restrita.
@@ -340,7 +341,7 @@ Quando esse backend está ativo:
 
 No modo configurado pelo bootstrap atual:
 
-- `curl` usa EC2 por padrão para qualquer URL suportada e falha se o backend remoto falhar
+- `curl` usa EC2 por padrão para URLs suportadas, mas o fallback local permanece habilitado por padrão
 - `git` usa EC2 por padrão para os clones GitHub suportados, mas o fallback local permanece habilitado por padrão
 - `git` exporta `GIT_ZIP_WRAPPER_LFS_MODE=local` por padrão, então `git lfs pull` roda localmente após o clone
 

@@ -322,10 +322,10 @@ render_optional_exports() {
     printf 'export WRAPPERS_VIA_EC2_ALL_URLS=%s\n' "$(shell_quote "1")"
     printf 'export CURL_WRAPPER_USE_EC2=%s\n' "$(shell_quote "1")"
     printf 'export CURL_WRAPPER_EC2_ALL_URLS=%s\n' "$(shell_quote "1")"
-    printf 'export CURL_WRAPPER_EC2_REQUIRED=%s\n' "$(shell_quote "1")"
+    printf 'export CURL_WRAPPER_EC2_REQUIRED=%s\n' "$(shell_quote "0")"
     printf 'export WGET_WRAPPER_USE_EC2=%s\n' "$(shell_quote "1")"
     printf 'export WGET_WRAPPER_EC2_ALL_URLS=%s\n' "$(shell_quote "1")"
-    printf 'export WGET_WRAPPER_EC2_REQUIRED=%s\n' "$(shell_quote "1")"
+    printf 'export WGET_WRAPPER_EC2_REQUIRED=%s\n' "$(shell_quote "0")"
     printf 'export GIT_ZIP_WRAPPER_USE_EC2=%s\n' "$(shell_quote "1")"
     printf 'export GIT_ZIP_WRAPPER_EC2_ALL_URLS=%s\n' "$(shell_quote "1")"
     printf 'export GIT_ZIP_WRAPPER_EC2_REQUIRED=%s\n' "$(shell_quote "0")"
@@ -398,8 +398,9 @@ EOF
     cat <<EOF
 export CURL_WRAPPER_ENABLE_MASON_SMART_RELEASES="1"
 export CURL_WRAPPER_RELEASE_FALLBACK_REPOS="elixir-lsp/elixir-ls,luals/lua-language-server,omnisharp/omnisharp-roslyn"
+export CURL_WRAPPER_ALLOW_DIRECT_RELEASE_FALLBACK="1"
 export CURL_WRAPPER_RELEASE_CACHE_DIR=$(shell_quote "${HOME}/.cache/curl-python-wrapper/releases")
-export CURL_WRAPPER_MASON_SOURCE_BUILD_REPOS="elixir-lsp/elixir-ls,omnisharp/omnisharp-roslyn"
+export CURL_WRAPPER_MASON_SOURCE_BUILD_REPOS="omnisharp/omnisharp-roslyn"
 export CURL_WRAPPER_MASON_BUILDERS="elixir-lsp/elixir-ls=elixir_ls_release,omnisharp/omnisharp-roslyn=omnisharp_source_publish"
 export CURL_WRAPPER_MASON_REPACKAGE_EXTENSIONS="tar.gz,tgz,tar"
 

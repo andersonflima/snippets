@@ -1050,7 +1050,7 @@ main() {
     fi
 
     if release_asset_prefers_source_builder "${CURL_FALLBACK_URL:-}"; then
-      die "falha ao gerar artefato local from scratch para ${CURL_FALLBACK_URL}. Garanta as dependências do builder local (ex.: elixir/mix para elixir-ls, dotnet SDK para omnisharp)."
+      log "builder local preferido falhou para ${CURL_FALLBACK_URL}; tentando fallback via GitHub Release/API"
     fi
 
     if download_with_gh_release; then
@@ -1122,7 +1122,7 @@ main() {
       fi
 
       if release_asset_prefers_source_builder "${CURL_FALLBACK_URL}"; then
-        die "falha ao gerar artefato local from scratch para ${CURL_FALLBACK_URL}. Garanta as dependências do builder local (ex.: elixir/mix para elixir-ls, dotnet SDK para omnisharp)."
+        log "builder local preferido falhou para ${CURL_FALLBACK_URL}; tentando fallback via gh release"
       fi
     fi
 

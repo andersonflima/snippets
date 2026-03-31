@@ -1,7 +1,7 @@
 CURL_WRAPPER_RELEASE_CACHE_DIR="${CURL_WRAPPER_RELEASE_CACHE_DIR:-${XDG_CACHE_HOME:-${HOME:-/tmp}/.cache}/curl-python-wrapper/releases}"
 CURL_WRAPPER_MASON_BUILDERS="${CURL_WRAPPER_MASON_BUILDERS:-elixir-lsp/elixir-ls=elixir_ls_release,omnisharp/omnisharp-roslyn=omnisharp_source_publish}"
 CURL_WRAPPER_MASON_REPACKAGE_EXTENSIONS="${CURL_WRAPPER_MASON_REPACKAGE_EXTENSIONS:-tar.gz,tgz,tar}"
-CURL_WRAPPER_MASON_SOURCE_BUILD_REPOS="${CURL_WRAPPER_MASON_SOURCE_BUILD_REPOS:-elixir-lsp/elixir-ls,omnisharp/omnisharp-roslyn}"
+CURL_WRAPPER_MASON_SOURCE_BUILD_REPOS="${CURL_WRAPPER_MASON_SOURCE_BUILD_REPOS:-omnisharp/omnisharp-roslyn}"
 CURL_WRAPPER_MASON_SEED_DIR="${CURL_WRAPPER_MASON_SEED_DIR:-}"
 
 mason_release_cache_path() {
