@@ -214,6 +214,40 @@ Regras:
 - o item `CURRENT` não usa `Payload` serializado; os campos do estado atual são gravados como atributos nativos da tabela
 - a gravação do item `CURRENT` usa merge otimista por `Revision`, reaplicando apenas os eventos locais ainda não materializados para evitar perda de estado quando múltiplas Lambdas salvam a mesma tabela
 
+### Integração com monitor externo de export job
+
+Se você tiver um script externo que acompanha `DescribeExport` e atualiza status/data no checkpoint, **não sobrescreva** o item `CURRENT` com `PutItem` parcial.
+
+Risco operacional:
+
+- se o monitor apagar ou deixar inválido `LastTo`, a próxima execução da Lambda cai em `FULL` (`checkpoint_last_to_missing_or_invalid`)
+- se apagar `LastMode`, `IncrementalSeq`, `PendingExports` ou `LastExportArn`, a progressão incremental fica inconsistente e pode repetir `FULL` ou ficar em `PENDING`
+
+Campos mínimos que a Lambda usa para decidir `FULL` vs `INCREMENTAL`:
+
+- `LastTo`
+- `LastMode`
+- `IncrementalSeq`
+- `PendingExports`
+- `LastExportArn`
+- `LastExportItemCount`
+- `TableCreatedAt`
+
+Recomendação:
+
+- não gravar metadados do monitor no mesmo item `CURRENT`; prefira item separado (`SK=JOB#<export_arn>`), ou
+- se precisar escrever no `CURRENT`, use `UpdateItem` só em atributos próprios do monitor (por exemplo `LastJobStatus`, `LastJobAt`) sem remover os campos acima
+
+Exemplo seguro (`UpdateItem`) para metadados do monitor:
+
+```bash
+aws dynamodb update-item \
+  --table-name snapshot-checkpoints \
+  --key '{"TableName":{"S":"arn:aws:dynamodb:sa-east-1:111111111111:table/orders"},"RecordType":{"S":"CURRENT"}}' \
+  --update-expression 'SET LastJobStatus = :s, LastJobAt = :t' \
+  --expression-attribute-values '{":s":{"S":"COMPLETED"},":t":{"S":"2026-03-31T20:10:00Z"}}'
+```
+
 ## Retorno do handler
 
 Campos comuns de retorno do `lambda_handler`:
