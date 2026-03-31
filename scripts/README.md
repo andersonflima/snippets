@@ -1,53 +1,63 @@
 # Scripts
 
-Interface pública para ambiente restrito:
+## Entrypoints canônicos
 
-- `scripts/configure_restricted_dev_env.sh`: instala todos os wrappers, gera os env-files, persiste o carregamento no shell rc e salva o estado do ambiente restrito
-- `scripts/activate_restricted_dev_env.sh`: carrega os env-files do ambiente restrito só na sessão atual
-- `scripts/deactivate_restricted_dev_env.sh`: remove da sessão atual as envs e paths do ambiente restrito
-- `scripts/doctor_restricted_dev_env.sh`: valida se `mix`, `brew`, `curl`, `git` e `nvim` estão vendo os wrappers
-- `scripts/reset_restricted_dev_env.sh`: remove wrappers, env-files, bloco gerenciado no shell rc e restaura a configuração persistida do Hex quando ela tiver sido alterada pelo bootstrap
+- `scripts/configure_restricted_dev_env.sh`
+  Bootstrap completo: instala wrappers, gera envs, atualiza shell rc e salva estado.
+- `scripts/reinstall_wrappers.sh`
+  Reinstala wrappers de `curl/git/brew` (e opcionalmente `mix`) sem precisar resetar tudo.
+- `scripts/validate_wrappers.sh`
+  Valida wrappers ativos no `PATH`, binários reais e política de fallback EC2.
+- `scripts/doctor_restricted_dev_env.sh`
+  Diagnóstico detalhado (inclui `validate_wrappers` + visão de `nvim`).
+- `scripts/reset_restricted_dev_env.sh`
+  Remove wrappers/envs/bloco do shell rc e restaura Hex persistido.
+- `scripts/activate_restricted_dev_env.sh`
+  Carrega envs na sessão atual.
+- `scripts/deactivate_restricted_dev_env.sh`
+  Remove envs da sessão atual.
 
-Ferramentas operacionais:
+## Fluxo recomendado
 
-- `scripts/docdb_stream_backup.exs`: backup DocumentDB em Elixir
-- `scripts/configure_hex_config.sh`: persiste proxy/TLS diretamente no Hex via `mix hex.config`
-- `scripts/fetch_url_via_ec2.sh`: baixa uma URL pelo EC2 via SSM e devolve o artefato por S3
-- `scripts/fetch_mix_hex_cache_from_ec2.sh`: importa `~/.mix`, `~/.hex` e cache de projeto de um EC2
-- `scripts/build_mason_seed_artifact.sh`: gera um artefato seed do Mason fora da máquina restrita
-
-Implementação interna:
-
-- `scripts/install/`: bootstrap, reset, manifesto de estado e instaladores/configuradores internos
-- `scripts/wrappers/`: wrappers reais de `mix`, `brew`, `curl` e `git`
-- `scripts/ec2/elixir/`: scripts específicos de runtime Elixir/Erlang e backend remoto do `mix`
-- `scripts/ec2/assets/`: helpers remotos para download via EC2
-- `scripts/ec2/go/`: instalação de Go no EC2
-- `scripts/ec2/mongodb/`: instalação de MongoDB Database Tools no EC2
-
-Uso recomendado:
+Configuração inicial:
 
 ```bash
 sh scripts/configure_restricted_dev_env.sh "<bucket>"
 ```
 
-Esse entrypoint público já persiste automaticamente no `~/.zshrc`, usando um bloco gerenciado e um manifesto em `~/.config/restricted-dev-env/state.sh`.
-
-Se você quiser carregar só na sessão atual, sem persistir:
+Reinstalação rápida dos wrappers:
 
 ```bash
-sh scripts/configure_restricted_dev_env.sh "<bucket>" --no-shell-rc
-. scripts/activate_restricted_dev_env.sh
+sh scripts/reinstall_wrappers.sh
 ```
 
-Para descarregar o ambiente da sessão atual:
+Validação rápida:
 
 ```bash
-. scripts/deactivate_restricted_dev_env.sh
+sh scripts/validate_wrappers.sh
 ```
 
-Para validar o ambiente:
+Diagnóstico completo:
 
 ```bash
 sh scripts/doctor_restricted_dev_env.sh
 ```
+
+## Ferramentas operacionais
+
+- `scripts/list_github_repos_by_prefix.sh`
+- `scripts/build_mason_seed_artifact.sh`
+- `scripts/configure_hex_config.sh`
+- `scripts/fetch_url_via_ec2.sh`
+- `scripts/fetch_mix_hex_cache_from_ec2.sh`
+- `scripts/docdb_stream_backup.exs`
+
+## Organização interna
+
+- `scripts/install/`: implementação canônica de instalação/configuração/validação.
+- `scripts/wrappers/`: wrappers reais (`curl`, `wget`, `git`, `brew`).
+- `scripts/ec2/`: helpers e automações EC2 (assets, git, elixir, go, mongodb).
+
+## Compatibilidade
+
+Scripts antigos como `scripts/install_*` e `scripts/*_wrapper.sh` continuam como entrypoints de compatibilidade, mas a manutenção principal está nos canônicos acima.

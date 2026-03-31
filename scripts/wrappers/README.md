@@ -55,7 +55,14 @@ Depois disso, abra o `nvim` normalmente.
 Para diagnosticar se o Mason está vendo os wrappers:
 
 ```bash
+sh scripts/validate_wrappers.sh
 sh scripts/doctor_restricted_dev_env.sh
+```
+
+Para reinstalar wrappers sem reset completo:
+
+```bash
+sh scripts/reinstall_wrappers.sh
 ```
 
 Se você quiser mudar o rc de destino:

@@ -442,5 +442,6 @@ Para aplicar na sessão atual:
   hash -r 2>/dev/null || true
 
 Para validar se o Mason está vendo os wrappers:
+  sh "${ROOT_DIR}/validate_wrappers.sh"
   sh "${ROOT_DIR}/doctor_restricted_dev_env.sh"
 EOF

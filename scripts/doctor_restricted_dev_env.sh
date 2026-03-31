@@ -14,6 +14,14 @@ fi
 rehash 2>/dev/null || true
 hash -r 2>/dev/null || true
 
+printf 'wrapper validation:\n'
+if sh "${SCRIPT_DIR}/validate_wrappers.sh"; then
+  printf 'wrapper validation: OK\n'
+else
+  printf 'wrapper validation: FAIL\n'
+fi
+printf '\n'
+
 printf 'mix=%s\n' "$(command -v mix 2>/dev/null || printf 'não encontrado')"
 printf 'brew=%s\n' "$(command -v brew 2>/dev/null || printf 'não encontrado')"
 printf 'curl=%s\n' "$(command -v curl 2>/dev/null || printf 'não encontrado')"
