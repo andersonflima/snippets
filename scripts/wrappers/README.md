@@ -320,6 +320,10 @@ Principais variáveis:
 - `GIT_ZIP_WRAPPER_STRICT`
   Impede fallback para `git clone` normal.
 
+Comportamento adicional para ElixirLS/Mix.install:
+
+- quando `git fetch` falha dentro do cache `mix/installs`, o wrapper tenta fallback local por archive (`tar.gz`) do GitHub para materializar o tag/branch solicitado.
+
 ## Mason inteligente
 
 ## Backend compartilhado via EC2

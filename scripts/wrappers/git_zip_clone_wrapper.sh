@@ -767,6 +767,41 @@ replace_mix_install_repo_with_clone() {
   rm -rf "${temp_dir}"
 }
 
+replace_mix_install_repo_with_archive() {
+  local real_git git_dir worktree_dir origin_url ref normalized_origin_url slug temp_dir archive_path extracted_repo_dir source_url
+  real_git="$1"
+  git_dir="$2"
+
+  path_looks_like_mix_install_git_dir "${git_dir}" || return 1
+  worktree_dir="$(resolve_fetch_worktree_dir "${real_git}" || true)"
+  origin_url="$(resolve_fetch_origin_url "${real_git}" || true)"
+  [[ -n "${worktree_dir}" && -n "${origin_url}" ]] || return 1
+
+  normalized_origin_url="$(normalize_clone_url_for_http_transport "${origin_url}" 2>/dev/null || true)"
+  [[ -n "${normalized_origin_url}" ]] || normalized_origin_url="${origin_url}"
+  slug="$(extract_github_slug "${normalized_origin_url}" || true)"
+  [[ -n "${slug}" ]] || return 1
+
+  ref="$(extract_requested_fetch_ref || true)"
+  temp_dir="$(mktemp -d -t git-zip-fetch-archive-XXXXXX)"
+  archive_path="${temp_dir}/repo.tar.gz"
+
+  source_url="$(download_github_archive "${slug}" "${ref}" "${archive_path}" || true)"
+  if [[ -z "${source_url}" ]]; then
+    rm -rf "${temp_dir}"
+    return 1
+  fi
+
+  extracted_repo_dir="${temp_dir}/repo"
+  mkdir -p "${extracted_repo_dir}"
+  tar -xzf "${archive_path}" -C "${extracted_repo_dir}" --strip-components=1
+  rm -rf "${worktree_dir}"
+  mkdir -p "${worktree_dir}"
+  cp -a "${extracted_repo_dir}/." "${worktree_dir}/"
+  rm -rf "${temp_dir}"
+  log "fallback por archive local concluído para cache do Mix.install: ${worktree_dir} (source: ${source_url})"
+}
+
 curl_mode_label() {
   case "$1" in
     default) printf '%s\n' "default" ;;
@@ -981,7 +1016,7 @@ main() {
   case "${GIT_SUBCOMMAND}" in
     fetch)
       resolve_proxy_config
-      local fetch_git_dir
+      local fetch_git_dir fetch_exit_code
       if should_use_ec2_backend_for_fetch; then
         fetch_git_dir="$(resolve_fetch_git_dir "${real_git}" || true)"
         if [[ -n "${fetch_git_dir}" ]]; then
@@ -1002,7 +1037,18 @@ main() {
           die "não foi possível resolver o diretório git para o fetch remoto"
         fi
       fi
-      exec "${real_git}" "$@"
+      fetch_git_dir="$(resolve_fetch_git_dir "${real_git}" || true)"
+      set +e
+      "${real_git}" "$@"
+      fetch_exit_code=$?
+      set -e
+      if [[ "${fetch_exit_code}" -eq 0 ]]; then
+        return 0
+      fi
+      if [[ -n "${fetch_git_dir}" ]] && replace_mix_install_repo_with_archive "${real_git}" "${fetch_git_dir}"; then
+        return 0
+      fi
+      exit "${fetch_exit_code}"
       ;;
     checkout)
       resolve_proxy_config
