@@ -216,6 +216,29 @@ Regras:
 - o item `CURRENT` não usa `Payload` serializado; os campos do estado atual são gravados como atributos nativos da tabela
 - a gravação do item `CURRENT` usa merge otimista por `Revision`, reaplicando apenas os eventos locais ainda não materializados para evitar perda de estado quando múltiplas Lambdas salvam a mesma tabela
 
+### Dados cruciais para controle de `FULL` e `INCREMENTAL`
+
+No item `CURRENT` da tabela de checkpoint, estes campos são os mais críticos para a decisão de modo:
+
+| Campo | Papel no controle | Efeito quando ausente/inválido |
+| --- | --- | --- |
+| `LastTo` | Marca o fim da última janela confirmada do export | força `FULL` (`checkpoint_last_to_missing_or_invalid`) |
+| `LastMode` | Indica o último modo confirmado (`FULL`/`INCREMENTAL`) | quebra progressão incremental e pode forçar novo ciclo |
+| `IncrementalSeq` | Contador do ciclo incremental (`INCR`, `INCR2`, ...) | progressão fica inconsistente; pode reciclar índice ou voltar para `FULL` |
+| `PendingExports` | Lista de exports ainda em andamento para reconciliação | sem esse estado, a Lambda pode perder tracking e replanejar incorretamente |
+| `LastExportArn` | Referência do último export para `DescribeExport` | sem ARN não consegue reconciliar corretamente metadados do incremental anterior |
+| `LastExportItemCount` | Define avanço do índice incremental (`>0` avança, `0` reutiliza) | sem valor, a Lambda mantém o mesmo índice até conseguir reconciliar |
+| `TableCreatedAt` | Detecta recriação de tabela alvo | divergência com `DescribeTable` invalida estado antigo e força bootstrap `FULL` |
+| `TableArn` / `TargetTableName` | Identidade da tabela no checkpoint | chave/identidade errada causa leitura de estado incorreto |
+| `RecordType` (`CURRENT`) | Define o registro corrente usado na decisão | se alterado, a Lambda pode não achar estado corrente e cair em `FULL` |
+
+Regras de decisão relevantes:
+
+- sem checkpoint válido (`CURRENT`) ou sem `LastTo` válido: `FULL`
+- com `PendingExports` ativo: retorna `PENDING` e não inicia novo export
+- com `IncrementalSeq` no limite (`MAX_INCREMENTAL_EXPORTS_PER_CYCLE`): força novo `FULL`
+- com `LastMode=INCREMENTAL`, o avanço do índice depende de `LastExportItemCount` do export anterior
+
 ### Integração com monitor externo de export job
 
 Se você tiver um script externo que acompanha `DescribeExport` e atualiza status/data no checkpoint, **não sobrescreva** o item `CURRENT` com `PutItem` parcial.
