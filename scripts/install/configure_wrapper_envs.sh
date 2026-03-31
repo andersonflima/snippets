@@ -303,11 +303,7 @@ render_path_prefix() {
 render_optional_exports() {
   GIT_LFS_MODE="$(printf '%s' "${GIT_LFS_MODE}" | tr '[:upper:]' '[:lower:]')"
   if [[ -z "${GIT_LFS_MODE}" ]]; then
-    if [[ "${ENABLE_EC2_BACKEND}" == "1" ]]; then
-      GIT_LFS_MODE="ec2"
-    else
-      GIT_LFS_MODE="local"
-    fi
+    GIT_LFS_MODE="local"
   fi
   case "${GIT_LFS_MODE}" in
     local|ec2)
@@ -332,7 +328,7 @@ render_optional_exports() {
     printf 'export WGET_WRAPPER_EC2_REQUIRED=%s\n' "$(shell_quote "1")"
     printf 'export GIT_ZIP_WRAPPER_USE_EC2=%s\n' "$(shell_quote "1")"
     printf 'export GIT_ZIP_WRAPPER_EC2_ALL_URLS=%s\n' "$(shell_quote "1")"
-    printf 'export GIT_ZIP_WRAPPER_EC2_REQUIRED=%s\n' "$(shell_quote "1")"
+    printf 'export GIT_ZIP_WRAPPER_EC2_REQUIRED=%s\n' "$(shell_quote "0")"
     if [[ -n "${AWS_PROFILE_NAME}" ]]; then
       printf 'export WRAPPERS_VIA_EC2_AWS_PROFILE=%s\n' "$(shell_quote "${AWS_PROFILE_NAME}")"
     fi

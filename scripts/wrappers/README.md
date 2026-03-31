@@ -305,7 +305,7 @@ Principais variáveis:
 - `GIT_ZIP_WRAPPER_LFS_MODE`
   Define onde os blobs do Git LFS serão materializados quando o clone usar o backend remoto.
   Valores válidos: `local`, `ec2`.
-  Padrão no bootstrap com backend EC2: `ec2`.
+  Padrão no bootstrap com backend EC2: `local`.
 
 - `GIT_ZIP_WRAPPER_STRICT`
   Impede fallback para `git clone` normal.
@@ -341,9 +341,8 @@ Quando esse backend está ativo:
 No modo configurado pelo bootstrap atual:
 
 - `curl` usa EC2 por padrão para qualquer URL suportada e falha se o backend remoto falhar
-- `git` usa EC2 por padrão para os clones GitHub suportados e falha se o backend remoto falhar
-- `git` exporta `GIT_ZIP_WRAPPER_LFS_MODE=ec2`, então o clone remoto tenta rodar `git lfs pull` no EC2 antes de gerar o `tar.gz`
-- o fallback local deixa de ser silencioso
+- `git` usa EC2 por padrão para os clones GitHub suportados, mas o fallback local permanece habilitado por padrão
+- `git` exporta `GIT_ZIP_WRAPPER_LFS_MODE=local` por padrão, então `git lfs pull` roda localmente após o clone
 
 Pré-requisito adicional para esse modo:
 
