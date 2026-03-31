@@ -641,9 +641,17 @@ checkout_with_ec2_backend() {
 }
 
 path_looks_like_mix_install_git_dir() {
-  local git_dir
+  local git_dir normalized_git_dir
   git_dir="$1"
-  [[ "${git_dir}" == *"/.cache/mix/installs/"*"/.git" ]]
+  normalized_git_dir="${git_dir%/}"
+
+  case "${normalized_git_dir}" in
+    */.cache/mix/installs/*/.git|*/.mix/installs/*/.git|*/Library/Caches/mix/installs/*/.git)
+      return 0
+      ;;
+  esac
+
+  return 1
 }
 
 resolve_fetch_worktree_dir() {
