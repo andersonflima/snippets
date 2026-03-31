@@ -1,4 +1,13 @@
-#!/usr/bin/env bash
+#!/bin/sh
+[ -n "${BASH_VERSION:-}" ] || {
+  if command -v bash >/dev/null 2>&1; then
+    exec bash "$0" "$@"
+  fi
+
+  printf '[list-github-repos-by-prefix] erro: bash e obrigatorio\n' >&2
+  exit 1
+}
+
 set -euo pipefail
 
 log() {
@@ -167,19 +176,21 @@ list_repository_branches() {
 
 emit_repositories_only() {
   local repo_name
-  while IFS= read -r repo_name; do
-    [[ -n "${repo_name}" ]] || continue
-    printf '%s/%s\n' "${OWNER}" "${repo_name}"
-  done < <(list_repositories_matching_prefix "${OWNER}" "${PREFIX}" "${RESOLVED_OWNER_TYPE}" "${AUTHENTICATED_LOGIN}")
+  list_repositories_matching_prefix "${OWNER}" "${PREFIX}" "${RESOLVED_OWNER_TYPE}" "${AUTHENTICATED_LOGIN}" \
+    | while IFS= read -r repo_name; do
+      [[ -n "${repo_name}" ]] || continue
+      printf '%s/%s\n' "${OWNER}" "${repo_name}"
+    done
 }
 
 emit_repositories_with_branches() {
   local repo_name branches_csv
-  while IFS= read -r repo_name; do
-    [[ -n "${repo_name}" ]] || continue
-    branches_csv="$(list_repository_branches "${OWNER}" "${repo_name}" | paste -sd ',' -)"
-    printf '%s/%s\t%s\n' "${OWNER}" "${repo_name}" "${branches_csv}"
-  done < <(list_repositories_matching_prefix "${OWNER}" "${PREFIX}" "${RESOLVED_OWNER_TYPE}" "${AUTHENTICATED_LOGIN}")
+  list_repositories_matching_prefix "${OWNER}" "${PREFIX}" "${RESOLVED_OWNER_TYPE}" "${AUTHENTICATED_LOGIN}" \
+    | while IFS= read -r repo_name; do
+      [[ -n "${repo_name}" ]] || continue
+      branches_csv="$(list_repository_branches "${OWNER}" "${repo_name}" | paste -sd ',' -)"
+      printf '%s/%s\t%s\n' "${OWNER}" "${repo_name}" "${branches_csv}"
+    done
 }
 
 emit_output() {
