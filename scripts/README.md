@@ -1,41 +1,39 @@
 # Scripts
 
-## Entrypoints canônicos
+## Fluxo principal (2 comandos)
 
-- `scripts/configure_restricted_dev_env.sh`
-  Bootstrap completo: instala wrappers, gera envs, atualiza shell rc e salva estado.
-- `scripts/reinstall_wrappers.sh`
-  Reinstala wrappers de `curl/git/brew` (e opcionalmente `mix`) sem precisar resetar tudo.
-- `scripts/validate_wrappers.sh`
-  Valida wrappers ativos no `PATH`, binários reais e política de fallback EC2.
-- `scripts/doctor_restricted_dev_env.sh`
-  Diagnóstico detalhado (inclui `validate_wrappers` + visão de `nvim`).
-- `scripts/reset_restricted_dev_env.sh`
-  Remove wrappers/envs/bloco do shell rc e restaura Hex persistido.
-- `scripts/activate_restricted_dev_env.sh`
-  Carrega envs na sessão atual.
-- `scripts/deactivate_restricted_dev_env.sh`
-  Remove envs da sessão atual.
+- `scripts/configure.sh`
+  Configura tudo: instala wrappers, gera envs, atualiza shell rc e salva estado.
+- `scripts/reset.sh`
+  Remove tudo: wrappers/envs/bloco do shell rc e restaura Hex persistido.
 
 ## Fluxo recomendado
 
-Configuração inicial:
+Configuração completa:
 
 ```bash
-sh scripts/configure_restricted_dev_env.sh "<bucket>"
+sh scripts/configure.sh "<bucket>"
 ```
 
 Com backend EC2 dos wrappers habilitado explicitamente:
 
 ```bash
-sh scripts/configure_restricted_dev_env.sh "<bucket>" --enable-ec2-backend
+sh scripts/configure.sh "<bucket>" --enable-ec2-backend
 ```
 
-Reinstalação rápida dos wrappers:
+Remoção completa:
 
 ```bash
-sh scripts/reinstall_wrappers.sh
+sh scripts/reset.sh
 ```
+
+Reconfiguração completa reaproveitando bucket salvo (após primeira configuração):
+
+```bash
+sh scripts/configure.sh
+```
+
+## Diagnóstico opcional
 
 Validação rápida:
 
@@ -66,4 +64,4 @@ sh scripts/doctor_restricted_dev_env.sh
 
 ## Compatibilidade
 
-Scripts antigos como `scripts/install_*` e `scripts/*_wrapper.sh` continuam como entrypoints de compatibilidade, mas a manutenção principal está nos canônicos acima.
+Scripts antigos como `scripts/configure_restricted_dev_env.sh`, `scripts/reset_restricted_dev_env.sh`, `scripts/reinstall_wrappers.sh`, `scripts/install_*` e `scripts/*_wrapper.sh` continuam por compatibilidade, mas o fluxo recomendado fica restrito aos dois comandos acima.

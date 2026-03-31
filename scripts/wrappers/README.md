@@ -27,7 +27,7 @@ Arquivos:
 Fluxo público recomendado:
 
 ```bash
-sh scripts/configure_restricted_dev_env.sh "<bucket>"
+sh scripts/configure.sh "<bucket>"
 ```
 
 Nesse modo padrão, o backend EC2 dos wrappers (`curl`, `wget`, `git`) fica desabilitado para priorizar fallback local e estabilidade de `brew`, `LazyVim` e `Mason`.
@@ -35,7 +35,7 @@ Nesse modo padrão, o backend EC2 dos wrappers (`curl`, `wget`, `git`) fica desa
 Para habilitar o backend remoto dos wrappers explicitamente:
 
 ```bash
-sh scripts/configure_restricted_dev_env.sh "<bucket>" --enable-ec2-backend
+sh scripts/configure.sh "<bucket>" --enable-ec2-backend
 ```
 
 Esse fluxo instala e configura:
@@ -54,7 +54,7 @@ Se você quiser ativar só na sessão atual, sem persistir:
 
 ```bash
 . scripts/deactivate_restricted_dev_env.sh 2>/dev/null || true
-sh scripts/configure_restricted_dev_env.sh "<bucket>" --no-shell-rc
+sh scripts/configure.sh "<bucket>" --no-shell-rc
 . scripts/activate_restricted_dev_env.sh
 ```
 
@@ -67,22 +67,16 @@ sh scripts/validate_wrappers.sh
 sh scripts/doctor_restricted_dev_env.sh
 ```
 
-Para reinstalar wrappers sem reset completo:
-
-```bash
-sh scripts/reinstall_wrappers.sh
-```
-
 Se você quiser mudar o rc de destino:
 
 ```bash
-sh scripts/configure_restricted_dev_env.sh "<bucket>" --shell-rc "$HOME/.zshrc"
+sh scripts/configure.sh "<bucket>" --shell-rc "$HOME/.zshrc"
 ```
 
 Para zerar tudo depois:
 
 ```bash
-sh scripts/reset_restricted_dev_env.sh
+sh scripts/reset.sh
 ```
 
 O reset remove o bloco gerenciado do shell rc, apaga os wrappers/env-files e restaura a configuração do Hex quando ela tiver sido alterada pelo bootstrap com `--configure-hex`.
@@ -96,7 +90,7 @@ Para limpar a sessão atual sem abrir outro shell:
 Opcionalmente, ele também pode aplicar `mix hex.config`:
 
 ```bash
-sh scripts/configure_restricted_dev_env.sh \
+sh scripts/configure.sh \
   "<bucket>" \
   --configure-hex \
   --hex-unsafe-https
@@ -149,7 +143,7 @@ sh scripts/install/install_git_zip_wrapper.sh \
 O caminho público recomendado é usar só o bootstrap:
 
 ```bash
-sh scripts/configure_restricted_dev_env.sh "<bucket>"
+sh scripts/configure.sh "<bucket>"
 ```
 
 Os configuradores individuais continuam existindo apenas em `scripts/install/` para manutenção interna e cenários avançados.
