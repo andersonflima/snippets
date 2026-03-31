@@ -274,7 +274,13 @@ list_repositories_matching_prefix() {
   while :; do
     page_endpoint="${endpoint}&page=${page}"
     progress "consultando repositorios via API: ${page_endpoint}"
-    page_payload="$(gh_api_with_retry "${page_endpoint}")"
+    if ! page_payload="$(gh_api_with_retry "${page_endpoint}")"; then
+      if [[ "${page}" -gt 1 ]]; then
+        log "aviso: falha ao consultar a pagina ${page}; retornando resultado parcial coletado ate a pagina $((page - 1))"
+        break
+      fi
+      die "falha ao consultar repositorios na primeira pagina: ${page_endpoint}"
+    fi
     page_count="$(printf '%s' "${page_payload}" | jq 'length')"
     progress "pagina ${page}: ${page_count} repositorios retornados"
 
@@ -314,8 +320,13 @@ list_repository_branches() {
 
   while :; do
     page_endpoint="/repos/${owner}/${repo}/branches?per_page=100&page=${page}"
-    page_payload="$(gh_api_with_retry "${page_endpoint}")"
+    progress "consultando branches via API: ${page_endpoint}"
+    if ! page_payload="$(gh_api_with_retry "${page_endpoint}")"; then
+      log "aviso: falha ao consultar branches de ${owner}/${repo} na pagina ${page}; retornando branches parciais"
+      break
+    fi
     page_count="$(printf '%s' "${page_payload}" | jq 'length')"
+    progress "branches ${owner}/${repo} pagina ${page}: ${page_count} itens"
 
     if [[ "${page_count}" == "0" ]]; then
       break

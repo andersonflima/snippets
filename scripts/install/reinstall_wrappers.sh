@@ -40,6 +40,7 @@ Opções:
   --aws-region <region>        Região AWS.
   --s3-bucket <bucket>         Bucket S3 dos wrappers.
   --s3-prefix <prefixo>        Prefixo S3 dos wrappers.
+  --enable-ec2-backend         Liga backend remoto via EC2 nos wrappers.
   --disable-ec2-backend        Desliga backend EC2 nos wrappers.
   --proxy <url>                Proxy local para wrappers.
   --ec2-proxy <url>            Proxy exclusivo para backend EC2.
@@ -147,6 +148,10 @@ while [[ $# -gt 0 ]]; do
       S3_PREFIX_NAME="${2:-}"
       shift 2
       ;;
+    --enable-ec2-backend)
+      ENABLE_EC2_BACKEND="1"
+      shift
+      ;;
     --disable-ec2-backend)
       ENABLE_EC2_BACKEND="0"
       shift
@@ -216,7 +221,7 @@ load_existing_env_defaults() {
 load_existing_env_defaults
 
 if [[ -z "${ENABLE_EC2_BACKEND}" ]]; then
-  ENABLE_EC2_BACKEND="1"
+  ENABLE_EC2_BACKEND="0"
 fi
 
 install_wrapper_binaries() {
@@ -280,7 +285,9 @@ configure_wrapper_env_file() {
   [[ -n "${CA_CERT_PATH}" ]] && configure_args+=(--ca-cert "${CA_CERT_PATH}")
   [[ -n "${MASON_SEED_DIR}" ]] && configure_args+=(--mason-seed-dir "${MASON_SEED_DIR}")
 
-  if [[ "${ENABLE_EC2_BACKEND}" == "0" ]]; then
+  if [[ "${ENABLE_EC2_BACKEND}" == "1" ]]; then
+    configure_args+=(--enable-ec2-backend)
+  else
     configure_args+=(--disable-ec2-backend)
   fi
   if [[ "${AUTO_INSECURE_ON_CERT_ERROR}" == "1" ]]; then

@@ -78,6 +78,8 @@ Opções:
   --aws-profile <profile>      Profile AWS.
   --s3-prefix <prefixo>        Prefixo compartilhado para os wrappers. Padrão: wrappers-via-ec2
   --mix-s3-prefix <prefixo>    Prefixo específico do mix. Padrão: mix-via-ec2
+  --enable-ec2-backend         Liga backend remoto via EC2 nos wrappers (opcional).
+  --disable-ec2-backend        Desliga backend remoto via EC2 nos wrappers.
   --shell-rc <arquivo>         Arquivo rc do shell.
   --apply-shell-rc             Persiste os env-files no shell rc.
   --real-mix <path>            Binário real do mix.
@@ -111,6 +113,7 @@ AWS_REGION_NAME="sa-east-1"
 AWS_PROFILE_NAME=""
 WRAPPERS_S3_PREFIX="wrappers-via-ec2"
 MIX_S3_PREFIX="mix-via-ec2"
+ENABLE_WRAPPER_EC2_BACKEND="0"
 SHELL_RC_PATH="${HOME}/.zshrc"
 APPLY_SHELL_RC="0"
 REAL_MIX_BIN=""
@@ -154,6 +157,14 @@ while [[ $# -gt 0 ]]; do
     --mix-s3-prefix)
       MIX_S3_PREFIX="${2:-}"
       shift 2
+      ;;
+    --enable-ec2-backend)
+      ENABLE_WRAPPER_EC2_BACKEND="1"
+      shift
+      ;;
+    --disable-ec2-backend)
+      ENABLE_WRAPPER_EC2_BACKEND="0"
+      shift
       ;;
     --shell-rc)
       SHELL_RC_PATH="${2:-}"
@@ -368,6 +379,11 @@ fi
 if [[ "${AUTO_INSECURE_ON_CERT_ERROR}" == "1" ]]; then
   WRAPPER_ENV_ARGS+=(--auto-insecure-on-cert-error)
 fi
+if [[ "${ENABLE_WRAPPER_EC2_BACKEND}" == "1" ]]; then
+  WRAPPER_ENV_ARGS+=(--enable-ec2-backend)
+else
+  WRAPPER_ENV_ARGS+=(--disable-ec2-backend)
+fi
 MIX_ENV_ARGS+=(--no-shell-rc)
 WRAPPER_ENV_ARGS+=(--no-shell-rc)
 
@@ -430,6 +446,9 @@ Bucket compartilhado:
 Prefixos:
   mix: ${MIX_S3_PREFIX}
   wrappers: ${WRAPPERS_S3_PREFIX}
+
+Wrappers EC2 backend:
+  ${ENABLE_WRAPPER_EC2_BACKEND}
 
 Persistência:
   shell rc: ${RESTRICTED_DEV_ENV_MANAGED_SHELL_RC:-não alterado}

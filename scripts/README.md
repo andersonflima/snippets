@@ -25,6 +25,12 @@ Configuração inicial:
 sh scripts/configure_restricted_dev_env.sh "<bucket>"
 ```
 
+Com backend EC2 dos wrappers habilitado explicitamente:
+
+```bash
+sh scripts/configure_restricted_dev_env.sh "<bucket>" --enable-ec2-backend
+```
+
 Reinstalação rápida dos wrappers:
 
 ```bash

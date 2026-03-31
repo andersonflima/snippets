@@ -86,6 +86,7 @@ Opções:
   --aws-region <region>        Region AWS do backend remoto. Padrão: sa-east-1
   --s3-bucket <bucket>         Bucket compartilhado pelos wrappers no backend EC2.
   --s3-prefix <prefixo>        Prefixo S3 compartilhado. Padrão: wrappers-via-ec2
+  --enable-ec2-backend         Liga backend remoto via EC2 nos wrappers.
   --disable-ec2-backend        Desliga o backend remoto via EC2 nos wrappers.
   --proxy <url>                Define proxy para wrappers e env padrão.
   --ec2-proxy <url>            Define proxy exclusivo para o backend remoto no EC2.
@@ -124,7 +125,7 @@ AWS_PROFILE_NAME="${WRAPPERS_VIA_EC2_AWS_PROFILE:-${MIX_VIA_EC2_AWS_PROFILE:-${A
 AWS_REGION_NAME="${WRAPPERS_VIA_EC2_AWS_REGION:-${MIX_VIA_EC2_AWS_REGION:-sa-east-1}}"
 S3_BUCKET_NAME="${WRAPPERS_VIA_EC2_S3_BUCKET:-${MIX_VIA_EC2_S3_BUCKET:-}}"
 S3_PREFIX_NAME="${WRAPPERS_VIA_EC2_S3_PREFIX:-${MIX_VIA_EC2_S3_PREFIX:-wrappers-via-ec2}}"
-ENABLE_EC2_BACKEND="${WRAPPERS_VIA_EC2_ENABLED:-1}"
+ENABLE_EC2_BACKEND="${WRAPPERS_VIA_EC2_ENABLED:-0}"
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
@@ -197,6 +198,10 @@ while [[ $# -gt 0 ]]; do
       S3_PREFIX_NAME="${2:-}"
       shift 2
       ;;
+    --enable-ec2-backend)
+      ENABLE_EC2_BACKEND="1"
+      shift
+      ;;
     --disable-ec2-backend)
       ENABLE_EC2_BACKEND="0"
       shift
@@ -231,6 +236,10 @@ done
 [[ -n "${CURL_INSTALL_DIR}" ]] || die "--curl-install-dir não pode ser vazio"
 [[ -n "${GIT_INSTALL_DIR}" ]] || die "--git-install-dir não pode ser vazio"
 [[ -n "${BREW_INSTALL_DIR}" ]] || die "--brew-install-dir não pode ser vazio"
+[[ "${ENABLE_EC2_BACKEND}" == "0" || "${ENABLE_EC2_BACKEND}" == "1" ]] || die "--enable-ec2-backend/--disable-ec2-backend inválido"
+if [[ "${ENABLE_EC2_BACKEND}" == "1" && -z "${S3_BUCKET_NAME}" ]]; then
+  die "--s3-bucket é obrigatório quando o backend EC2 está habilitado"
+fi
 
 if [[ -z "${REAL_CURL_BIN}" ]]; then
   REAL_CURL_BIN="$(resolve_real_binary curl || true)"
@@ -301,6 +310,7 @@ render_path_prefix() {
 }
 
 render_optional_exports() {
+  local ec2_use_value ec2_all_urls_value
   GIT_LFS_MODE="$(printf '%s' "${GIT_LFS_MODE}" | tr '[:upper:]' '[:lower:]')"
   if [[ -z "${GIT_LFS_MODE}" ]]; then
     GIT_LFS_MODE="local"
@@ -315,20 +325,29 @@ render_optional_exports() {
 
   printf 'export WRAPPERS_VIA_EC2_ENABLED=%s\n' "$(shell_quote "${ENABLE_EC2_BACKEND}")"
   printf 'export GIT_ZIP_WRAPPER_LFS_MODE=%s\n' "$(shell_quote "${GIT_LFS_MODE}")"
+  printf 'export CURL_WRAPPER_EC2_REQUIRED=%s\n' "$(shell_quote "0")"
+  printf 'export WGET_WRAPPER_EC2_REQUIRED=%s\n' "$(shell_quote "0")"
+  printf 'export GIT_ZIP_WRAPPER_EC2_REQUIRED=%s\n' "$(shell_quote "0")"
+
+  if [[ "${ENABLE_EC2_BACKEND}" == "1" ]]; then
+    ec2_use_value="1"
+    ec2_all_urls_value="1"
+  else
+    ec2_use_value="0"
+    ec2_all_urls_value="0"
+  fi
+  printf 'export WRAPPERS_VIA_EC2_ALL_URLS=%s\n' "$(shell_quote "${ec2_all_urls_value}")"
+  printf 'export CURL_WRAPPER_USE_EC2=%s\n' "$(shell_quote "${ec2_use_value}")"
+  printf 'export CURL_WRAPPER_EC2_ALL_URLS=%s\n' "$(shell_quote "${ec2_all_urls_value}")"
+  printf 'export WGET_WRAPPER_USE_EC2=%s\n' "$(shell_quote "${ec2_use_value}")"
+  printf 'export WGET_WRAPPER_EC2_ALL_URLS=%s\n' "$(shell_quote "${ec2_all_urls_value}")"
+  printf 'export GIT_ZIP_WRAPPER_USE_EC2=%s\n' "$(shell_quote "${ec2_use_value}")"
+  printf 'export GIT_ZIP_WRAPPER_EC2_ALL_URLS=%s\n' "$(shell_quote "${ec2_all_urls_value}")"
+
   if [[ "${ENABLE_EC2_BACKEND}" == "1" ]]; then
     printf 'export WRAPPERS_VIA_EC2_INSTANCE_NAME=%s\n' "$(shell_quote "${INSTANCE_NAME}")"
     printf 'export WRAPPERS_VIA_EC2_AWS_REGION=%s\n' "$(shell_quote "${AWS_REGION_NAME}")"
     printf 'export WRAPPERS_VIA_EC2_S3_PREFIX=%s\n' "$(shell_quote "${S3_PREFIX_NAME}")"
-    printf 'export WRAPPERS_VIA_EC2_ALL_URLS=%s\n' "$(shell_quote "1")"
-    printf 'export CURL_WRAPPER_USE_EC2=%s\n' "$(shell_quote "1")"
-    printf 'export CURL_WRAPPER_EC2_ALL_URLS=%s\n' "$(shell_quote "1")"
-    printf 'export CURL_WRAPPER_EC2_REQUIRED=%s\n' "$(shell_quote "0")"
-    printf 'export WGET_WRAPPER_USE_EC2=%s\n' "$(shell_quote "1")"
-    printf 'export WGET_WRAPPER_EC2_ALL_URLS=%s\n' "$(shell_quote "1")"
-    printf 'export WGET_WRAPPER_EC2_REQUIRED=%s\n' "$(shell_quote "0")"
-    printf 'export GIT_ZIP_WRAPPER_USE_EC2=%s\n' "$(shell_quote "1")"
-    printf 'export GIT_ZIP_WRAPPER_EC2_ALL_URLS=%s\n' "$(shell_quote "1")"
-    printf 'export GIT_ZIP_WRAPPER_EC2_REQUIRED=%s\n' "$(shell_quote "0")"
     if [[ -n "${AWS_PROFILE_NAME}" ]]; then
       printf 'export WRAPPERS_VIA_EC2_AWS_PROFILE=%s\n' "$(shell_quote "${AWS_PROFILE_NAME}")"
     fi

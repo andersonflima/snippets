@@ -30,6 +30,14 @@ Fluxo público recomendado:
 sh scripts/configure_restricted_dev_env.sh "<bucket>"
 ```
 
+Nesse modo padrão, o backend EC2 dos wrappers (`curl`, `wget`, `git`) fica desabilitado para priorizar fallback local e estabilidade de `brew`, `LazyVim` e `Mason`.
+
+Para habilitar o backend remoto dos wrappers explicitamente:
+
+```bash
+sh scripts/configure_restricted_dev_env.sh "<bucket>" --enable-ec2-backend
+```
+
 Esse fluxo instala e configura:
 
 - wrapper do `mix`
@@ -217,7 +225,7 @@ Principais variáveis:
 
 - `CURL_WRAPPER_USE_EC2`
   Quando `1`, delega downloads suportados para o helper remoto via EC2.
-  Padrão: herda `WRAPPERS_VIA_EC2_ENABLED`.
+  Padrão: herda `WRAPPERS_VIA_EC2_ENABLED` (bootstrap padrão mantém `0`).
 
 - `WRAPPERS_VIA_EC2_INSTANCE_NAME`
   Instância EC2 compartilhada usada pelos wrappers.
@@ -291,7 +299,7 @@ Principais variáveis:
 
 - `GIT_ZIP_WRAPPER_USE_EC2`
   Quando `1`, delega downloads dos archives suportados para o helper remoto via EC2.
-  Padrão: herda `WRAPPERS_VIA_EC2_ENABLED`.
+  Padrão: herda `WRAPPERS_VIA_EC2_ENABLED` (bootstrap padrão mantém `0`).
 
 - `GIT_ZIP_WRAPPER_PROXY`
   Proxy explícito para os downloads do wrapper.
@@ -338,6 +346,12 @@ export WRAPPERS_VIA_EC2_AWS_REGION="sa-east-1"
 export WRAPPERS_VIA_EC2_S3_BUCKET="<bucket-compartilhado>"
 export WRAPPERS_VIA_EC2_S3_PREFIX="wrappers-via-ec2"
 ```
+
+Política de falha:
+
+- `CURL_WRAPPER_EC2_REQUIRED=0` por padrão (falha remota cai para local)
+- `WGET_WRAPPER_EC2_REQUIRED=0` por padrão (falha remota cai para local)
+- `GIT_ZIP_WRAPPER_EC2_REQUIRED=0` por padrão (falha remota cai para local)
 
 Quando esse backend está ativo:
 

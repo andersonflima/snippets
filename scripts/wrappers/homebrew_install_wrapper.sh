@@ -152,7 +152,7 @@ configure_install_environment() {
   export PATH
   configure_backend_failopen_policy
 
-  if is_truthy "${BREW_WRAPPER_NO_AUTO_UPDATE:-0}"; then
+  if is_truthy "${BREW_WRAPPER_NO_AUTO_UPDATE:-1}"; then
     export HOMEBREW_NO_AUTO_UPDATE="1"
   fi
 }
