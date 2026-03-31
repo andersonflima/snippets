@@ -52,9 +52,13 @@ require_command() {
   command -v "$1" >/dev/null 2>&1 || die "comando obrigatorio nao encontrado: $1"
 }
 
+gh_api() {
+  GH_PROMPT_DISABLED=1 gh api "$@"
+}
+
 assert_github_auth() {
   local auth_status_output
-  if auth_status_output="$(gh auth status 2>&1)"; then
+  if auth_status_output="$(GH_PROMPT_DISABLED=1 gh auth status 2>&1)"; then
     return 0
   fi
 
@@ -119,7 +123,7 @@ parse_arguments() {
 }
 
 resolve_authenticated_login() {
-  gh api /user --jq '.login' 2>/dev/null || true
+  gh_api /user --jq '.login' 2>/dev/null || true
 }
 
 resolve_owner_type() {
@@ -132,12 +136,12 @@ resolve_owner_type() {
     return 0
   fi
 
-  if gh api "/orgs/${owner}" >/dev/null 2>&1; then
+  if gh_api "/orgs/${owner}" >/dev/null 2>&1; then
     printf 'org\n'
     return 0
   fi
 
-  if gh api "/users/${owner}" >/dev/null 2>&1; then
+  if gh_api "/users/${owner}" >/dev/null 2>&1; then
     printf 'user\n'
     return 0
   fi
@@ -172,21 +176,39 @@ cleanup() {
 
 list_repositories_matching_prefix() {
   local owner prefix owner_type authenticated_login endpoint
+  local page page_endpoint page_payload page_count
   owner="$1"
   prefix="$2"
   owner_type="$3"
   authenticated_login="$4"
   endpoint="$(repositories_endpoint "${owner}" "${owner_type}" "${authenticated_login}")"
-  progress "consultando repositorios via API: ${endpoint}"
+  page=1
 
-  gh api --paginate "${endpoint}" \
-    | jq -r --arg owner "${owner}" --arg prefix "${prefix}" '
-      .[]
-      | select(.owner.login == $owner)
-      | select(.name | startswith($prefix))
-      | .name
-    ' \
-    | sort -u
+  while :; do
+    page_endpoint="${endpoint}&page=${page}"
+    progress "consultando repositorios via API: ${page_endpoint}"
+    page_payload="$(gh_api "${page_endpoint}")"
+    page_count="$(printf '%s' "${page_payload}" | jq 'length')"
+    progress "pagina ${page}: ${page_count} repositorios retornados"
+
+    if [[ "${page_count}" == "0" ]]; then
+      break
+    fi
+
+    printf '%s\n' "${page_payload}" \
+      | jq -r --arg owner "${owner}" --arg prefix "${prefix}" '
+        .[]
+        | select(.owner.login == $owner)
+        | select(.name | startswith($prefix))
+        | .name
+      '
+
+    if [[ "${page_count}" != "100" ]]; then
+      break
+    fi
+
+    page=$((page + 1))
+  done | sort -u
 }
 
 prepare_matching_repositories() {
@@ -198,12 +220,28 @@ prepare_matching_repositories() {
 
 list_repository_branches() {
   local owner repo
+  local page page_endpoint page_payload page_count
   owner="$1"
   repo="$2"
+  page=1
 
-  gh api --paginate "/repos/${owner}/${repo}/branches?per_page=100" \
-    | jq -r '.[] | .name' \
-    | sort -u
+  while :; do
+    page_endpoint="/repos/${owner}/${repo}/branches?per_page=100&page=${page}"
+    page_payload="$(gh_api "${page_endpoint}")"
+    page_count="$(printf '%s' "${page_payload}" | jq 'length')"
+
+    if [[ "${page_count}" == "0" ]]; then
+      break
+    fi
+
+    printf '%s\n' "${page_payload}" | jq -r '.[] | .name'
+
+    if [[ "${page_count}" != "100" ]]; then
+      break
+    fi
+
+    page=$((page + 1))
+  done | sort -u
 }
 
 emit_repositories_only() {
