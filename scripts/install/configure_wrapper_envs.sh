@@ -89,7 +89,6 @@ Opções:
   --disable-ec2-backend        Desliga o backend remoto via EC2 nos wrappers.
   --proxy <url>                Define proxy para wrappers e env padrão.
   --ec2-proxy <url>            Define proxy exclusivo para o backend remoto no EC2.
-                               Padrão: herda --proxy quando não informado.
   --ca-cert <arquivo>          Define CA customizada para o wrapper de git.
   --auto-insecure-on-cert-error
                                Ativa retry inseguro no wrapper de curl.
@@ -232,10 +231,6 @@ done
 [[ -n "${CURL_INSTALL_DIR}" ]] || die "--curl-install-dir não pode ser vazio"
 [[ -n "${GIT_INSTALL_DIR}" ]] || die "--git-install-dir não pode ser vazio"
 [[ -n "${BREW_INSTALL_DIR}" ]] || die "--brew-install-dir não pode ser vazio"
-
-if [[ -n "${PROXY_URL}" && -z "${EC2_PROXY_URL}" ]]; then
-  EC2_PROXY_URL="${PROXY_URL}"
-fi
 
 if [[ -z "${REAL_CURL_BIN}" ]]; then
   REAL_CURL_BIN="$(resolve_real_binary curl || true)"
