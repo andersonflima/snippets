@@ -41,6 +41,7 @@ Observações:
 | `TARGETS_CSV` | vazio | Fonte CSV de alvos: inline, caminho empacotado com a função ou `s3://` |
 | `IGNORE_CSV` | vazio | Fonte CSV de ignorados: inline, caminho empacotado com a função ou `s3://` |
 | `PERMISSION_PRECHECK` | `true` | Valida resolução de contexto/sessão por tabela antes da execução |
+| `PITR_AUTO_ENABLE` | `false` | Quando `true`, habilita PITR automaticamente nas tabelas com PITR desativado |
 | `INCREMENTAL_EXPORT_VIEW_TYPE` | `NEW_IMAGE` | Define o tipo de imagem no export incremental (`NEW_IMAGE` ou `NEW_AND_OLD_IMAGES`) |
 | `MAX_INCREMENTAL_EXPORTS_PER_CYCLE` | `6` | Limite de incrementais consecutivos antes de forçar novo `FULL` |
 | `LOG_LEVEL` | `INFO` | Nível de log |
@@ -128,9 +129,10 @@ Antes de chamar `ExportTableToPointInTime`, a Lambda:
 1. resolve a sessão AWS efetiva da tabela;
 2. valida se a sessão pertence à conta dona da tabela quando o target vem por ARN;
 3. consulta `DescribeContinuousBackups`;
-4. se `PointInTimeRecoveryStatus` estiver `DISABLED`, executa `UpdateContinuousBackups`;
-5. aguarda até o PITR ficar `ENABLED`;
-6. dispara o export `FULL_EXPORT` ou `INCREMENTAL_EXPORT`.
+4. se `PointInTimeRecoveryStatus` estiver `DISABLED`:
+   - com `PITR_AUTO_ENABLE=true`, executa `UpdateContinuousBackups` e aguarda `ENABLED`;
+   - com `PITR_AUTO_ENABLE=false` (padrão), não tenta habilitar PITR automaticamente;
+5. dispara o export `FULL_EXPORT` ou `INCREMENTAL_EXPORT`.
 
 Destino S3 por tabela:
 
@@ -389,6 +391,7 @@ Mapeamento aplicado no item do DynamoDB:
 - Conta AWS incorreta para export: ocorre quando a sessão atual não pertence à conta dona da tabela.
 - Timeout aguardando export: ocorre quando `WAIT_FOR_COMPLETION=true` e o export ultrapassa o limite interno de espera.
 - PITR não pode ser validado ou habilitado: ocorre quando faltam permissões ou a tabela não chega a `ENABLED` no tempo esperado.
+- PITR desativado com `PITR_AUTO_ENABLE=false`: a Lambda não habilita PITR automaticamente; nesse cenário, o export nativo pode falhar (ou cair no fallback por `Scan` quando habilitado).
 - Permissão insuficiente em S3 ou DynamoDB: ocorre quando a identidade AWS não possui as ações necessárias.
 
 ## Observabilidade

@@ -1385,6 +1385,7 @@ def _ensure_point_in_time_recovery(
     *,
     table_name: str,
     table_arn: str,
+    auto_enable: bool,
 ) -> Dict[str, Optional[datetime]]:
     response = ddb_client.describe_continuous_backups(TableName=table_name)
     desc = _safe_dict_field(response.get("ContinuousBackupsDescription"), "ContinuousBackupsDescription")
@@ -1392,6 +1393,17 @@ def _ensure_point_in_time_recovery(
     pitr_status = _safe_str_field(pitr_desc.get("PointInTimeRecoveryStatus"), field_name="PointInTimeRecoveryStatus", required=False)
 
     if pitr_status == "ENABLED":
+        return _extract_pitr_window(pitr_desc)
+
+    if not auto_enable:
+        _log_event(
+            "table.pitr.enable.skipped",
+            table_name=table_name,
+            table_arn=table_arn,
+            point_in_time_recovery_status=pitr_status,
+            auto_enable=False,
+            level=logging.WARNING,
+        )
         return _extract_pitr_window(pitr_desc)
 
     _log_event(
@@ -1568,6 +1580,7 @@ def _start_full_export(
         ddb_client,
         table_name=target.table_name,
         table_arn=target.table_arn,
+        auto_enable=bool(config.get("pitr_auto_enable")),
     )
 
     _log_event(
@@ -1659,6 +1672,7 @@ def _start_incremental_export(
         ddb_client,
         table_name=target.table_name,
         table_arn=target.table_arn,
+        auto_enable=bool(config.get("pitr_auto_enable")),
     )
     resolved_export_from, resolved_export_to = _clamp_incremental_export_window_to_pitr(
         export_from=export_from,
@@ -3006,6 +3020,11 @@ def build_snapshot_config(event: Optional[Dict[str, Any]]) -> Dict[str, Any]:
         "SCAN_FALLBACK_ENABLED",
         True,
     )
+    pitr_auto_enable = _resolve_env_first_bool(
+        _resolve_optional_text(payload.get("pitr_auto_enable"), payload.get("pitrAutoEnable")),
+        "PITR_AUTO_ENABLE",
+        False,
+    )
 
     incremental_export_view_type = _resolve_incremental_export_view_type(
         os.getenv("INCREMENTAL_EXPORT_VIEW_TYPE"),
@@ -3110,6 +3129,7 @@ def build_snapshot_config(event: Optional[Dict[str, Any]]) -> Dict[str, Any]:
         "snapshot_bucket_exact": snapshot_bucket_exact,
         "dry_run": dry_run,
         "scan_fallback_enabled": scan_fallback_enabled,
+        "pitr_auto_enable": pitr_auto_enable,
         "incremental_export_view_type": incremental_export_view_type,
         "max_incremental_exports_per_cycle": max_incremental_exports_per_cycle,
         "checkpoint_dynamodb_table_arn": checkpoint_dynamodb_table_arn,
@@ -3134,6 +3154,7 @@ def build_snapshot_config(event: Optional[Dict[str, Any]]) -> Dict[str, Any]:
         wait_for_completion=wait_for_completion,
         snapshot_bucket_exact=snapshot_bucket_exact,
         scan_fallback_enabled=scan_fallback_enabled,
+        pitr_auto_enable=pitr_auto_enable,
         incremental_export_view_type=incremental_export_view_type,
         max_incremental_exports_per_cycle=max_incremental_exports_per_cycle,
     )

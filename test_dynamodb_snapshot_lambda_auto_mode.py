@@ -312,6 +312,35 @@ class SnapshotAutomaticModeTests(unittest.TestCase):
             ):
                 snapshot_lambda.build_snapshot_config({})
 
+    def test_build_snapshot_config_defaults_pitr_auto_enable_to_false(self) -> None:
+        with patch.dict(
+            "os.environ",
+            {
+                "SNAPSHOT_BUCKET": "snapshot-bucket",
+                "TARGET_TABLES": "orders",
+                "CHECKPOINT_DYNAMODB_TABLE_ARN": "arn:aws:dynamodb:us-east-1:111111111111:table/checkpoints",
+            },
+            clear=True,
+        ):
+            config = snapshot_lambda.build_snapshot_config({})
+
+        self.assertFalse(config["pitr_auto_enable"])
+
+    def test_build_snapshot_config_reads_pitr_auto_enable_from_env(self) -> None:
+        with patch.dict(
+            "os.environ",
+            {
+                "SNAPSHOT_BUCKET": "snapshot-bucket",
+                "TARGET_TABLES": "orders",
+                "CHECKPOINT_DYNAMODB_TABLE_ARN": "arn:aws:dynamodb:us-east-1:111111111111:table/checkpoints",
+                "PITR_AUTO_ENABLE": "true",
+            },
+            clear=True,
+        ):
+            config = snapshot_lambda.build_snapshot_config({})
+
+        self.assertTrue(config["pitr_auto_enable"])
+
     def test_reconcile_pending_exports_persists_item_count_from_completed_export(self) -> None:
         reconciled = snapshot_lambda._reconcile_pending_exports(
             ddb_client=FakeDescribeExportClient(item_count_by_arn={f"{TABLE_ARN}/export/001": 7}),
