@@ -184,6 +184,59 @@ def _parse_iso_datetime(value: Any) -> Optional[datetime]:
     return parsed.astimezone(timezone.utc)
 
 
+def _resolve_checkpoint_last_to_timestamp(
+    *,
+    raw_last_to: Any,
+    table_name: str,
+    table_arn: str,
+) -> Optional[datetime]:
+    parsed = _parse_iso_datetime(raw_last_to)
+    if isinstance(parsed, datetime):
+        return parsed
+
+    parsed = _coerce_checkpoint_timestamp_to_utc(raw_last_to)
+    if isinstance(parsed, datetime):
+        _log_event(
+            "checkpoint.last_to.recovered_from_legacy_format",
+            table_name=table_name,
+            table_arn=table_arn,
+            raw_last_to=_safe_str_field(raw_last_to, field_name="checkpoint_state.last_to", required=False),
+            last_to=_dt_to_iso(parsed),
+            level=logging.INFO,
+        )
+    return parsed
+
+
+def _coerce_checkpoint_timestamp_to_utc(value: Any) -> Optional[datetime]:
+    if isinstance(value, datetime):
+        if value.tzinfo is None:
+            return value.replace(tzinfo=timezone.utc)
+        return value.astimezone(timezone.utc)
+    if value is None:
+        return None
+    if isinstance(value, (int, float)):
+        return datetime.fromtimestamp(value, tz=timezone.utc)
+    text = _resolve_optional_text(value)
+    if not text:
+        return None
+    if text.isdigit():
+        try:
+            epoch_seconds = int(text)
+            if epoch_seconds > 10**12:
+                epoch_seconds = epoch_seconds / 1000
+            return datetime.fromtimestamp(epoch_seconds, tz=timezone.utc)
+        except (OverflowError, OSError, ValueError):
+            return None
+    if text.endswith("Z"):
+        normalized = text[:-1] + "+00:00"
+        try:
+            parsed = datetime.fromisoformat(normalized)
+            return parsed if parsed.tzinfo else parsed.replace(tzinfo=timezone.utc)
+        except ValueError:
+            return _parse_iso_datetime(text)
+    return _parse_iso_datetime(text)
+
+
 def _coerce_datetime_utc(value: Any) -> Optional[datetime]:
     if isinstance(value, datetime):
         if value.tzinfo is None:
@@ -693,10 +746,8 @@ def snapshot_manager_build_bucket_name(base_bucket: str, region: Optional[str], 
 
 
 def _build_export_prefix(run_time: datetime, target: TableTarget, export_type: str, *, incremental_index: int = 1) -> str:
-    date_part = run_time.astimezone(timezone.utc).strftime("%Y%m%d")
-    run_id_part = run_time.astimezone(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
     export_segment = "FULL" if export_type == "FULL_EXPORT" else ("INCR" if incremental_index <= 1 else f"INCR{incremental_index}")
-    return f"DDB/{date_part}/{target.account_id}/{target.table_name}/{export_segment}/run_id={run_id_part}"
+    return f"DDB/{target.account_id}/{target.table_name}/{export_segment}"
 
 
 def _build_client_token(*parts: str) -> str:
@@ -932,6 +983,13 @@ def create_checkpoint_store(*, session: Any, checkpoint_dynamodb_table_arn: str)
     table_name = _safe_str_field(table_context.get("table_name"), field_name="checkpoint.table_name")
     ddb_client = _get_session_client(session, "dynamodb", region_name=table_region)
     _ensure_checkpoint_dynamodb_table_exists(ddb_client, table_name=table_name)
+    _log_event(
+        "checkpoint.dynamodb.table.validated",
+        table_name=table_name,
+        table_region=table_region,
+        table_arn=checkpoint_dynamodb_table_arn,
+        level=logging.INFO,
+    )
     return {
         "backend": "dynamodb",
         "ddb": ddb_client,
@@ -983,6 +1041,13 @@ def checkpoint_load_table_state(
         )
         if item:
             decoded = _ddb_decode_item(item)
+            _log_event(
+                "checkpoint.load.record.found",
+                lookup_key="arn",
+                target_table_name=requested_table_name,
+                target_table_arn=requested_table_arn,
+                level=logging.INFO,
+            )
 
     if not item:
         item = _checkpoint_get_current_item(
@@ -1003,8 +1068,21 @@ def checkpoint_load_table_state(
                 )
                 return {}
             decoded = decoded_legacy
+            _log_event(
+                "checkpoint.load.record.found",
+                lookup_key="table_name",
+                target_table_name=requested_table_name,
+                target_table_arn=requested_table_arn,
+                level=logging.INFO,
+            )
 
     if not item:
+        _log_event(
+            "checkpoint.load.record.missing",
+            target_table_name=requested_table_name,
+            target_table_arn=requested_table_arn,
+            level=logging.INFO,
+        )
         return {}
 
     if decoded is None:
@@ -2115,7 +2193,54 @@ def _resolve_automatic_export_plan(
         table_name=table_name,
         table_arn=table_arn,
     )
-    last_to_candidate = _parse_iso_datetime(refreshed_checkpoint_state.get("last_to"))
+    last_to_candidate = _resolve_checkpoint_last_to_timestamp(
+        raw_last_to=refreshed_checkpoint_state.get("last_to"),
+        table_name=table_name,
+        table_arn=table_arn,
+    )
+    if not isinstance(last_to_candidate, datetime):
+        last_export_arn = _safe_str_field(
+            refreshed_checkpoint_state.get("last_export_arn"),
+            field_name="checkpoint_state.last_export_arn",
+            required=False,
+        )
+        if last_export_arn:
+            try:
+                last_export_desc = _describe_export_description(
+                    ddb_client,
+                    export_arn=last_export_arn,
+                )
+                candidate_last_to = _coerce_checkpoint_timestamp_to_utc(
+                    last_export_desc.get("ExportToTime"),
+                )
+                if candidate_last_to is None:
+                    candidate_last_to = _coerce_checkpoint_timestamp_to_utc(
+                        last_export_desc.get("ExportEndTime"),
+                    )
+                if candidate_last_to is not None:
+                    refreshed_checkpoint_state = {
+                        **refreshed_checkpoint_state,
+                        "last_to": _dt_to_iso(candidate_last_to),
+                    }
+                    last_to_candidate = candidate_last_to
+                    _log_event(
+                        "checkpoint.last_to.recovered_from_last_export",
+                        table_name=table_name,
+                        table_arn=table_arn,
+                        export_arn=last_export_arn,
+                        export_to=_dt_to_iso(candidate_last_to),
+                        level=logging.INFO,
+                    )
+            except ClientError as exc:
+                _log_event(
+                    "checkpoint.last_to.recover_failed",
+                    table_name=table_name,
+                    table_arn=table_arn,
+                    export_arn=last_export_arn,
+                    code=_client_error_code(exc),
+                    message=_client_error_message(exc),
+                    level=logging.WARNING,
+                )
     if not checkpoint_record_exists:
         return {
             "mode": "FULL",
@@ -2242,6 +2367,15 @@ def _process_table(
         target_table_arn=target.table_arn,
     )
     checkpoint_record_exists = bool(raw_checkpoint_state)
+    _log_event(
+        "snapshot.checkpoint.record.evaluated",
+        table_name=target.table_name,
+        table_arn=target.table_arn,
+        checkpoint_record_exists=checkpoint_record_exists,
+        has_pending_exports=bool(_normalize_pending_exports(raw_checkpoint_state.get("pending_exports"))),
+        table_region=target.region,
+        level=logging.INFO,
+    )
     checkpoint_state = _normalize_checkpoint_state(
         raw_checkpoint_state,
         table_name=target.table_name,
@@ -2257,21 +2391,28 @@ def _process_table(
         field_name="checkpoint_state.table_created_at",
         required=False,
     )
-    if checkpoint_record_exists and table_created_at and checkpoint_created_at and checkpoint_created_at != table_created_at:
-        _log_event(
-            "checkpoint.table_recreated.detected",
-            table_name=target.table_name,
-            table_arn=target.table_arn,
-            checkpoint_table_created_at=checkpoint_created_at,
-            runtime_table_created_at=table_created_at,
-            level=logging.WARNING,
-        )
-        checkpoint_record_exists = False
-        checkpoint_state = _normalize_checkpoint_state(
-            {},
-            table_name=target.table_name,
-            table_arn=target.table_arn,
-        )
+    if checkpoint_record_exists and table_created_at and checkpoint_created_at:
+        checkpoint_created_at_dt = _coerce_checkpoint_timestamp_to_utc(checkpoint_created_at)
+        table_created_at_dt = _coerce_checkpoint_timestamp_to_utc(table_created_at)
+        if checkpoint_created_at_dt and table_created_at_dt:
+            changed_table_created_at = checkpoint_created_at_dt != table_created_at_dt
+        else:
+            changed_table_created_at = checkpoint_created_at != table_created_at
+        if changed_table_created_at:
+            _log_event(
+                "checkpoint.table_recreated.detected",
+                table_name=target.table_name,
+                table_arn=target.table_arn,
+                checkpoint_table_created_at=checkpoint_created_at,
+                runtime_table_created_at=table_created_at,
+                level=logging.WARNING,
+            )
+            checkpoint_record_exists = False
+            checkpoint_state = _normalize_checkpoint_state(
+                {},
+                table_name=target.table_name,
+                table_arn=target.table_arn,
+            )
     if table_created_at:
         checkpoint_state = {
             **checkpoint_state,
@@ -2296,6 +2437,19 @@ def _process_table(
         table_arn=target.table_arn,
         max_incremental_exports_per_cycle=config.get("max_incremental_exports_per_cycle"),
     )
+    _log_event(
+        "snapshot.checkpoint.plan.resolved",
+        table_name=target.table_name,
+        table_arn=target.table_arn,
+        proposed_mode=automatic_plan.get("mode"),
+        reason=_safe_str_field(automatic_plan.get("reason"), field_name="automatic_plan.reason"),
+        checkpoint_record_exists=checkpoint_record_exists,
+        checkpoint_last_mode=_safe_str_field(checkpoint_state.get("last_mode"), field_name="checkpoint_state.last_mode", required=False),
+        checkpoint_last_to=_safe_str_field(checkpoint_state.get("last_to"), field_name="checkpoint_state.last_to", required=False),
+        incremental_seq=_coerce_non_negative_int(checkpoint_state.get("incremental_seq"), field_name="checkpoint_state.incremental_seq", default=0),
+        pending_exports_count=len(_normalize_pending_exports(checkpoint_state.get("pending_exports"))),
+        level=logging.INFO,
+    )
     checkpoint_state = automatic_plan["checkpoint_state"]
 
     def finalize_result(result: Dict[str, Any]) -> Dict[str, Any]:
@@ -2317,6 +2471,23 @@ def _process_table(
 
     if bool(config.get("dry_run")):
         planned_mode = _safe_str_field(automatic_plan.get("mode"), field_name="automatic_plan.mode").upper()
+        pending_exports = _normalize_pending_exports(checkpoint_state.get("pending_exports"))
+        checkpoint_last_to = _safe_str_field(checkpoint_state.get("last_to"), field_name="checkpoint_state.last_to", required=False)
+        _log_event(
+            "snapshot.dry_run.table_plan",
+            table_name=target.table_name,
+            table_arn=target.table_arn,
+            table_region=target.region,
+            planned_mode=planned_mode,
+            reason=_safe_str_field(automatic_plan.get("reason"), field_name="automatic_plan.reason"),
+            has_pending_exports=bool(pending_exports),
+            checkpoint_record_exists=checkpoint_record_exists,
+            checkpoint_last_mode=_safe_str_field(checkpoint_state.get("last_mode"), field_name="checkpoint_state.last_mode", required=False),
+            checkpoint_last_to=checkpoint_last_to,
+            incremental_seq=_coerce_non_negative_int(checkpoint_state.get("incremental_seq"), field_name="checkpoint_state.incremental_seq", default=0),
+            pending_exports_count=len(pending_exports),
+            level=logging.INFO,
+        )
         return finalize_result({
             "table_name": target.table_name,
             "table_arn": target.table_arn,
@@ -2324,11 +2495,14 @@ def _process_table(
             "status": "PLANNED",
             "source": "dry_run",
             "snapshot_bucket": bucket,
+            "checkpoint_record_exists": checkpoint_record_exists,
             "checkpoint_state": checkpoint_state,
+            "pending_exports": pending_exports,
             "assume_role_arn": assume_role_arn,
             "table_account_id": target.account_id,
             "table_region": target.region,
             "mode_selection_reason": automatic_plan.get("reason"),
+            "checkpoint_last_to": checkpoint_last_to,
             "message": "Execução em dry_run: nenhum export foi iniciado.",
         })
 
@@ -2739,8 +2913,6 @@ def _emit_output_to_cloudwatch(
     config: Dict[str, Any],
     context: Any,
 ) -> None:
-    if not bool(config.get("output_cloudwatch_enabled")):
-        return
     envelope = {
         "source": source,
         "aws_request_id": getattr(context, "aws_request_id", None),
@@ -3049,7 +3221,7 @@ def build_snapshot_config(event: Optional[Dict[str, Any]]) -> Dict[str, Any]:
     output_cloudwatch_enabled = _resolve_env_first_bool(
         _resolve_optional_text(payload.get("output_cloudwatch_enabled"), payload.get("outputCloudwatchEnabled")),
         "OUTPUT_CLOUDWATCH_ENABLED",
-        False,
+        True,
     )
 
     output_dynamodb_enabled = _resolve_env_first_bool(
@@ -3247,7 +3419,7 @@ def lambda_handler(
             "error_type": "config",
             **fields,
         }
-        if emit_cloudwatch_output and isinstance(config, dict):
+        if emit_cloudwatch_output:
             _emit_output_to_cloudwatch("lambda_handler.config_error", response, config=config, context=context)
         return response
 
@@ -3261,7 +3433,7 @@ def lambda_handler(
             "error_type": "aws",
             **fields,
         }
-        if emit_cloudwatch_output and isinstance(config, dict):
+        if emit_cloudwatch_output:
             _emit_output_to_cloudwatch("lambda_handler.aws_error", response, config=config, context=context)
         return response
 
@@ -3274,6 +3446,6 @@ def lambda_handler(
             "error_type": "runtime",
             **fields,
         }
-        if emit_cloudwatch_output and isinstance(config, dict):
+        if emit_cloudwatch_output:
             _emit_output_to_cloudwatch("lambda_handler.runtime_error", response, config=config, context=context)
         return response
