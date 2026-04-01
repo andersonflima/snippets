@@ -60,6 +60,9 @@ Opções:
   --s3-bucket <bucket>         Bucket compartilhado com os demais wrappers.
   --s3-prefix <prefixo>        Prefixo S3 compartilhado. Padrão: mix-via-ec2
   --ssh-identity <arquivo>     Chave SSH privada para o EC2.
+  --proxy <url>                Proxy usado no ambiente remoto do mix via EC2.
+  --ca-cert <arquivo>          CA customizada no ambiente remoto do mix via EC2.
+  --hex-unsafe-https           Ativa modo inseguro do Hex no ambiente remoto.
   --remote-commands <csv>      Lista CSV de comandos do mix roteados para o EC2.
   -h, --help                   Mostra esta ajuda.
 USAGE
@@ -76,6 +79,9 @@ AWS_REGION_NAME="${MIX_VIA_EC2_AWS_REGION:-sa-east-1}"
 S3_BUCKET_NAME="${MIX_VIA_EC2_S3_BUCKET:-}"
 S3_PREFIX_NAME="${MIX_VIA_EC2_S3_PREFIX:-mix-via-ec2}"
 SSH_IDENTITY_PATH="${MIX_VIA_EC2_SSH_IDENTITY:-}"
+PROXY_URL="${MIX_VIA_EC2_PROXY:-${WRAPPERS_VIA_EC2_PROXY:-}}"
+CA_CERT_PATH="${MIX_VIA_EC2_CA_CERT:-${GIT_ZIP_WRAPPER_CURL_CACERT:-}}"
+HEX_UNSAFE_HTTPS_VALUE="${MIX_VIA_EC2_HEX_UNSAFE_HTTPS:-0}"
 REMOTE_COMMANDS="${MIX_WRAPPER_REMOTE_COMMANDS:-deps.get,deps.compile,deps.update,deps.unlock,local.hex,local.rebar,archive.install,archive.build,phx.new,hex.info}"
 
 while [[ $# -gt 0 ]]; do
@@ -128,6 +134,18 @@ while [[ $# -gt 0 ]]; do
     --ssh-identity)
       SSH_IDENTITY_PATH="${2:-}"
       shift 2
+      ;;
+    --proxy)
+      PROXY_URL="${2:-}"
+      shift 2
+      ;;
+    --ca-cert)
+      CA_CERT_PATH="${2:-}"
+      shift 2
+      ;;
+    --hex-unsafe-https)
+      HEX_UNSAFE_HTTPS_VALUE="1"
+      shift
       ;;
     --remote-commands)
       REMOTE_COMMANDS="${2:-}"
@@ -204,6 +222,20 @@ EOF
 
   if [[ -n "${SSH_IDENTITY_PATH}" ]]; then
     printf 'export MIX_VIA_EC2_SSH_IDENTITY=%s\n' "$(shell_quote "${SSH_IDENTITY_PATH}")" >> "${ENV_FILE}"
+  fi
+
+  if [[ -n "${PROXY_URL}" ]]; then
+    printf 'export MIX_VIA_EC2_PROXY=%s\n' "$(shell_quote "${PROXY_URL}")" >> "${ENV_FILE}"
+  fi
+
+  if [[ -n "${CA_CERT_PATH}" ]]; then
+    printf 'export MIX_VIA_EC2_CA_CERT=%s\n' "$(shell_quote "${CA_CERT_PATH}")" >> "${ENV_FILE}"
+  fi
+
+  if [[ "${HEX_UNSAFE_HTTPS_VALUE}" == "1" ]]; then
+    printf 'export MIX_VIA_EC2_HEX_UNSAFE_HTTPS=%s\n' "$(shell_quote "1")" >> "${ENV_FILE}"
+    printf 'export MIX_VIA_EC2_HEX_UNSAFE_REGISTRY=%s\n' "$(shell_quote "1")" >> "${ENV_FILE}"
+    printf 'export MIX_VIA_EC2_HEX_NO_VERIFY_REPO_ORIGIN=%s\n' "$(shell_quote "1")" >> "${ENV_FILE}"
   fi
 
   chmod 0644 "${ENV_FILE}"

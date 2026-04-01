@@ -380,6 +380,17 @@ fi
 if [[ -n "${SSH_IDENTITY_PATH}" ]]; then
   MIX_ENV_ARGS+=(--ssh-identity "${SSH_IDENTITY_PATH}")
 fi
+if [[ -n "${EC2_PROXY_URL}" ]]; then
+  MIX_ENV_ARGS+=(--proxy "${EC2_PROXY_URL}")
+elif [[ -n "${PROXY_URL}" ]]; then
+  MIX_ENV_ARGS+=(--proxy "${PROXY_URL}")
+fi
+if [[ -n "${CA_CERT_PATH}" ]]; then
+  MIX_ENV_ARGS+=(--ca-cert "${CA_CERT_PATH}")
+fi
+if [[ "${HEX_UNSAFE_HTTPS}" == "1" ]]; then
+  MIX_ENV_ARGS+=(--hex-unsafe-https)
+fi
 if [[ -n "${PROXY_URL}" ]]; then
   WRAPPER_ENV_ARGS+=(--proxy "${PROXY_URL}")
 fi

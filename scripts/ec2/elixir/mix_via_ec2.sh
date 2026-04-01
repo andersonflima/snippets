@@ -23,6 +23,9 @@ Opções:
   --aws-region <region>       Region AWS para resolução automática do EC2.
   --s3-bucket <bucket>        Bucket usado no modo SSM para sincronização de artefatos.
   --s3-prefix <prefixo>       Prefixo do bucket no modo SSM. Padrão: mix-via-ec2
+  --proxy <url>               Proxy HTTP/HTTPS/ALL no ambiente remoto.
+  --ca-cert <arquivo>         CA customizada para Hex remoto (HEX_CACERTS_PATH).
+  --hex-unsafe-https          Ativa HEX_UNSAFE_HTTPS/REGISTRY/NO_VERIFY no remoto.
   --user <user>               Usuário SSH. Padrão: ec2-user
   --identity <arquivo>        Chave privada SSH.
   --port <porta>              Porta SSH. Padrão: 22
@@ -111,6 +114,11 @@ AWS_REGION_NAME="${MIX_VIA_EC2_AWS_REGION:-${AWS_REGION:-${AWS_DEFAULT_REGION:-}
 S3_BUCKET="${MIX_VIA_EC2_S3_BUCKET:-}"
 S3_PREFIX="${MIX_VIA_EC2_S3_PREFIX:-mix-via-ec2}"
 KEEP_S3_ARTIFACTS="${MIX_VIA_EC2_KEEP_S3_ARTIFACTS:-0}"
+REMOTE_PROXY_URL="${MIX_VIA_EC2_PROXY:-${WRAPPERS_VIA_EC2_PROXY:-}}"
+REMOTE_CA_CERT_PATH="${MIX_VIA_EC2_CA_CERT:-${GIT_ZIP_WRAPPER_CURL_CACERT:-}}"
+REMOTE_HEX_UNSAFE_HTTPS="${MIX_VIA_EC2_HEX_UNSAFE_HTTPS:-0}"
+REMOTE_HEX_UNSAFE_REGISTRY="${MIX_VIA_EC2_HEX_UNSAFE_REGISTRY:-}"
+REMOTE_HEX_NO_VERIFY_REPO_ORIGIN="${MIX_VIA_EC2_HEX_NO_VERIFY_REPO_ORIGIN:-}"
 SSH_USER="${MIX_VIA_EC2_SSH_USER:-ec2-user}"
 SSH_IDENTITY="${MIX_VIA_EC2_SSH_IDENTITY:-}"
 SSH_PORT="22"
@@ -161,6 +169,18 @@ while [[ $# -gt 0 ]]; do
     --s3-prefix)
       S3_PREFIX="${2:-}"
       shift 2
+      ;;
+    --proxy)
+      REMOTE_PROXY_URL="${2:-}"
+      shift 2
+      ;;
+    --ca-cert)
+      REMOTE_CA_CERT_PATH="${2:-}"
+      shift 2
+      ;;
+    --hex-unsafe-https)
+      REMOTE_HEX_UNSAFE_HTTPS="1"
+      shift
       ;;
     --user)
       SSH_USER="${2:-}"
@@ -637,11 +657,18 @@ upload_local_project_archive() {
 
 generate_remote_script() {
   local remote_script_path remote_mix_args_literal quoted_remote_project_path quoted_aws_region quoted_mix_first_arg
+  local quoted_remote_proxy_url quoted_remote_ca_cert_path quoted_remote_hex_unsafe_https
+  local quoted_remote_hex_unsafe_registry quoted_remote_hex_no_verify_repo_origin
   remote_script_path="$1"
   remote_mix_args_literal="$(printf '%q ' "${MIX_ARGS[@]}")"
   quoted_remote_project_path="$(shell_quote "${REMOTE_PROJECT_PATH}")"
   quoted_aws_region="$(shell_quote "${AWS_REGION_NAME}")"
   quoted_mix_first_arg="$(shell_quote "${MIX_ARGS[0]}")"
+  quoted_remote_proxy_url="$(shell_quote "${REMOTE_PROXY_URL}")"
+  quoted_remote_ca_cert_path="$(shell_quote "${REMOTE_CA_CERT_PATH}")"
+  quoted_remote_hex_unsafe_https="$(shell_quote "${REMOTE_HEX_UNSAFE_HTTPS}")"
+  quoted_remote_hex_unsafe_registry="$(shell_quote "${REMOTE_HEX_UNSAFE_REGISTRY}")"
+  quoted_remote_hex_no_verify_repo_origin="$(shell_quote "${REMOTE_HEX_NO_VERIFY_REPO_ORIGIN}")"
 
   cat > "${remote_script_path}" <<EOF
 #!/usr/bin/env bash
@@ -717,6 +744,11 @@ SYNC_BUILD="${SYNC_BUILD}"
 SYNC_HOME_CACHE="${SYNC_HOME_CACHE}"
 REMOTE_PROJECT_PATH_RAW=${quoted_remote_project_path}
 REMOTE_AWS_REGION=${quoted_aws_region}
+REMOTE_PROXY_URL=${quoted_remote_proxy_url}
+REMOTE_CA_CERT_PATH=${quoted_remote_ca_cert_path}
+REMOTE_HEX_UNSAFE_HTTPS=${quoted_remote_hex_unsafe_https}
+REMOTE_HEX_UNSAFE_REGISTRY=${quoted_remote_hex_unsafe_registry}
+REMOTE_HEX_NO_VERIFY_REPO_ORIGIN=${quoted_remote_hex_no_verify_repo_origin}
 PROJECT_ARCHIVE_KEY="${PROJECT_ARCHIVE_KEY}"
 PROJECT_RESULT_KEY="${PROJECT_RESULT_KEY}"
 HOME_CACHE_KEY="${HOME_CACHE_KEY}"
@@ -740,6 +772,22 @@ export MIX_HOME="\${REMOTE_MIX_HOME}"
 export HEX_HOME="\${REMOTE_HEX_HOME}"
 export REBAR_CACHE_DIR="\${REMOTE_REBAR_CACHE_DIR}"
 export REBAR_GLOBAL_CONFIG_DIR="\${REMOTE_REBAR_CONFIG_DIR}"
+if [[ -n "\${REMOTE_PROXY_URL}" ]]; then
+  export HTTPS_PROXY="\${REMOTE_PROXY_URL}"
+  export HTTP_PROXY="\${REMOTE_PROXY_URL}"
+  export ALL_PROXY="\${REMOTE_PROXY_URL}"
+  export https_proxy="\${REMOTE_PROXY_URL}"
+  export http_proxy="\${REMOTE_PROXY_URL}"
+  export all_proxy="\${REMOTE_PROXY_URL}"
+fi
+if [[ -n "\${REMOTE_CA_CERT_PATH}" ]]; then
+  export HEX_CACERTS_PATH="\${REMOTE_CA_CERT_PATH}"
+fi
+if [[ "\${REMOTE_HEX_UNSAFE_HTTPS}" == "1" ]]; then
+  export HEX_UNSAFE_HTTPS=1
+  export HEX_UNSAFE_REGISTRY="\${REMOTE_HEX_UNSAFE_REGISTRY:-1}"
+  export HEX_NO_VERIFY_REPO_ORIGIN="\${REMOTE_HEX_NO_VERIFY_REPO_ORIGIN:-1}"
+fi
 export HEX_HTTP_TIMEOUT="\${HEX_HTTP_TIMEOUT:-120}"
 export HEX_HTTP_CONCURRENCY="\${HEX_HTTP_CONCURRENCY:-1}"
 
@@ -1070,6 +1118,8 @@ sync_project_to_remote_ssh() {
 
 run_remote_mix_ssh() {
   local remote_project remote_mix_args_literal remote_work_dir quoted_remote_work_dir
+  local quoted_remote_proxy_url quoted_remote_ca_cert_path remote_hex_flags_script remote_proxy_script
+  local quoted_remote_hex_unsafe_registry_value quoted_remote_hex_no_verify_repo_origin_value
   remote_project="$1"
   remote_mix_args_literal="$(printf '%q ' "${MIX_ARGS[@]}")"
   remote_work_dir="${remote_project}"
@@ -1078,9 +1128,28 @@ run_remote_mix_ssh() {
     remote_work_dir="\${HOME}"
   fi
   quoted_remote_work_dir="$(shell_quote "${remote_work_dir}")"
+  quoted_remote_proxy_url="$(shell_quote "${REMOTE_PROXY_URL}")"
+  quoted_remote_ca_cert_path="$(shell_quote "${REMOTE_CA_CERT_PATH}")"
+  quoted_remote_hex_unsafe_registry_value="$(shell_quote "${REMOTE_HEX_UNSAFE_REGISTRY:-1}")"
+  quoted_remote_hex_no_verify_repo_origin_value="$(shell_quote "${REMOTE_HEX_NO_VERIFY_REPO_ORIGIN:-1}")"
+  remote_proxy_script=""
+  remote_hex_flags_script=""
+
+  if [[ -n "${REMOTE_PROXY_URL}" ]]; then
+    remote_proxy_script+="export HTTPS_PROXY=${quoted_remote_proxy_url} HTTP_PROXY=${quoted_remote_proxy_url} ALL_PROXY=${quoted_remote_proxy_url}; "
+    remote_proxy_script+="export https_proxy=${quoted_remote_proxy_url} http_proxy=${quoted_remote_proxy_url} all_proxy=${quoted_remote_proxy_url}; "
+  fi
+  if [[ -n "${REMOTE_CA_CERT_PATH}" ]]; then
+    remote_hex_flags_script+="export HEX_CACERTS_PATH=${quoted_remote_ca_cert_path}; "
+  fi
+  if [[ "${REMOTE_HEX_UNSAFE_HTTPS}" == "1" ]]; then
+    remote_hex_flags_script+="export HEX_UNSAFE_HTTPS=1; "
+    remote_hex_flags_script+="export HEX_UNSAFE_REGISTRY=${quoted_remote_hex_unsafe_registry_value}; "
+    remote_hex_flags_script+="export HEX_NO_VERIFY_REPO_ORIGIN=${quoted_remote_hex_no_verify_repo_origin_value}; "
+  fi
 
   log "executando mix no EC2 via SSH: mix ${MIX_ARGS[*]}"
-  "${SSH_CMD[@]}" "bash -lc 'set -euo pipefail; cd ${quoted_remote_work_dir}; mix ${remote_mix_args_literal}'"
+  "${SSH_CMD[@]}" "bash -lc 'set -euo pipefail; ${remote_proxy_script}${remote_hex_flags_script}cd ${quoted_remote_work_dir}; mix ${remote_mix_args_literal}'"
 }
 
 sync_remote_project_back_ssh() {

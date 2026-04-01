@@ -21,6 +21,15 @@ Com backend EC2 dos wrappers habilitado explicitamente:
 sh scripts/configure.sh "<bucket>" --enable-ec2-backend
 ```
 
+Com proxy/CA corporativo no remoto (mix + wrappers via EC2):
+
+```bash
+sh scripts/configure.sh "<bucket>" \
+  --enable-ec2-backend \
+  --ec2-proxy "http://proxy.corp:3128" \
+  --ca-cert "/etc/ssl/certs/corp-ca.pem"
+```
+
 Remoção completa:
 
 ```bash
