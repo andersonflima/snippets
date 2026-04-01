@@ -3,7 +3,7 @@
 ## Fluxo público (2 comandos)
 
 - `scripts/configure.sh`
-  Configura tudo: instala wrappers, gera envs, atualiza shell rc e salva estado.
+  Configura tudo: instala wrappers, gera envs, atualiza shell rc, integra setup do ElixirLS e salva estado.
 - `scripts/reset.sh`
   Remove tudo: wrappers/envs/bloco do shell rc e restaura Hex persistido.
 

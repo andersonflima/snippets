@@ -131,6 +131,8 @@ HEX_UNSAFE_HTTPS="0"
 HEX_RUN_TEST="1"
 MIX_ENV_FILE="${HOME}/.config/mix-via-ec2-envs.sh"
 WRAPPER_ENV_FILE="${HOME}/.config/wrapper-envs.sh"
+ELIXIR_LS_SETUP_SH="${HOME}/.config/elixir_ls/setup.sh"
+ELIXIR_LS_SETUP_FISH="${HOME}/.config/elixir_ls/setup.fish"
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
@@ -343,6 +345,17 @@ sync_shell_rc_state() {
   RESTRICTED_DEV_ENV_MANAGED_SHELL_RC=""
 }
 
+sync_elixir_ls_setup_state() {
+  restricted_dev_env_apply_elixir_ls_setup_sh_block \
+    "${ELIXIR_LS_SETUP_SH}" \
+    "${MIX_ENV_FILE}" \
+    "${WRAPPER_ENV_FILE}"
+  restricted_dev_env_apply_elixir_ls_setup_fish_block \
+    "${ELIXIR_LS_SETUP_FISH}" \
+    "${MIX_ENV_FILE}" \
+    "${WRAPPER_ENV_FILE}"
+}
+
 MIX_ENV_ARGS=(
   --instance-name "${INSTANCE_NAME}"
   --aws-region "${AWS_REGION_NAME}"
@@ -429,6 +442,7 @@ if [[ "${CONFIGURE_HEX}" == "1" ]]; then
 fi
 
 run_step "sincronizando persistência do ambiente restrito" sync_shell_rc_state
+run_step "sincronizando setup do ElixirLS (sh/fish)" sync_elixir_ls_setup_state
 run_step "persistindo estado do ambiente restrito" restricted_dev_env_write_state
 
 cat <<EOF
@@ -452,6 +466,8 @@ Wrappers EC2 backend:
 
 Persistência:
   shell rc: ${RESTRICTED_DEV_ENV_MANAGED_SHELL_RC:-não alterado}
+  elixir_ls setup.sh: ${ELIXIR_LS_SETUP_SH}
+  elixir_ls setup.fish: ${ELIXIR_LS_SETUP_FISH}
   state: ${RESTRICTED_DEV_ENV_STATE_FILE}
 
 Para aplicar na sessão atual:

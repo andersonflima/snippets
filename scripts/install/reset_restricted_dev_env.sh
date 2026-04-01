@@ -41,6 +41,8 @@ STATE_HELPER="${SCRIPT_DIR}/restricted_dev_env_state.sh"
 . "${STATE_HELPER}"
 
 SHELL_RC_PATH="${HOME}/.zshrc"
+ELIXIR_LS_SETUP_SH="${HOME}/.config/elixir_ls/setup.sh"
+ELIXIR_LS_SETUP_FISH="${HOME}/.config/elixir_ls/setup.fish"
 RESET_SHELL_RC="1"
 RESET_ENV_FILES="1"
 RESET_INSTALL_DIRS="1"
@@ -154,6 +156,11 @@ if [[ "${RESET_SHELL_RC}" == "1" ]]; then
     restricted_dev_env_remove_shell_rc_block "${shell_rc_target}"
     log "shell rc limpo: ${shell_rc_target}"
   done
+
+  restricted_dev_env_remove_elixir_ls_setup_sh_block "${ELIXIR_LS_SETUP_SH}"
+  log "elixir_ls setup limpo: ${ELIXIR_LS_SETUP_SH}"
+  restricted_dev_env_remove_elixir_ls_setup_fish_block "${ELIXIR_LS_SETUP_FISH}"
+  log "elixir_ls setup limpo: ${ELIXIR_LS_SETUP_FISH}"
 fi
 
 if [[ "${RESET_ENV_FILES}" == "1" ]]; then
