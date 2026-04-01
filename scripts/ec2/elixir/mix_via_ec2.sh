@@ -35,12 +35,12 @@ Opções:
   -h, --help                  Mostra esta ajuda.
 
 Exemplos:
-  sh scripts/mix_via_ec2.sh \
+  sh scripts/ec2/elixir/mix_via_ec2.sh \
     --instance-name Dander \
     --aws-region sa-east-1 \
     -- deps.get
 
-  sh scripts/mix_via_ec2.sh \
+  sh scripts/ec2/elixir/mix_via_ec2.sh \
     --instance-name Dander \
     --aws-region sa-east-1 \
     -- archive.install hex phx_new --force

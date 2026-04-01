@@ -189,5 +189,5 @@ Para abrir uma sessão limpa agora:
   zsh -f
 
 Para limpar a sessão atual:
-  . scripts/deactivate_restricted_dev_env.sh
+  exec "${SHELL:-/bin/zsh}" -l
 EOF

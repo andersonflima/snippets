@@ -22,7 +22,7 @@ die() {
 usage() {
   cat <<'USAGE'
 Uso:
-  sh scripts/reinstall_wrappers.sh [opções]
+  sh scripts/install/reinstall_wrappers.sh [opções]
 
 Opções:
   --env-file <arquivo>         Arquivo de env gerado pelo configure_wrapper_envs.

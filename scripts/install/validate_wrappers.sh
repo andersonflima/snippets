@@ -17,7 +17,7 @@ log() {
 usage() {
   cat <<'USAGE'
 Uso:
-  sh scripts/validate_wrappers.sh [opções]
+  sh scripts/install/validate_wrappers.sh [opções]
 
 Opções:
   --env-file <arquivo>   Env-file dos wrappers. Padrão: $HOME/.config/wrapper-envs.sh

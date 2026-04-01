@@ -39,11 +39,11 @@ Estrutura local gerada:
   <destination>/project/mix.lock
 
 Exemplos:
-  sh scripts/fetch_mix_hex_cache_from_ec2.sh \
+  sh scripts/ec2/elixir/fetch_mix_hex_cache_from_ec2.sh \
     --host 10.0.0.10 \
     --identity ~/.ssh/minha-chave.pem
 
-  sh scripts/fetch_mix_hex_cache_from_ec2.sh \
+  sh scripts/ec2/elixir/fetch_mix_hex_cache_from_ec2.sh \
     --host 10.0.0.10 \
     --identity ~/.ssh/minha-chave.pem \
     --project-path /home/ec2-user/app \

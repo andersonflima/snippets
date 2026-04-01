@@ -388,14 +388,14 @@ MIX_ENV_ARGS+=(--no-shell-rc)
 WRAPPER_ENV_ARGS+=(--no-shell-rc)
 
 run_step "instalando wrapper do mix" \
-  sh "${ROOT_DIR}/install_mix_ec2_wrapper.sh" --real-mix "${REAL_MIX_BIN}"
+  sh "${ROOT_DIR}/install/install_mix_ec2_wrapper.sh" --real-mix "${REAL_MIX_BIN}"
 run_step "instalando wrapper do curl" \
-  sh "${ROOT_DIR}/install_curl_python_wrapper.sh" --real-curl "${REAL_CURL_BIN}"
+  sh "${ROOT_DIR}/install/install_curl_python_wrapper.sh" --real-curl "${REAL_CURL_BIN}"
 run_step "instalando wrapper do git" \
-  sh "${ROOT_DIR}/install_git_zip_wrapper.sh" --real-git "${REAL_GIT_BIN}"
+  sh "${ROOT_DIR}/install/install_git_zip_wrapper.sh" --real-git "${REAL_GIT_BIN}"
 if [[ -n "${REAL_BREW_BIN}" ]]; then
   run_step "instalando wrapper do brew" \
-    sh "${ROOT_DIR}/install_homebrew_wrapper.sh" --real-brew "${REAL_BREW_BIN}"
+    sh "${ROOT_DIR}/install/install_homebrew_wrapper.sh" --real-brew "${REAL_BREW_BIN}"
 else
   log "brew não encontrado no PATH; pulando wrapper do brew"
 fi
@@ -425,7 +425,7 @@ if [[ "${CONFIGURE_HEX}" == "1" ]]; then
   fi
 
   run_step "configurando Hex no host local" \
-    sh "${ROOT_DIR}/configure_hex_config.sh" "${HEX_ARGS[@]}"
+    sh "${ROOT_DIR}/ec2/elixir/configure_hex_config.sh" "${HEX_ARGS[@]}"
 fi
 
 run_step "sincronizando persistência do ambiente restrito" sync_shell_rc_state
@@ -461,6 +461,5 @@ Para aplicar na sessão atual:
   hash -r 2>/dev/null || true
 
 Para validar se o Mason está vendo os wrappers:
-  sh "${ROOT_DIR}/validate_wrappers.sh"
-  sh "${ROOT_DIR}/doctor_restricted_dev_env.sh"
+  sh "${ROOT_DIR}/install/validate_wrappers.sh"
 EOF

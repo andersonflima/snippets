@@ -8,16 +8,16 @@ defmodule DocdbStreamBackup do
 
   @usage """
   Uso:
-    elixir scripts/docdb_stream_backup.exs <docdb_uri> <bucket>
-    elixir scripts/docdb_stream_backup.exs <docdb_uri> <bucket> <prefix>
-    elixir scripts/docdb_stream_backup.exs <docdb_uri> <bucket> --prefix docdb/prod
-    elixir scripts/docdb_stream_backup.exs <docdb_uri> <bucket> --mongodump-arg --tls --mongodump-arg --tlsCAFile=/path/ca.pem
-    elixir scripts/docdb_stream_backup.exs <docdb_uri> <bucket> --mongodump-arg='--tls' --mongodump-arg='--tlsCAFile=/path/ca.pem'
+    elixir scripts/ec2/mongodb/docdb_stream_backup.exs <docdb_uri> <bucket>
+    elixir scripts/ec2/mongodb/docdb_stream_backup.exs <docdb_uri> <bucket> <prefix>
+    elixir scripts/ec2/mongodb/docdb_stream_backup.exs <docdb_uri> <bucket> --prefix docdb/prod
+    elixir scripts/ec2/mongodb/docdb_stream_backup.exs <docdb_uri> <bucket> --mongodump-arg --tls --mongodump-arg --tlsCAFile=/path/ca.pem
+    elixir scripts/ec2/mongodb/docdb_stream_backup.exs <docdb_uri> <bucket> --mongodump-arg='--tls' --mongodump-arg='--tlsCAFile=/path/ca.pem'
 
   Exemplos:
-    elixir scripts/docdb_stream_backup.exs 'mongodb://user:pass@host:27017/?tls=true&replicaSet=rs0&readPreference=secondaryPreferred&retryWrites=false' meu-bucket
-    elixir scripts/docdb_stream_backup.exs 'mongodb://user:pass@host:27017/?tls=true&replicaSet=rs0' meu-bucket docdb/prod
-    elixir scripts/docdb_stream_backup.exs 'mongodb://user:pass@host:27017/?tls=true&replicaSet=rs0' meu-bucket --prefix docdb/prod --mongodump-arg --tlsCAFile=/path/ca.pem
+    elixir scripts/ec2/mongodb/docdb_stream_backup.exs 'mongodb://user:pass@host:27017/?tls=true&replicaSet=rs0&readPreference=secondaryPreferred&retryWrites=false' meu-bucket
+    elixir scripts/ec2/mongodb/docdb_stream_backup.exs 'mongodb://user:pass@host:27017/?tls=true&replicaSet=rs0' meu-bucket docdb/prod
+    elixir scripts/ec2/mongodb/docdb_stream_backup.exs 'mongodb://user:pass@host:27017/?tls=true&replicaSet=rs0' meu-bucket --prefix docdb/prod --mongodump-arg --tlsCAFile=/path/ca.pem
 
   Observação:
     O upload acontece por stream em memória, sem gerar arquivo local no EC2.

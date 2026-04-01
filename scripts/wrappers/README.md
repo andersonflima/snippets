@@ -53,9 +53,9 @@ No entrypoint público, a configuração agora é persistida automaticamente no 
 Se você quiser ativar só na sessão atual, sem persistir:
 
 ```bash
-. scripts/deactivate_restricted_dev_env.sh 2>/dev/null || true
 sh scripts/configure.sh "<bucket>" --no-shell-rc
-. scripts/activate_restricted_dev_env.sh
+[ -f "$HOME/.config/mix-via-ec2-envs.sh" ] && . "$HOME/.config/mix-via-ec2-envs.sh"
+[ -f "$HOME/.config/wrapper-envs.sh" ] && . "$HOME/.config/wrapper-envs.sh"
 ```
 
 Depois disso, abra o `nvim` normalmente.
@@ -63,8 +63,7 @@ Depois disso, abra o `nvim` normalmente.
 Para diagnosticar se o Mason está vendo os wrappers:
 
 ```bash
-sh scripts/validate_wrappers.sh
-sh scripts/doctor_restricted_dev_env.sh
+sh scripts/install/validate_wrappers.sh
 ```
 
 Se você quiser mudar o rc de destino:
@@ -84,7 +83,7 @@ O reset remove o bloco gerenciado do shell rc, apaga os wrappers/env-files e res
 Para limpar a sessão atual sem abrir outro shell:
 
 ```bash
-. scripts/deactivate_restricted_dev_env.sh
+exec "${SHELL:-/bin/zsh}" -l
 ```
 
 Opcionalmente, ele também pode aplicar `mix hex.config`:
@@ -415,7 +414,7 @@ Se a máquina do serviço não consegue rodar `mix deps.get` ou `dotnet restore`
 Gerando o seed:
 
 ```bash
-sh scripts/build_mason_seed_artifact.sh \
+sh scripts/install/build_mason_seed_artifact.sh \
   --release-url https://github.com/elixir-lsp/elixir-ls/releases/download/v0.30.0/elixir-ls-v0.30.0.zip \
   --seed-dir "$HOME/.cache/mason-seeds"
 ```

@@ -108,7 +108,7 @@ validate_sudo_non_interactive() {
   fi
 
   if ! sudo -n true >/dev/null 2>&1; then
-    die "sudo sem modo não interativo. Execute como root ou use: sudo -E bash scripts/fix_elixir_ec2.sh"
+    die "sudo sem modo não interativo. Execute como root ou use: sudo -E bash scripts/ec2/elixir/fix_elixir_ec2.sh"
   fi
 }
 
