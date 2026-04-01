@@ -45,7 +45,7 @@ Observações:
 | `INCREMENTAL_EXPORT_VIEW_TYPE` | `NEW_IMAGE` | Define o tipo de imagem no export incremental (`NEW_IMAGE` ou `NEW_AND_OLD_IMAGES`) |
 | `MAX_INCREMENTAL_EXPORTS_PER_CYCLE` | `6` | Limite de incrementais consecutivos antes de forçar novo `FULL` |
 | `LOG_LEVEL` | `INFO` | Nível de log |
-| `OUTPUT_CLOUDWATCH_ENABLED` | `false` | Quando `true`, publica o payload final da execução nos logs estruturados da própria Lambda |
+| `OUTPUT_CLOUDWATCH_ENABLED` | `true` | Mantido para compatibilidade. A Lambda publica o payload final da execução nos logs estruturados da própria Lambda (CloudWatch) em todo ciclo. |
 | `OUTPUT_DYNAMODB_ENABLED` | `false` | Quando `true`, persiste o payload final da execução em uma tabela DynamoDB padronizada |
 | `OUTPUT_DYNAMODB_TABLE` | vazio | Nome da tabela DynamoDB de destino usada pelo output padronizado. Obrigatória quando `OUTPUT_DYNAMODB_ENABLED=true` |
 | `OUTPUT_DYNAMODB_REGION` | região atual da execução | Região AWS da tabela usada para persistir o output padronizado |
@@ -178,26 +178,24 @@ Regras de progressão `INCR` -> `INCR2` -> `INCR3`:
 
 ## Layout no S3
 
-- `DDB/YYYYMMDD/<account_id>/<table_name>/FULL/run_id=YYYYMMDDThhmmssZ`
-- `DDB/YYYYMMDD/<account_id>/<table_name>/INCR/run_id=YYYYMMDDThhmmssZ`
-- `DDB/YYYYMMDD/<account_id>/<table_name>/INCR2/run_id=YYYYMMDDThhmmssZ`
-- `DDB/YYYYMMDD/<account_id>/<table_name>/INCR3/run_id=YYYYMMDDThhmmssZ`
-- `DDB/YYYYMMDD/<account_id>/<table_name>/INCR4/run_id=YYYYMMDDThhmmssZ`
-- `DDB/YYYYMMDD/<account_id>/<table_name>/INCR5/run_id=YYYYMMDDThhmmssZ`
-- `DDB/YYYYMMDD/<account_id>/<table_name>/INCR6/run_id=YYYYMMDDThhmmssZ` (quando o limite padrão `6` estiver em uso)
+- `DDB/<account_id>/<table_name>/FULL`
+- `DDB/<account_id>/<table_name>/INCR`
+- `DDB/<account_id>/<table_name>/INCR2`
+- `DDB/<account_id>/<table_name>/INCR3`
+- `DDB/<account_id>/<table_name>/INCR4`
+- `DDB/<account_id>/<table_name>/INCR5`
+- `DDB/<account_id>/<table_name>/INCR6` (quando o limite padrão `6` estiver em uso)
 
 Observação:
 
-- O sufixo `run_id=...` garante prefixo único por execução, inclusive quando há múltiplos incrementais no mesmo dia.
+- O sufixo `run_id` não é mais incluído no prefixo de export para simplificar a organização de pastas; a unicidade entre execuções é garantida pelo `ClientToken`.
 - Quando o incremental anterior termina sem itens exportados, a Lambda reutiliza o mesmo índice incremental na próxima execução em vez de avançar para o próximo sufixo.
 - O maior sufixo incremental (`INCR<N>`) depende de `MAX_INCREMENTAL_EXPORTS_PER_CYCLE`.
 
 Explicação do `run_id`:
 
 - `run_id` é o identificador da execução (`YYYYMMDDThhmmssZ`) e representa o timestamp UTC em que a Lambda iniciou aquele ciclo.
-- O `run_id` não substitui o índice incremental; ele só cria um namespace único dentro de `INCR`, `INCR2`, `INCR3`, etc.
-- Exemplo sem avanço de índice (`ItemCount = 0` no export anterior): execução 10:00 -> `.../INCR/run_id=20260324T100000Z`; execução 11:00 -> `.../INCR/run_id=20260324T110000Z`.
-- Exemplo com avanço de índice (`ItemCount > 0` no export anterior): execução 10:00 -> `.../INCR/run_id=20260324T100000Z`; execução 11:00 -> `.../INCR2/run_id=20260324T110000Z`.
+- O `run_id` continua no payload e no rastreio interno, mas não é parte do prefixo S3.
 
 No fallback por `Scan`, além das partições `.jsonl` ou `.jsonl.gz`, a Lambda grava `manifest.json` com `files`, `total_items`, `total_parts`, `from` e `to`.
 
@@ -309,6 +307,8 @@ Cada item em `results` pode conter:
 - `full_export_s3_prefix`
 - `pending_exports`
 - `checkpoint_state`
+- `checkpoint_record_exists`
+- `checkpoint_last_to`
 - `assume_role`
 - `table_account_id`
 - `table_region`
@@ -369,7 +369,7 @@ Campos relevantes:
 
 Mapeamento aplicado no item do DynamoDB:
 
-- `Destination S3 Bucket` salva a URL completa do prefix do export no S3, por exemplo `s3://meu-bucket/DDB/20260309/111111111111/orders/INCR/run_id=20260309T153000Z`
+- `Destination S3 Bucket` salva a URL completa do prefix do export no S3, por exemplo `s3://meu-bucket/DDB/111111111111/orders/INCR`
 - `Status` é salvo em formato de leitura do console, por exemplo `In progress` e `Completed`
 - `Export Type` é salvo como `Full export` ou `Incremental export`
 - `Export job start time (utc-03:00)` é convertido para `UTC-03:00` em ISO-8601, por exemplo `2026-03-08T21:00:00-03:00`
@@ -395,7 +395,7 @@ Mapeamento aplicado no item do DynamoDB:
       "status": "STARTED",
       "source": "native",
       "export_job_id": "016...",
-      "s3_prefix": "DDB/20260309/111111111111/orders/INCR/run_id=20260309T153000Z",
+      "s3_prefix": "DDB/111111111111/orders/INCR",
       "checkpoint_from": "2026-03-08T00:00:00Z",
       "checkpoint_source": "checkpoint",
       "checkpoint_to": "2026-03-09T15:30:00Z",
@@ -435,7 +435,16 @@ Os logs são estruturados em JSON. Eventos relevantes:
 - `fallback.partition.*`
 - `fallback.manifest.*`
 - `aws.assume_role.*`
+- `checkpoint.dynamodb.table.validated`
+- `checkpoint.load.record.found`
+- `checkpoint.load.record.missing`
+- `checkpoint.load.legacy_partition_mismatch`
+- `snapshot.checkpoint.record.evaluated`
+- `snapshot.checkpoint.plan.resolved`
+- `snapshot.dry_run.table_plan`
 
 Quando `OUTPUT_CLOUDWATCH_ENABLED=true`, o payload final da execução também é emitido como evento estruturado no fluxo de logs da própria Lambda.
 
 Para consultas em CloudWatch, prefira os campos `table_name`, `table_status`, `export_job_id` e `checkpoint_to` do evento `output.cloudwatch.table`. O `export_arn` continua existindo apenas no estado interno de checkpoint e nos logs técnicos usados para reconciliação.
+
+No `dry_run`, o log `snapshot.dry_run.table_plan` informa o modo planejado por tabela antes de qualquer export (`mode`, `reason`, `checkpoint_record_exists`, `checkpoint_last_to`, `incremental_seq`, `pending_exports_count`), permitindo confirmar que a decisão partiu do estado atual do checkpoint sem executar mudanças.
