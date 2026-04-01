@@ -131,6 +131,29 @@ class FakeIncrementalPitrClient(FakeDescribeExportClient):
         }
 
 
+class FakeIncrementalPitrClientWithRecoverableLastTo(FakeIncrementalPitrClient):
+    def __init__(
+        self,
+        *,
+        earliest_restorable: datetime,
+        latest_restorable: datetime,
+        recovered_last_to: datetime,
+    ) -> None:
+        super().__init__(earliest_restorable=earliest_restorable, latest_restorable=latest_restorable)
+        self.recovered_last_to = recovered_last_to
+        self.describe_export_calls: list[str] = []
+
+    def describe_export(self, *, ExportArn: str) -> dict:
+        self.describe_export_calls.append(ExportArn)
+        return {
+            "ExportDescription": {
+                "ExportArn": ExportArn,
+                "ExportStatus": "COMPLETED",
+                "ExportToTime": self.recovered_last_to,
+            },
+        }
+
+
 class SnapshotAutomaticModeTests(unittest.TestCase):
     def build_config(self) -> dict:
         return {
@@ -172,9 +195,15 @@ class SnapshotAutomaticModeTests(unittest.TestCase):
             incremental_index=1,
         )
 
-        self.assertNotEqual(first_prefix, second_prefix)
-        self.assertTrue(first_prefix.endswith("/INCR/run_id=20260323T100000Z"))
-        self.assertTrue(second_prefix.endswith("/INCR/run_id=20260323T110000Z"))
+        self.assertEqual(first_prefix, second_prefix)
+        self.assertEqual(first_prefix.split("/"), [
+            "DDB",
+            "111111111111",
+            "orders",
+            "INCR",
+        ])
+        self.assertEqual(first_prefix, "DDB/111111111111/orders/INCR")
+        self.assertTrue(first_prefix.endswith("/INCR"))
 
     def run_process_table(
         self,
@@ -366,6 +395,79 @@ class SnapshotAutomaticModeTests(unittest.TestCase):
         self.assertEqual(reconciled["last_mode"], "INCREMENTAL")
         self.assertEqual(reconciled["last_to"], "2026-03-22T00:00:00Z")
 
+    def test_reconcile_pending_exports_completed_without_checkpoint_to_recovers_from_export_description(self) -> None:
+        class FakeCompletedDescribeClient:
+            def describe_export(self, *, ExportArn: str) -> dict[str, Any]:
+                return {
+                    "ExportDescription": {
+                        "ExportArn": ExportArn,
+                        "ExportStatus": "COMPLETED",
+                        "ExportToTime": datetime(2026, 3, 22, tzinfo=timezone.utc),
+                        "ItemCount": 11,
+                    }
+                }
+
+        reconciled = snapshot_lambda._reconcile_pending_exports(
+            ddb_client=FakeCompletedDescribeClient(),
+            state={
+                "table_name": "orders",
+                "table_arn": TABLE_ARN,
+                "pending_exports": [
+                    {
+                        "export_arn": f"{TABLE_ARN}/export/019",
+                        "mode": "INCREMENTAL",
+                        "source": "native",
+                    }
+                ],
+                "incremental_seq": 1,
+            },
+            table_name="orders",
+            table_arn=TABLE_ARN,
+        )
+
+        self.assertEqual(reconciled["last_export_arn"], f"{TABLE_ARN}/export/019")
+        self.assertEqual(reconciled["last_export_item_count"], 11)
+        self.assertEqual(reconciled["last_to"], "2026-03-22T00:00:00Z")
+
+    def test_invalid_incremental_seq_uses_default_and_stays_incremental(self) -> None:
+        class FakeDryRunDescribeClient:
+            def describe_continuous_backups(self, TableName: str) -> dict[str, Any]:
+                return {
+                    "ContinuousBackupsDescription": {
+                        "ContinuousBackupsStatus": "ENABLED",
+                        "PointInTimeRecoveryDescription": {
+                            "PointInTimeRecoveryStatus": "ENABLED",
+                            "EarliestRestorableDateTime": datetime(2026, 3, 21, tzinfo=timezone.utc),
+                            "LatestRestorableDateTime": datetime(2026, 3, 23, tzinfo=timezone.utc),
+                        },
+                    }
+                }
+
+        result = self.run_process_table(
+            previous_state={
+                "table_name": "orders",
+                "table_arn": TABLE_ARN,
+                "last_to": "2026-03-22T00:00:00Z",
+                "last_mode": "INCREMENTAL",
+                "incremental_seq": "NaN",
+                "last_export_item_count": "bad",
+            },
+            ddb_client=FakeDryRunDescribeClient(),
+            start_incremental_export=lambda **kwargs: {
+                "table_name": "orders",
+                "table_arn": TABLE_ARN,
+                "mode": "INCREMENTAL",
+                "status": "STARTED",
+                "source": "native",
+                "export_arn": f"{TABLE_ARN}/export/077",
+                "checkpoint_to": "2026-03-23T00:00:00Z",
+            },
+        )
+
+        self.assertEqual(result["mode"], "INCREMENTAL")
+        self.assertEqual(result["status"], "STARTED")
+        self.assertEqual(result["mode_selection_reason"], "initial_incremental_after_full")
+
     def test_first_incremental_after_full_uses_index_one(self) -> None:
         captured: dict[str, Any] = {}
 
@@ -502,6 +604,136 @@ class SnapshotAutomaticModeTests(unittest.TestCase):
             datetime(2026, 3, 23, tzinfo=timezone.utc),
         )
 
+    def test_incremental_plan_recovers_last_to_from_last_export_arn_when_last_to_is_invalid(self) -> None:
+        ddb_client = FakeIncrementalPitrClientWithRecoverableLastTo(
+            earliest_restorable=datetime(2026, 3, 21, tzinfo=timezone.utc),
+            latest_restorable=datetime(2026, 3, 23, tzinfo=timezone.utc),
+            recovered_last_to=datetime(2026, 3, 22, tzinfo=timezone.utc),
+        )
+
+        result = self.run_process_table(
+            previous_state={
+                "table_name": "orders",
+                "table_arn": TABLE_ARN,
+                "last_to": "invalid-timestamp",
+                "last_mode": "FULL",
+                "last_export_arn": f"{TABLE_ARN}/export/098",
+                "incremental_seq": 0,
+            },
+            ddb_client=ddb_client,
+        )
+
+        self.assertEqual(result["status"], "STARTED")
+        self.assertEqual(result["mode"], "INCREMENTAL")
+        self.assertEqual(result["checkpoint_from"], "2026-03-22T00:00:00Z")
+        self.assertEqual(result["checkpoint_to"], "2026-03-23T00:00:00Z")
+        self.assertEqual(result["mode_selection_reason"], "initial_incremental_after_full")
+        self.assertEqual(ddb_client.describe_export_calls, [f"{TABLE_ARN}/export/098"])
+
+    def test_checkpoint_load_table_state_reuses_legacy_partition_without_table_arn(self) -> None:
+        class FakeCheckpointClient:
+            def get_item(self, **kwargs: Any) -> dict[str, Any]:
+                key = kwargs["Key"]["TableName"]["S"]
+                if key == TABLE_ARN:
+                    return {}
+                if key == "orders":
+                    return {
+                        "Item": {
+                            "TargetTableName": "orders",
+                            "TableName": "orders",
+                            "LastTo": "2026-03-22T00:00:00Z",
+                            "LastMode": "FULL",
+                            "IncrementalSeq": 2,
+                        }
+                    }
+                return {}
+
+        loaded_state = snapshot_lambda.checkpoint_load_table_state(
+            {
+                "ddb": FakeCheckpointClient(),
+                "table_name": "snapshot-checkpoints",
+            },
+            target_table_name="orders",
+            target_table_arn=TABLE_ARN,
+        )
+
+        self.assertEqual(loaded_state["table_name"], "orders")
+        self.assertNotIn("table_arn", loaded_state)
+        self.assertEqual(loaded_state["last_to"], "2026-03-22T00:00:00Z")
+        self.assertEqual(loaded_state["last_mode"], "FULL")
+        self.assertEqual(loaded_state["incremental_seq"], 2)
+
+    def test_checkpoint_load_table_state_rejects_legacy_partition_with_mismatched_table_arn(self) -> None:
+        class FakeCheckpointClient:
+            def get_item(self, **kwargs: Any) -> dict[str, Any]:
+                key = kwargs["Key"]["TableName"]["S"]
+                if key == TABLE_ARN:
+                    return {}
+                if key == "orders":
+                    return {
+                        "Item": {
+                            "TargetTableName": "orders",
+                            "TableName": "orders",
+                            "TableArn": "arn:aws:dynamodb:us-east-1:222222222222:table/orders",
+                            "LastTo": "2026-03-22T00:00:00Z",
+                        }
+                    }
+                return {}
+
+        loaded_state = snapshot_lambda.checkpoint_load_table_state(
+            {
+                "ddb": FakeCheckpointClient(),
+                "table_name": "snapshot-checkpoints",
+            },
+            target_table_name="orders",
+            target_table_arn=TABLE_ARN,
+        )
+
+        self.assertEqual(loaded_state, {})
+
+    def test_checkpoint_load_table_state_handles_invalid_numeric_fields(self) -> None:
+        logged_events: list[dict[str, Any]] = []
+
+        def capture_log_event(action: str, *, level: int = 20, **fields: Any) -> None:
+            logged_events.append({"action": action, "fields": fields})
+
+        class FakeCheckpointClient:
+            def get_item(self, **kwargs: Any) -> dict[str, Any]:
+                key = kwargs["Key"]["TableName"]["S"]
+                if key == TABLE_ARN:
+                    return {}
+                if key == "orders":
+                    return {
+                        "Item": {
+                            "TargetTableName": "orders",
+                            "TableName": "orders",
+                            "LastTo": "2026-03-22T00:00:00Z",
+                            "LastMode": "INCREMENTAL",
+                            "IncrementalSeq": "NaN",
+                            "LastExportItemCount": "bad",
+                        }
+                    }
+                return {}
+
+        with patch.object(snapshot_lambda, "_log_event", side_effect=capture_log_event):
+            loaded_state = snapshot_lambda.checkpoint_load_table_state(
+                {
+                    "ddb": FakeCheckpointClient(),
+                    "table_name": "snapshot-checkpoints",
+                },
+                target_table_name="orders",
+                target_table_arn=TABLE_ARN,
+            )
+
+        self.assertEqual(loaded_state["table_name"], "orders")
+        self.assertNotIn("table_arn", loaded_state)
+        self.assertEqual(loaded_state["incremental_seq"], 0)
+        self.assertNotIn("last_export_item_count", loaded_state)
+        invalid_numeric_actions = [
+            event["action"] for event in logged_events if event["action"] == "checkpoint.state.invalid_numeric"
+        ]
+        self.assertEqual(len(invalid_numeric_actions), 2)
+
     def test_incremental_export_returns_pending_when_pitr_adjusted_window_is_below_15_minutes(self) -> None:
         ddb_client = FakeIncrementalPitrClient(
             earliest_restorable=datetime(2026, 3, 22, 23, 50, tzinfo=timezone.utc),
@@ -528,6 +760,64 @@ class SnapshotAutomaticModeTests(unittest.TestCase):
         self.assertEqual(result["mode_selection_reason"], "initial_incremental_after_full")
         self.assertEqual(ddb_client.describe_continuous_backups_calls, ["orders"])
         self.assertEqual(ddb_client.export_calls, [])
+
+    def test_dry_run_with_pending_exports_returns_pending_tracking(self) -> None:
+        logged_events: list[dict[str, Any]] = []
+
+        def capture_log_event(action: str, *, level: int = 20, **fields: Any) -> None:
+            logged_events.append({"action": action, "level": level, "fields": fields})
+
+        def fail_if_called(**kwargs: Any) -> dict[str, Any]:
+            raise AssertionError("export execution shouldn't run in dry-run")
+
+        class FakePendingDescribeExportClient:
+            def describe_export(self, *, ExportArn: str) -> dict[str, Any]:
+                return {
+                    "ExportDescription": {
+                        "ExportArn": ExportArn,
+                        "ExportStatus": "IN_PROGRESS",
+                    },
+                }
+
+        with ExitStack() as stack:
+            stack.enter_context(
+                patch.object(snapshot_lambda, "_log_event", capture_log_event)
+            )
+            result = self.run_process_table(
+                previous_state={
+                    "table_name": "orders",
+                    "table_arn": TABLE_ARN,
+                    "last_to": "2026-03-22T00:00:00Z",
+                    "last_mode": "INCREMENTAL",
+                    "last_export_arn": f"{TABLE_ARN}/export/018",
+                    "last_export_item_count": 9,
+                    "incremental_seq": 2,
+                    "pending_exports": [
+                        {
+                            "export_arn": f"{TABLE_ARN}/export/018",
+                            "checkpoint_to": "2026-03-22T00:00:00Z",
+                            "mode": "INCREMENTAL",
+                            "source": "native",
+                        }
+                    ],
+                },
+                ddb_client=FakePendingDescribeExportClient(),
+                start_incremental_export=fail_if_called,
+                start_full_export=fail_if_called,
+                config_override={"dry_run": True},
+            )
+
+        self.assertEqual(result["status"], "PENDING")
+        self.assertEqual(result["mode"], "INCREMENTAL")
+        self.assertEqual(result["source"], "pending_export_tracking")
+        self.assertEqual(result["mode_selection_reason"], "pending_export_tracking")
+        self.assertEqual(len(result["pending_exports"]), 1)
+        self.assertEqual(result["mode"], "INCREMENTAL")
+        dry_run_plans = [
+            event for event in logged_events if event["action"] == "snapshot.dry_run.table_plan"
+        ]
+        self.assertEqual(len(dry_run_plans), 1)
+        self.assertTrue(dry_run_plans[0]["fields"]["has_pending_exports"])
 
     def test_reaches_six_incrementals_and_starts_new_full(self) -> None:
         captured: dict[str, Any] = {"full_calls": 0}

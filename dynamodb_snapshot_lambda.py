@@ -307,6 +307,49 @@ def _coerce_optional_non_negative_int(value: Any, *, field_name: str) -> Optiona
     return parsed if parsed >= 0 else 0
 
 
+def _safe_coerce_non_negative_int(
+    value: Any,
+    *,
+    field_name: str,
+    table_name: str,
+    table_arn: str,
+    default: int = 0,
+) -> int:
+    try:
+        return _coerce_non_negative_int(value, field_name=field_name, default=default)
+    except ValueError:
+        _log_event(
+            "checkpoint.state.invalid_numeric",
+            table_name=table_name,
+            table_arn=table_arn,
+            field=field_name,
+            raw_value=_safe_str_field(value, field_name=field_name, required=False),
+            level=logging.WARNING,
+        )
+        return default
+
+
+def _safe_coerce_optional_non_negative_int(
+    value: Any,
+    *,
+    field_name: str,
+    table_name: str,
+    table_arn: str,
+) -> Optional[int]:
+    try:
+        return _coerce_optional_non_negative_int(value, field_name=field_name)
+    except ValueError:
+        _log_event(
+            "checkpoint.state.invalid_numeric",
+            table_name=table_name,
+            table_arn=table_arn,
+            field=field_name,
+            raw_value=_safe_str_field(value, field_name=field_name, required=False),
+            level=logging.WARNING,
+        )
+        return None
+
+
 def _to_json_safe(value: Any) -> Any:
     if isinstance(value, dict):
         return {key: _to_json_safe(inner) for key, inner in value.items()}
@@ -852,25 +895,31 @@ def _normalize_pending_exports(raw_pending: Any) -> List[Dict[str, str]]:
 
 def _normalize_checkpoint_state(state: Dict[str, Any], *, table_name: str, table_arn: str) -> Dict[str, Any]:
     last_mode = _safe_str_field(state.get("last_mode"), field_name="state.last_mode", required=False).upper()
-    incremental_seq = _coerce_non_negative_int(
+    normalized_table_name = _safe_str_field(state.get("table_name"), field_name="state.table_name", required=False) or table_name
+    normalized_table_arn = _safe_str_field(state.get("table_arn"), field_name="state.table_arn", required=False) or table_arn
+    incremental_seq = _safe_coerce_non_negative_int(
         state.get("incremental_seq"),
         field_name="state.incremental_seq",
         default=0,
+        table_name=normalized_table_name,
+        table_arn=normalized_table_arn,
     )
     pending_exports = _normalize_pending_exports(state.get("pending_exports"))
     if last_mode == "FULL" and not pending_exports:
         incremental_seq = 0
     return {
-        "table_name": _safe_str_field(state.get("table_name"), field_name="state.table_name", required=False) or table_name,
-        "table_arn": _safe_str_field(state.get("table_arn"), field_name="state.table_arn", required=False) or table_arn,
+        "table_name": normalized_table_name,
+        "table_arn": normalized_table_arn,
         "table_created_at": _safe_str_field(state.get("table_created_at"), field_name="state.table_created_at", required=False),
         "last_to": _safe_str_field(state.get("last_to"), field_name="state.last_to", required=False),
         "last_mode": last_mode,
         "source": _safe_str_field(state.get("source"), field_name="state.source", required=False),
         "last_export_arn": _safe_str_field(state.get("last_export_arn"), field_name="state.last_export_arn", required=False),
-        "last_export_item_count": _coerce_optional_non_negative_int(
+        "last_export_item_count": _safe_coerce_optional_non_negative_int(
             state.get("last_export_item_count"),
             field_name="state.last_export_item_count",
+            table_name=normalized_table_name,
+            table_arn=normalized_table_arn,
         ),
         "pending_exports": pending_exports,
         "incremental_seq": incremental_seq,
@@ -1058,7 +1107,20 @@ def checkpoint_load_table_state(
         if item and requested_table_arn:
             decoded_legacy = _ddb_decode_item(item)
             legacy_table_arn = _safe_str_field(decoded_legacy.get("TableArn"), field_name="checkpoint.TableArn", required=False)
-            if legacy_table_arn != requested_table_arn:
+            legacy_target_name = (
+                _safe_str_field(decoded_legacy.get("TargetTableName"), field_name="checkpoint.TargetTableName", required=False)
+                or _safe_str_field(decoded_legacy.get("TableName"), field_name="checkpoint.TableName", required=False)
+            )
+            if legacy_target_name and legacy_target_name != requested_table_name:
+                _log_event(
+                    "checkpoint.load.legacy_partition_name_mismatch",
+                    requested_table_name=requested_table_name,
+                    requested_table_arn=requested_table_arn,
+                    legacy_table_name=legacy_target_name,
+                    level=logging.WARNING,
+                )
+                return {}
+            if legacy_table_arn and legacy_table_arn != requested_table_arn:
                 _log_event(
                     "checkpoint.load.legacy_partition_mismatch",
                     requested_table_name=requested_table_name,
@@ -1067,6 +1129,13 @@ def checkpoint_load_table_state(
                     level=logging.WARNING,
                 )
                 return {}
+            if not legacy_table_arn:
+                _log_event(
+                    "checkpoint.load.legacy_partition_missing_table_arn",
+                    requested_table_name=requested_table_name,
+                    requested_table_arn=requested_table_arn,
+                    level=logging.WARNING,
+                )
             decoded = decoded_legacy
             _log_event(
                 "checkpoint.load.record.found",
@@ -1087,28 +1156,38 @@ def checkpoint_load_table_state(
 
     if decoded is None:
         decoded = _ddb_decode_item(item)
-    pending_exports = _normalize_pending_exports(decoded.get("PendingExports"))
-    state = {
-        "table_name": _safe_str_field(
+    normalized_table_name = (
+        _safe_str_field(
             decoded.get("TargetTableName"),
             field_name="checkpoint.TargetTableName",
             required=False,
-        ) or _safe_str_field(decoded.get("TableName"), field_name="checkpoint.TableName", required=False),
-        "table_arn": _safe_str_field(decoded.get("TableArn"), field_name="checkpoint.TableArn", required=False),
+        )
+        or _safe_str_field(decoded.get("TableName"), field_name="checkpoint.TableName", required=False)
+        or requested_table_name
+    )
+    normalized_table_arn = _safe_str_field(decoded.get("TableArn"), field_name="checkpoint.TableArn", required=False)
+    pending_exports = _normalize_pending_exports(decoded.get("PendingExports"))
+    state = {
+        "table_name": normalized_table_name,
+        "table_arn": normalized_table_arn,
         "table_created_at": _safe_str_field(decoded.get("TableCreatedAt"), field_name="checkpoint.TableCreatedAt", required=False),
         "last_to": _safe_str_field(decoded.get("LastTo"), field_name="checkpoint.LastTo", required=False),
         "last_mode": _safe_str_field(decoded.get("LastMode"), field_name="checkpoint.LastMode", required=False),
         "source": _safe_str_field(decoded.get("Source"), field_name="checkpoint.Source", required=False),
         "last_export_arn": _safe_str_field(decoded.get("LastExportArn"), field_name="checkpoint.LastExportArn", required=False),
-        "last_export_item_count": _coerce_optional_non_negative_int(
+        "last_export_item_count": _safe_coerce_optional_non_negative_int(
             decoded.get("LastExportItemCount"),
             field_name="checkpoint.LastExportItemCount",
+            table_name=normalized_table_name,
+            table_arn=normalized_table_arn or _safe_str_field(requested_table_arn, field_name="target_table_arn", required=False),
         ),
         "pending_exports": pending_exports,
-        "incremental_seq": _coerce_non_negative_int(
+        "incremental_seq": _safe_coerce_non_negative_int(
             decoded.get("IncrementalSeq"),
             field_name="checkpoint.IncrementalSeq",
             default=0,
+            table_name=normalized_table_name,
+            table_arn=normalized_table_arn or _safe_str_field(requested_table_arn, field_name="target_table_arn", required=False),
         ),
     }
     return {
@@ -2067,6 +2146,12 @@ def _reconcile_pending_exports(
                 field_name="pending.checkpoint_to",
                 required=False,
             )
+            if not checkpoint_to:
+                checkpoint_to = _coerce_checkpoint_timestamp_to_utc(desc.get("ExportToTime"))
+                if checkpoint_to is None:
+                    checkpoint_to = _coerce_checkpoint_timestamp_to_utc(desc.get("ExportEndTime"))
+                if checkpoint_to is not None:
+                    checkpoint_to = _dt_to_iso(checkpoint_to)
             if checkpoint_to:
                 next_state["last_to"] = checkpoint_to
             next_state["last_mode"] = _safe_str_field(
@@ -2437,6 +2522,8 @@ def _process_table(
         table_arn=target.table_arn,
         max_incremental_exports_per_cycle=config.get("max_incremental_exports_per_cycle"),
     )
+    checkpoint_state = automatic_plan["checkpoint_state"]
+    pending_exports = _normalize_pending_exports(checkpoint_state.get("pending_exports"))
     _log_event(
         "snapshot.checkpoint.plan.resolved",
         table_name=target.table_name,
@@ -2450,7 +2537,6 @@ def _process_table(
         pending_exports_count=len(_normalize_pending_exports(checkpoint_state.get("pending_exports"))),
         level=logging.INFO,
     )
-    checkpoint_state = automatic_plan["checkpoint_state"]
 
     def finalize_result(result: Dict[str, Any]) -> Dict[str, Any]:
         result["checkpoint_state"] = checkpoint_state
@@ -2469,9 +2555,39 @@ def _process_table(
             )
         return result
 
+    if pending_exports:
+        result = _build_pending_result(
+            target=target,
+            mode="INCREMENTAL",
+            source="pending_export_tracking",
+            message="Já existe export em andamento para esta tabela.",
+            bucket=bucket,
+            assume_role_arn=assume_role_arn,
+            checkpoint_state=checkpoint_state,
+        )
+        result["mode_selection_reason"] = "pending_export_tracking"
+        if bool(config.get("dry_run")):
+            planned_mode = _safe_str_field(automatic_plan.get("mode"), field_name="automatic_plan.mode").upper()
+            _log_event(
+                "snapshot.dry_run.table_plan",
+                table_name=target.table_name,
+                table_arn=target.table_arn,
+                table_region=target.region,
+                planned_mode=planned_mode,
+                reason=_safe_str_field(automatic_plan.get("reason"), field_name="automatic_plan.reason"),
+                has_pending_exports=True,
+                checkpoint_record_exists=checkpoint_record_exists,
+                checkpoint_last_mode=_safe_str_field(checkpoint_state.get("last_mode"), field_name="checkpoint_state.last_mode", required=False),
+                checkpoint_last_to=_safe_str_field(checkpoint_state.get("last_to"), field_name="checkpoint_state.last_to", required=False),
+                incremental_seq=_coerce_non_negative_int(checkpoint_state.get("incremental_seq"), field_name="checkpoint_state.incremental_seq", default=0),
+                pending_exports_count=len(pending_exports),
+                dry_run=True,
+                level=logging.INFO,
+            )
+            return finalize_result(result)
+
     if bool(config.get("dry_run")):
         planned_mode = _safe_str_field(automatic_plan.get("mode"), field_name="automatic_plan.mode").upper()
-        pending_exports = _normalize_pending_exports(checkpoint_state.get("pending_exports"))
         checkpoint_last_to = _safe_str_field(checkpoint_state.get("last_to"), field_name="checkpoint_state.last_to", required=False)
         _log_event(
             "snapshot.dry_run.table_plan",
@@ -2505,19 +2621,6 @@ def _process_table(
             "checkpoint_last_to": checkpoint_last_to,
             "message": "Execução em dry_run: nenhum export foi iniciado.",
         })
-
-    if _normalize_pending_exports(checkpoint_state.get("pending_exports")):
-        result = _build_pending_result(
-            target=target,
-            mode="INCREMENTAL",
-            source="pending_export_tracking",
-            message="Já existe export em andamento para esta tabela.",
-            bucket=bucket,
-            assume_role_arn=assume_role_arn,
-            checkpoint_state=checkpoint_state,
-        )
-        result["mode_selection_reason"] = "pending_export_tracking"
-        return finalize_result(result)
 
     selected_mode = _safe_str_field(automatic_plan.get("mode"), field_name="automatic_plan.mode")
 

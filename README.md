@@ -146,12 +146,13 @@ Sem receber `mode`, a Lambda decide automaticamente assim:
 
 1. reconcilia exports pendentes via `DescribeExport`;
 2. se ainda houver export pendente, não dispara novo export para a tabela;
-3. se não existir checkpoint válido com `last_to`, executa `FULL`;
-4. após existir um `FULL`, passa a executar incrementais automaticamente;
-5. a contagem incremental vai até o limite configurado em `MAX_INCREMENTAL_EXPORTS_PER_CYCLE` (padrão `6`); ao atingir esse limite, a próxima execução volta para `FULL` e zera a contagem;
-6. quando a contagem incremental já saiu de `0`, a Lambda valida o `ItemCount` do export incremental anterior;
-7. se o export anterior teve `ItemCount > 0`, a contagem avança para o próximo incremental;
-8. se o export anterior não exportou itens, a contagem não avança e o próximo export reutiliza o mesmo índice incremental.
+3. no `dry_run`, se houver export pendente, o retorno é `PENDING` com `source='pending_export_tracking'`.
+4. se não existir checkpoint válido com `last_to`, executa `FULL`;
+5. após existir um `FULL`, passa a executar incrementais automaticamente;
+6. a contagem incremental vai até o limite configurado em `MAX_INCREMENTAL_EXPORTS_PER_CYCLE` (padrão `6`); ao atingir esse limite, a próxima execução volta para `FULL` e zera a contagem;
+7. quando a contagem incremental já saiu de `0`, a Lambda valida o `ItemCount` do export incremental anterior;
+8. se o export anterior teve `ItemCount > 0`, a contagem avança para o próximo incremental;
+9. se o export anterior não exportou itens, a contagem não avança e o próximo export reutiliza o mesmo índice incremental.
 
 Garantias operacionais do checkpoint:
 
@@ -442,6 +443,9 @@ Os logs são estruturados em JSON. Eventos relevantes:
 - `snapshot.checkpoint.record.evaluated`
 - `snapshot.checkpoint.plan.resolved`
 - `snapshot.dry_run.table_plan`
+- `checkpoint.state.invalid_numeric`
+- `checkpoint.load.legacy_partition_missing_table_arn`
+- `checkpoint.load.legacy_partition_name_mismatch`
 
 Quando `OUTPUT_CLOUDWATCH_ENABLED=true`, o payload final da execução também é emitido como evento estruturado no fluxo de logs da própria Lambda.
 
