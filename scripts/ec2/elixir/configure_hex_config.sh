@@ -98,6 +98,48 @@ done
 
 command -v mix >/dev/null 2>&1 || die "mix não encontrado no PATH"
 
+apply_mix_runtime_env() {
+  export HEX_HTTP_CONCURRENCY="${HTTP_CONCURRENCY_VALUE}"
+  export HEX_HTTP_TIMEOUT="${HTTP_TIMEOUT_VALUE}"
+
+  if [[ -n "${PROXY_URL}" ]]; then
+    export HTTPS_PROXY="${PROXY_URL}"
+    export HTTP_PROXY="${PROXY_URL}"
+    export ALL_PROXY="${PROXY_URL}"
+    export https_proxy="${PROXY_URL}"
+    export http_proxy="${PROXY_URL}"
+    export all_proxy="${PROXY_URL}"
+  fi
+
+  if [[ -n "${CA_CERT_PATH}" ]]; then
+    export HEX_CACERTS_PATH="${CA_CERT_PATH}"
+  fi
+
+  if [[ -n "${API_URL_VALUE}" ]]; then
+    export HEX_API_URL="${API_URL_VALUE}"
+  fi
+
+  if [[ -n "${MIRROR_URL_VALUE}" ]]; then
+    export HEX_MIRROR="${MIRROR_URL_VALUE}"
+  fi
+
+  if [[ "${UNSAFE_HTTPS}" == "1" ]]; then
+    export HEX_UNSAFE_HTTPS="1"
+    export HEX_UNSAFE_REGISTRY="1"
+    export HEX_NO_VERIFY_REPO_ORIGIN="1"
+  fi
+}
+
+ensure_hex_installed() {
+  apply_mix_runtime_env
+
+  if mix local.hex --force --if-missing; then
+    return 0
+  fi
+
+  mix archive.install github hexpm/hex branch latest --force
+}
+
 run_mix_hex_config() {
   local key value
   key="$1"
@@ -105,6 +147,8 @@ run_mix_hex_config() {
   log "hex.config ${key}"
   mix hex.config "${key}" "${value}"
 }
+
+ensure_hex_installed
 
 run_mix_hex_config "http_concurrency" "${HTTP_CONCURRENCY_VALUE}"
 run_mix_hex_config "http_timeout" "${HTTP_TIMEOUT_VALUE}"
