@@ -122,12 +122,12 @@ REAL_WGET_BIN=""
 REAL_GIT_BIN=""
 REAL_BREW_BIN=""
 SSH_IDENTITY_PATH=""
-PROXY_URL=""
-EC2_PROXY_URL=""
-CA_CERT_PATH=""
-AUTO_INSECURE_ON_CERT_ERROR="0"
+PROXY_URL="${WRAPPERS_VIA_EC2_PROXY:-${HTTPS_PROXY:-${https_proxy:-${ALL_PROXY:-${all_proxy:-${HTTP_PROXY:-${http_proxy:-}}}}}}}"
+EC2_PROXY_URL="${MIX_VIA_EC2_PROXY:-}"
+CA_CERT_PATH="${MIX_VIA_EC2_CA_CERT:-${GIT_ZIP_WRAPPER_CURL_CACERT:-${HEX_CACERTS_PATH:-${SSL_CERT_FILE:-${REQUESTS_CA_BUNDLE:-${AWS_CA_BUNDLE:-}}}}}}"
+AUTO_INSECURE_ON_CERT_ERROR="${CURL_WRAPPER_AUTO_INSECURE_ON_CERT_ERROR:-0}"
 CONFIGURE_HEX="0"
-HEX_UNSAFE_HTTPS="0"
+HEX_UNSAFE_HTTPS="${MIX_VIA_EC2_HEX_UNSAFE_HTTPS:-${HEX_UNSAFE_HTTPS:-0}}"
 HEX_RUN_TEST="1"
 MIX_ENV_FILE="${HOME}/.config/mix-via-ec2-envs.sh"
 WRAPPER_ENV_FILE="${HOME}/.config/wrapper-envs.sh"
@@ -278,6 +278,16 @@ is_wrapper_binary_path git "${REAL_GIT_BIN}" && die "git real não pode apontar 
 if [[ -n "${REAL_BREW_BIN}" ]]; then
   is_wrapper_binary_path brew "${REAL_BREW_BIN}" && die "brew real não pode apontar para o wrapper instalado: ${REAL_BREW_BIN}"
 fi
+if [[ -n "${CA_CERT_PATH}" ]]; then
+  [[ -f "${CA_CERT_PATH}" ]] || die "CA customizada não encontrada: ${CA_CERT_PATH}"
+fi
+case "${AUTO_INSECURE_ON_CERT_ERROR}" in
+  0|1)
+    ;;
+  *)
+    die "CURL_WRAPPER_AUTO_INSECURE_ON_CERT_ERROR inválido: ${AUTO_INSECURE_ON_CERT_ERROR}"
+    ;;
+esac
 
 run_step() {
   local description
@@ -403,6 +413,28 @@ validate_mix_wrapper_env_activation() {
   fi
 }
 
+validate_mix_remote_runtime_prerequisites() {
+  local mix_instance_name mix_transport
+  mix_instance_name="$(
+    set +u
+    # shellcheck disable=SC1090
+    . "${MIX_ENV_FILE}"
+    set -u
+    printf '%s' "${MIX_VIA_EC2_INSTANCE_NAME:-}"
+  )"
+  mix_transport="$(
+    set +u
+    # shellcheck disable=SC1090
+    . "${MIX_ENV_FILE}"
+    set -u
+    printf '%s' "${MIX_VIA_EC2_TRANSPORT:-auto}"
+  )"
+
+  if [[ -n "${mix_instance_name}" ]] && [[ "${mix_transport}" != "ssh" ]]; then
+    command -v aws >/dev/null 2>&1 || die "aws cli não encontrado no PATH; mix-via-ec2 com instance-name exige aws local"
+  fi
+}
+
 validate_shell_rc_persistence() {
   local managed_shell_rc
   managed_shell_rc="${RESTRICTED_DEV_ENV_MANAGED_SHELL_RC:-}"
@@ -422,6 +454,7 @@ validate_restricted_dev_env_result() {
   validate_persisted_env_files
   validate_installed_wrappers
   validate_mix_wrapper_env_activation
+  validate_mix_remote_runtime_prerequisites
   validate_shell_rc_persistence
 }
 
@@ -451,8 +484,6 @@ if [[ -n "${SSH_IDENTITY_PATH}" ]]; then
 fi
 if [[ -n "${EC2_PROXY_URL}" ]]; then
   MIX_ENV_ARGS+=(--proxy "${EC2_PROXY_URL}")
-elif [[ -n "${PROXY_URL}" ]]; then
-  MIX_ENV_ARGS+=(--proxy "${PROXY_URL}")
 fi
 if [[ -n "${CA_CERT_PATH}" ]]; then
   MIX_ENV_ARGS+=(--ca-cert "${CA_CERT_PATH}")
@@ -550,6 +581,12 @@ Persistência:
   elixir_ls setup.sh: ${ELIXIR_LS_SETUP_SH}
   elixir_ls setup.fish: ${ELIXIR_LS_SETUP_FISH}
   state: ${RESTRICTED_DEV_ENV_STATE_FILE}
+
+Rede corporativa efetiva:
+  proxy wrappers: ${PROXY_URL:-não definido}
+  proxy mix remoto: ${EC2_PROXY_URL:-não definido}
+  ca cert: ${CA_CERT_PATH:-não definida}
+  hex unsafe: ${HEX_UNSAFE_HTTPS}
 
 Para aplicar na sessão atual:
   . "${MIX_ENV_FILE}"
