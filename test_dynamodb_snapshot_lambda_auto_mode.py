@@ -195,15 +195,28 @@ class SnapshotAutomaticModeTests(unittest.TestCase):
             incremental_index=1,
         )
 
-        self.assertEqual(first_prefix, second_prefix)
+        self.assertNotEqual(first_prefix, second_prefix)
         self.assertEqual(first_prefix.split("/"), [
             "DDB",
             "111111111111",
             "orders",
             "INCR",
+            "run_id=20260323T100000Z",
         ])
-        self.assertEqual(first_prefix, "DDB/111111111111/orders/INCR")
-        self.assertTrue(first_prefix.endswith("/INCR"))
+        self.assertEqual(first_prefix, "DDB/111111111111/orders/INCR/run_id=20260323T100000Z")
+        self.assertEqual(second_prefix, "DDB/111111111111/orders/INCR/run_id=20260323T110000Z")
+        self.assertTrue(first_prefix.endswith("/run_id=20260323T100000Z"))
+
+    def test_build_export_prefix_keeps_incremental_path_stable_across_cycle_index(self) -> None:
+        target = self.build_target()
+        third_incremental = snapshot_lambda._build_export_prefix(
+            datetime(2026, 3, 23, 12, 0, 0, tzinfo=timezone.utc),
+            target,
+            "INCREMENTAL_EXPORT",
+            incremental_index=3,
+        )
+
+        self.assertEqual(third_incremental, "DDB/111111111111/orders/INCR/run_id=20260323T120000Z")
 
     def run_process_table(
         self,
@@ -221,7 +234,11 @@ class SnapshotAutomaticModeTests(unittest.TestCase):
         if isinstance(config_override, dict):
             config = {**config, **config_override}
         checkpoint_store = {
-            "ddb": types.SimpleNamespace(put_item=lambda **kwargs: None),
+            "ddb": types.SimpleNamespace(
+                get_item=lambda **kwargs: {},
+                put_item=lambda **kwargs: None,
+                delete_item=lambda **kwargs: None,
+            ),
             "table_name": "snapshot-checkpoints",
         }
 
@@ -250,8 +267,20 @@ class SnapshotAutomaticModeTests(unittest.TestCase):
             stack.enter_context(
                 patch.object(
                     snapshot_lambda,
-                    "checkpoint_load_table_state",
-                    lambda store, target_table_name, target_table_arn=None: previous_state,
+                    "_checkpoint_load_table_state_with_diagnostics",
+                    lambda store, target_table_name, target_table_arn=None: (
+                        previous_state,
+                        {
+                            "record_found": bool(previous_state),
+                            "lookup_key": "arn" if previous_state else "",
+                            "lookup_attempts": [],
+                            "used_legacy_partition": False,
+                            "rejected": False,
+                            "rejected_reason": "",
+                            "notes": [],
+                            "field_integrity": {},
+                        },
+                    ),
                 )
             )
             stack.enter_context(
@@ -813,11 +842,18 @@ class SnapshotAutomaticModeTests(unittest.TestCase):
         self.assertEqual(result["mode_selection_reason"], "pending_export_tracking")
         self.assertEqual(len(result["pending_exports"]), 1)
         self.assertEqual(result["mode"], "INCREMENTAL")
+        self.assertIn("checkpoint_diagnostics", result)
+        self.assertEqual(result["checkpoint_diagnostics"]["integrity_status"], "valid")
+        self.assertIn("export pendente", result["checkpoint_debug_summary"])
         dry_run_plans = [
             event for event in logged_events if event["action"] == "snapshot.dry_run.table_plan"
         ]
         self.assertEqual(len(dry_run_plans), 1)
         self.assertTrue(dry_run_plans[0]["fields"]["has_pending_exports"])
+        checkpoint_diagnostics_events = [
+            event for event in logged_events if event["action"] == "snapshot.dry_run.checkpoint_diagnostics"
+        ]
+        self.assertEqual(len(checkpoint_diagnostics_events), 1)
 
     def test_reaches_six_incrementals_and_starts_new_full(self) -> None:
         captured: dict[str, Any] = {"full_calls": 0}

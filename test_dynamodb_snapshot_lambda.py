@@ -499,6 +499,197 @@ class SnapshotPendingExportTrackingTests(unittest.TestCase):
         self.assertEqual(ddb_client.describe_calls, [f"{TABLE_ARN}/export/016"])
 
 
+class SnapshotAutomaticPlanIntegrityTests(unittest.TestCase):
+    def test_checkpoint_load_table_state_recovers_legacy_record_without_table_arn(self) -> None:
+        with ExitStack() as stack:
+            stack.enter_context(
+                patch.object(
+                    snapshot_lambda,
+                    "_checkpoint_get_current_item",
+                    side_effect=[
+                        {},
+                        {"TableName": {"S": "orders"}, "RecordType": {"S": "CURRENT"}},
+                    ],
+                )
+            )
+            stack.enter_context(
+                patch.object(
+                    snapshot_lambda,
+                    "_ddb_decode_item",
+                    lambda _item: {
+                        "TargetTableName": "orders",
+                        "LastTo": "2026-03-10T00:00:00Z",
+                        "LastMode": "FULL",
+                        "IncrementalSeq": 0,
+                    },
+                )
+            )
+
+            state = snapshot_lambda.checkpoint_load_table_state(
+                {"ddb": object(), "table_name": "snapshot-checkpoints"},
+                target_table_name="orders",
+                target_table_arn=TABLE_ARN,
+            )
+
+        self.assertEqual(state["table_name"], "orders")
+        self.assertEqual(state["last_to"], "2026-03-10T00:00:00Z")
+        self.assertEqual(state["last_mode"], "FULL")
+        self.assertEqual(state["incremental_seq"], 0)
+
+    def test_automatic_plan_recovers_last_to_from_last_export_arn(self) -> None:
+        class FakeDescribeClient:
+            def describe_export(self, **kwargs: Any) -> dict[str, Any]:
+                self.kwargs = kwargs
+                return {
+                    "ExportDescription": {
+                        "ExportArn": f"{TABLE_ARN}/export/016",
+                        "ExportToTime": datetime(2026, 3, 10, tzinfo=timezone.utc),
+                    }
+                }
+
+        plan = snapshot_lambda._resolve_automatic_export_plan(
+            checkpoint_record_exists=True,
+            checkpoint_state={
+                "table_name": "orders",
+                "table_arn": TABLE_ARN,
+                "last_to": "valor-invalido",
+                "last_mode": "FULL",
+                "last_export_arn": f"{TABLE_ARN}/export/016",
+                "incremental_seq": 0,
+                "pending_exports": [],
+            },
+            ddb_client=FakeDescribeClient(),
+            table_name="orders",
+            table_arn=TABLE_ARN,
+        )
+
+        self.assertEqual(plan["mode"], "INCREMENTAL")
+        self.assertEqual(plan["reason"], "initial_incremental_after_full")
+        self.assertEqual(
+            plan["checkpoint_state"]["last_to"],
+            "2026-03-10T00:00:00Z",
+        )
+
+    def test_process_table_dry_run_respects_pending_exports_before_planned_mode(self) -> None:
+        target = snapshot_lambda.TableTarget(
+            raw_ref=TABLE_ARN,
+            table_name="orders",
+            table_arn=TABLE_ARN,
+            account_id="111111111111",
+            region="us-east-1",
+        )
+        checkpoint_state = {
+            "table_name": "orders",
+            "table_arn": TABLE_ARN,
+            "last_to": "2026-03-09T00:00:00Z",
+            "last_mode": "FULL",
+            "incremental_seq": 0,
+            "pending_exports": [
+                {
+                    "export_arn": f"{TABLE_ARN}/export/016",
+                    "checkpoint_to": "2026-03-10T00:00:00Z",
+                    "mode": "INCREMENTAL",
+                    "source": "native",
+                }
+            ],
+        }
+        config = {
+            "bucket": "snapshot-bucket",
+            "snapshot_bucket_exact": True,
+            "bucket_owner": None,
+            "run_time": datetime(2026, 3, 10, tzinfo=timezone.utc),
+            "dry_run": True,
+            "max_incremental_exports_per_cycle": 6,
+        }
+
+        class BaseSession:
+            region_name = "us-east-1"
+
+        with ExitStack() as stack:
+            stack.enter_context(
+                patch.object(snapshot_lambda, "_resolve_table_target", lambda *args, **kwargs: target)
+            )
+            stack.enter_context(
+                patch.object(snapshot_lambda, "_resolve_assumed_session_for_target", lambda **kwargs: (object(), None))
+            )
+            stack.enter_context(
+                patch.object(snapshot_lambda, "_get_session_client", lambda *args, **kwargs: object())
+            )
+            stack.enter_context(
+                patch.object(
+                    snapshot_lambda,
+                    "_checkpoint_load_table_state_with_diagnostics",
+                    lambda *args, **kwargs: (
+                        checkpoint_state,
+                        {
+                            "record_found": True,
+                            "lookup_key": "arn",
+                            "lookup_attempts": [
+                                {
+                                    "lookup_key": "arn",
+                                    "partition_value": TABLE_ARN,
+                                    "item_found": True,
+                                }
+                            ],
+                            "used_legacy_partition": False,
+                            "rejected": False,
+                            "rejected_reason": "",
+                            "notes": [],
+                            "field_integrity": {
+                                "target_table_name": {"matches_requested": True},
+                                "table_arn": {"reason": "ok"},
+                                "last_mode": {"reason": "ok"},
+                                "last_to": {"reason": "ok"},
+                                "table_created_at": {"reason": "ok"},
+                                "incremental_seq": {"reason": "ok"},
+                                "last_export_item_count": {"reason": "missing_optional"},
+                                "pending_exports": {"reason": "ok"},
+                            },
+                        },
+                    ),
+                )
+            )
+            stack.enter_context(
+                patch.object(snapshot_lambda, "_read_table_created_at_iso", lambda *args, **kwargs: "")
+            )
+            stack.enter_context(
+                patch.object(snapshot_lambda, "_resolve_snapshot_bucket", lambda *_args, **_kwargs: "snapshot-bucket")
+            )
+            stack.enter_context(
+                patch.object(snapshot_lambda, "_reconcile_pending_exports", lambda **kwargs: checkpoint_state)
+            )
+            stack.enter_context(
+                patch.object(
+                    snapshot_lambda,
+                    "_resolve_automatic_export_plan",
+                    lambda **kwargs: {
+                        "mode": "INCREMENTAL",
+                        "reason": "initial_incremental_after_full",
+                        "checkpoint_state": checkpoint_state,
+                        "last_to": datetime(2026, 3, 9, tzinfo=timezone.utc),
+                    },
+                )
+            )
+
+            result = snapshot_lambda._process_table(
+                config=config,
+                base_session=BaseSession(),
+                checkpoint_store={"ddb": object(), "table_name": "snapshot-checkpoints"},
+                raw_target_ref=TABLE_ARN,
+                ignore_set=set(),
+                assume_session_cache={},
+            )
+
+        self.assertEqual(result["status"], "PENDING")
+        self.assertEqual(result["source"], "pending_export_tracking")
+        self.assertEqual(result["mode_selection_reason"], "pending_export_tracking")
+        self.assertEqual(result["checkpoint_diagnostics"]["integrity_status"], "valid")
+        self.assertTrue(result["checkpoint_diagnostics"]["usable_for_planning"])
+        self.assertFalse(result["checkpoint_diagnostics"]["usable_for_incremental"])
+        self.assertEqual(result["checkpoint_diagnostics"]["lookup"]["lookup_key"], "arn")
+        self.assertIn("export pendente", result["checkpoint_debug_summary"])
+
+
 class SnapshotErrorGuidanceTests(unittest.TestCase):
     def test_lambda_handler_returns_friendly_config_error(self) -> None:
         result = snapshot_lambda.lambda_handler({}, None)
@@ -542,6 +733,75 @@ class SnapshotErrorGuidanceTests(unittest.TestCase):
             "O export demorou mais do que o limite de espera configurado nesta execução.",
         )
         self.assertIn("WAIT_FOR_COMPLETION=false", result["resolution"])
+
+    def test_log_event_includes_event_time_with_millisecond_precision(self) -> None:
+        captured_messages: list[str] = []
+
+        class FakeLogger:
+            def isEnabledFor(self, _level: int) -> bool:
+                return True
+
+            def log(self, _level: int, _fmt: str, message: str) -> None:
+                captured_messages.append(message)
+
+        with ExitStack() as stack:
+            stack.enter_context(
+                patch.object(snapshot_lambda, "logger", FakeLogger())
+            )
+            stack.enter_context(
+                patch.object(
+                    snapshot_lambda,
+                    "_now_utc",
+                    lambda: datetime(2026, 4, 2, 15, 36, 16, 123456, tzinfo=timezone.utc),
+                )
+            )
+            snapshot_lambda._log_event("checkpoint.trace", table_name="orders")
+
+        self.assertEqual(len(captured_messages), 1)
+        payload = json.loads(captured_messages[0])
+        self.assertEqual(payload["action"], "checkpoint.trace")
+        self.assertEqual(payload["table_name"], "orders")
+        self.assertEqual(payload["eventTime"], "2026-04-02T15:36:16.123Z")
+
+    def test_checkpoint_command_log_includes_reason_sequence_and_millisecond_time(self) -> None:
+        captured_messages: list[str] = []
+
+        class FakeLogger:
+            def isEnabledFor(self, _level: int) -> bool:
+                return True
+
+            def log(self, _level: int, _fmt: str, message: str) -> None:
+                captured_messages.append(message)
+
+        with ExitStack() as stack:
+            stack.enter_context(
+                patch.object(snapshot_lambda, "logger", FakeLogger())
+            )
+            stack.enter_context(
+                patch.object(
+                    snapshot_lambda,
+                    "_now_utc",
+                    lambda: datetime(2026, 4, 2, 15, 36, 16, 123456, tzinfo=timezone.utc),
+                )
+            )
+            snapshot_lambda._log_checkpoint_dynamodb_command(
+                command="PutItem",
+                table_name="snapshot-checkpoints",
+                reason="lock checkpoint table for concurrency control",
+                partition_value=TABLE_ARN,
+                record_type="LOCK",
+            )
+
+        self.assertEqual(len(captured_messages), 1)
+        payload = json.loads(captured_messages[0])
+        self.assertEqual(payload["action"], "checkpoint.dynamodb.command")
+        self.assertEqual(payload["command"], "PutItem")
+        self.assertEqual(payload["reason"], "lock checkpoint table for concurrency control")
+        self.assertEqual(payload["partition_value"], TABLE_ARN)
+        self.assertEqual(payload["record_type"], "LOCK")
+        self.assertEqual(payload["commandTime"], "2026-04-02T15:36:16.123Z")
+        self.assertEqual(payload["eventTime"], "2026-04-02T15:36:16.123Z")
+        self.assertGreaterEqual(payload["commandSequence"], 1)
 
 
 class SnapshotOutputTests(unittest.TestCase):
@@ -812,6 +1072,7 @@ class SnapshotOutputTests(unittest.TestCase):
 
         self.assertEqual(store["backend"], "dynamodb")
         self.assertEqual(store["table_name"], "snapshot-checkpoints")
+        self.assertNotIn("key", store)
         self.assertEqual(len(create_calls), 1)
         self.assertEqual(create_calls[0]["TableName"], "snapshot-checkpoints")
         self.assertEqual(create_calls[0]["BillingMode"], "PAY_PER_REQUEST")
@@ -830,6 +1091,81 @@ class SnapshotOutputTests(unittest.TestCase):
             ],
         )
         self.assertGreaterEqual(checkpoint_client.describe_attempts, 3)
+
+    def test_build_checkpoint_store_for_session_tolerates_concurrent_checkpoint_table_creation(self) -> None:
+        checkpoint_table_arn = "arn:aws:dynamodb:sa-east-1:111111111111:table/snapshot-checkpoints"
+        create_calls: list[dict[str, Any]] = []
+        fake_session = object()
+
+        class FakeDynamoCheckpointClient:
+            def __init__(self) -> None:
+                self.describe_attempts = 0
+
+            def describe_table(self, **kwargs: Any) -> dict[str, Any]:
+                self.describe_attempts += 1
+                if self.describe_attempts == 1:
+                    raise snapshot_lambda.ClientError(
+                        {
+                            "Error": {
+                                "Code": "ResourceNotFoundException",
+                                "Message": "Requested resource not found",
+                            }
+                        },
+                        "DescribeTable",
+                    )
+                return {
+                    "Table": {
+                        "TableStatus": "ACTIVE",
+                        "AttributeDefinitions": [
+                            {"AttributeName": "TableName", "AttributeType": "S"},
+                            {"AttributeName": "RecordType", "AttributeType": "S"},
+                        ],
+                        "KeySchema": [
+                            {"AttributeName": "TableName", "KeyType": "HASH"},
+                            {"AttributeName": "RecordType", "KeyType": "RANGE"},
+                        ],
+                    }
+                }
+
+            def create_table(self, **kwargs: Any) -> None:
+                create_calls.append(kwargs)
+                raise snapshot_lambda.ClientError(
+                    {
+                        "Error": {
+                            "Code": "ResourceInUseException",
+                            "Message": "Cannot create preexisting table",
+                        }
+                    },
+                    "CreateTable",
+                )
+
+        checkpoint_client = FakeDynamoCheckpointClient()
+
+        def resolve_client(session: Any, service_name: str, *, region_name: str | None = None) -> Any:
+            self.assertIs(session, fake_session)
+            self.assertEqual(service_name, "dynamodb")
+            self.assertEqual(region_name, "sa-east-1")
+            return checkpoint_client
+
+        with ExitStack() as stack:
+            stack.enter_context(
+                patch.object(snapshot_lambda, "_get_session_client", resolve_client)
+            )
+            stack.enter_context(
+                patch.object(snapshot_lambda.time, "sleep", lambda _seconds: None)
+            )
+            store = snapshot_lambda.build_checkpoint_store_for_session(
+                fake_session,
+                {
+                    "checkpoint_key": "snapshots/_checkpoint.json",
+                    "checkpoint_dynamodb_table_arn": checkpoint_table_arn,
+                },
+            )
+
+        self.assertEqual(store["backend"], "dynamodb")
+        self.assertEqual(store["table_name"], "snapshot-checkpoints")
+        self.assertEqual(len(create_calls), 1)
+        self.assertGreaterEqual(checkpoint_client.describe_attempts, 2)
 
     def test_build_checkpoint_store_for_session_rejects_invalid_checkpoint_dynamodb_schema(self) -> None:
         checkpoint_table_arn = "arn:aws:dynamodb:sa-east-1:111111111111:table/snapshot-checkpoints"
@@ -1160,7 +1496,7 @@ class SnapshotOutputTests(unittest.TestCase):
                                 "status": "COMPLETED",
                                 "source": "native",
                                 "export_arn": f"{TABLE_ARN}/export/016",
-                                "s3_prefix": "DDB/20260309/111111111111/orders/INCR",
+                                "s3_prefix": "DDB/111111111111/orders/INCR/run_id=20260309T000000Z",
                                 "checkpoint_to": "2026-03-09T00:00:00Z",
                                 "export_job_id": "016",
                                 "started_at": "2026-03-09T00:00:00Z",
@@ -1191,7 +1527,7 @@ class SnapshotOutputTests(unittest.TestCase):
         )
         self.assertEqual(
             item["Destination S3 Bucket"]["S"],
-            "s3://snapshot-bucket/DDB/20260309/111111111111/orders/INCR",
+            "s3://snapshot-bucket/DDB/111111111111/orders/INCR/run_id=20260309T000000Z",
         )
         self.assertEqual(
             item["Status"]["S"],
@@ -1280,7 +1616,7 @@ class SnapshotOutputTests(unittest.TestCase):
                                 "status": "COMPLETED",
                                 "source": "native",
                                 "export_arn": f"{TABLE_ARN}/export/016",
-                                "s3_prefix": "DDB/20260309/111111111111/orders/INCR",
+                                "s3_prefix": "DDB/111111111111/orders/INCR/run_id=20260309T000000Z",
                                 "checkpoint_to": "2026-03-09T00:00:00Z",
                                 "export_job_id": "016",
                                 "started_at": "2026-03-09T00:00:00Z",
@@ -1359,7 +1695,7 @@ class SnapshotOutputTests(unittest.TestCase):
                                 "mode": "INCREMENTAL",
                                 "status": "STARTED",
                                 "source": "pending_export_tracking",
-                                "s3_prefix": "DDB/20260309/111111111111/orders/INCR1",
+                                "s3_prefix": "DDB/111111111111/orders/INCR/run_id=20260309T000000Z",
                                 "checkpoint_from": "2026-03-09T00:00:00Z",
                                 "checkpoint_to": "2026-03-10T00:00:00Z",
                                 "pending_exports": [
@@ -1414,7 +1750,7 @@ class SnapshotOutputTests(unittest.TestCase):
         )
         self.assertEqual(
             table_item["Destination S3 Bucket"]["S"],
-            "s3://snapshot-bucket/DDB/20260309/111111111111/orders/INCR1",
+            "s3://snapshot-bucket/DDB/111111111111/orders/INCR/run_id=20260309T000000Z",
         )
         self.assertEqual(
             table_item["Status"]["S"],
@@ -1644,7 +1980,7 @@ class SnapshotOutputTests(unittest.TestCase):
                                 "export_job_id": "016",
                                 "checkpoint_from": "2026-03-09T00:00:00Z",
                                 "checkpoint_to": "2026-03-10T00:00:00Z",
-                                "s3_prefix": "DDB/20260309/111111111111/orders/INCR1",
+                                "s3_prefix": "DDB/111111111111/orders/INCR/run_id=20260309T000000Z",
                                 "assume_role_arn": "arn:aws:iam::111111111111:role/snapshot",
                             }
                         ],
@@ -1832,7 +2168,7 @@ class SnapshotFunctionalRefactorTests(unittest.TestCase):
             TABLE_ARN,
             export_from,
             export_to,
-            "DDB/20260309/111111111111/orders/INCR1",
+            "DDB/111111111111/orders/INCR/run_id=20260309T000000Z",
             ddb_client=FakeDynamoScanClient(),
             s3_client=FakeS3Client(),
             execution_context={
@@ -1864,7 +2200,7 @@ class SnapshotFunctionalRefactorTests(unittest.TestCase):
         self.assertEqual(put_calls[0]["Bucket"], "snapshot-bucket-us-east-1")
         self.assertEqual(
             put_calls[0]["Key"],
-            "DDB/20260309/111111111111/orders/INCR1/manifest.json",
+            "DDB/111111111111/orders/INCR/run_id=20260309T000000Z/manifest.json",
         )
 
     def test_checkpoint_save_does_not_mutate_input_payload(self) -> None:
@@ -1979,6 +2315,266 @@ class SnapshotFunctionalRefactorTests(unittest.TestCase):
             },
         )
         self.assertNotIn("ExpressionAttributeValues", current_put_call)
+
+    def test_checkpoint_save_current_backend_consults_before_put_item(self) -> None:
+        call_order: list[str] = []
+        put_calls: list[dict[str, Any]] = []
+
+        class FakeDynamoCheckpointClient:
+            def get_item(self, **kwargs: Any) -> dict[str, Any]:
+                call_order.append("GetItem")
+                return {}
+
+            def put_item(self, **kwargs: Any) -> None:
+                call_order.append("PutItem")
+                put_calls.append(kwargs)
+
+        snapshot_lambda.checkpoint_save(
+            {
+                "backend": "dynamodb",
+                "ddb": FakeDynamoCheckpointClient(),
+                "table_name": "snapshot-checkpoints",
+            },
+            {
+                "version": 2,
+                "tables": {
+                    TABLE_ARN: {
+                        "table_name": "orders",
+                        "table_arn": TABLE_ARN,
+                        "last_to": "2026-03-09T00:00:00Z",
+                        "last_mode": "FULL",
+                        "incremental_seq": 0,
+                    }
+                },
+            },
+        )
+
+        self.assertEqual(call_order, ["GetItem", "PutItem"])
+        self.assertEqual(len(put_calls), 1)
+        self.assertEqual(
+            put_calls[0]["ConditionExpression"],
+            "attribute_not_exists(#pk) AND attribute_not_exists(#sk)",
+        )
+        self.assertEqual(
+            put_calls[0]["Item"]["Revision"]["N"],
+            "1",
+        )
+
+    def test_checkpoint_save_current_backend_recovers_from_invalid_revision(self) -> None:
+        put_calls: list[dict[str, Any]] = []
+
+        class FakeDynamoCheckpointClient:
+            def get_item(self, **kwargs: Any) -> dict[str, Any]:
+                return {
+                    "Item": snapshot_lambda._ddb_encode_item(
+                        {
+                            "TableName": TABLE_ARN,
+                            "RecordType": "CURRENT",
+                            "Revision": "broken-revision",
+                            "TargetTableName": "orders",
+                            "TableArn": TABLE_ARN,
+                            "LastMode": "FULL",
+                            "LastTo": "2026-03-09T00:00:00Z",
+                        }
+                    )
+                }
+
+            def put_item(self, **kwargs: Any) -> None:
+                put_calls.append(kwargs)
+
+        snapshot_lambda.checkpoint_save(
+            {
+                "backend": "dynamodb",
+                "ddb": FakeDynamoCheckpointClient(),
+                "table_name": "snapshot-checkpoints",
+            },
+            {
+                "version": 2,
+                "tables": {
+                    TABLE_ARN: {
+                        "table_name": "orders",
+                        "table_arn": TABLE_ARN,
+                        "last_to": "2026-03-10T00:00:00Z",
+                        "last_mode": "INCREMENTAL",
+                        "incremental_seq": 1,
+                    }
+                },
+            },
+        )
+
+        self.assertEqual(len(put_calls), 1)
+        self.assertEqual(
+            put_calls[0]["ConditionExpression"],
+            "attribute_exists(#pk) AND attribute_exists(#sk)",
+        )
+        self.assertEqual(
+            put_calls[0]["ExpressionAttributeNames"],
+            {
+                "#pk": snapshot_lambda.CHECKPOINT_DYNAMODB_PARTITION_KEY,
+                "#sk": snapshot_lambda.CHECKPOINT_DYNAMODB_SORT_KEY,
+            },
+        )
+        self.assertNotIn("ExpressionAttributeValues", put_calls[0])
+        self.assertEqual(put_calls[0]["Item"]["Revision"]["N"], "1")
+
+    def test_checkpoint_save_legacy_dynamodb_recovers_from_invalid_revision(self) -> None:
+        put_calls: list[dict[str, Any]] = []
+
+        class FakeDynamoCheckpointClient:
+            def get_item(self, **kwargs: Any) -> dict[str, Any]:
+                return {
+                    "Item": snapshot_lambda._marshal_dynamodb_item(
+                        {
+                            "TableName": "orders",
+                            "RecordType": "CURRENT",
+                            "Revision": "broken-revision",
+                            "TargetTableName": "orders",
+                            "TableArn": TABLE_ARN,
+                            "LastMode": "FULL",
+                            "LastTo": "2026-03-09T00:00:00Z",
+                        }
+                    )
+                }
+
+            def put_item(self, **kwargs: Any) -> None:
+                put_calls.append(kwargs)
+
+        snapshot_lambda.checkpoint_save(
+            {
+                "backend": "dynamodb",
+                "ddb": FakeDynamoCheckpointClient(),
+                "table_name": "snapshot-checkpoints",
+                "key": "snapshots/_checkpoint.json",
+            },
+            {
+                "version": 1,
+                "tables": {
+                    TABLE_ARN: {
+                        "table_name": "orders",
+                        "table_arn": TABLE_ARN,
+                        "last_to": "2026-03-10T00:00:00Z",
+                        "last_mode": "INCREMENTAL",
+                        "incremental_seq": 1,
+                    }
+                },
+            },
+        )
+
+        current_put_call = next(
+            call
+            for call in put_calls
+            if call["Item"]["RecordType"]["S"] == "CURRENT"
+        )
+        self.assertEqual(
+            current_put_call["ConditionExpression"],
+            "attribute_exists(#pk) AND attribute_exists(#sk)",
+        )
+        self.assertEqual(
+            current_put_call["ExpressionAttributeNames"],
+            {
+                "#pk": snapshot_lambda.CHECKPOINT_DYNAMODB_PARTITION_KEY,
+                "#sk": snapshot_lambda.CHECKPOINT_DYNAMODB_SORT_KEY,
+            },
+        )
+        self.assertNotIn("ExpressionAttributeValues", current_put_call)
+        self.assertEqual(current_put_call["Item"]["Revision"]["N"], "1")
+
+    def test_checkpoint_lock_consults_before_put_item(self) -> None:
+        call_order: list[str] = []
+
+        class FakeDynamoCheckpointClient:
+            def get_item(self, **kwargs: Any) -> dict[str, Any]:
+                call_order.append("GetItem")
+                return {}
+
+            def put_item(self, **kwargs: Any) -> None:
+                call_order.append("PutItem")
+
+        result = snapshot_lambda._checkpoint_try_acquire_execution_lock(
+            {
+                "backend": "dynamodb",
+                "ddb": FakeDynamoCheckpointClient(),
+                "table_name": "snapshot-checkpoints",
+            },
+            target_table_name="orders",
+            target_table_arn=TABLE_ARN,
+            mode_hint="AUTO",
+            owner_token="owner-123",
+        )
+
+        self.assertTrue(result["acquired"])
+        self.assertEqual(call_order, ["GetItem", "GetItem", "PutItem"])
+
+    def test_checkpoint_lock_logs_command_order_with_reason(self) -> None:
+        captured_messages: list[str] = []
+
+        class FakeLogger:
+            def isEnabledFor(self, _level: int) -> bool:
+                return True
+
+            def log(self, _level: int, _fmt: str, message: str) -> None:
+                captured_messages.append(message)
+
+        class FakeDynamoCheckpointClient:
+            def get_item(self, **kwargs: Any) -> dict[str, Any]:
+                return {}
+
+            def put_item(self, **kwargs: Any) -> None:
+                return None
+
+        with ExitStack() as stack:
+            stack.enter_context(
+                patch.object(snapshot_lambda, "logger", FakeLogger())
+            )
+            stack.enter_context(
+                patch.object(
+                    snapshot_lambda,
+                    "_now_utc",
+                    lambda: datetime(2026, 4, 2, 15, 36, 16, 123456, tzinfo=timezone.utc),
+                )
+            )
+            snapshot_lambda._checkpoint_try_acquire_execution_lock(
+                {
+                    "backend": "dynamodb",
+                    "ddb": FakeDynamoCheckpointClient(),
+                    "table_name": "snapshot-checkpoints",
+                },
+                target_table_name="orders",
+                target_table_arn=TABLE_ARN,
+                mode_hint="AUTO",
+                owner_token="owner-123",
+            )
+
+        command_payloads = [
+            json.loads(message)
+            for message in captured_messages
+            if json.loads(message).get("action") == "checkpoint.dynamodb.command"
+        ]
+
+        self.assertEqual(
+            [payload["command"] for payload in command_payloads],
+            ["GetItem", "GetItem", "PutItem"],
+        )
+        self.assertEqual(
+            [payload["reason"] for payload in command_payloads],
+            [
+                "load checkpoint CURRENT record before acquiring execution lock",
+                "load checkpoint LOCK record before acquiring execution lock",
+                "lock checkpoint table for concurrency control",
+            ],
+        )
+        self.assertEqual(
+            [payload["commandTime"] for payload in command_payloads],
+            [
+                "2026-04-02T15:36:16.123Z",
+                "2026-04-02T15:36:16.123Z",
+                "2026-04-02T15:36:16.123Z",
+            ],
+        )
+        self.assertEqual(
+            sorted(payload["commandSequence"] for payload in command_payloads),
+            [payload["commandSequence"] for payload in command_payloads],
+        )
 
     def test_checkpoint_load_reads_dynamodb_payload_when_configured(self) -> None:
         payload = {
@@ -2383,7 +2979,7 @@ class SnapshotFunctionalRefactorTests(unittest.TestCase):
 
     def test_parse_new_layout_export_key_accepts_compact_and_legacy_dates(self) -> None:
         compact = snapshot_lambda._parse_new_layout_export_key(
-            "DDB/20260313/111111111111/orders/FULL/run_id=20260313T000000Z/manifest-summary.json"
+            "DDB/111111111111/orders/FULL/run_id=20260313T000000Z/manifest-summary.json"
         )
         legacy = snapshot_lambda._parse_new_layout_export_key(
             "DDB/2026-03-13/111111111111/orders/FULL/run_id=20260313T000000Z/manifest-summary.json"
