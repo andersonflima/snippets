@@ -287,6 +287,20 @@ run_step() {
   "$@"
 }
 
+path_is_under() {
+  local value base
+  value="$1"
+  base="$2"
+
+  case "${value}" in
+    "${base}"|"${base}/"*)
+      return 0
+      ;;
+  esac
+
+  return 1
+}
+
 resolve_hex_config_path() {
   local hex_dump config_home
   hex_dump="$(mix hex.config 2>/dev/null || true)"
@@ -354,6 +368,61 @@ sync_elixir_ls_setup_state() {
     "${ELIXIR_LS_SETUP_FISH}" \
     "${MIX_ENV_FILE}" \
     "${WRAPPER_ENV_FILE}"
+}
+
+validate_persisted_env_files() {
+  [[ -f "${MIX_ENV_FILE}" ]] || die "env-file do mix via EC2 não foi criado: ${MIX_ENV_FILE}"
+  [[ -f "${WRAPPER_ENV_FILE}" ]] || die "env-file compartilhado dos wrappers não foi criado: ${WRAPPER_ENV_FILE}"
+}
+
+validate_installed_wrappers() {
+  [[ -x "${HOME}/.local/share/mix-ec2-wrapper/bin/mix" ]] || die "wrapper do mix não foi instalado"
+  [[ -x "${HOME}/.local/share/mix-ec2-wrapper/bin/mix-via-ec2" ]] || die "entrypoint mix-via-ec2 não foi instalado"
+  [[ -x "${HOME}/.local/share/curl-python-wrapper/bin/curl" ]] || die "wrapper do curl não foi instalado"
+  [[ -x "${HOME}/.local/share/git-zip-wrapper/bin/git" ]] || die "wrapper do git não foi instalado"
+}
+
+validate_mix_wrapper_env_activation() {
+  local current_mix expected_mix wrapper_dir
+  expected_mix="${HOME}/.local/share/mix-ec2-wrapper/bin/mix"
+  wrapper_dir="${HOME}/.local/share/mix-ec2-wrapper/bin"
+
+  current_mix="$(
+    set +u
+    # shellcheck disable=SC1090
+    . "${MIX_ENV_FILE}"
+    set -u
+    rehash 2>/dev/null || true
+    hash -r 2>/dev/null || true
+    command -v mix 2>/dev/null || true
+  )"
+
+  [[ -n "${current_mix}" ]] || die "mix não ficou resolvível após carregar ${MIX_ENV_FILE}"
+  if [[ "${current_mix}" != "${expected_mix}" ]] && ! path_is_under "${current_mix}" "${wrapper_dir}"; then
+    die "mix não ficou apontando para o wrapper após carregar ${MIX_ENV_FILE}: ${current_mix}"
+  fi
+}
+
+validate_shell_rc_persistence() {
+  local managed_shell_rc
+  managed_shell_rc="${RESTRICTED_DEV_ENV_MANAGED_SHELL_RC:-}"
+
+  if [[ "${APPLY_SHELL_RC}" != "1" ]]; then
+    return 0
+  fi
+
+  [[ -n "${managed_shell_rc}" ]] || die "shell rc gerenciado não foi registrado no estado"
+  [[ -f "${managed_shell_rc}" ]] || die "shell rc gerenciado não existe: ${managed_shell_rc}"
+  grep -Fq "${RESTRICTED_DEV_ENV_SHELL_RC_BEGIN}" "${managed_shell_rc}" || die "bloco gerenciado não foi gravado em ${managed_shell_rc}"
+  grep -Fq "${MIX_ENV_FILE}" "${managed_shell_rc}" || die "shell rc não referencia ${MIX_ENV_FILE}"
+  grep -Fq "${WRAPPER_ENV_FILE}" "${managed_shell_rc}" || die "shell rc não referencia ${WRAPPER_ENV_FILE}"
+}
+
+validate_restricted_dev_env_result() {
+  validate_persisted_env_files
+  validate_installed_wrappers
+  validate_mix_wrapper_env_activation
+  validate_shell_rc_persistence
 }
 
 MIX_ENV_ARGS=(
@@ -455,6 +524,7 @@ fi
 run_step "sincronizando persistência do ambiente restrito" sync_shell_rc_state
 run_step "sincronizando setup do ElixirLS (sh/fish)" sync_elixir_ls_setup_state
 run_step "persistindo estado do ambiente restrito" restricted_dev_env_write_state
+run_step "validando artefatos persistidos do bootstrap" validate_restricted_dev_env_result
 
 cat <<EOF
 Bootstrap concluído.
