@@ -119,6 +119,7 @@ REMOTE_CA_CERT_PATH="${MIX_VIA_EC2_CA_CERT:-${GIT_ZIP_WRAPPER_CURL_CACERT:-}}"
 REMOTE_HEX_UNSAFE_HTTPS="${MIX_VIA_EC2_HEX_UNSAFE_HTTPS:-0}"
 REMOTE_HEX_UNSAFE_REGISTRY="${MIX_VIA_EC2_HEX_UNSAFE_REGISTRY:-}"
 REMOTE_HEX_NO_VERIFY_REPO_ORIGIN="${MIX_VIA_EC2_HEX_NO_VERIFY_REPO_ORIGIN:-}"
+LOCAL_CA_CERT_SOURCE_PATH=""
 SSH_USER="${MIX_VIA_EC2_SSH_USER:-ec2-user}"
 SSH_IDENTITY="${MIX_VIA_EC2_SSH_IDENTITY:-}"
 SSH_PORT="22"
@@ -139,6 +140,7 @@ PROJECT_RESULT_KEY=""
 HOME_CACHE_KEY=""
 RUNTIME_METADATA_KEY=""
 STATUS_KEY=""
+CA_CERT_KEY=""
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
@@ -370,8 +372,32 @@ EOF
   chmod 0644 "${MANAGED_ENV_FILE}"
 }
 
-prepare_run_artifacts() {
+ensure_run_id() {
+  if [[ -n "${RUN_ID}" ]]; then
+    return 0
+  fi
+
   RUN_ID="$(date +%Y%m%d%H%M%S)-$(random_suffix)"
+}
+
+prepare_remote_ca_cert_stage() {
+  LOCAL_CA_CERT_SOURCE_PATH=""
+
+  if [[ -z "${REMOTE_CA_CERT_PATH}" ]]; then
+    return 0
+  fi
+
+  if [[ ! -f "${REMOTE_CA_CERT_PATH}" ]]; then
+    return 0
+  fi
+
+  ensure_run_id
+  LOCAL_CA_CERT_SOURCE_PATH="${REMOTE_CA_CERT_PATH}"
+  REMOTE_CA_CERT_PATH="/tmp/mix-via-ec2/runs/${RUN_ID}/input/ca-cert.pem"
+}
+
+prepare_run_artifacts() {
+  ensure_run_id
   RUN_S3_PREFIX="${S3_PREFIX%/}/${INSTANCE_NAME:-manual}/${PROJECT_NAME}/${RUN_ID}"
   PROJECT_ARCHIVE_KEY="${RUN_S3_PREFIX}/input/project-source.tgz"
   REMOTE_SCRIPT_KEY="${RUN_S3_PREFIX}/input/run.sh"
@@ -379,6 +405,12 @@ prepare_run_artifacts() {
   HOME_CACHE_KEY="${RUN_S3_PREFIX}/output/home-cache.tgz"
   RUNTIME_METADATA_KEY="${RUN_S3_PREFIX}/output/runtime.txt"
   STATUS_KEY="${RUN_S3_PREFIX}/output/status.txt"
+  prepare_remote_ca_cert_stage
+  if [[ -n "${LOCAL_CA_CERT_SOURCE_PATH}" ]]; then
+    CA_CERT_KEY="${RUN_S3_PREFIX}/input/ca-cert.pem"
+  else
+    CA_CERT_KEY=""
+  fi
 }
 
 cleanup_s3_run_artifacts() {
@@ -655,10 +687,19 @@ upload_local_project_archive() {
   rm -f "${archive_path}"
 }
 
+upload_local_ca_cert() {
+  if [[ -z "${LOCAL_CA_CERT_SOURCE_PATH}" || -z "${CA_CERT_KEY}" ]]; then
+    return 0
+  fi
+
+  log "enviando certificado CA local para s3://${S3_BUCKET}/${CA_CERT_KEY}"
+  "${AWS_CMD[@]}" s3 cp "${LOCAL_CA_CERT_SOURCE_PATH}" "s3://${S3_BUCKET}/${CA_CERT_KEY}" --only-show-errors >/dev/null
+}
+
 generate_remote_script() {
   local remote_script_path remote_mix_args_literal quoted_remote_project_path quoted_aws_region quoted_mix_first_arg
   local quoted_remote_proxy_url quoted_remote_ca_cert_path quoted_remote_hex_unsafe_https
-  local quoted_remote_hex_unsafe_registry quoted_remote_hex_no_verify_repo_origin
+  local quoted_remote_hex_unsafe_registry quoted_remote_hex_no_verify_repo_origin quoted_ca_cert_key
   remote_script_path="$1"
   remote_mix_args_literal="$(printf '%q ' "${MIX_ARGS[@]}")"
   quoted_remote_project_path="$(shell_quote "${REMOTE_PROJECT_PATH}")"
@@ -669,6 +710,7 @@ generate_remote_script() {
   quoted_remote_hex_unsafe_https="$(shell_quote "${REMOTE_HEX_UNSAFE_HTTPS}")"
   quoted_remote_hex_unsafe_registry="$(shell_quote "${REMOTE_HEX_UNSAFE_REGISTRY}")"
   quoted_remote_hex_no_verify_repo_origin="$(shell_quote "${REMOTE_HEX_NO_VERIFY_REPO_ORIGIN}")"
+  quoted_ca_cert_key="$(shell_quote "${CA_CERT_KEY}")"
 
   cat > "${remote_script_path}" <<EOF
 #!/usr/bin/env bash
@@ -749,6 +791,7 @@ REMOTE_CA_CERT_PATH=${quoted_remote_ca_cert_path}
 REMOTE_HEX_UNSAFE_HTTPS=${quoted_remote_hex_unsafe_https}
 REMOTE_HEX_UNSAFE_REGISTRY=${quoted_remote_hex_unsafe_registry}
 REMOTE_HEX_NO_VERIFY_REPO_ORIGIN=${quoted_remote_hex_no_verify_repo_origin}
+CA_CERT_KEY=${quoted_ca_cert_key}
 PROJECT_ARCHIVE_KEY="${PROJECT_ARCHIVE_KEY}"
 PROJECT_RESULT_KEY="${PROJECT_RESULT_KEY}"
 HOME_CACHE_KEY="${HOME_CACHE_KEY}"
@@ -779,6 +822,10 @@ if [[ -n "\${REMOTE_PROXY_URL}" ]]; then
   export https_proxy="\${REMOTE_PROXY_URL}"
   export http_proxy="\${REMOTE_PROXY_URL}"
   export all_proxy="\${REMOTE_PROXY_URL}"
+fi
+if [[ -n "\${CA_CERT_KEY}" && -n "\${REMOTE_CA_CERT_PATH}" ]]; then
+  mkdir -p "\${REMOTE_CA_CERT_PATH%/*}"
+  aws s3 cp "s3://${S3_BUCKET}/\${CA_CERT_KEY}" "\${REMOTE_CA_CERT_PATH}" --only-show-errors >/dev/null
 fi
 if [[ -n "\${REMOTE_CA_CERT_PATH}" ]]; then
   export HEX_CACERTS_PATH="\${REMOTE_CA_CERT_PATH}"
@@ -1045,6 +1092,7 @@ run_ssm_mix() {
     upload_local_project_archive
   fi
 
+  upload_local_ca_cert
   upload_remote_script
 
   parameter_file="$(make_temp_file "mix-via-ec2-ssm-params-${RUN_ID}" ".json")"
@@ -1114,6 +1162,21 @@ sync_project_to_remote_ssh() {
     --exclude=node_modules \
     -C "${LOCAL_PROJECT_PATH}" . | \
     "${SSH_CMD[@]}" "bash -lc 'set -euo pipefail; mkdir -p ${quoted_remote_parent}; rm -rf ${quoted_remote_project}; mkdir -p ${quoted_remote_project}; tar -xzf - -C ${quoted_remote_project}'"
+}
+
+sync_remote_ca_cert_ssh() {
+  local remote_ca_parent quoted_remote_ca_parent quoted_remote_ca_path
+
+  if [[ -z "${LOCAL_CA_CERT_SOURCE_PATH}" || -z "${REMOTE_CA_CERT_PATH}" ]]; then
+    return 0
+  fi
+
+  remote_ca_parent="${REMOTE_CA_CERT_PATH%/*}"
+  quoted_remote_ca_parent="$(shell_quote "${remote_ca_parent}")"
+  quoted_remote_ca_path="$(shell_quote "${REMOTE_CA_CERT_PATH}")"
+
+  log "sincronizando certificado CA local para o EC2 em ${REMOTE_CA_CERT_PATH}"
+  "${SSH_CMD[@]}" "bash -lc 'set -euo pipefail; mkdir -p ${quoted_remote_ca_parent}; cat > ${quoted_remote_ca_path}; chmod 0644 ${quoted_remote_ca_path}'" < "${LOCAL_CA_CERT_SOURCE_PATH}"
 }
 
 run_remote_mix_ssh() {
@@ -1208,8 +1271,10 @@ EOF
 
 run_ssh_mix() {
   [[ -n "${HOST}" ]] || die "host ausente para o modo SSH"
+  prepare_remote_ca_cert_stage
   build_ssh_command
   fetch_remote_metadata_ssh
+  sync_remote_ca_cert_ssh
 
   if [[ "${COMMAND_TYPE}" == "project" ]]; then
     sync_project_to_remote_ssh "${REMOTE_PROJECT_PATH}"
