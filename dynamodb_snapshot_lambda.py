@@ -4284,6 +4284,17 @@ def _process_table(
 ) -> Optional[Dict[str, Any]]:
     runtime_region = _resolve_runtime_region(base_session.region_name)
     target = _resolve_table_target(raw_target_ref, session=base_session, runtime_region=runtime_region)
+    _log_event(
+        "snapshot.preflight.target.resolved",
+        raw_target_ref=_safe_str_field(raw_target_ref, field_name="raw_target_ref"),
+        target_input_kind=("arn" if _safe_str_field(raw_target_ref, field_name="raw_target_ref").startswith("arn:") else "name"),
+        resolved_table_name=target.table_name,
+        resolved_table_arn=target.table_arn,
+        resolved_table_account_id=target.account_id,
+        resolved_table_region=target.region,
+        runtime_region=runtime_region,
+        level=logging.INFO,
+    )
 
     if target.raw_ref.lower() in ignore_set or target.table_name.lower() in ignore_set or target.table_arn.lower() in ignore_set:
         _log_event(

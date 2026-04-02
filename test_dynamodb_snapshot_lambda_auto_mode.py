@@ -226,6 +226,7 @@ class SnapshotAutomaticModeTests(unittest.TestCase):
         start_incremental_export: Any | None = None,
         start_full_export: Any | None = None,
         config_override: dict | None = None,
+        ignore_set: set[str] | None = None,
     ) -> dict:
         base_session = types.SimpleNamespace(region_name="us-east-1")
         target = self.build_target()
@@ -304,9 +305,65 @@ class SnapshotAutomaticModeTests(unittest.TestCase):
                 base_session=base_session,
                 checkpoint_store=checkpoint_store,
                 raw_target_ref="orders",
-                ignore_set=set(),
+                ignore_set=ignore_set or set(),
                 assume_session_cache={},
             )
+
+    def test_process_table_ignores_target_when_ignore_list_contains_resolved_table_arn(self) -> None:
+        target = self.build_target()
+        assume_role_calls: list[dict[str, Any]] = []
+
+        with ExitStack() as stack:
+            stack.enter_context(
+                patch.object(
+                    snapshot_lambda,
+                    "_resolve_assumed_session_for_target",
+                    lambda **kwargs: assume_role_calls.append(kwargs),
+                )
+            )
+            result = self.run_process_table(
+                previous_state={},
+                ddb_client=object(),
+                ignore_set={target.table_arn.lower()},
+            )
+
+        self.assertIsNone(result)
+        self.assertEqual(assume_role_calls, [])
+
+    def test_process_table_logs_resolved_target_identity(self) -> None:
+        logged_events: list[dict[str, Any]] = []
+
+        def capture_log_event(action: str, *, level: int = 20, **fields: Any) -> None:
+            logged_events.append({"action": action, "level": level, "fields": fields})
+
+        with ExitStack() as stack:
+            stack.enter_context(
+                patch.object(snapshot_lambda, "_log_event", capture_log_event)
+            )
+            result = self.run_process_table(
+                previous_state={
+                    "table_name": "orders",
+                    "table_arn": TABLE_ARN,
+                    "last_to": "2026-03-22T00:00:00Z",
+                    "last_mode": "FULL",
+                    "incremental_seq": 0,
+                },
+                ddb_client=object(),
+                config_override={"dry_run": True},
+            )
+
+        self.assertEqual(result["status"], "PLANNED")
+        resolved_events = [
+            event for event in logged_events if event["action"] == "snapshot.preflight.target.resolved"
+        ]
+        self.assertEqual(len(resolved_events), 1)
+        self.assertEqual(resolved_events[0]["fields"]["raw_target_ref"], "orders")
+        self.assertEqual(resolved_events[0]["fields"]["target_input_kind"], "name")
+        self.assertEqual(resolved_events[0]["fields"]["resolved_table_name"], "orders")
+        self.assertEqual(resolved_events[0]["fields"]["resolved_table_arn"], TABLE_ARN)
+        self.assertEqual(resolved_events[0]["fields"]["resolved_table_account_id"], "111111111111")
+        self.assertEqual(resolved_events[0]["fields"]["resolved_table_region"], "us-east-1")
+        self.assertEqual(resolved_events[0]["fields"]["runtime_region"], "us-east-1")
 
     def test_build_snapshot_config_always_uses_automatic_mode(self) -> None:
         with patch.dict(
