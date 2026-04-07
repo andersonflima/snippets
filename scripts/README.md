@@ -5,7 +5,7 @@
 - `scripts/configure.sh`
   Configura tudo: instala wrappers, gera envs, atualiza shell rc, integra setup do ElixirLS e salva estado.
 - `scripts/reset.sh`
-  Remove tudo: wrappers/envs/bloco do shell rc e restaura Hex persistido.
+  Remove tudo: wrappers/envs/bloco do shell rc, cache do wrapper, artefatos locais do elixir-ls no Mason e restaura Hex persistido.
 
 ## Fluxo recomendado
 
@@ -14,6 +14,8 @@ Configuração completa:
 ```bash
 sh scripts/configure.sh "<bucket>"
 ```
+
+Se o bucket informado não existir, o bootstrap cria automaticamente no `--aws-region` efetivo.
 
 Com backend EC2 dos wrappers habilitado explicitamente:
 
@@ -36,10 +38,10 @@ Remoção completa:
 sh scripts/reset.sh
 ```
 
-Reconfiguração completa reaproveitando bucket salvo (após primeira configuração):
+Após o reset completo, a próxima configuração deve informar o bucket novamente:
 
 ```bash
-sh scripts/configure.sh
+sh scripts/configure.sh "<bucket>"
 ```
 
 ## Diagnóstico opcional (implementação interna)

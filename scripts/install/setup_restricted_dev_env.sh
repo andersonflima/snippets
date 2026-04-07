@@ -122,8 +122,8 @@ REAL_WGET_BIN=""
 REAL_GIT_BIN=""
 REAL_BREW_BIN=""
 SSH_IDENTITY_PATH=""
-PROXY_URL="${WRAPPERS_VIA_EC2_PROXY:-${HTTPS_PROXY:-${https_proxy:-${ALL_PROXY:-${all_proxy:-${HTTP_PROXY:-${http_proxy:-}}}}}}}"
-EC2_PROXY_URL="${MIX_VIA_EC2_PROXY:-}"
+PROXY_URL="${HTTPS_PROXY:-${https_proxy:-${ALL_PROXY:-${all_proxy:-${HTTP_PROXY:-${http_proxy:-}}}}}}"
+EC2_PROXY_URL=""
 CA_CERT_PATH="${MIX_VIA_EC2_CA_CERT:-${GIT_ZIP_WRAPPER_CURL_CACERT:-${HEX_CACERTS_PATH:-${SSL_CERT_FILE:-${REQUESTS_CA_BUNDLE:-${AWS_CA_BUNDLE:-}}}}}}"
 AUTO_INSECURE_ON_CERT_ERROR="${CURL_WRAPPER_AUTO_INSECURE_ON_CERT_ERROR:-0}"
 CONFIGURE_HEX="0"
@@ -295,6 +295,71 @@ run_step() {
   shift
   log "${description}"
   "$@"
+}
+
+configure_local_aws_cmd() {
+  AWS_CMD=(aws)
+
+  if [[ -n "${AWS_PROFILE_NAME}" ]]; then
+    AWS_CMD+=(--profile "${AWS_PROFILE_NAME}")
+  fi
+
+  if [[ -n "${AWS_REGION_NAME}" ]]; then
+    AWS_CMD+=(--region "${AWS_REGION_NAME}")
+  fi
+}
+
+shared_s3_bucket_exists() {
+  "${AWS_CMD[@]}" s3api head-bucket --bucket "${S3_BUCKET}" >/dev/null 2>&1
+}
+
+shared_s3_bucket_region_is_resolvable() {
+  local -a region_probe_cmd=(aws)
+  local bucket_region
+
+  if [[ -n "${AWS_PROFILE_NAME}" ]]; then
+    region_probe_cmd+=(--profile "${AWS_PROFILE_NAME}")
+  fi
+
+  bucket_region="$("${region_probe_cmd[@]}" s3api get-bucket-location \
+    --bucket "${S3_BUCKET}" \
+    --query 'LocationConstraint' \
+    --output text 2>/dev/null || true)"
+
+  [[ -n "${bucket_region}" && "${bucket_region}" != "None" && "${bucket_region}" != "null" ]] || [[ "${bucket_region}" == "None" ]]
+}
+
+ensure_shared_s3_bucket() {
+  local bucket_region create_output
+
+  command -v aws >/dev/null 2>&1 || die "aws cli não encontrado no PATH; a configuração exige criar/validar o bucket S3 compartilhado"
+  configure_local_aws_cmd
+
+  if shared_s3_bucket_exists || shared_s3_bucket_region_is_resolvable; then
+    return 0
+  fi
+
+  log "bucket S3 ${S3_BUCKET} não existe. Criando automaticamente"
+
+  if [[ "${AWS_REGION_NAME}" == "us-east-1" ]]; then
+    create_output="$("${AWS_CMD[@]}" s3api create-bucket --bucket "${S3_BUCKET}" 2>&1)" || {
+      if shared_s3_bucket_exists || shared_s3_bucket_region_is_resolvable; then
+        return 0
+      fi
+      die "falha ao criar bucket S3 ${S3_BUCKET}: ${create_output}"
+    }
+    return 0
+  fi
+
+  bucket_region="LocationConstraint=${AWS_REGION_NAME}"
+  create_output="$("${AWS_CMD[@]}" s3api create-bucket \
+    --bucket "${S3_BUCKET}" \
+    --create-bucket-configuration "${bucket_region}" 2>&1)" || {
+      if shared_s3_bucket_exists || shared_s3_bucket_region_is_resolvable; then
+        return 0
+      fi
+      die "falha ao criar bucket S3 ${S3_BUCKET}: ${create_output}"
+    }
 }
 
 path_is_under() {
@@ -511,6 +576,7 @@ fi
 MIX_ENV_ARGS+=(--no-shell-rc)
 WRAPPER_ENV_ARGS+=(--no-shell-rc)
 
+run_step "garantindo bucket S3 compartilhado" ensure_shared_s3_bucket
 run_step "instalando wrapper do mix" \
   sh "${ROOT_DIR}/install/install_mix_ec2_wrapper.sh" --real-mix "${REAL_MIX_BIN}"
 run_step "instalando wrapper do curl" \

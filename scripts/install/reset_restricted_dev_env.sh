@@ -29,6 +29,8 @@ Opções:
   --keep-shell-rc              Não remove linhas do shell rc.
   --keep-env-files             Não remove env-files em ~/.config.
   --keep-install-dirs          Não remove wrappers instalados em ~/.local/share.
+  --keep-wrapper-cache         Não remove cache/seed do wrapper em ~/.cache.
+  --keep-mason-elixir-ls       Não remove artefatos do elixir-ls sob ~/.local/share/nvim/mason.
   --keep-hex-config            Não restaura/remove a config persistida do Hex.
   -h, --help                   Mostra esta ajuda.
 USAGE
@@ -46,6 +48,8 @@ ELIXIR_LS_SETUP_FISH="${HOME}/.config/elixir_ls/setup.fish"
 RESET_SHELL_RC="1"
 RESET_ENV_FILES="1"
 RESET_INSTALL_DIRS="1"
+RESET_WRAPPER_CACHE="1"
+RESET_MASON_ELIXIR_LS="1"
 RESET_HEX_CONFIG="1"
 
 while [[ $# -gt 0 ]]; do
@@ -64,6 +68,14 @@ while [[ $# -gt 0 ]]; do
       ;;
     --keep-install-dirs)
       RESET_INSTALL_DIRS="0"
+      shift
+      ;;
+    --keep-wrapper-cache)
+      RESET_WRAPPER_CACHE="0"
+      shift
+      ;;
+    --keep-mason-elixir-ls)
+      RESET_MASON_ELIXIR_LS="0"
       shift
       ;;
     --keep-hex-config)
@@ -177,6 +189,18 @@ if [[ "${RESET_INSTALL_DIRS}" == "1" ]]; then
   remove_dir_if_exists "${HOME}/.local/share/nvim-ec2-wrapper"
 fi
 
+if [[ "${RESET_WRAPPER_CACHE}" == "1" ]]; then
+  remove_dir_if_exists "${HOME}/.cache/curl-python-wrapper"
+  remove_dir_if_exists "${HOME}/.cache/mason-seeds"
+fi
+
+if [[ "${RESET_MASON_ELIXIR_LS}" == "1" ]]; then
+  remove_dir_if_exists "${HOME}/.local/share/nvim/mason/packages/elixir-ls"
+  remove_dir_if_exists "${HOME}/.local/share/nvim/mason/staging/elixir-ls"
+  remove_file_if_exists "${HOME}/.local/share/nvim/mason/bin/elixir-ls"
+  remove_file_if_exists "${HOME}/.local/share/nvim/mason/receipts/elixir-ls.json"
+fi
+
 restore_hex_config_from_state
 
 if [[ "${RESET_SHELL_RC}" == "1" &&
@@ -197,4 +221,7 @@ Para abrir uma sessão limpa agora:
 
 Para limpar a sessão atual:
   exec "${SHELL:-/bin/zsh}" -l
+
+Para reconfigurar do zero:
+  sh scripts/configure.sh "<bucket>"
 EOF

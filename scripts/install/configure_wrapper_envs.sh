@@ -116,7 +116,7 @@ REAL_GIT_BIN="${GIT_ZIP_WRAPPER_REAL_GIT:-}"
 REAL_BREW_BIN="${BREW_WRAPPER_REAL_BREW:-}"
 GIT_LFS_MODE="${GIT_ZIP_WRAPPER_LFS_MODE:-}"
 PROXY_URL=""
-EC2_PROXY_URL="${WRAPPERS_VIA_EC2_PROXY:-}"
+EC2_PROXY_URL=""
 CA_CERT_PATH=""
 AUTO_INSECURE_ON_CERT_ERROR="0"
 MASON_SEED_DIR="${CURL_WRAPPER_MASON_SEED_DIR:-}"
@@ -354,12 +354,18 @@ render_optional_exports() {
     if [[ -n "${S3_BUCKET_NAME}" ]]; then
       printf 'export WRAPPERS_VIA_EC2_S3_BUCKET=%s\n' "$(shell_quote "${S3_BUCKET_NAME}")"
     fi
-    if [[ -n "${EC2_PROXY_URL}" ]]; then
-      printf 'export WRAPPERS_VIA_EC2_PROXY=%s\n' "$(shell_quote "${EC2_PROXY_URL}")"
-      printf 'export CURL_WRAPPER_EC2_PROXY=%s\n' "$(shell_quote "${EC2_PROXY_URL}")"
-      printf 'export WGET_WRAPPER_EC2_PROXY=%s\n' "$(shell_quote "${EC2_PROXY_URL}")"
-      printf 'export GIT_ZIP_WRAPPER_EC2_PROXY=%s\n' "$(shell_quote "${EC2_PROXY_URL}")"
-    fi
+  fi
+
+  if [[ -n "${EC2_PROXY_URL}" ]]; then
+    printf 'export WRAPPERS_VIA_EC2_PROXY=%s\n' "$(shell_quote "${EC2_PROXY_URL}")"
+    printf 'export CURL_WRAPPER_EC2_PROXY=%s\n' "$(shell_quote "${EC2_PROXY_URL}")"
+    printf 'export WGET_WRAPPER_EC2_PROXY=%s\n' "$(shell_quote "${EC2_PROXY_URL}")"
+    printf 'export GIT_ZIP_WRAPPER_EC2_PROXY=%s\n' "$(shell_quote "${EC2_PROXY_URL}")"
+  else
+    printf 'unset WRAPPERS_VIA_EC2_PROXY\n'
+    printf 'unset CURL_WRAPPER_EC2_PROXY\n'
+    printf 'unset WGET_WRAPPER_EC2_PROXY\n'
+    printf 'unset GIT_ZIP_WRAPPER_EC2_PROXY\n'
   fi
 
   if [[ -n "${PROXY_URL}" ]]; then

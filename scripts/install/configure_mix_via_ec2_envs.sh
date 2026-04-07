@@ -79,7 +79,7 @@ AWS_REGION_NAME="${MIX_VIA_EC2_AWS_REGION:-sa-east-1}"
 S3_BUCKET_NAME="${MIX_VIA_EC2_S3_BUCKET:-}"
 S3_PREFIX_NAME="${MIX_VIA_EC2_S3_PREFIX:-mix-via-ec2}"
 SSH_IDENTITY_PATH="${MIX_VIA_EC2_SSH_IDENTITY:-}"
-PROXY_URL="${MIX_VIA_EC2_PROXY:-${WRAPPERS_VIA_EC2_PROXY:-}}"
+PROXY_URL=""
 CA_CERT_PATH="${MIX_VIA_EC2_CA_CERT:-${GIT_ZIP_WRAPPER_CURL_CACERT:-}}"
 HEX_UNSAFE_HTTPS_VALUE="${MIX_VIA_EC2_HEX_UNSAFE_HTTPS:-0}"
 REMOTE_COMMANDS="${MIX_WRAPPER_REMOTE_COMMANDS:-deps.get,deps.compile,deps.update,deps.unlock,local.hex,local.rebar,archive.install,archive.build,phx.new,hex.info}"
@@ -226,6 +226,8 @@ EOF
 
   if [[ -n "${PROXY_URL}" ]]; then
     printf 'export MIX_VIA_EC2_PROXY=%s\n' "$(shell_quote "${PROXY_URL}")" >> "${ENV_FILE}"
+  else
+    printf 'unset MIX_VIA_EC2_PROXY\n' >> "${ENV_FILE}"
   fi
 
   if [[ -n "${CA_CERT_PATH}" ]]; then

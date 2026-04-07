@@ -72,6 +72,8 @@ Se você quiser mudar o rc de destino:
 sh scripts/configure.sh "<bucket>" --shell-rc "$HOME/.zshrc"
 ```
 
+Se o bucket informado ainda não existir, o bootstrap tenta criá-lo automaticamente na região configurada.
+
 Para zerar tudo depois:
 
 ```bash
@@ -79,6 +81,8 @@ sh scripts/reset.sh
 ```
 
 O reset remove o bloco gerenciado do shell rc, apaga os wrappers/env-files e restaura a configuração do Hex quando ela tiver sido alterada pelo bootstrap com `--configure-hex`.
+
+No fluxo atual, ele também remove o cache do wrapper em `~/.cache/curl-python-wrapper`, o seed local em `~/.cache/mason-seeds` e os artefatos do `elixir-ls` em `~/.local/share/nvim/mason`, para que a próxima execução de `configure.sh` comece do zero.
 
 Para limpar a sessão atual sem abrir outro shell:
 
