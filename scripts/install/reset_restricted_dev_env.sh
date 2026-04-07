@@ -198,6 +198,7 @@ if [[ "${RESET_MASON_ELIXIR_LS}" == "1" ]]; then
   remove_dir_if_exists "${HOME}/.local/share/nvim/mason/packages/elixir-ls"
   remove_dir_if_exists "${HOME}/.local/share/nvim/mason/staging/elixir-ls"
   remove_file_if_exists "${HOME}/.local/share/nvim/mason/bin/elixir-ls"
+  remove_file_if_exists "${HOME}/.local/share/nvim/mason/bin/elixir-ls-debugger"
   remove_file_if_exists "${HOME}/.local/share/nvim/mason/receipts/elixir-ls.json"
 fi
 
