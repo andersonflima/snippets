@@ -73,8 +73,16 @@ class FakeCodeBuildClient:
         self.role_arn = role_arn
         self.calls = calls
 
+    def batch_get_projects(self, **kwargs: Any) -> dict[str, Any]:
+        self.calls.append({"role_arn": self.role_arn, "operation": "batch_get_projects", "request": kwargs})
+        return {"projects": []}
+
+    def create_project(self, **kwargs: Any) -> dict[str, Any]:
+        self.calls.append({"role_arn": self.role_arn, "operation": "create_project", "request": kwargs})
+        return {"project": kwargs}
+
     def start_build(self, **kwargs: Any) -> dict[str, Any]:
-        self.calls.append({"role_arn": self.role_arn, "request": kwargs})
+        self.calls.append({"role_arn": self.role_arn, "operation": "start_build", "request": kwargs})
         account_id = self.role_arn.split(":")[4]
         role_name = self.role_arn.split("/")[-1]
         return {
@@ -99,12 +107,42 @@ class FakeAssumedSession:
         return FakeCodeBuildClient(role_arn=self.role_arn, calls=self.calls)
 
 
+class FakeS3Body:
+    def __init__(self, content: str) -> None:
+        self.content = content
+
+    def read(self) -> bytes:
+        return self.content.encode("utf-8")
+
+
+class FakeS3Client:
+    def __init__(self, *, calls: list[dict[str, Any]], content: str) -> None:
+        self.calls = calls
+        self.content = content
+
+    def get_object(self, **kwargs: Any) -> dict[str, Any]:
+        self.calls.append({"operation": "s3_get_object", "request": kwargs})
+        return {"Body": FakeS3Body(self.content)}
+
+
+class FakeBaseSession:
+    def __init__(self, *, s3_calls: list[dict[str, Any]], buildspec_content: str) -> None:
+        self.s3_calls = s3_calls
+        self.buildspec_content = buildspec_content
+
+    def client(self, service_name: str, region_name: str | None = None) -> Any:
+        if service_name != "s3":
+            raise AssertionError(f"Unexpected base session client request: {service_name} {region_name}")
+        return FakeS3Client(calls=self.s3_calls, content=self.buildspec_content)
+
+
 class LambdaCodeBuildTests(unittest.TestCase):
     def test_build_codebuild_config_accepts_environment_variables_list_from_payload(self) -> None:
         event = {
             "target_role_arns": [ROLE_ARN_A],
             "codebuild_project_name": "deploy-project",
             "codebuild_region": "sa-east-1",
+            "codebuild_buildspec_s3_uri": "s3://central-bucket/buildspecs/deploy.yml",
             "codebuild_environment_variables": [
                 {"name": "ENV_NAME", "value": "production", "type": "PLAINTEXT"}
             ],
@@ -125,7 +163,6 @@ class LambdaCodeBuildTests(unittest.TestCase):
         config = {
             "run_id": "20260402T181516Z",
             "codebuild_project_name": "deploy-project",
-            "codebuild_buildspec": "buildspecs/deploy.yml",
             "codebuild_source_version": "refs/heads/main",
             "codebuild_environment_variables": [
                 {"name": "ENV_NAME", "value": "production", "type": "PLAINTEXT"},
@@ -133,10 +170,14 @@ class LambdaCodeBuildTests(unittest.TestCase):
             ],
         }
 
-        request = codebuild_lambda._build_start_build_request(config, role_arn=ROLE_ARN_A)
+        request = codebuild_lambda._build_start_build_request(
+            config,
+            role_arn=ROLE_ARN_A,
+            buildspec_override="version: 0.2\nphases:\n  build:\n    commands:\n      - echo deploy\n",
+        )
 
         self.assertEqual(request["projectName"], "deploy-project")
-        self.assertEqual(request["buildspecOverride"], "buildspecs/deploy.yml")
+        self.assertEqual(request["buildspecOverride"], "version: 0.2\nphases:\n  build:\n    commands:\n      - echo deploy\n")
         self.assertEqual(request["sourceVersion"], "refs/heads/main")
         self.assertEqual(
             request["environmentVariablesOverride"],
@@ -152,6 +193,7 @@ class LambdaCodeBuildTests(unittest.TestCase):
         event = {
             "codebuild_project_name": "deploy-project",
             "codebuild_region": "sa-east-1",
+            "codebuild_buildspec_s3_uri": "s3://central-bucket/buildspecs/deploy.yml",
         }
 
         with patch.dict(os.environ, {}, clear=True):
@@ -167,7 +209,7 @@ class LambdaCodeBuildTests(unittest.TestCase):
             "target_role_arns": [ROLE_ARN_A, ROLE_ARN_B],
             "codebuild_project_name": "deploy-project",
             "codebuild_region": "sa-east-1",
-            "codebuild_buildspec": "buildspecs/deploy.yml",
+            "codebuild_buildspec_s3_uri": "s3://central-bucket/buildspecs/deploy.yml",
             "codebuild_source_version": "refs/heads/main",
             "codebuild_environment_variables": [
                 {"name": "ENV_NAME", "value": "production", "type": "PLAINTEXT"}
@@ -179,13 +221,19 @@ class LambdaCodeBuildTests(unittest.TestCase):
         }
         assume_calls: list[dict[str, Any]] = []
         codebuild_calls: list[dict[str, Any]] = []
+        s3_calls: list[dict[str, Any]] = []
+        buildspec_content = "version: 0.2\nphases:\n  build:\n    commands:\n      - echo deploy\n"
 
         def fake_assume_role_session(**kwargs: Any) -> Any:
             assume_calls.append(kwargs)
             return FakeAssumedSession(role_arn=kwargs["role_arn"], calls=codebuild_calls)
 
         with patch.object(codebuild_lambda, "_now_utc", return_value=FIXED_NOW):
-            with patch.object(codebuild_lambda, "_build_aws_session", return_value=object()):
+            with patch.object(
+                codebuild_lambda,
+                "_build_aws_session",
+                return_value=FakeBaseSession(s3_calls=s3_calls, buildspec_content=buildspec_content),
+            ):
                 with patch.object(codebuild_lambda, "_assume_role_session", side_effect=fake_assume_role_session):
                     with patch.dict(os.environ, {}, clear=True):
                         response = codebuild_lambda.lambda_handler(event, DummyContext())
@@ -200,10 +248,18 @@ class LambdaCodeBuildTests(unittest.TestCase):
         self.assertEqual([call["duration_seconds"] for call in assume_calls], [1800, 1800])
         self.assertTrue(all(call["session_name"].startswith("trigger-20260402T181516Z-") for call in assume_calls))
 
-        start_build_requests = [call["request"] for call in codebuild_calls if "request" in call]
+        self.assertEqual(
+            s3_calls,
+            [
+                {"operation": "s3_get_object", "request": {"Bucket": "central-bucket", "Key": "buildspecs/deploy.yml"}},
+                {"operation": "s3_get_object", "request": {"Bucket": "central-bucket", "Key": "buildspecs/deploy.yml"}},
+            ],
+        )
+
+        start_build_requests = [call["request"] for call in codebuild_calls if call.get("operation") == "start_build"]
         self.assertEqual(len(start_build_requests), 2)
         self.assertTrue(all(request["projectName"] == "deploy-project" for request in start_build_requests))
-        self.assertTrue(all(request["buildspecOverride"] == "buildspecs/deploy.yml" for request in start_build_requests))
+        self.assertTrue(all(request["buildspecOverride"] == buildspec_content for request in start_build_requests))
         self.assertTrue(all(request["sourceVersion"] == "refs/heads/main" for request in start_build_requests))
         self.assertTrue(
             all(
@@ -219,8 +275,11 @@ class LambdaCodeBuildTests(unittest.TestCase):
             "target_role_arns": [ROLE_ARN_A, ROLE_ARN_FAIL],
             "codebuild_project_name": "deploy-project",
             "codebuild_region": "sa-east-1",
+            "codebuild_buildspec_s3_uri": "s3://central-bucket/buildspecs/deploy.yml",
             "max_workers": 1,
         }
+        s3_calls: list[dict[str, Any]] = []
+        buildspec_content = "version: 0.2\nphases:\n  build:\n    commands:\n      - echo deploy\n"
 
         def fake_assume_role_session(**kwargs: Any) -> Any:
             if kwargs["role_arn"] == ROLE_ARN_FAIL:
@@ -228,7 +287,11 @@ class LambdaCodeBuildTests(unittest.TestCase):
             return FakeAssumedSession(role_arn=kwargs["role_arn"], calls=[])
 
         with patch.object(codebuild_lambda, "_now_utc", return_value=FIXED_NOW):
-            with patch.object(codebuild_lambda, "_build_aws_session", return_value=object()):
+            with patch.object(
+                codebuild_lambda,
+                "_build_aws_session",
+                return_value=FakeBaseSession(s3_calls=s3_calls, buildspec_content=buildspec_content),
+            ):
                 with patch.object(codebuild_lambda, "_assume_role_session", side_effect=fake_assume_role_session):
                     with patch.dict(os.environ, {}, clear=True):
                         response = codebuild_lambda.lambda_handler(event, DummyContext())
@@ -238,6 +301,90 @@ class LambdaCodeBuildTests(unittest.TestCase):
         self.assertEqual([result["target_role_arn"] for result in response["results"]], [ROLE_ARN_A, ROLE_ARN_FAIL])
         self.assertEqual([result["status"] for result in response["results"]], ["STARTED", "FAILED"])
         self.assertEqual(response["results"][1]["error"], "assume role failed")
+
+    def test_lambda_handler_returns_config_error_when_buildspec_s3_is_missing(self) -> None:
+        event = {
+            "target_role_arns": [ROLE_ARN_A],
+            "codebuild_project_name": "deploy-project",
+            "codebuild_region": "sa-east-1",
+        }
+
+        with patch.dict(os.environ, {}, clear=True):
+            response = codebuild_lambda.lambda_handler(event, DummyContext())
+
+        self.assertFalse(response["ok"])
+        self.assertEqual(response["status"], "error")
+        self.assertEqual(response["error_type"], "config")
+        self.assertIn("codebuild_buildspec_s3_uri", response["error"])
+
+    def test_lambda_handler_creates_project_and_uses_buildspec_from_s3_for_target_accounts(self) -> None:
+        event = {
+            "target_account_ids": ["111111111111"],
+            "assume_role_arn_template": "arn:aws:iam::{account_id}:role/codebuild-trigger",
+            "codebuild_project_name": "deploy-{account_id}",
+            "codebuild_region": "sa-east-1",
+            "codebuild_project_definition": {
+                "serviceRole": "arn:aws:iam::{account_id}:role/codebuild-service-role",
+                "environment": {
+                    "type": "LINUX_CONTAINER",
+                    "image": "aws/codebuild/standard:7.0",
+                    "computeType": "BUILD_GENERAL1_SMALL",
+                },
+            },
+            "codebuild_buildspec_s3_uri": "s3://central-bucket/buildspecs/deploy.yml",
+            "codebuild_source_version": "refs/heads/main",
+        }
+        buildspec_content = "version: 0.2\nphases:\n  build:\n    commands:\n      - echo deploy\n"
+        assume_calls: list[dict[str, Any]] = []
+        codebuild_calls: list[dict[str, Any]] = []
+        s3_calls: list[dict[str, Any]] = []
+
+        def fake_assume_role_session(**kwargs: Any) -> Any:
+            assume_calls.append(kwargs)
+            return FakeAssumedSession(role_arn=kwargs["role_arn"], calls=codebuild_calls)
+
+        with patch.object(codebuild_lambda, "_now_utc", return_value=FIXED_NOW):
+            with patch.object(
+                codebuild_lambda,
+                "_build_aws_session",
+                return_value=FakeBaseSession(s3_calls=s3_calls, buildspec_content=buildspec_content),
+            ):
+                with patch.object(codebuild_lambda, "_assume_role_session", side_effect=fake_assume_role_session):
+                    with patch.dict(os.environ, {}, clear=True):
+                        response = codebuild_lambda.lambda_handler(event, DummyContext())
+
+        self.assertTrue(response["ok"])
+        self.assertEqual(response["status"], "ok")
+        self.assertEqual(response["target_count"], 1)
+        self.assertEqual(response["results"][0]["status"], "STARTED")
+        self.assertEqual(response["results"][0]["codebuild_project_action"], "CREATED")
+        self.assertEqual(response["results"][0]["codebuild_project_name"], "deploy-111111111111")
+        self.assertEqual([call["role_arn"] for call in assume_calls], [ROLE_ARN_A])
+        self.assertEqual(
+            s3_calls,
+            [{"operation": "s3_get_object", "request": {"Bucket": "central-bucket", "Key": "buildspecs/deploy.yml"}}],
+        )
+
+        create_project_requests = [
+            call["request"] for call in codebuild_calls if call.get("operation") == "create_project"
+        ]
+        self.assertEqual(len(create_project_requests), 1)
+        self.assertEqual(create_project_requests[0]["name"], "deploy-111111111111")
+        self.assertEqual(
+            create_project_requests[0]["serviceRole"],
+            "arn:aws:iam::111111111111:role/codebuild-service-role",
+        )
+        self.assertEqual(create_project_requests[0]["source"]["type"], "NO_SOURCE")
+        self.assertEqual(create_project_requests[0]["source"]["buildspec"], buildspec_content)
+        self.assertEqual(create_project_requests[0]["artifacts"]["type"], "NO_ARTIFACTS")
+
+        start_build_requests = [
+            call["request"] for call in codebuild_calls if call.get("operation") == "start_build"
+        ]
+        self.assertEqual(len(start_build_requests), 1)
+        self.assertEqual(start_build_requests[0]["projectName"], "deploy-111111111111")
+        self.assertEqual(start_build_requests[0]["buildspecOverride"], buildspec_content)
+        self.assertEqual(start_build_requests[0]["sourceVersion"], "refs/heads/main")
 
 
 if __name__ == "__main__":
