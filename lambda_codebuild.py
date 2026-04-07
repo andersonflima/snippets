@@ -254,6 +254,78 @@ export CODEBUILD_BUILDSPEC_S3_URI="s3://central-artifacts/buildspecs/deploy.yml"
 export MAX_WORKERS="4"
 ```
 
+Exemplo 4: payload operacional mais completo
+--------------------------------------------
+
+Este exemplo é um payload mais próximo de uso real, com:
+- conta central
+- múltiplas contas target
+- projeto por conta
+- buildspec central em S3
+- `NO_SOURCE`
+- variáveis de ambiente por conta
+
+```json
+{
+  "target_account_ids": [
+    "111111111111",
+    "222222222222"
+  ],
+  "assume_role_arn_template": "arn:aws:iam::{account_id}:role/codebuild-trigger",
+  "codebuild_project_name": "deploy-{account_id}",
+  "codebuild_region": "sa-east-1",
+  "codebuild_project_definition": {
+    "serviceRole": "arn:aws:iam::{account_id}:role/codebuild-service-role",
+    "environment": {
+      "type": "LINUX_CONTAINER",
+      "image": "aws/codebuild/standard:7.0",
+      "computeType": "BUILD_GENERAL1_SMALL"
+    },
+    "source": {
+      "type": "NO_SOURCE"
+    },
+    "artifacts": {
+      "type": "NO_ARTIFACTS"
+    },
+    "logsConfig": {
+      "cloudWatchLogs": {
+        "status": "ENABLED"
+      }
+    },
+    "timeoutInMinutes": 60,
+    "queuedTimeoutInMinutes": 30
+  },
+  "codebuild_buildspec_s3_uri": "s3://central-artifacts/buildspecs/deploy.yml",
+  "codebuild_environment_variables": [
+    {
+      "name": "TARGET_ACCOUNT_ID",
+      "value": "{account_id}",
+      "type": "PLAINTEXT"
+    },
+    {
+      "name": "AWS_REGION",
+      "value": "sa-east-1",
+      "type": "PLAINTEXT"
+    },
+    {
+      "name": "ENVIRONMENT",
+      "value": "production",
+      "type": "PLAINTEXT"
+    }
+  ],
+  "assume_role_session_name_prefix": "codebuild-trigger",
+  "assume_role_duration_seconds": 3600,
+  "max_workers": 4
+}
+```
+
+Nesse exemplo:
+- a Lambda assume `codebuild-trigger` em cada conta alvo
+- garante o projeto `deploy-111111111111`, `deploy-222222222222`, etc.
+- usa `codebuild-service-role` como role de execução do build
+- lê `deploy.yml` do bucket central
+- injeta `TARGET_ACCOUNT_ID` com o valor resolvido de cada conta
+
 Papéis IAM Envolvidos
 =====================
 
