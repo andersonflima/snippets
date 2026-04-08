@@ -85,7 +85,7 @@ Opções:
   --real-mix <path>            Binário real do mix.
   --real-curl <path>           Binário real do curl.
   --real-git <path>            Binário real do git.
-  --real-brew <path>           Binário real do brew, quando houver Homebrew.
+  --real-brew <path>           Legado. Ignorado; o wrapper de brew foi removido.
   --ssh-identity <arquivo>     Chave SSH opcional para o mix via EC2.
   --proxy <url>                Proxy para wrappers e, opcionalmente, Hex.
   --ec2-proxy <url>            Proxy exclusivo para o backend remoto no EC2.
@@ -265,9 +265,6 @@ fi
 if [[ -z "${REAL_GIT_BIN}" ]]; then
   REAL_GIT_BIN="$(resolve_real_binary git || true)"
 fi
-if [[ -z "${REAL_BREW_BIN}" ]]; then
-  REAL_BREW_BIN="$(resolve_real_binary brew || true)"
-fi
 
 [[ -n "${REAL_MIX_BIN}" ]] || die "não foi possível localizar mix no PATH"
 [[ -n "${REAL_CURL_BIN}" ]] || die "não foi possível localizar curl no PATH"
@@ -275,9 +272,6 @@ fi
 is_wrapper_binary_path mix "${REAL_MIX_BIN}" && die "mix real não pode apontar para o wrapper instalado: ${REAL_MIX_BIN}"
 is_wrapper_binary_path curl "${REAL_CURL_BIN}" && die "curl real não pode apontar para o wrapper instalado: ${REAL_CURL_BIN}"
 is_wrapper_binary_path git "${REAL_GIT_BIN}" && die "git real não pode apontar para o wrapper instalado: ${REAL_GIT_BIN}"
-if [[ -n "${REAL_BREW_BIN}" ]]; then
-  is_wrapper_binary_path brew "${REAL_BREW_BIN}" && die "brew real não pode apontar para o wrapper instalado: ${REAL_BREW_BIN}"
-fi
 if [[ -n "${CA_CERT_PATH}" ]]; then
   [[ -f "${CA_CERT_PATH}" ]] || die "CA customizada não encontrada: ${CA_CERT_PATH}"
 fi
@@ -295,6 +289,18 @@ run_step() {
   shift
   log "${description}"
   "$@"
+}
+
+remove_legacy_brew_wrapper_installation() {
+  local brew_wrapper_root
+  brew_wrapper_root="${HOME}/.local/share/homebrew-install-wrapper"
+
+  if [[ ! -d "${brew_wrapper_root}" ]]; then
+    return 0
+  fi
+
+  rm -rf "${brew_wrapper_root}"
+  log "wrapper legado do brew removido: ${brew_wrapper_root}"
 }
 
 configure_local_aws_cmd() {
@@ -583,17 +589,9 @@ run_step "instalando wrapper do curl" \
   sh "${ROOT_DIR}/install/install_curl_python_wrapper.sh" --real-curl "${REAL_CURL_BIN}"
 run_step "instalando wrapper do git" \
   sh "${ROOT_DIR}/install/install_git_zip_wrapper.sh" --real-git "${REAL_GIT_BIN}"
-if [[ -n "${REAL_BREW_BIN}" ]]; then
-  run_step "instalando wrapper do brew" \
-    sh "${ROOT_DIR}/install/install_homebrew_wrapper.sh" --real-brew "${REAL_BREW_BIN}"
-else
-  log "brew não encontrado no PATH; pulando wrapper do brew"
-fi
+run_step "removendo wrapper legado do brew" remove_legacy_brew_wrapper_installation
 run_step "configurando ambiente do mix via EC2" \
   sh "${ROOT_DIR}/install/configure_mix_via_ec2_envs.sh" "${MIX_ENV_ARGS[@]}"
-if [[ -n "${REAL_BREW_BIN}" ]]; then
-  WRAPPER_ENV_ARGS+=(--real-brew "${REAL_BREW_BIN}")
-fi
 run_step "configurando ambiente compartilhado dos wrappers" \
   sh "${ROOT_DIR}/install/configure_wrapper_envs.sh" "${WRAPPER_ENV_ARGS[@]}"
 

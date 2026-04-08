@@ -4,7 +4,7 @@ Esta pasta contém os wrappers reais usados para adaptar downloads e clones em a
 
 Arquivos:
 
-- `homebrew_install_wrapper.sh`: wrapper de `brew` para `install` e `install --cask`, injetando os wrappers de `curl` e `git`
+- `homebrew_install_wrapper.sh`: wrapper legado de `brew` para `install` e `install --cask`, injetando os wrappers de `curl` e `git`
 - `curl_python_wrapper.sh`: wrapper de `curl` com fallback para Python, `gh release` e estratégias inteligentes para Mason
 - `git_zip_clone_wrapper.sh`: wrapper de `git clone` que baixa tarball/zip de repositório e monta o diretório localmente
 - `mix_ec2_wrapper.sh`: wrapper de `mix` para roteamento de comandos de dependência para o EC2
@@ -12,10 +12,10 @@ Arquivos:
 
 ## Estrutura
 
-- implementação real do `brew`: `scripts/wrappers/homebrew_install_wrapper.sh`
+- implementação legada do `brew`: `scripts/wrappers/homebrew_install_wrapper.sh`
 - implementação real do `curl`: `scripts/wrappers/curl_python_wrapper.sh`
 - implementação real do `git`: `scripts/wrappers/git_zip_clone_wrapper.sh`
-- instalador do wrapper de `brew`: `scripts/install/install_homebrew_wrapper.sh`
+- instalador legado do wrapper de `brew`: `scripts/install/install_homebrew_wrapper.sh`
 - instalador do wrapper de `curl`: `scripts/install/install_curl_python_wrapper.sh`
 - instalador do wrapper de `git`: `scripts/install/install_git_zip_wrapper.sh`
 - configurador de ambiente: `scripts/install/configure_wrapper_envs.sh`
@@ -41,7 +41,6 @@ sh scripts/configure.sh "<bucket>" --enable-ec2-backend
 Esse fluxo instala e configura:
 
 - wrapper do `mix`
-- wrapper do `brew`, quando houver Homebrew no host
 - wrapper do `curl`
 - wrapper do `git`
 - envs compartilhadas do EC2/S3
@@ -99,7 +98,9 @@ sh scripts/configure.sh \
   --hex-unsafe-https
 ```
 
-### Homebrew wrapper
+### Homebrew wrapper legado
+
+O bootstrap atual não instala nem ativa mais o wrapper de `brew`. O `brew` usa o binário real do host diretamente. Esta seção fica apenas para manutenção legada.
 
 ```bash
 sh scripts/install/install_homebrew_wrapper.sh
@@ -158,9 +159,8 @@ Se você não usar o configurador automático, exporte manualmente os paths e va
 ```bash
 export CURL_WRAPPER_REAL_CURL="$(command -v curl)"
 export GIT_ZIP_WRAPPER_REAL_GIT="$(command -v git)"
-export BREW_WRAPPER_REAL_BREW="$(command -v brew)"
 
-export PATH="$HOME/.local/share/homebrew-install-wrapper/bin:$HOME/.local/share/curl-python-wrapper/bin:$HOME/.local/share/git-zip-wrapper/bin:$PATH"
+export PATH="$HOME/.local/share/curl-python-wrapper/bin:$HOME/.local/share/git-zip-wrapper/bin:$PATH"
 ```
 
 ## LazyVim / Mason
@@ -168,11 +168,9 @@ export PATH="$HOME/.local/share/homebrew-install-wrapper/bin:$HOME/.local/share/
 Exemplo de configuração por ambiente:
 
 ```lua
-vim.env.BREW_WRAPPER_REAL_BREW = "/opt/homebrew/bin/brew"
 vim.env.CURL_WRAPPER_REAL_CURL = "/usr/bin/curl"
 vim.env.GIT_ZIP_WRAPPER_REAL_GIT = "/usr/bin/git"
 vim.env.PATH = table.concat({
-  vim.fn.expand("~/.local/share/homebrew-install-wrapper/bin"),
   vim.fn.expand("~/.local/share/curl-python-wrapper/bin"),
   vim.fn.expand("~/.local/share/git-zip-wrapper/bin"),
   vim.env.PATH,

@@ -34,7 +34,7 @@ Opções:
   --real-curl <path>           Binário real do curl.
   --real-wget <path>           Binário real do wget.
   --real-git <path>            Binário real do git.
-  --real-brew <path>           Binário real do brew.
+  --real-brew <path>           Legado. Ignorado; o wrapper de brew foi removido.
   --instance-name <nome>       Nome da instância EC2 dos wrappers.
   --aws-profile <profile>      Profile AWS.
   --aws-region <region>        Região AWS.
@@ -52,7 +52,8 @@ Opções:
   -h, --help                   Mostra esta ajuda.
 
 Comportamento:
-  - Reinstala wrappers de curl, git e brew (quando brew existir).
+  - Reinstala wrappers de curl e git.
+  - Remove instalação legada do wrapper de brew, quando existir.
   - Se --skip-configure não for usado, regenera o env-file.
   - Quando possível, reaproveita parâmetros do env-file atual.
 USAGE
@@ -203,7 +204,6 @@ load_existing_env_defaults() {
   [[ -n "${REAL_CURL_BIN}" ]] || REAL_CURL_BIN="${CURL_WRAPPER_REAL_CURL:-}"
   [[ -n "${REAL_WGET_BIN}" ]] || REAL_WGET_BIN="${WGET_WRAPPER_REAL_WGET:-}"
   [[ -n "${REAL_GIT_BIN}" ]] || REAL_GIT_BIN="${GIT_ZIP_WRAPPER_REAL_GIT:-}"
-  [[ -n "${REAL_BREW_BIN}" ]] || REAL_BREW_BIN="${BREW_WRAPPER_REAL_BREW:-}"
 
   [[ -n "${INSTANCE_NAME}" ]] || INSTANCE_NAME="${WRAPPERS_VIA_EC2_INSTANCE_NAME:-}"
   [[ -n "${AWS_PROFILE_NAME}" ]] || AWS_PROFILE_NAME="${WRAPPERS_VIA_EC2_AWS_PROFILE:-}"
@@ -223,15 +223,25 @@ if [[ -z "${ENABLE_EC2_BACKEND}" ]]; then
   ENABLE_EC2_BACKEND="0"
 fi
 
+remove_legacy_brew_wrapper_installation() {
+  local brew_wrapper_root
+  brew_wrapper_root="${HOME}/.local/share/homebrew-install-wrapper"
+
+  if [[ ! -d "${brew_wrapper_root}" ]]; then
+    return 0
+  fi
+
+  rm -rf "${brew_wrapper_root}"
+  log "wrapper legado do brew removido: ${brew_wrapper_root}"
+}
+
 install_wrapper_binaries() {
   local -a curl_install_args=()
   local -a git_install_args=()
-  local -a brew_install_args=()
 
   [[ -n "${REAL_CURL_BIN}" ]] && curl_install_args+=(--real-curl "${REAL_CURL_BIN}")
   [[ -n "${REAL_WGET_BIN}" ]] && curl_install_args+=(--real-wget "${REAL_WGET_BIN}")
   [[ -n "${REAL_GIT_BIN}" ]] && git_install_args+=(--real-git "${REAL_GIT_BIN}")
-  [[ -n "${REAL_BREW_BIN}" ]] && brew_install_args+=(--real-brew "${REAL_BREW_BIN}")
 
   log "reinstalando wrapper de curl/wget"
   sh "${SCRIPT_DIR}/install_curl_python_wrapper.sh" "${curl_install_args[@]}"
@@ -239,12 +249,7 @@ install_wrapper_binaries() {
   log "reinstalando wrapper de git"
   sh "${SCRIPT_DIR}/install_git_zip_wrapper.sh" "${git_install_args[@]}"
 
-  if [[ -n "${REAL_BREW_BIN}" ]] || command -v brew >/dev/null 2>&1; then
-    log "reinstalando wrapper de brew"
-    sh "${SCRIPT_DIR}/install_homebrew_wrapper.sh" "${brew_install_args[@]}"
-  else
-    log "brew não encontrado no host atual; reinstalação do wrapper de brew foi ignorada"
-  fi
+  remove_legacy_brew_wrapper_installation
 
   if [[ "${WITH_MIX_WRAPPER}" == "1" ]]; then
     log "reinstalando wrapper de mix"
@@ -273,7 +278,6 @@ configure_wrapper_env_file() {
   [[ -n "${REAL_CURL_BIN}" ]] && configure_args+=(--real-curl "${REAL_CURL_BIN}")
   [[ -n "${REAL_WGET_BIN}" ]] && configure_args+=(--real-wget "${REAL_WGET_BIN}")
   [[ -n "${REAL_GIT_BIN}" ]] && configure_args+=(--real-git "${REAL_GIT_BIN}")
-  [[ -n "${REAL_BREW_BIN}" ]] && configure_args+=(--real-brew "${REAL_BREW_BIN}")
   [[ -n "${INSTANCE_NAME}" ]] && configure_args+=(--instance-name "${INSTANCE_NAME}")
   [[ -n "${AWS_PROFILE_NAME}" ]] && configure_args+=(--aws-profile "${AWS_PROFILE_NAME}")
   [[ -n "${AWS_REGION_NAME}" ]] && configure_args+=(--aws-region "${AWS_REGION_NAME}")

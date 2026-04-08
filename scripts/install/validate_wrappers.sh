@@ -135,6 +135,28 @@ validate_optional_wrapper() {
   ok "${name}: wrapper ativo (${current_bin})"
 }
 
+brew_wrapper_is_disabled() {
+  [[ "${BREW_WRAPPER_ENABLED:-1}" == "0" ]]
+}
+
+validate_disabled_brew_wrapper() {
+  local current_bin legacy_dir
+  legacy_dir="${HOME}/.local/share/homebrew-install-wrapper/bin"
+  current_bin="$(command -v brew 2>/dev/null || true)"
+
+  if [[ -z "${current_bin}" ]]; then
+    ok "brew: wrapper desabilitado; comando não está presente no PATH"
+    return 0
+  fi
+
+  if path_is_under "${current_bin}" "${legacy_dir}"; then
+    fail "brew: wrapper desabilitado, mas o PATH ainda resolve para ${current_bin}"
+    return 0
+  fi
+
+  ok "brew: wrapper desabilitado; binário real ativo (${current_bin})"
+}
+
 validate_real_binary_env() {
   local var_name value
   var_name="$1"
@@ -163,6 +185,29 @@ validate_optional_real_binary_env() {
     return 0
   fi
   ok "${var_name}: ${value}"
+}
+
+validate_curl_wrapper_homebrew_contract() {
+  local wrapper_bin resolved_real_curl
+  wrapper_bin="${HOME}/.local/share/curl-python-wrapper/bin/curl"
+
+  if [[ ! -x "${wrapper_bin}" ]]; then
+    fail "curl: wrapper não encontrado para validar contrato com Homebrew (${wrapper_bin})"
+    return 0
+  fi
+
+  resolved_real_curl="$("${wrapper_bin}" --homebrew=print-path 2>/dev/null || true)"
+  if [[ -z "${resolved_real_curl}" ]]; then
+    fail "curl: wrapper não respondeu ao contrato --homebrew=print-path"
+    return 0
+  fi
+
+  if [[ "${resolved_real_curl}" != "${CURL_WRAPPER_REAL_CURL}" ]]; then
+    fail "curl: --homebrew=print-path retornou ${resolved_real_curl}, esperado ${CURL_WRAPPER_REAL_CURL}"
+    return 0
+  fi
+
+  ok "curl: contrato --homebrew=print-path OK (${resolved_real_curl})"
 }
 
 validate_fail_open_policy() {
@@ -196,12 +241,19 @@ validate_fail_open_policy() {
 validate_required_wrapper curl "${HOME}/.local/share/curl-python-wrapper/bin/curl" "${HOME}/.local/share/curl-python-wrapper/bin"
 validate_optional_wrapper wget "${HOME}/.local/share/curl-python-wrapper/bin/wget" "${HOME}/.local/share/curl-python-wrapper/bin"
 validate_required_wrapper git "${HOME}/.local/share/git-zip-wrapper/bin/git" "${HOME}/.local/share/git-zip-wrapper/bin"
-validate_optional_wrapper brew "${HOME}/.local/share/homebrew-install-wrapper/bin/brew" "${HOME}/.local/share/homebrew-install-wrapper/bin"
+if brew_wrapper_is_disabled; then
+  validate_disabled_brew_wrapper
+else
+  validate_optional_wrapper brew "${HOME}/.local/share/homebrew-install-wrapper/bin/brew" "${HOME}/.local/share/homebrew-install-wrapper/bin"
+fi
 
 validate_real_binary_env CURL_WRAPPER_REAL_CURL
+validate_curl_wrapper_homebrew_contract
 validate_optional_real_binary_env WGET_WRAPPER_REAL_WGET
 validate_real_binary_env GIT_ZIP_WRAPPER_REAL_GIT
-if [[ -n "${BREW_WRAPPER_REAL_BREW:-}" ]]; then
+if brew_wrapper_is_disabled; then
+  ok "BREW_WRAPPER_REAL_BREW desabilitado por configuração"
+elif [[ -n "${BREW_WRAPPER_REAL_BREW:-}" ]]; then
   validate_real_binary_env BREW_WRAPPER_REAL_BREW
 else
   warn "BREW_WRAPPER_REAL_BREW não definido (normal quando brew real não existe no host)"
