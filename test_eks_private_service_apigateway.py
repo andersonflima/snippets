@@ -60,6 +60,88 @@ users:
                 [first_kubeconfig_path, second_kubeconfig_path],
             )
 
+    def test_is_legacy_exec_credential_error_detects_stdout_decode_failure(self) -> None:
+        message = (
+            'Falha ao executar kubectl apply -f -: error validating "STDIN": '
+            'getting credentials: decoding stdout: no kind "ExecCredential" '
+            'is registered for version "client.authentication.k8s.io/v1alpha1"'
+        )
+
+        detected = eks_script.is_legacy_exec_credential_error(message)
+
+        self.assertTrue(detected)
+
+    def test_build_ephemeral_kubeconfig_uses_static_token(self) -> None:
+        cluster = {
+            "name": "cluster-dev",
+            "endpoint": "https://example.eks.amazonaws.com",
+            "certificateAuthority": {"data": "Y2VydA=="},
+        }
+
+        kubeconfig = eks_script.build_ephemeral_kubeconfig(cluster, "token-123")
+
+        self.assertEqual(kubeconfig["kind"], "Config")
+        self.assertEqual(
+            kubeconfig["clusters"][0]["cluster"]["certificate-authority-data"],
+            "Y2VydA==",
+        )
+        self.assertEqual(kubeconfig["users"][0]["user"]["token"], "token-123")
+        self.assertEqual(kubeconfig["current-context"], "cluster-dev-context")
+
+    def test_run_kubectl_command_falls_back_to_static_token_on_legacy_exec_error(self) -> None:
+        config = {
+            "region": "sa-east-1",
+            "cluster_name": "cluster-dev",
+            "aws_endpoint_url": None,
+        }
+        eks_client = object()
+        legacy_error = RuntimeError(
+            'Falha ao executar kubectl apply -f -: '
+            'decoding stdout: no kind "ExecCredential" is registered for version '
+            '"client.authentication.k8s.io/v1alpha1"'
+        )
+
+        with patch.object(
+            eks_script,
+            "run_command",
+            side_effect=[legacy_error, '{"status":{"token":"k8s-token"}}', "applied"],
+        ) as run_command_mock, patch.object(
+            eks_script,
+            "load_cluster_details",
+            return_value={
+                "name": "cluster-dev",
+                "endpoint": "https://example.eks.amazonaws.com",
+                "certificateAuthority": {"data": "Y2VydA=="},
+            },
+        ):
+            output = eks_script.run_kubectl_command(
+                config,
+                eks_client,
+                ["apply", "-f", "-"],
+                input_text='{"kind":"Service"}',
+            )
+
+        self.assertEqual(output, "applied")
+        self.assertEqual(run_command_mock.call_count, 3)
+        first_command = run_command_mock.call_args_list[0].args[0]
+        second_command = run_command_mock.call_args_list[1].args[0]
+        third_command = run_command_mock.call_args_list[2].args[0]
+        self.assertEqual(first_command, ["kubectl", "apply", "-f", "-"])
+        self.assertEqual(
+            second_command,
+            [
+                "aws",
+                "eks",
+                "get-token",
+                "--region",
+                "sa-east-1",
+                "--cluster-name",
+                "cluster-dev",
+            ],
+        )
+        self.assertEqual(third_command[0:2], ["kubectl", "--kubeconfig"])
+        self.assertEqual(third_command[-3:], ["apply", "-f", "-"])
+
 
 if __name__ == "__main__":
     unittest.main()

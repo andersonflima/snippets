@@ -80,6 +80,7 @@ import os
 import shutil
 import subprocess
 import sys
+import tempfile
 import time
 from typing import Any, Callable, Dict, Iterable, Optional, Sequence
 from urllib.parse import urlparse
@@ -331,8 +332,19 @@ def run_command(
         details = stderr or stdout or "sem saída adicional"
         raise RuntimeError(
             f"Falha ao executar {' '.join(command)}: {details}"
-        )
+    )
     return result.stdout
+
+
+def is_legacy_exec_credential_error(message: str) -> bool:
+    normalized_message = message.lower()
+    return (
+        "execcredential" in normalized_message
+        and (
+            LEGACY_EXEC_API_VERSION in normalized_message
+            or LEGACY_EXEC_API_VERSION_TYPO in normalized_message
+        )
+    )
 
 
 def assert_cluster_available(eks_client: Any, cluster_name: str) -> Dict[str, Any]:
@@ -417,6 +429,133 @@ def normalize_kubeconfig_exec_api_versions() -> list[str]:
     return changed_paths
 
 
+def load_cluster_details(eks_client: Any, cluster_name: str) -> Dict[str, Any]:
+    return eks_client.describe_cluster(name=cluster_name)["cluster"]
+
+
+def build_eks_get_token_command(config: Dict[str, Any]) -> list[str]:
+    command = [
+        "aws",
+        "eks",
+        "get-token",
+        "--region",
+        config["region"],
+        "--cluster-name",
+        config["cluster_name"],
+    ]
+    if config["aws_endpoint_url"]:
+        command.extend(["--endpoint-url", config["aws_endpoint_url"]])
+    return command
+
+
+def extract_eks_token(config: Dict[str, Any]) -> str:
+    output = run_command(build_eks_get_token_command(config))
+    try:
+        payload = json.loads(output)
+    except json.JSONDecodeError as exc:
+        raise RuntimeError(
+            "Falha ao decodificar a saída do aws eks get-token."
+        ) from exc
+
+    token = payload.get("status", {}).get("token")
+    if not token:
+        raise RuntimeError(
+            "aws eks get-token não retornou status.token."
+        )
+    return token
+
+
+def build_ephemeral_kubeconfig(cluster: Dict[str, Any], token: str) -> Dict[str, Any]:
+    cluster_name = cluster.get("name") or "cluster"
+    return {
+        "apiVersion": "v1",
+        "kind": "Config",
+        "clusters": [
+            {
+                "name": cluster_name,
+                "cluster": {
+                    "server": cluster["endpoint"],
+                    "certificate-authority-data": cluster["certificateAuthority"]["data"],
+                },
+            }
+        ],
+        "users": [
+            {
+                "name": f"{cluster_name}-token",
+                "user": {"token": token},
+            }
+        ],
+        "contexts": [
+            {
+                "name": f"{cluster_name}-context",
+                "context": {
+                    "cluster": cluster_name,
+                    "user": f"{cluster_name}-token",
+                },
+            }
+        ],
+        "current-context": f"{cluster_name}-context",
+    }
+
+
+def run_kubectl_with_static_eks_token(
+    config: Dict[str, Any],
+    eks_client: Any,
+    kubectl_args: Sequence[str],
+    *,
+    input_text: Optional[str] = None,
+) -> str:
+    cluster = load_cluster_details(eks_client, config["cluster_name"])
+    cluster_name = cluster.get("name", config["cluster_name"])
+    token = extract_eks_token(config)
+    kubeconfig_payload = build_ephemeral_kubeconfig(cluster, token)
+
+    with tempfile.NamedTemporaryFile(
+        mode="w",
+        encoding="utf-8",
+        prefix=f"{cluster_name}-kubectl-",
+        suffix=".json",
+        delete=False,
+    ) as kubeconfig_file:
+        kubeconfig_path = kubeconfig_file.name
+        json.dump(kubeconfig_payload, kubeconfig_file)
+
+    try:
+        LOGGER.warning(
+            "ExecCredential legado detectado no kubeconfig. "
+            "Reexecutando kubectl com token estático do aws eks get-token."
+        )
+        return run_command(
+            ["kubectl", "--kubeconfig", kubeconfig_path, *kubectl_args],
+            input_text=input_text,
+        )
+    finally:
+        try:
+            os.remove(kubeconfig_path)
+        except OSError:
+            LOGGER.debug("Não foi possível remover kubeconfig temporário: %s", kubeconfig_path)
+
+
+def run_kubectl_command(
+    config: Dict[str, Any],
+    eks_client: Any,
+    kubectl_args: Sequence[str],
+    *,
+    input_text: Optional[str] = None,
+) -> str:
+    try:
+        return run_command(["kubectl", *kubectl_args], input_text=input_text)
+    except RuntimeError as exc:
+        if not is_legacy_exec_credential_error(str(exc)):
+            raise
+        return run_kubectl_with_static_eks_token(
+            config,
+            eks_client,
+            kubectl_args,
+            input_text=input_text,
+        )
+
+
 def build_service_manifest(config: Dict[str, Any]) -> Dict[str, Any]:
     return {
         "apiVersion": "v1",
@@ -441,7 +580,7 @@ def build_service_manifest(config: Dict[str, Any]) -> Dict[str, Any]:
     }
 
 
-def apply_service_manifest(config: Dict[str, Any]) -> None:
+def apply_service_manifest(config: Dict[str, Any], eks_client: Any) -> None:
     manifest = build_service_manifest(config)
     manifest_text = json.dumps(manifest, indent=2)
     LOGGER.info(
@@ -449,13 +588,19 @@ def apply_service_manifest(config: Dict[str, Any]) -> None:
         config["namespace"],
         config["service_name"],
     )
-    run_command(["kubectl", "apply", "-f", "-"], input_text=manifest_text)
+    run_kubectl_command(
+        config,
+        eks_client,
+        ["apply", "-f", "-"],
+        input_text=manifest_text,
+    )
 
 
-def load_service(config: Dict[str, Any]) -> Dict[str, Any]:
-    output = run_command(
+def load_service(config: Dict[str, Any], eks_client: Any) -> Dict[str, Any]:
+    output = run_kubectl_command(
+        config,
+        eks_client,
         [
-            "kubectl",
             "get",
             "svc",
             config["service_name"],
@@ -463,7 +608,7 @@ def load_service(config: Dict[str, Any]) -> Dict[str, Any]:
             config["namespace"],
             "-o",
             "json",
-        ]
+        ],
     )
     return json.loads(output)
 
@@ -497,10 +642,10 @@ def extract_service_hostname(service: Dict[str, Any]) -> Optional[str]:
     return hostnames[0] if hostnames else None
 
 
-def wait_for_nlb_hostname(config: Dict[str, Any]) -> str:
+def wait_for_nlb_hostname(config: Dict[str, Any], eks_client: Any) -> str:
     return wait_for(
         f"NLB do Service {config['namespace']}/{config['service_name']}",
-        lambda: extract_service_hostname(load_service(config)),
+        lambda: extract_service_hostname(load_service(config, eks_client)),
         timeout_seconds=config["timeout_seconds"],
         poll_interval_seconds=config["poll_interval_seconds"],
     )
@@ -835,8 +980,8 @@ def execute(config: Dict[str, Any]) -> Dict[str, Any]:
     update_kubeconfig(config)
     normalize_kubeconfig_exec_api_versions()
 
-    apply_service_manifest(config)
-    nlb_dns_name = wait_for_nlb_hostname(config)
+    apply_service_manifest(config, clients["eks"])
+    nlb_dns_name = wait_for_nlb_hostname(config, clients["eks"])
     LOGGER.info("NLB resolvido: %s", nlb_dns_name)
 
     nlb_arn = find_nlb_arn(clients["elbv2"], nlb_dns_name)
