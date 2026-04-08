@@ -1,3 +1,4 @@
+import io
 import os
 import sys
 import types
@@ -180,11 +181,28 @@ class LambdaDynamoDbTableArnsCsvTests(unittest.TestCase):
         self.assertEqual(config["mode"], "athena")
         self.assertEqual(config["query"], "select table_arn from metadata")
         self.assertEqual(config["athena_database"], "catalog_db")
+        self.assertEqual(config["athena_catalog"], "")
         self.assertEqual(config["athena_workgroup"], "primary")
         self.assertEqual(
             config["athena_result_output_location"],
             "s3://inventory-bucket/athena-query-results/dynamodb-table-arns/20260408T182500Z/",
         )
+
+    def test_build_lambda_config_keeps_athena_context_empty_for_complete_query(self) -> None:
+        event = {
+            "bucket": "inventory-bucket",
+            "regions": ["sa-east-1"],
+            "query": "select table_arn from meu_catalog.meu_schema.minha_view",
+        }
+
+        with patch.object(inventory_lambda, "_now_utc", return_value=FIXED_NOW):
+            with patch.dict(os.environ, {}, clear=True):
+                config = inventory_lambda.build_lambda_config(event)
+
+        self.assertEqual(config["mode"], "athena")
+        self.assertEqual(config["athena_database"], "")
+        self.assertEqual(config["athena_catalog"], "")
+        self.assertEqual(config["query"], "select table_arn from meu_catalog.meu_schema.minha_view")
 
     def test_lambda_handler_lists_tables_generates_csv_and_uploads_to_s3(self) -> None:
         cloudcontrol_client_sa = FakeCloudControlClient(
@@ -402,7 +420,7 @@ class LambdaDynamoDbTableArnsCsvTests(unittest.TestCase):
                         "ResultConfiguration": {
                             "OutputLocation": "s3://inventory-bucket/athena-query-results/dynamodb-table-arns/20260408T182500Z/"
                         },
-                        "QueryExecutionContext": {"Database": "metadata", "Catalog": "AwsDataCatalog"},
+                        "QueryExecutionContext": {"Database": "metadata"},
                     },
                 },
                 {
@@ -503,6 +521,49 @@ class LambdaDynamoDbTableArnsCsvTests(unittest.TestCase):
         self.assertEqual(response["status"], "error")
         self.assertEqual(response["error_type"], "config")
         self.assertIn("bucket", response["error"])
+
+    def test_run_local_cli_executes_lambda_handler_and_prints_json(self) -> None:
+        stdout = io.StringIO()
+
+        with patch.object(
+            inventory_lambda,
+            "lambda_handler",
+            return_value={"ok": True, "status": "ok", "mode": "athena"},
+        ) as lambda_handler_mock:
+            with patch("sys.stdout", stdout):
+                with patch.dict(os.environ, {}, clear=True):
+                    exit_code = inventory_lambda.run_local_cli(
+                        [
+                            "--bucket",
+                            "inventory-bucket",
+                            "--region",
+                            "sa-east-1",
+                            "--query",
+                            "select table_arn from meu_catalog.meu_schema.minha_view",
+                            "--aws-profile",
+                            "sandbox",
+                            "--aws-default-region",
+                            "sa-east-1",
+                        ]
+                    )
+                    self.assertEqual(os.environ["AWS_PROFILE"], "sandbox")
+                    self.assertEqual(os.environ["AWS_REGION"], "sa-east-1")
+                    self.assertEqual(os.environ["AWS_DEFAULT_REGION"], "sa-east-1")
+
+        self.assertEqual(exit_code, 0)
+        lambda_handler_mock.assert_called_once()
+        event, context = lambda_handler_mock.call_args.args
+        self.assertEqual(event["bucket"], "inventory-bucket")
+        self.assertEqual(event["regions"], ["sa-east-1"])
+        self.assertEqual(
+            event["query"],
+            "select table_arn from meu_catalog.meu_schema.minha_view",
+        )
+        self.assertEqual(context.aws_request_id, "local-cli")
+        self.assertEqual(
+            stdout.getvalue(),
+            '{\n  "ok": true,\n  "status": "ok",\n  "mode": "athena"\n}\n',
+        )
 
 
 if __name__ == "__main__":

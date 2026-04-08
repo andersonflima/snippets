@@ -1,4 +1,4 @@
-"""AWS Lambda para inventariar ARNs de tabelas DynamoDB e publicar CSV no S3.
+"""AWS Lambda e CLI local para inventariar ARNs de tabelas DynamoDB e publicar CSV no S3.
 
 Handler
 =======
@@ -24,6 +24,18 @@ Quando uma `query` for informada, a Lambda muda para modo Athena:
 2. aguarda conclusão;
 3. lê o result set;
 4. publica o CSV final no bucket escolhido.
+
+Execução local
+==============
+
+O mesmo arquivo também pode ser executado localmente:
+
+```bash
+python3 lambda_dynamodb_table_arns_csv.py \
+  --bucket meu-bucket \
+  --prefix inventarios/dynamodb \
+  --query "select table_arn from catalogo.schema.view"
+```
 
 Variáveis de ambiente
 =====================
@@ -75,12 +87,14 @@ As variáveis de ambiente têm precedência sobre o payload.
 
 from __future__ import annotations
 
+import argparse
 import csv
 import io
 import json
 import logging
 import os
 import re
+import sys
 import time
 from datetime import datetime, timezone
 from typing import Any, Optional
@@ -353,7 +367,6 @@ def build_lambda_config(event: Optional[dict[str, Any]]) -> dict[str, Any]:
         "athena_catalog": _resolve_optional_text(
             os.environ.get("ATHENA_CATALOG"),
             payload.get("athena_catalog"),
-            fallback="AwsDataCatalog",
             field_name="athena_catalog",
             required=False,
         ),
@@ -923,6 +936,123 @@ def _run_inventory(config: dict[str, Any]) -> dict[str, Any]:
     return _run_cloudcontrol_inventory(config)
 
 
+class _LocalExecutionContext:
+    aws_request_id = "local-cli"
+
+
+def _parse_cli_json_payload(raw_payload: str, *, field_name: str) -> dict[str, Any]:
+    try:
+        parsed_payload = json.loads(raw_payload)
+    except json.JSONDecodeError as error:
+        raise ValueError(f"{field_name} não contém JSON válido") from error
+
+    if not isinstance(parsed_payload, dict):
+        raise ValueError(f"{field_name} deve representar um objeto JSON")
+    return parsed_payload
+
+
+def _parse_cli_args(argv: Optional[list[str]] = None) -> argparse.Namespace:
+    parser = argparse.ArgumentParser(
+        description="Executa o inventário de tabelas DynamoDB via Cloud Control ou Athena.",
+    )
+    parser.add_argument("--event-json", help="Payload JSON inline.")
+    parser.add_argument("--event-file", help="Arquivo JSON com o payload.")
+    parser.add_argument("--bucket", help="Bucket S3 de saída.")
+    parser.add_argument("--key", help="Chave S3 final do CSV.")
+    parser.add_argument("--prefix", help="Prefixo S3 final do CSV.")
+    parser.add_argument("--region", dest="regions", action="append", help="Região alvo. Pode repetir.")
+    parser.add_argument("--s3-region", help="Região do bucket de saída.")
+    parser.add_argument("--mode", choices=("cloudcontrol", "athena"), help="Modo explícito.")
+    parser.add_argument("--query", help="Query completa do Athena.")
+    parser.add_argument("--athena-database", help="Database opcional do Athena.")
+    parser.add_argument("--athena-workgroup", help="Workgroup do Athena.")
+    parser.add_argument("--athena-catalog", help="Catalog opcional do Athena.")
+    parser.add_argument("--athena-region", help="Região do Athena.")
+    parser.add_argument("--athena-result-prefix", help="Prefixo temporário de resultado do Athena.")
+    parser.add_argument(
+        "--athena-poll-interval-seconds",
+        type=int,
+        help="Intervalo entre polls do Athena.",
+    )
+    parser.add_argument(
+        "--athena-max-poll-attempts",
+        type=int,
+        help="Máximo de polls do Athena.",
+    )
+    parser.add_argument("--aws-profile", help="Profile AWS local.")
+    parser.add_argument("--aws-default-region", help="Região AWS padrão local.")
+    return parser.parse_args(argv)
+
+
+def _load_cli_event_payload(args: argparse.Namespace) -> dict[str, Any]:
+    if args.event_json and args.event_file:
+        raise ValueError("use apenas um entre --event-json e --event-file")
+
+    if args.event_json:
+        return _parse_cli_json_payload(args.event_json, field_name="--event-json")
+
+    if args.event_file:
+        with open(args.event_file, "r", encoding="utf-8") as event_file:
+            return _parse_cli_json_payload(event_file.read(), field_name="--event-file")
+
+    return {}
+
+
+def _build_event_from_cli_args(args: argparse.Namespace) -> dict[str, Any]:
+    base_event = _load_cli_event_payload(args)
+    cli_fields = {
+        "bucket": args.bucket,
+        "key": args.key,
+        "prefix": args.prefix,
+        "s3_region": args.s3_region,
+        "mode": args.mode,
+        "query": args.query,
+        "athena_database": args.athena_database,
+        "athena_workgroup": args.athena_workgroup,
+        "athena_catalog": args.athena_catalog,
+        "athena_region": args.athena_region,
+        "athena_result_prefix": args.athena_result_prefix,
+        "athena_poll_interval_seconds": args.athena_poll_interval_seconds,
+        "athena_max_poll_attempts": args.athena_max_poll_attempts,
+    }
+    merged_event = {
+        **base_event,
+        **{key: value for key, value in cli_fields.items() if value is not None},
+    }
+
+    if args.regions:
+        merged_event["regions"] = args.regions
+
+    return merged_event
+
+
+def _apply_cli_environment_overrides(args: argparse.Namespace) -> None:
+    if args.aws_profile:
+        os.environ["AWS_PROFILE"] = args.aws_profile
+    if args.aws_default_region:
+        os.environ["AWS_REGION"] = args.aws_default_region
+        os.environ["AWS_DEFAULT_REGION"] = args.aws_default_region
+
+
+def run_local_cli(argv: Optional[list[str]] = None) -> int:
+    try:
+        cli_args = _parse_cli_args(argv)
+        _apply_cli_environment_overrides(cli_args)
+        event = _build_event_from_cli_args(cli_args)
+        response = lambda_handler(event, _LocalExecutionContext())
+    except Exception as error:
+        response = {
+            "ok": False,
+            "status": "error",
+            "error_type": "cli",
+            **_build_error_response_fields(error),
+        }
+
+    json.dump(response, sys.stdout, ensure_ascii=False, indent=2)
+    sys.stdout.write("\n")
+    return 0 if response.get("ok") else 1
+
+
 def lambda_handler(event: Optional[dict[str, Any]], context: Any) -> dict[str, Any]:
     _configure_logging()
     event_keys = sorted(event.keys()) if isinstance(event, dict) else []
@@ -992,3 +1122,7 @@ def lambda_handler(event: Optional[dict[str, Any]], context: Any) -> dict[str, A
             "error_type": "runtime",
             **_build_error_response_fields(error),
         }
+
+
+if __name__ == "__main__":
+    raise SystemExit(run_local_cli())
