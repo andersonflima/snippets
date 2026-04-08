@@ -1,13 +1,53 @@
 import os
 import tempfile
 import unittest
+from argparse import Namespace
 from datetime import datetime, timedelta, timezone
-from unittest.mock import patch
+from unittest.mock import Mock, patch
 
 import eks_private_service_apigateway as eks_script
 
 
 class EksPrivateServiceApiGatewayTests(unittest.TestCase):
+    def test_build_config_from_args_uses_direct_nlb_mode(self) -> None:
+        args = Namespace(
+            region="sa-east-1",
+            cluster_name=None,
+            service_name=None,
+            nlb_arn=None,
+            nlb_name="autoservice-app-dev",
+            nlb_subnet_id=["subnet-a", "subnet-b"],
+            target_group_arn=None,
+            target_group_name=None,
+            target_id=["i-abc123"],
+            target_type="instance",
+            listener_protocol="TCP",
+            aws_endpoint_url=None,
+            namespace="default",
+            service_port=80,
+            target_port=3000,
+            selector=[],
+            annotation=[],
+            nlb_scheme="internal",
+            vpc_link_name=None,
+            api_name=None,
+            stage_name="prod",
+            api_endpoint_type="REGIONAL",
+            timeout_seconds=900,
+            poll_interval_seconds=10,
+            skip_kubeconfig_update=False,
+            skip_cluster_check=False,
+            log_level="INFO",
+            dry_run=False,
+        )
+
+        config = eks_script.build_config_from_args(args)
+
+        self.assertEqual(config["mode"], eks_script.DIRECT_NLB_MODE)
+        self.assertEqual(config["nlb_name"], "autoservice-app-dev")
+        self.assertEqual(config["target_group_name"], "autoservice-app-dev-tg")
+        self.assertEqual(config["service_name"], "autoservice-app-dev")
+
     def test_normalize_kubeconfig_exec_api_version_file_replaces_legacy_values(self) -> None:
         legacy_content = """
 apiVersion: v1
@@ -96,6 +136,48 @@ users:
             expiration,
             datetime(2026, 4, 8, 20, 10, 0, tzinfo=timezone.utc),
         )
+
+    def test_extract_service_hostname_accepts_hostname_or_ip(self) -> None:
+        hostname_service = {
+            "status": {"loadBalancer": {"ingress": [{"hostname": "internal-nlb.amazonaws.com"}]}}
+        }
+        ip_service = {
+            "status": {"loadBalancer": {"ingress": [{"ip": "10.0.0.15"}]}}
+        }
+
+        hostname = eks_script.extract_service_hostname(hostname_service)
+        ip_value = eks_script.extract_service_hostname(ip_service)
+
+        self.assertEqual(hostname, "internal-nlb.amazonaws.com")
+        self.assertEqual(ip_value, "10.0.0.15")
+
+    def test_summarize_pending_service_nlb_includes_latest_events(self) -> None:
+        service = {
+            "spec": {
+                "type": "LoadBalancer",
+                "clusterIP": "172.20.10.20",
+            }
+        }
+        events = [
+            {
+                "type": "Normal",
+                "reason": "EnsuringLoadBalancer",
+                "message": "Ensuring load balancer",
+                "lastTimestamp": "2026-04-08T17:26:30Z",
+            },
+            {
+                "type": "Warning",
+                "reason": "SyncLoadBalancerFailed",
+                "message": "subnet tag missing",
+                "lastTimestamp": "2026-04-08T17:26:40Z",
+            },
+        ]
+
+        summary = eks_script.summarize_pending_service_nlb(service, events)
+
+        self.assertIn("type=LoadBalancer", summary)
+        self.assertIn("clusterIP=172.20.10.20", summary)
+        self.assertIn("Warning/SyncLoadBalancerFailed: subnet tag missing", summary)
 
     def test_run_kubectl_command_falls_back_to_static_token_on_legacy_exec_error(self) -> None:
         config = {
@@ -198,6 +280,166 @@ users:
         command = run_command_mock.call_args.args[0]
         self.assertEqual(command[0:2], ["kubectl", "--kubeconfig"])
         self.assertNotIn("aws", command)
+
+    def test_wait_for_nlb_hostname_raises_timeout_with_service_diagnostics(self) -> None:
+        config = {
+            "namespace": "default",
+            "service_name": "autoservice-app-dev",
+            "timeout_seconds": 1,
+            "poll_interval_seconds": 0,
+        }
+        service = {
+            "spec": {
+                "type": "LoadBalancer",
+                "clusterIP": "172.20.10.20",
+            },
+            "status": {"loadBalancer": {"ingress": []}},
+        }
+        events = [
+            {
+                "type": "Warning",
+                "reason": "SyncLoadBalancerFailed",
+                "message": "subnet tag missing",
+                "lastTimestamp": "2026-04-08T17:26:40Z",
+            }
+        ]
+
+        with patch.object(
+            eks_script,
+            "load_service",
+            return_value=service,
+        ), patch.object(
+            eks_script,
+            "load_service_events",
+            return_value=events,
+        ), patch.object(
+            eks_script.time,
+            "sleep",
+            return_value=None,
+        ):
+            with self.assertRaises(TimeoutError) as raised_error:
+                eks_script.wait_for_nlb_hostname(config, object())
+
+        self.assertIn("Último diagnóstico", str(raised_error.exception))
+        self.assertIn("SyncLoadBalancerFailed", str(raised_error.exception))
+
+    def test_execute_direct_mode_configures_apigateway_without_kubectl(self) -> None:
+        config = {
+            "mode": eks_script.DIRECT_NLB_MODE,
+            "region": "sa-east-1",
+            "cluster_name": None,
+            "service_name": "autoservice-app-dev",
+            "namespace": "default",
+            "aws_endpoint_url": None,
+            "service_port": 80,
+            "target_port": 3000,
+            "selector": {"app": "autoservice-app-dev"},
+            "annotations": {},
+            "nlb_arn": None,
+            "nlb_name": "autoservice-app-dev",
+            "nlb_subnet_ids": ["subnet-a", "subnet-b"],
+            "target_group_arn": None,
+            "target_group_name": "autoservice-app-dev-tg",
+            "target_ids": ["i-abc123"],
+            "target_type": "instance",
+            "listener_protocol": "TCP",
+            "vpc_link_name": "autoservice-app-dev-vpc-link",
+            "api_name": "autoservice-app-dev-api",
+            "stage_name": "prod",
+            "api_endpoint_type": "REGIONAL",
+            "timeout_seconds": 900,
+            "poll_interval_seconds": 10,
+            "skip_kubeconfig_update": False,
+            "skip_cluster_check": False,
+            "_kubectl_auth_state": None,
+        }
+
+        with patch.object(
+            eks_script,
+            "ensure_commands_exist",
+        ) as ensure_commands_exist_mock, patch.object(
+            eks_script,
+            "build_clients",
+            return_value={
+                "eks": object(),
+                "apigateway": object(),
+                "elbv2": object(),
+            },
+        ), patch.object(
+            eks_script,
+            "ensure_direct_nlb_backend",
+            return_value={
+                "load_balancer": {
+                    "DNSName": "internal-autoservice-app-dev.amazonaws.com",
+                    "LoadBalancerArn": "arn:aws:elasticloadbalancing:sa-east-1:123:loadbalancer/net/autoservice/abc",
+                },
+                "target_group": None,
+                "listener": {"ListenerArn": "listener-arn"},
+            },
+        ) as ensure_direct_nlb_backend_mock, patch.object(
+            eks_script,
+            "ensure_vpc_link",
+            return_value={"id": "vpclink-123"},
+        ) as ensure_vpc_link_mock, patch.object(
+            eks_script,
+            "ensure_api_gateway",
+            return_value={
+                "api_id": "api-123",
+                "deployment_id": "deploy-123",
+                "api_url": "https://api.example.com/prod",
+            },
+        ):
+            result = eks_script.execute(config)
+
+        ensure_commands_exist_mock.assert_called_once_with(())
+        ensure_direct_nlb_backend_mock.assert_called_once()
+        ensure_vpc_link_mock.assert_called_once()
+        self.assertEqual(result["mode"], eks_script.DIRECT_NLB_MODE)
+        self.assertEqual(result["nlb_arn"], "arn:aws:elasticloadbalancing:sa-east-1:123:loadbalancer/net/autoservice/abc")
+        self.assertEqual(result["vpc_link_id"], "vpclink-123")
+
+    def test_ensure_vpc_link_recreates_when_target_arn_differs(self) -> None:
+        apigateway_client = Mock()
+        apigateway_client.create_vpc_link.return_value = {"id": "vpclink-new"}
+        config = {
+            "vpc_link_name": "autoservice-app-dev-vpc-link",
+            "timeout_seconds": 900,
+            "poll_interval_seconds": 10,
+        }
+
+        with patch.object(
+            eks_script,
+            "get_named_vpc_links",
+            return_value=[
+                {
+                    "id": "vpclink-old",
+                    "name": "autoservice-app-dev-vpc-link",
+                    "targetArns": ["arn:aws:elasticloadbalancing:sa-east-1:123:loadbalancer/net/old/abc"],
+                }
+            ],
+        ), patch.object(
+            eks_script,
+            "wait_for_vpc_link_deletion",
+            return_value=None,
+        ) as wait_for_vpc_link_deletion_mock, patch.object(
+            eks_script,
+            "wait_for_vpc_link",
+            return_value={"id": "vpclink-new", "targetArns": ["arn:new"]},
+        ) as wait_for_vpc_link_mock:
+            result = eks_script.ensure_vpc_link(
+                apigateway_client,
+                "arn:new",
+                config,
+            )
+
+        apigateway_client.delete_vpc_link.assert_called_once_with(vpcLinkId="vpclink-old")
+        wait_for_vpc_link_deletion_mock.assert_called_once()
+        apigateway_client.create_vpc_link.assert_called_once_with(
+            name="autoservice-app-dev-vpc-link",
+            targetArns=["arn:new"],
+        )
+        wait_for_vpc_link_mock.assert_called_once_with(apigateway_client, "vpclink-new", config)
+        self.assertEqual(result["id"], "vpclink-new")
 
 
 if __name__ == "__main__":

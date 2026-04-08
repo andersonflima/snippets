@@ -1,17 +1,26 @@
 #!/usr/bin/env python3
-"""Provisiona um Service interno no EKS, VPC Link e API Gateway REST.
+"""Provisiona NLB, VPC Link e API Gateway REST.
 
 Instrucoes de uso
 =================
 
 Pre-requisitos para AWS real:
 - python3 com boto3 instalado
-- aws CLI autenticado na conta correta
-- kubectl instalado e com acesso ao cluster EKS
-- workload ja rodando no cluster com labels que batam no selector do Service
-- suporte no cluster para provisionar Service do tipo LoadBalancer
+- boto3 autenticado na conta correta
+- para o modo direto de NLB: subnets do NLB e targets, quando o NLB ainda nao existir
+- para o modo legado de EKS: aws CLI e kubectl instalados e com acesso ao cluster
 
-Comando minimo:
+Comando minimo no modo direto:
+
+    python3 eks_private_service_apigateway.py \
+      --region us-east-1 \
+      --nlb-name meu-nlb \
+      --nlb-subnet-id subnet-aaa \
+      --nlb-subnet-id subnet-bbb \
+      --target-group-name meu-nlb-tg \
+      --target-id i-0123456789abcdef0
+
+Comando minimo no modo legado de EKS:
 
     python3 eks_private_service_apigateway.py \
       --region us-east-1 \
@@ -38,6 +47,11 @@ Exemplo com parametros mais comuns:
       --selector app.kubernetes.io/component=api
 
 Quando usar alguns parametros:
+- --nlb-arn: para integrar com um NLB existente de forma direta
+- --nlb-name: para reutilizar um NLB pelo nome ou criar se nao existir
+- --nlb-subnet-id: subnets usadas para criar o NLB quando ele ainda nao existe
+- --target-group-name: nome do target group a reutilizar ou criar
+- --target-id: targets a registrar no target group quando ele ainda nao existir ou estiver incompleto
 - --namespace: quando o Service nao fica em default
 - --target-port: quando a aplicacao escuta em outra porta
 - --selector chave=valor: quando o label selector nao eh app=<service-name>
@@ -49,7 +63,12 @@ Quando usar alguns parametros:
 - --skip-kubeconfig-update: use so quando o kubeconfig ja estiver pronto
 - --dry-run: mostra manifesto e configuracao derivada sem aplicar mudancas
 
-Pre-check recomendado:
+Pre-check recomendado no modo direto:
+
+    aws sts get-caller-identity
+    aws elbv2 describe-load-balancers --names meu-nlb
+
+Pre-check recomendado no modo legado de EKS:
 
     aws sts get-caller-identity
     aws eks describe-cluster --region us-east-1 --name meu-cluster-eks
@@ -65,9 +84,9 @@ Permissoes AWS esperadas:
 
 Observacao:
 - para AWS real, nao passe --aws-endpoint-url
-- se o aws CLI nao estiver instalado, use --skip-kubeconfig-update apenas quando
-  o kubectl ja estiver apontando para o cluster correto
-- o script normaliza automaticamente exec apiVersion legado no kubeconfig
+- o modo direto nao usa kubectl
+- o modo legado de EKS continua disponivel quando voce nao informa NLB direto
+- no modo legado, o script normaliza automaticamente exec apiVersion legado no kubeconfig
   (`v1alpha1` ou typo `v1aplha1`) para `v1beta1` antes de usar o kubectl
 """
 
@@ -87,6 +106,8 @@ from typing import Any, Callable, Dict, Iterable, Optional, Sequence
 from urllib.parse import urlparse
 
 LOGGER = logging.getLogger("eks_private_service_apigateway")
+DIRECT_NLB_MODE = "nlb-direct"
+EKS_SERVICE_MODE = "eks-service"
 DEFAULT_STAGE_NAME = "prod"
 DEFAULT_NAMESPACE = "default"
 DEFAULT_SERVICE_PORT = 80
@@ -102,8 +123,8 @@ STATIC_TOKEN_REFRESH_SKEW_SECONDS = 60
 def parse_args(argv: Sequence[str]) -> argparse.Namespace:
     parser = argparse.ArgumentParser(
         description=(
-            "Cria/atualiza um Service LoadBalancer interno no EKS e publica o "
-            "backend via API Gateway REST com VPC Link."
+            "Garante NLB, VPC Link e API Gateway REST. "
+            "No modo direto usa apenas boto3; no modo legado ainda pode usar EKS + kubectl."
         )
     )
     parser.add_argument(
@@ -115,8 +136,45 @@ def parse_args(argv: Sequence[str]) -> argparse.Namespace:
         ),
         help="Região AWS. Default: AWS_REGION, AWS_DEFAULT_REGION ou us-east-1.",
     )
-    parser.add_argument("--cluster-name", required=True, help="Nome do cluster EKS.")
-    parser.add_argument("--service-name", required=True, help="Nome do Service Kubernetes.")
+    parser.add_argument("--cluster-name", help="Nome do cluster EKS no modo legado.")
+    parser.add_argument("--service-name", help="Nome do Service Kubernetes no modo legado.")
+    parser.add_argument("--nlb-arn", help="ARN do NLB existente a integrar.")
+    parser.add_argument(
+        "--nlb-name",
+        help="Nome do NLB existente ou a criar no modo direto.",
+    )
+    parser.add_argument(
+        "--nlb-subnet-id",
+        action="append",
+        default=[],
+        help="Subnet do NLB no modo direto. Pode ser repetido.",
+    )
+    parser.add_argument(
+        "--target-group-arn",
+        help="ARN do target group existente no modo direto.",
+    )
+    parser.add_argument(
+        "--target-group-name",
+        help="Nome do target group existente ou a criar no modo direto.",
+    )
+    parser.add_argument(
+        "--target-id",
+        action="append",
+        default=[],
+        help="Target do target group no modo direto. Pode ser repetido.",
+    )
+    parser.add_argument(
+        "--target-type",
+        choices=("instance", "ip"),
+        default="instance",
+        help="Tipo de target do target group no modo direto. Default: instance.",
+    )
+    parser.add_argument(
+        "--listener-protocol",
+        choices=("TCP", "TLS"),
+        default="TCP",
+        help="Protocolo do listener do NLB no modo direto. Default: TCP.",
+    )
     parser.add_argument(
         "--aws-endpoint-url",
         default=first_non_empty_text(os.getenv("AWS_ENDPOINT_URL")),
@@ -261,9 +319,50 @@ def configure_logging(level_name: str) -> None:
     )
 
 
-def namespace_from_args(args: argparse.Namespace) -> Dict[str, Any]:
+def direct_nlb_mode_requested(args: argparse.Namespace) -> bool:
+    return any(
+        [
+            bool(args.nlb_arn),
+            bool(args.nlb_name),
+            bool(args.nlb_subnet_id),
+            bool(args.target_group_arn),
+            bool(args.target_group_name),
+            bool(args.target_id),
+        ]
+    )
+
+
+def derive_resource_base_name(args: argparse.Namespace) -> str:
+    return (
+        first_non_empty_text(
+            args.nlb_name,
+            args.cluster_name,
+            args.service_name,
+            "managed-nlb",
+        )
+        or "managed-nlb"
+    )
+
+
+def build_config_from_args(args: argparse.Namespace) -> Dict[str, Any]:
+    mode = DIRECT_NLB_MODE if direct_nlb_mode_requested(args) else EKS_SERVICE_MODE
+    base_name = derive_resource_base_name(args)
+
+    if mode == DIRECT_NLB_MODE and not first_non_empty_text(args.nlb_arn, args.nlb_name):
+        raise ValueError(
+            "No modo direto informe --nlb-arn ou --nlb-name."
+        )
+    if mode == EKS_SERVICE_MODE and not args.cluster_name:
+        raise ValueError(
+            "Informe --cluster-name no modo legado de EKS."
+        )
+    if mode == EKS_SERVICE_MODE and not args.service_name:
+        raise ValueError(
+            "Informe --service-name no modo legado de EKS."
+        )
+
     selector = parse_key_value_items(args.selector, "selector") or {
-        "app": args.service_name,
+        "app": args.service_name or base_name,
     }
     annotations = {
         "service.beta.kubernetes.io/aws-load-balancer-type": "nlb",
@@ -271,17 +370,28 @@ def namespace_from_args(args: argparse.Namespace) -> Dict[str, Any]:
     }
     annotations.update(parse_key_value_items(args.annotation, "annotation"))
     return {
+        "mode": mode,
         "region": args.region,
         "cluster_name": args.cluster_name,
-        "service_name": args.service_name,
+        "service_name": args.service_name or base_name,
         "aws_endpoint_url": args.aws_endpoint_url,
         "namespace": args.namespace,
         "service_port": args.service_port,
         "target_port": args.target_port,
         "selector": selector,
         "annotations": annotations,
-        "vpc_link_name": args.vpc_link_name or f"{args.cluster_name}-vpc-link",
-        "api_name": args.api_name or f"{args.cluster_name}-api",
+        "nlb_arn": first_non_empty_text(args.nlb_arn),
+        "nlb_name": first_non_empty_text(args.nlb_name),
+        "nlb_subnet_ids": list(args.nlb_subnet_id),
+        "target_group_arn": first_non_empty_text(args.target_group_arn),
+        "target_group_name": (
+            first_non_empty_text(args.target_group_name, f"{base_name}-tg") or f"{base_name}-tg"
+        ),
+        "target_ids": list(args.target_id),
+        "target_type": args.target_type,
+        "listener_protocol": args.listener_protocol,
+        "vpc_link_name": args.vpc_link_name or f"{base_name}-vpc-link",
+        "api_name": args.api_name or f"{base_name}-api",
         "stage_name": args.stage_name,
         "api_endpoint_type": args.api_endpoint_type,
         "timeout_seconds": args.timeout_seconds,
@@ -289,7 +399,12 @@ def namespace_from_args(args: argparse.Namespace) -> Dict[str, Any]:
         "skip_kubeconfig_update": args.skip_kubeconfig_update,
         "skip_cluster_check": args.skip_cluster_check,
         "dry_run": args.dry_run,
+        "_kubectl_auth_state": None,
     }
+
+
+def namespace_from_args(args: argparse.Namespace) -> Dict[str, Any]:
+    return build_config_from_args(args)
 
 
 def ensure_commands_exist(commands: Iterable[str]) -> None:
@@ -703,6 +818,27 @@ def load_service(config: Dict[str, Any], eks_client: Any) -> Dict[str, Any]:
     return json.loads(output)
 
 
+def load_service_events(config: Dict[str, Any], eks_client: Any) -> list[Dict[str, Any]]:
+    output = run_kubectl_command(
+        config,
+        eks_client,
+        [
+            "get",
+            "events",
+            "-n",
+            config["namespace"],
+            "--field-selector",
+            (
+                "involvedObject.kind=Service,"
+                f"involvedObject.name={config['service_name']}"
+            ),
+            "-o",
+            "json",
+        ],
+    )
+    return json.loads(output).get("items", [])
+
+
 def wait_for(
     description: str,
     supplier: Callable[[], Optional[Any]],
@@ -728,16 +864,92 @@ def extract_service_hostname(service: Dict[str, Any]) -> Optional[str]:
         .get("loadBalancer", {})
         .get("ingress", [])
     )
-    hostnames = [item.get("hostname") for item in ingress if item.get("hostname")]
-    return hostnames[0] if hostnames else None
+    endpoints = [
+        item.get("hostname") or item.get("ip")
+        for item in ingress
+        if item.get("hostname") or item.get("ip")
+    ]
+    return endpoints[0] if endpoints else None
+
+
+def service_event_timestamp(event: Dict[str, Any]) -> str:
+    series = event.get("series", {})
+    return first_non_empty_text(
+        event.get("eventTime"),
+        series.get("lastObservedTime"),
+        event.get("lastTimestamp"),
+        event.get("firstTimestamp"),
+        event.get("metadata", {}).get("creationTimestamp"),
+        "",
+    ) or ""
+
+
+def summarize_service_events(events: Sequence[Dict[str, Any]], *, limit: int = 3) -> list[str]:
+    sorted_events = sorted(
+        events,
+        key=service_event_timestamp,
+    )
+    selected_events = sorted_events[-limit:]
+    summaries: list[str] = []
+    for event in selected_events:
+        event_type = first_non_empty_text(event.get("type"), "Normal")
+        reason = first_non_empty_text(event.get("reason"), "SemReason")
+        message = first_non_empty_text(event.get("message"), "sem mensagem")
+        timestamp = service_event_timestamp(event)
+        if timestamp:
+            summaries.append(f"{timestamp} {event_type}/{reason}: {message}")
+        else:
+            summaries.append(f"{event_type}/{reason}: {message}")
+    return summaries
+
+
+def summarize_pending_service_nlb(
+    service: Dict[str, Any],
+    events: Sequence[Dict[str, Any]],
+) -> str:
+    service_type = first_non_empty_text(service.get("spec", {}).get("type"), "desconhecido")
+    cluster_ip = first_non_empty_text(service.get("spec", {}).get("clusterIP"), "pendente")
+    event_summaries = summarize_service_events(events)
+    if event_summaries:
+        return (
+            f"type={service_type}, clusterIP={cluster_ip}, ingress=pendente. "
+            f"Últimos eventos: {' | '.join(event_summaries)}"
+        )
+    return f"type={service_type}, clusterIP={cluster_ip}, ingress=pendente, sem eventos úteis."
 
 
 def wait_for_nlb_hostname(config: Dict[str, Any], eks_client: Any) -> str:
-    return wait_for(
-        f"NLB do Service {config['namespace']}/{config['service_name']}",
-        lambda: extract_service_hostname(load_service(config, eks_client)),
-        timeout_seconds=config["timeout_seconds"],
-        poll_interval_seconds=config["poll_interval_seconds"],
+    deadline = time.time() + config["timeout_seconds"]
+    description = f"NLB do Service {config['namespace']}/{config['service_name']}"
+    last_diagnostic = ""
+
+    while time.time() < deadline:
+        service = load_service(config, eks_client)
+        hostname = extract_service_hostname(service)
+        if hostname is not None:
+            return hostname
+
+        events = load_service_events(config, eks_client)
+        diagnostic = summarize_pending_service_nlb(service, events)
+        if diagnostic != last_diagnostic:
+            LOGGER.warning(
+                "Service %s/%s ainda sem NLB. %s",
+                config["namespace"],
+                config["service_name"],
+                diagnostic,
+            )
+            last_diagnostic = diagnostic
+
+        LOGGER.info("Aguardando %s", description)
+        time.sleep(config["poll_interval_seconds"])
+
+    if last_diagnostic:
+        raise TimeoutError(
+            f"Timeout aguardando {description} após {config['timeout_seconds']} segundos. "
+            f"Último diagnóstico: {last_diagnostic}"
+        )
+    raise TimeoutError(
+        f"Timeout aguardando {description} após {config['timeout_seconds']} segundos."
     )
 
 
@@ -754,6 +966,97 @@ def paginate(fetch_page: Callable[[Optional[str]], Dict[str, Any]], key: str) ->
 
 def normalize_dns_name(dns_name: str) -> str:
     return dns_name.rstrip(".")
+
+
+def find_load_balancer_by_name(elbv2_client: Any, load_balancer_name: str) -> Optional[Dict[str, Any]]:
+    load_balancers = paginate(
+        lambda marker: elbv2_client.describe_load_balancers(Marker=marker)
+        if marker
+        else elbv2_client.describe_load_balancers(),
+        "LoadBalancers",
+    )
+    for load_balancer in load_balancers:
+        if load_balancer.get("LoadBalancerName") == load_balancer_name:
+            return load_balancer
+    return None
+
+
+def load_load_balancer_by_arn(elbv2_client: Any, load_balancer_arn: str) -> Dict[str, Any]:
+    response = elbv2_client.describe_load_balancers(LoadBalancerArns=[load_balancer_arn])
+    load_balancers = response.get("LoadBalancers", [])
+    if not load_balancers:
+        raise RuntimeError(f"NLB não encontrado para o ARN {load_balancer_arn}.")
+    return load_balancers[0]
+
+
+def assert_network_load_balancer(load_balancer: Dict[str, Any]) -> Dict[str, Any]:
+    if load_balancer.get("Type") != "network":
+        raise RuntimeError(
+            f"O load balancer {load_balancer.get('LoadBalancerName') or load_balancer.get('LoadBalancerArn')} não é do tipo network."
+        )
+    return load_balancer
+
+
+def load_load_balancer_state(load_balancer: Dict[str, Any]) -> str:
+    return first_non_empty_text(load_balancer.get("State", {}).get("Code"), "unknown") or "unknown"
+
+
+def wait_for_nlb_active(elbv2_client: Any, load_balancer_arn: str, config: Dict[str, Any]) -> Dict[str, Any]:
+    def load_when_ready() -> Optional[Dict[str, Any]]:
+        load_balancer = assert_network_load_balancer(
+            load_load_balancer_by_arn(elbv2_client, load_balancer_arn)
+        )
+        state = load_load_balancer_state(load_balancer)
+        if state == "active":
+            return load_balancer
+        if state in {"failed"}:
+            raise RuntimeError(
+                f"NLB {load_balancer_arn} terminou em estado inválido: {state}."
+            )
+        return None
+
+    return wait_for(
+        f"NLB {load_balancer_arn}",
+        load_when_ready,
+        timeout_seconds=config["timeout_seconds"],
+        poll_interval_seconds=config["poll_interval_seconds"],
+    )
+
+
+def create_network_load_balancer(elbv2_client: Any, config: Dict[str, Any]) -> Dict[str, Any]:
+    if not config["nlb_name"]:
+        raise RuntimeError("Para criar NLB informe --nlb-name.")
+    if len(config["nlb_subnet_ids"]) < 2:
+        raise RuntimeError(
+            "Para criar NLB informe ao menos duas --nlb-subnet-id."
+        )
+    response = elbv2_client.create_load_balancer(
+        Name=config["nlb_name"],
+        Subnets=config["nlb_subnet_ids"],
+        Scheme=config["nlb_scheme"],
+        Type="network",
+        IpAddressType="ipv4",
+    )
+    return response["LoadBalancers"][0]
+
+
+def ensure_network_load_balancer(elbv2_client: Any, config: Dict[str, Any]) -> Dict[str, Any]:
+    if config["nlb_arn"]:
+        LOGGER.info("Reutilizando NLB informado por ARN: %s", config["nlb_arn"])
+        return wait_for_nlb_active(elbv2_client, config["nlb_arn"], config)
+
+    existing_load_balancer = find_load_balancer_by_name(elbv2_client, config["nlb_name"])
+    if existing_load_balancer is not None:
+        LOGGER.info("Reutilizando NLB existente: %s", existing_load_balancer["LoadBalancerArn"])
+        return wait_for_nlb_active(
+            elbv2_client,
+            existing_load_balancer["LoadBalancerArn"],
+            config,
+        )
+
+    LOGGER.info("Criando NLB %s", config["nlb_name"])
+    created_load_balancer = create_network_load_balancer(elbv2_client, config)
+    return wait_for_nlb_active(elbv2_client, created_load_balancer["LoadBalancerArn"], config)
 
 
 def build_api_url(api_id: str, config: Dict[str, Any]) -> str:
@@ -796,6 +1099,155 @@ def find_nlb_arn(elbv2_client: Any, dns_name: str) -> str:
     raise RuntimeError(f"NLB não encontrado para o DNS {dns_name}.")
 
 
+def load_listener_target_group_arn(listener: Dict[str, Any]) -> Optional[str]:
+    for action in listener.get("DefaultActions", []):
+        if action.get("Type") != "forward":
+            continue
+        direct_target_group = action.get("TargetGroupArn")
+        if direct_target_group:
+            return direct_target_group
+        forward_config = action.get("ForwardConfig", {})
+        target_groups = forward_config.get("TargetGroups", [])
+        if target_groups:
+            return target_groups[0].get("TargetGroupArn")
+    return None
+
+
+def load_nlb_listeners(elbv2_client: Any, load_balancer_arn: str) -> list[Dict[str, Any]]:
+    response = elbv2_client.describe_listeners(LoadBalancerArn=load_balancer_arn)
+    return response.get("Listeners", [])
+
+
+def find_listener_by_port(
+    listeners: Sequence[Dict[str, Any]],
+    *,
+    listener_port: int,
+) -> Optional[Dict[str, Any]]:
+    for listener in listeners:
+        if listener.get("Port") == listener_port:
+            return listener
+    return None
+
+
+def load_target_group_by_arn(elbv2_client: Any, target_group_arn: str) -> Dict[str, Any]:
+    response = elbv2_client.describe_target_groups(TargetGroupArns=[target_group_arn])
+    target_groups = response.get("TargetGroups", [])
+    if not target_groups:
+        raise RuntimeError(f"Target group não encontrado para o ARN {target_group_arn}.")
+    return target_groups[0]
+
+
+def find_target_group_by_name(elbv2_client: Any, target_group_name: str) -> Optional[Dict[str, Any]]:
+    try:
+        response = elbv2_client.describe_target_groups(Names=[target_group_name])
+    except Exception:
+        return None
+    target_groups = response.get("TargetGroups", [])
+    return target_groups[0] if target_groups else None
+
+
+def ensure_target_group(elbv2_client: Any, load_balancer: Dict[str, Any], config: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+    if config["target_group_arn"]:
+        return load_target_group_by_arn(elbv2_client, config["target_group_arn"])
+
+    existing_target_group = find_target_group_by_name(elbv2_client, config["target_group_name"])
+    if existing_target_group is not None:
+        return existing_target_group
+
+    if not config["target_ids"]:
+        return None
+
+    LOGGER.info("Criando target group %s", config["target_group_name"])
+    response = elbv2_client.create_target_group(
+        Name=config["target_group_name"],
+        Protocol=config["listener_protocol"],
+        Port=config["target_port"],
+        VpcId=load_balancer["VpcId"],
+        TargetType=config["target_type"],
+        HealthCheckProtocol=config["listener_protocol"],
+        HealthCheckPort=str(config["target_port"]),
+    )
+    return response["TargetGroups"][0]
+
+
+def ensure_target_group_targets(elbv2_client: Any, target_group_arn: str, config: Dict[str, Any]) -> None:
+    if not config["target_ids"]:
+        return
+    targets = [{"Id": target_id, "Port": config["target_port"]} for target_id in config["target_ids"]]
+    LOGGER.info("Registrando %s target(s) no target group %s", len(targets), target_group_arn)
+    elbv2_client.register_targets(
+        TargetGroupArn=target_group_arn,
+        Targets=targets,
+    )
+
+
+def ensure_nlb_listener(
+    elbv2_client: Any,
+    load_balancer_arn: str,
+    target_group_arn: Optional[str],
+    config: Dict[str, Any],
+) -> Optional[Dict[str, Any]]:
+    listeners = load_nlb_listeners(elbv2_client, load_balancer_arn)
+    existing_listener = find_listener_by_port(
+        listeners,
+        listener_port=config["service_port"],
+    )
+
+    if existing_listener is not None:
+        current_target_group_arn = load_listener_target_group_arn(existing_listener)
+        if target_group_arn and current_target_group_arn != target_group_arn:
+            LOGGER.info(
+                "Atualizando listener %s para o target group %s",
+                existing_listener["ListenerArn"],
+                target_group_arn,
+            )
+            elbv2_client.modify_listener(
+                ListenerArn=existing_listener["ListenerArn"],
+                DefaultActions=[{"Type": "forward", "TargetGroupArn": target_group_arn}],
+            )
+            updated_listeners = load_nlb_listeners(elbv2_client, load_balancer_arn)
+            return find_listener_by_port(updated_listeners, listener_port=config["service_port"])
+        return existing_listener
+
+    if not target_group_arn:
+        return None
+
+    LOGGER.info("Criando listener %s/%s", config["listener_protocol"], config["service_port"])
+    response = elbv2_client.create_listener(
+        LoadBalancerArn=load_balancer_arn,
+        Protocol=config["listener_protocol"],
+        Port=config["service_port"],
+        DefaultActions=[{"Type": "forward", "TargetGroupArn": target_group_arn}],
+    )
+    return response["Listeners"][0]
+
+
+def ensure_direct_nlb_backend(elbv2_client: Any, config: Dict[str, Any]) -> Dict[str, Any]:
+    load_balancer = ensure_network_load_balancer(elbv2_client, config)
+    target_group = ensure_target_group(elbv2_client, load_balancer, config)
+
+    if target_group is not None:
+        ensure_target_group_targets(elbv2_client, target_group["TargetGroupArn"], config)
+
+    listener = ensure_nlb_listener(
+        elbv2_client,
+        load_balancer["LoadBalancerArn"],
+        target_group["TargetGroupArn"] if target_group is not None else None,
+        config,
+    )
+    if listener is None:
+        raise RuntimeError(
+            "NLB sem listener utilizável na porta configurada. "
+            "Informe --target-group-arn/--target-group-name/--target-id para o modo direto."
+        )
+
+    return {
+        "load_balancer": load_balancer,
+        "target_group": target_group,
+        "listener": listener,
+    }
+
+
 def list_vpc_links(apigateway_client: Any) -> list[Dict[str, Any]]:
     return paginate(
         lambda position: apigateway_client.get_vpc_links(position=position)
@@ -829,6 +1281,25 @@ def wait_for_vpc_link(apigateway_client: Any, vpc_link_id: str, config: Dict[str
     )
 
 
+def wait_for_vpc_link_deletion(apigateway_client: Any, vpc_link_id: str, config: Dict[str, Any]) -> None:
+    def load_until_deleted() -> Optional[bool]:
+        try:
+            response = apigateway_client.get_vpc_link(vpcLinkId=vpc_link_id)
+        except Exception:
+            return True
+        status = response.get("status")
+        if status == "DELETING":
+            return None
+        return None
+
+    wait_for(
+        f"remoção do VPC Link {vpc_link_id}",
+        load_until_deleted,
+        timeout_seconds=config["timeout_seconds"],
+        poll_interval_seconds=config["poll_interval_seconds"],
+    )
+
+
 def ensure_vpc_link(apigateway_client: Any, nlb_arn: str, config: Dict[str, Any]) -> Dict[str, Any]:
     named_vpc_links = get_named_vpc_links(apigateway_client, config["vpc_link_name"])
     if len(named_vpc_links) > 1:
@@ -840,12 +1311,17 @@ def ensure_vpc_link(apigateway_client: Any, nlb_arn: str, config: Dict[str, Any]
     if named_vpc_links:
         existing = named_vpc_links[0]
         targets = existing.get("targetArns", [])
-        if targets != [nlb_arn]:
-            raise RuntimeError(
-                "Já existe VPC Link com o mesmo nome apontando para outro targetArn."
-            )
-        LOGGER.info("Reutilizando VPC Link existente: %s", existing["id"])
-        return wait_for_vpc_link(apigateway_client, existing["id"], config)
+        if targets == [nlb_arn]:
+            LOGGER.info("Reutilizando VPC Link existente: %s", existing["id"])
+            return wait_for_vpc_link(apigateway_client, existing["id"], config)
+
+        LOGGER.info(
+            "VPC Link %s aponta para outro targetArn. Recriando para %s.",
+            existing["id"],
+            nlb_arn,
+        )
+        apigateway_client.delete_vpc_link(vpcLinkId=existing["id"])
+        wait_for_vpc_link_deletion(apigateway_client, existing["id"], config)
 
     LOGGER.info("Criando VPC Link %s", config["vpc_link_name"])
     response = apigateway_client.create_vpc_link(
@@ -1037,8 +1513,9 @@ def ensure_api_gateway(
 
 
 def build_dry_run_payload(config: Dict[str, Any]) -> Dict[str, Any]:
-    return {
+    payload = {
         "config": {
+            "mode": config["mode"],
             "region": config["region"],
             "cluster_name": config["cluster_name"],
             "service_name": config["service_name"],
@@ -1048,35 +1525,57 @@ def build_dry_run_payload(config: Dict[str, Any]) -> Dict[str, Any]:
             "target_port": config["target_port"],
             "selector": config["selector"],
             "annotations": config["annotations"],
+            "nlb_arn": config["nlb_arn"],
+            "nlb_name": config["nlb_name"],
+            "nlb_subnet_ids": config["nlb_subnet_ids"],
+            "target_group_arn": config["target_group_arn"],
+            "target_group_name": config["target_group_name"],
+            "target_ids": config["target_ids"],
+            "target_type": config["target_type"],
+            "listener_protocol": config["listener_protocol"],
             "vpc_link_name": config["vpc_link_name"],
             "api_name": config["api_name"],
             "stage_name": config["stage_name"],
             "api_endpoint_type": config["api_endpoint_type"],
             "skip_cluster_check": config["skip_cluster_check"],
-        },
-        "service_manifest": build_service_manifest(config),
+        }
     }
+    if config["mode"] == EKS_SERVICE_MODE:
+        payload["service_manifest"] = build_service_manifest(config)
+    return payload
 
 
 def execute(config: Dict[str, Any]) -> Dict[str, Any]:
-    required_commands = ("kubectl",) if config["skip_kubeconfig_update"] else ("aws", "kubectl")
+    if config["mode"] == DIRECT_NLB_MODE:
+        required_commands: tuple[str, ...] = ()
+    elif config["skip_kubeconfig_update"]:
+        required_commands = ("kubectl",)
+    else:
+        required_commands = ("aws", "kubectl")
     ensure_commands_exist(required_commands)
     clients = build_clients(config["region"], config["aws_endpoint_url"])
 
     try:
-        if config["skip_cluster_check"]:
-            LOGGER.info("Pulando validação de status do cluster por configuração explícita.")
+        if config["mode"] == DIRECT_NLB_MODE:
+            direct_backend = ensure_direct_nlb_backend(clients["elbv2"], config)
+            load_balancer = direct_backend["load_balancer"]
+            nlb_dns_name = normalize_dns_name(load_balancer["DNSName"])
+            nlb_arn = load_balancer["LoadBalancerArn"]
+            LOGGER.info("NLB direto garantido: %s", nlb_arn)
         else:
-            assert_cluster_available(clients["eks"], config["cluster_name"])
-        update_kubeconfig(config)
-        normalize_kubeconfig_exec_api_versions()
+            if config["skip_cluster_check"]:
+                LOGGER.info("Pulando validação de status do cluster por configuração explícita.")
+            else:
+                assert_cluster_available(clients["eks"], config["cluster_name"])
+            update_kubeconfig(config)
+            normalize_kubeconfig_exec_api_versions()
 
-        apply_service_manifest(config, clients["eks"])
-        nlb_dns_name = wait_for_nlb_hostname(config, clients["eks"])
-        LOGGER.info("NLB resolvido: %s", nlb_dns_name)
+            apply_service_manifest(config, clients["eks"])
+            nlb_dns_name = wait_for_nlb_hostname(config, clients["eks"])
+            LOGGER.info("NLB resolvido: %s", nlb_dns_name)
 
-        nlb_arn = find_nlb_arn(clients["elbv2"], nlb_dns_name)
-        LOGGER.info("ARN do NLB: %s", nlb_arn)
+            nlb_arn = find_nlb_arn(clients["elbv2"], nlb_dns_name)
+            LOGGER.info("ARN do NLB: %s", nlb_arn)
 
         vpc_link = ensure_vpc_link(clients["apigateway"], nlb_arn, config)
         api = ensure_api_gateway(
@@ -1087,6 +1586,7 @@ def execute(config: Dict[str, Any]) -> Dict[str, Any]:
         )
 
         return {
+            "mode": config["mode"],
             "cluster_name": config["cluster_name"],
             "service_name": config["service_name"],
             "namespace": config["namespace"],
