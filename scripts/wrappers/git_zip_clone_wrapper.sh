@@ -43,6 +43,58 @@ GIT_GLOBAL_ARGS=()
 GIT_SUBCOMMAND=""
 GIT_SUBCOMMAND_ARGS=()
 
+normalize_existing_path() {
+  local candidate dir base target
+  candidate="$1"
+  [[ -n "${candidate}" ]] || return 1
+
+  while [[ -L "${candidate}" ]]; do
+    dir="$(dirname "${candidate}")"
+    dir="$(
+      cd "${dir}" >/dev/null 2>&1 &&
+        pwd -P
+    )" || return 1
+    target="$(readlink "${candidate}")" || return 1
+    if [[ "${target}" == /* ]]; then
+      candidate="${target}"
+    else
+      candidate="${dir}/${target}"
+    fi
+  done
+
+  if [[ -d "${candidate}" ]]; then
+    (
+      cd "${candidate}" >/dev/null 2>&1 &&
+        pwd -P
+    )
+    return 0
+  fi
+
+  dir="$(dirname "${candidate}")"
+  base="$(basename "${candidate}")"
+  [[ -d "${dir}" ]] || return 1
+  dir="$(
+    cd "${dir}" >/dev/null 2>&1 &&
+      pwd -P
+  )" || return 1
+  printf '%s\n' "${dir}/${base}"
+}
+
+paths_refer_to_same_file() {
+  local left right
+  left="$(normalize_existing_path "${1:-}" 2>/dev/null || true)"
+  right="$(normalize_existing_path "${2:-}" 2>/dev/null || true)"
+  [[ -n "${left}" && -n "${right}" && "${left}" == "${right}" ]]
+}
+
+should_skip_real_git_candidate() {
+  local candidate_path self_path
+  candidate_path="$1"
+  self_path="$2"
+  [[ -n "${candidate_path}" ]] || return 0
+  paths_refer_to_same_file "${candidate_path}" "${self_path}"
+}
+
 resolve_proxy_config() {
   local proxy
   proxy="${GIT_ZIP_WRAPPER_PROXY:-}"
@@ -124,17 +176,16 @@ resolve_real_git() {
   local self_path shell_path candidate
   self_path="$(cd "$(dirname "$0")" && pwd)/$(basename "$0")"
   shell_path="$(command -v -p git 2>/dev/null || true)"
-  if [[ -n "${shell_path}" && "${shell_path}" != "${self_path}" ]]; then
+  if ! should_skip_real_git_candidate "${shell_path}" "${self_path}"; then
     printf '%s\n' "${shell_path}"
     return
   fi
 
   while IFS= read -r candidate; do
     [[ -n "${candidate}" ]] || continue
-    if [[ "${candidate}" != "${self_path}" ]]; then
-      printf '%s\n' "${candidate}"
-      return
-    fi
+    should_skip_real_git_candidate "${candidate}" "${self_path}" && continue
+    printf '%s\n' "${candidate}"
+    return
   done <<EOF2
 $(which -a git 2>/dev/null || true)
 EOF2
@@ -898,6 +949,206 @@ extract_archive_to_destination() {
   rm -rf "${temp_extract}"
 }
 
+sanitize_archive_clone_branch_name() {
+  local candidate
+  candidate="$1"
+  if [[ -z "${candidate}" ]]; then
+    printf '%s\n' "archive-snapshot"
+    return 0
+  fi
+
+  candidate="${candidate//[^[:alnum:]._-]/-}"
+  candidate="${candidate#-}"
+  candidate="${candidate%-}"
+  [[ -n "${candidate}" ]] || candidate="archive-snapshot"
+  printf '%s\n' "${candidate}"
+}
+
+infer_branch_from_archive_source_url() {
+  local source_url branch
+  source_url="$1"
+  branch=""
+
+  case "${source_url}" in
+    *"/archive/refs/heads/"*)
+      branch="${source_url##*/archive/refs/heads/}"
+      branch="${branch%.tar.gz}"
+      branch="${branch%.tgz}"
+      branch="${branch%.tar}"
+      branch="${branch%.zip}"
+      ;;
+    *"/tar.gz/refs/heads/"*)
+      branch="${source_url##*/tar.gz/refs/heads/}"
+      ;;
+    *"/zip/refs/heads/"*)
+      branch="${source_url##*/zip/refs/heads/}"
+      ;;
+  esac
+
+  [[ -n "${branch}" ]] || return 1
+  printf '%s\n' "${branch}"
+}
+
+resolve_archive_clone_target_ref() {
+  local requested_ref source_url inferred_ref
+  requested_ref="$1"
+  source_url="$2"
+
+  if [[ -n "${requested_ref}" ]]; then
+    printf '%s\n' "${requested_ref}"
+    return 0
+  fi
+
+  inferred_ref="$(infer_branch_from_archive_source_url "${source_url}" 2>/dev/null || true)"
+  [[ -n "${inferred_ref}" ]] || return 1
+  printf '%s\n' "${inferred_ref}"
+}
+
+resolve_remote_default_branch() {
+  local real_git destination ls_remote_output line ref_prefix ref_suffix
+  real_git="$1"
+  destination="$2"
+
+  ls_remote_output="$("${real_git}" -C "${destination}" ls-remote --symref origin HEAD 2>/dev/null || true)"
+  [[ -n "${ls_remote_output}" ]] || return 1
+
+  ref_prefix="ref: refs/heads/"
+  ref_suffix="$(printf '\tHEAD')"
+  while IFS= read -r line; do
+    case "${line}" in
+      "${ref_prefix}"*"${ref_suffix}")
+        line="${line#${ref_prefix}}"
+        printf '%s\n' "${line%${ref_suffix}}"
+        return 0
+        ;;
+    esac
+  done <<EOF2
+${ls_remote_output}
+EOF2
+
+  return 1
+}
+
+fetch_archive_clone_target() {
+  local real_git destination target_ref fetch_depth fetch_exit_code
+  real_git="$1"
+  destination="$2"
+  target_ref="$3"
+  fetch_depth="$4"
+
+  set +e
+  if [[ -n "${target_ref}" ]]; then
+    "${real_git}" -C "${destination}" fetch --quiet --depth "${fetch_depth}" origin \
+      "+refs/heads/${target_ref}:refs/remotes/origin/${target_ref}"
+    fetch_exit_code=$?
+    if [[ "${fetch_exit_code}" -eq 0 ]]; then
+      set -e
+      return 0
+    fi
+
+    "${real_git}" -C "${destination}" fetch --quiet --depth "${fetch_depth}" origin \
+      "+refs/tags/${target_ref}:refs/tags/${target_ref}"
+    fetch_exit_code=$?
+    set -e
+    return "${fetch_exit_code}"
+  fi
+
+  "${real_git}" -C "${destination}" fetch --quiet --depth "${fetch_depth}" origin HEAD
+  fetch_exit_code=$?
+  set -e
+  return "${fetch_exit_code}"
+}
+
+checkout_archive_clone_target() {
+  local real_git destination target_ref
+  real_git="$1"
+  destination="$2"
+  target_ref="$3"
+
+  if [[ -n "${target_ref}" ]] &&
+    "${real_git}" -C "${destination}" rev-parse --verify "refs/remotes/origin/${target_ref}" >/dev/null 2>&1; then
+    "${real_git}" -C "${destination}" checkout --quiet -B "${target_ref}" "refs/remotes/origin/${target_ref}"
+    return 0
+  fi
+
+  if [[ -n "${target_ref}" ]] &&
+    "${real_git}" -C "${destination}" rev-parse --verify "refs/tags/${target_ref}" >/dev/null 2>&1; then
+    "${real_git}" -C "${destination}" checkout --quiet --detach "refs/tags/${target_ref}"
+    return 0
+  fi
+
+  if "${real_git}" -C "${destination}" rev-parse --verify FETCH_HEAD >/dev/null 2>&1; then
+    if [[ -n "${target_ref}" ]]; then
+      "${real_git}" -C "${destination}" checkout --quiet -B "${target_ref}" FETCH_HEAD
+    else
+      "${real_git}" -C "${destination}" checkout --quiet --detach FETCH_HEAD
+    fi
+    return 0
+  fi
+
+  return 1
+}
+
+create_archive_snapshot_commit() {
+  local real_git destination repo_url target_ref branch_name commit_message
+  real_git="$1"
+  destination="$2"
+  repo_url="$3"
+  target_ref="$4"
+
+  branch_name="$(sanitize_archive_clone_branch_name "${target_ref}")"
+  "${real_git}" -C "${destination}" symbolic-ref HEAD "refs/heads/${branch_name}" >/dev/null 2>&1 || true
+  "${real_git}" -C "${destination}" add -A
+  if "${real_git}" -C "${destination}" diff --cached --quiet --ignore-submodules --exit-code >/dev/null 2>&1; then
+    return 0
+  fi
+
+  commit_message="Archive snapshot of ${repo_url}"
+  if [[ -n "${target_ref}" ]]; then
+    commit_message="${commit_message} (${target_ref})"
+  fi
+
+  "${real_git}" \
+    -C "${destination}" \
+    -c user.name=git-zip-wrapper \
+    -c user.email=git-zip-wrapper@local \
+    commit --quiet -m "${commit_message}"
+}
+
+bootstrap_archive_clone_repository() {
+  local real_git repo_url destination requested_ref source_url target_ref fetch_depth
+  real_git="$1"
+  repo_url="$2"
+  destination="$3"
+  requested_ref="$4"
+  source_url="$5"
+
+  [[ -d "${destination}" ]] || return 1
+  [[ ! -d "${destination}/.git" ]] || return 0
+
+  "${real_git}" init --quiet "${destination}"
+  "${real_git}" -C "${destination}" remote remove origin >/dev/null 2>&1 || true
+  "${real_git}" -C "${destination}" remote add origin "${repo_url}"
+
+  target_ref="$(resolve_archive_clone_target_ref "${requested_ref}" "${source_url}" || true)"
+  if [[ -z "${target_ref}" ]]; then
+    target_ref="$(resolve_remote_default_branch "${real_git}" "${destination}" || true)"
+  fi
+
+  fetch_depth="$(first_forward_value_for_option --depth || true)"
+  [[ -n "${fetch_depth}" ]] || fetch_depth="1"
+
+  if fetch_archive_clone_target "${real_git}" "${destination}" "${target_ref}" "${fetch_depth}"; then
+    if checkout_archive_clone_target "${real_git}" "${destination}" "${target_ref}"; then
+      log "metadados Git materializados após clone por archive: ${destination}"
+      return 0
+    fi
+  fi
+
+  create_archive_snapshot_commit "${real_git}" "${destination}" "${repo_url}" "${target_ref}"
+  log "clone por archive materializado como snapshot Git local: ${destination}"
+}
+
 has_lfs_attributes() {
   local destination
   destination="$1"
@@ -1150,6 +1401,7 @@ main() {
   fi
 
   extract_archive_to_destination "${archive_path}" "${destination}"
+  bootstrap_archive_clone_repository "${real_git}" "${repo_url}" "${destination}" "${branch}" "${source_url}"
   run_git_lfs_post_clone "${destination}"
   log "clone(${ARCHIVE_FORMAT}) concluído: ${repo_url} -> ${destination} (source: ${source_url})"
 }
