@@ -53,6 +53,7 @@ Quando usar alguns parametros:
 - --target-group-name: nome do target group a reutilizar ou criar
 - --target-id: targets a registrar no target group quando ele ainda nao existir ou estiver incompleto
 - --cluster-name no modo direto: permite autodescobrir worker nodes do EKS para target-type instance
+- --ensure-public-nlb-network: cria ou corrige IGW e route table publica para internet-facing
 - --namespace: quando o Service nao fica em default
 - --target-port: quando a aplicacao escuta em outra porta
 - --selector chave=valor: quando o label selector nao eh app=<service-name>
@@ -230,6 +231,14 @@ def parse_args(argv: Sequence[str]) -> argparse.Namespace:
         help="Scheme do NLB. Default: internal.",
     )
     parser.add_argument(
+        "--ensure-public-nlb-network",
+        action="store_true",
+        help=(
+            "No modo direto com --nlb-scheme internet-facing, "
+            "cria ou corrige Internet Gateway e route table publica das subnets informadas."
+        ),
+    )
+    parser.add_argument(
         "--vpc-link-name",
         help="Nome do VPC Link. Default: <cluster-name>-vpc-link.",
     )
@@ -391,6 +400,7 @@ def build_config_from_args(args: argparse.Namespace) -> Dict[str, Any]:
         "nlb_arn": first_non_empty_text(args.nlb_arn),
         "nlb_name": first_non_empty_text(args.nlb_name),
         "nlb_scheme": args.nlb_scheme,
+        "ensure_public_nlb_network": args.ensure_public_nlb_network,
         "nlb_subnet_ids": list(args.nlb_subnet_id),
         "target_group_arn": first_non_empty_text(args.target_group_arn),
         "target_group_name": (
@@ -991,6 +1001,18 @@ def normalize_dns_name(dns_name: str) -> str:
     return dns_name.rstrip(".")
 
 
+def derive_resource_base_name_from_config(config: Dict[str, Any]) -> str:
+    return (
+        first_non_empty_text(
+            config.get("nlb_name"),
+            config.get("cluster_name"),
+            config.get("service_name"),
+            "managed-nlb",
+        )
+        or "managed-nlb"
+    )
+
+
 def find_load_balancer_by_name(elbv2_client: Any, load_balancer_name: str) -> Optional[Dict[str, Any]]:
     load_balancers = paginate(
         lambda marker: elbv2_client.describe_load_balancers(Marker=marker)
@@ -1022,6 +1044,289 @@ def assert_network_load_balancer(load_balancer: Dict[str, Any]) -> Dict[str, Any
 
 def load_load_balancer_state(load_balancer: Dict[str, Any]) -> str:
     return first_non_empty_text(load_balancer.get("State", {}).get("Code"), "unknown") or "unknown"
+
+
+def load_subnets(ec2_client: Any, subnet_ids: Sequence[str]) -> list[Dict[str, Any]]:
+    response = ec2_client.describe_subnets(SubnetIds=list(subnet_ids))
+    subnets = response.get("Subnets", [])
+    found_subnet_ids = {subnet.get("SubnetId", "") for subnet in subnets}
+    missing_subnet_ids = [subnet_id for subnet_id in subnet_ids if subnet_id not in found_subnet_ids]
+    if missing_subnet_ids:
+        raise RuntimeError(
+            f"Subnets não encontradas: {', '.join(missing_subnet_ids)}."
+        )
+    return subnets
+
+
+def infer_vpc_id_from_subnets(subnets: Sequence[Dict[str, Any]]) -> str:
+    vpc_ids = unique_preserving_order(
+        subnet.get("VpcId", "")
+        for subnet in subnets
+        if subnet.get("VpcId")
+    )
+    if len(vpc_ids) != 1:
+        raise RuntimeError("As subnets do NLB precisam pertencer à mesma VPC.")
+    return vpc_ids[0]
+
+
+def list_vpc_route_tables(ec2_client: Any, vpc_id: str) -> list[Dict[str, Any]]:
+    response = ec2_client.describe_route_tables(
+        Filters=[{"Name": "vpc-id", "Values": [vpc_id]}]
+    )
+    return response.get("RouteTables", [])
+
+
+def find_main_route_table(route_tables: Sequence[Dict[str, Any]]) -> Optional[Dict[str, Any]]:
+    for route_table in route_tables:
+        associations = route_table.get("Associations", [])
+        if any(association.get("Main") for association in associations):
+            return route_table
+    return None
+
+
+def find_explicit_subnet_route_table(
+    route_tables: Sequence[Dict[str, Any]],
+    subnet_id: str,
+) -> Optional[Dict[str, Any]]:
+    for route_table in route_tables:
+        associations = route_table.get("Associations", [])
+        if any(association.get("SubnetId") == subnet_id for association in associations):
+            return route_table
+    return None
+
+
+def find_subnet_route_table_association_id(
+    route_tables: Sequence[Dict[str, Any]],
+    subnet_id: str,
+) -> Optional[str]:
+    for route_table in route_tables:
+        associations = route_table.get("Associations", [])
+        for association in associations:
+            if association.get("SubnetId") == subnet_id:
+                return first_non_empty_text(association.get("RouteTableAssociationId"))
+    return None
+
+
+def load_effective_subnet_route_table(
+    route_tables: Sequence[Dict[str, Any]],
+    subnet_id: str,
+) -> Dict[str, Any]:
+    explicit_route_table = find_explicit_subnet_route_table(route_tables, subnet_id)
+    if explicit_route_table is not None:
+        return explicit_route_table
+    main_route_table = find_main_route_table(route_tables)
+    if main_route_table is None:
+        raise RuntimeError(
+            f"Não foi possível determinar a route table efetiva da subnet {subnet_id}."
+        )
+    return main_route_table
+
+
+def route_points_to_internet_gateway(route: Dict[str, Any], internet_gateway_id: str) -> bool:
+    return (
+        route.get("DestinationCidrBlock") == "0.0.0.0/0"
+        and route.get("GatewayId") == internet_gateway_id
+        and route.get("State") != "blackhole"
+    )
+
+
+def route_table_has_public_default_route(
+    route_table: Dict[str, Any],
+    internet_gateway_id: str,
+) -> bool:
+    routes = route_table.get("Routes", [])
+    return any(
+        route_points_to_internet_gateway(route, internet_gateway_id)
+        for route in routes
+    )
+
+
+def find_attached_internet_gateway_id(ec2_client: Any, vpc_id: str) -> Optional[str]:
+    response = ec2_client.describe_internet_gateways(
+        Filters=[{"Name": "attachment.vpc-id", "Values": [vpc_id]}]
+    )
+    internet_gateways = response.get("InternetGateways", [])
+    for internet_gateway in internet_gateways:
+        internet_gateway_id = first_non_empty_text(internet_gateway.get("InternetGatewayId"))
+        if internet_gateway_id:
+            return internet_gateway_id
+    return None
+
+
+def ensure_internet_gateway_for_vpc(ec2_client: Any, vpc_id: str) -> str:
+    existing_internet_gateway_id = find_attached_internet_gateway_id(ec2_client, vpc_id)
+    if existing_internet_gateway_id:
+        return existing_internet_gateway_id
+
+    LOGGER.info("Criando Internet Gateway para a VPC %s", vpc_id)
+    created_internet_gateway = ec2_client.create_internet_gateway()["InternetGateway"]
+    internet_gateway_id = created_internet_gateway["InternetGatewayId"]
+    ec2_client.attach_internet_gateway(
+        InternetGatewayId=internet_gateway_id,
+        VpcId=vpc_id,
+    )
+    return internet_gateway_id
+
+
+def route_table_name(route_table: Dict[str, Any]) -> Optional[str]:
+    for tag in route_table.get("Tags", []):
+        if tag.get("Key") == "Name" and tag.get("Value"):
+            return tag["Value"]
+    return None
+
+
+def build_public_route_table_name(config: Dict[str, Any]) -> str:
+    return f"{derive_resource_base_name_from_config(config)}-public-rt"
+
+
+def ensure_public_route_table_default_route(
+    ec2_client: Any,
+    route_table: Dict[str, Any],
+    internet_gateway_id: str,
+) -> None:
+    route_table_id = route_table["RouteTableId"]
+    default_route = next(
+        (
+            route
+            for route in route_table.get("Routes", [])
+            if route.get("DestinationCidrBlock") == "0.0.0.0/0"
+        ),
+        None,
+    )
+    if default_route is None:
+        ec2_client.create_route(
+            RouteTableId=route_table_id,
+            DestinationCidrBlock="0.0.0.0/0",
+            GatewayId=internet_gateway_id,
+        )
+        return
+    if route_points_to_internet_gateway(default_route, internet_gateway_id):
+        return
+    ec2_client.replace_route(
+        RouteTableId=route_table_id,
+        DestinationCidrBlock="0.0.0.0/0",
+        GatewayId=internet_gateway_id,
+    )
+
+
+def ensure_managed_public_route_table(
+    ec2_client: Any,
+    vpc_id: str,
+    internet_gateway_id: str,
+    config: Dict[str, Any],
+) -> Dict[str, Any]:
+    route_table_name_value = build_public_route_table_name(config)
+    existing_route_tables = list_vpc_route_tables(ec2_client, vpc_id)
+    managed_route_table = next(
+        (
+            route_table
+            for route_table in existing_route_tables
+            if route_table_name(route_table) == route_table_name_value
+        ),
+        None,
+    )
+    if managed_route_table is None:
+        LOGGER.info("Criando route table pública %s", route_table_name_value)
+        managed_route_table = ec2_client.create_route_table(VpcId=vpc_id)["RouteTable"]
+        ec2_client.create_tags(
+            Resources=[managed_route_table["RouteTableId"]],
+            Tags=[{"Key": "Name", "Value": route_table_name_value}],
+        )
+    ensure_public_route_table_default_route(
+        ec2_client,
+        managed_route_table,
+        internet_gateway_id,
+    )
+    refreshed_route_tables = list_vpc_route_tables(ec2_client, vpc_id)
+    refreshed_managed_route_table = next(
+        (
+            route_table
+            for route_table in refreshed_route_tables
+            if route_table.get("RouteTableId") == managed_route_table["RouteTableId"]
+        ),
+        managed_route_table,
+    )
+    return refreshed_managed_route_table
+
+
+def associate_subnet_with_route_table(
+    ec2_client: Any,
+    route_tables: Sequence[Dict[str, Any]],
+    subnet_id: str,
+    target_route_table_id: str,
+) -> None:
+    current_route_table = load_effective_subnet_route_table(route_tables, subnet_id)
+    current_route_table_id = current_route_table["RouteTableId"]
+    if current_route_table_id == target_route_table_id:
+        return
+
+    current_association_id = find_subnet_route_table_association_id(route_tables, subnet_id)
+    if current_association_id:
+        ec2_client.replace_route_table_association(
+            AssociationId=current_association_id,
+            RouteTableId=target_route_table_id,
+        )
+        return
+    ec2_client.associate_route_table(
+        RouteTableId=target_route_table_id,
+        SubnetId=subnet_id,
+    )
+
+
+def ensure_internet_facing_nlb_network(ec2_client: Any, config: Dict[str, Any]) -> None:
+    if config["nlb_scheme"] != "internet-facing":
+        return
+
+    subnets = load_subnets(ec2_client, config["nlb_subnet_ids"])
+    vpc_id = infer_vpc_id_from_subnets(subnets)
+    internet_gateway_id = find_attached_internet_gateway_id(ec2_client, vpc_id)
+    if internet_gateway_id is None:
+        if not config["ensure_public_nlb_network"]:
+            raise RuntimeError(
+                f"A VPC {vpc_id} não possui Internet Gateway anexado. "
+                "Use --ensure-public-nlb-network para criar/corrigir a rede pública "
+                "ou use --nlb-scheme internal."
+            )
+        internet_gateway_id = ensure_internet_gateway_for_vpc(ec2_client, vpc_id)
+
+    route_tables = list_vpc_route_tables(ec2_client, vpc_id)
+    subnet_ids_without_public_route = [
+        subnet_id
+        for subnet_id in config["nlb_subnet_ids"]
+        if not route_table_has_public_default_route(
+            load_effective_subnet_route_table(route_tables, subnet_id),
+            internet_gateway_id,
+        )
+    ]
+    if not subnet_ids_without_public_route:
+        return
+
+    if not config["ensure_public_nlb_network"]:
+        joined_subnet_ids = ", ".join(subnet_ids_without_public_route)
+        raise RuntimeError(
+            "As subnets informadas não possuem rota pública para Internet Gateway: "
+            f"{joined_subnet_ids}. Use --ensure-public-nlb-network ou --nlb-scheme internal."
+        )
+
+    managed_public_route_table = ensure_managed_public_route_table(
+        ec2_client,
+        vpc_id,
+        internet_gateway_id,
+        config,
+    )
+    refreshed_route_tables = list_vpc_route_tables(ec2_client, vpc_id)
+    for subnet_id in subnet_ids_without_public_route:
+        LOGGER.info(
+            "Associando subnet %s à route table pública %s",
+            subnet_id,
+            managed_public_route_table["RouteTableId"],
+        )
+        associate_subnet_with_route_table(
+            ec2_client,
+            refreshed_route_tables,
+            subnet_id,
+            managed_public_route_table["RouteTableId"],
+        )
 
 
 def list_cluster_nodegroups(eks_client: Any, cluster_name: str) -> list[str]:
@@ -1181,13 +1486,18 @@ def wait_for_nlb_active(elbv2_client: Any, load_balancer_arn: str, config: Dict[
     )
 
 
-def create_network_load_balancer(elbv2_client: Any, config: Dict[str, Any]) -> Dict[str, Any]:
+def create_network_load_balancer(
+    elbv2_client: Any,
+    ec2_client: Any,
+    config: Dict[str, Any],
+) -> Dict[str, Any]:
     if not config["nlb_name"]:
         raise RuntimeError("Para criar NLB informe --nlb-name.")
     if len(config["nlb_subnet_ids"]) < 2:
         raise RuntimeError(
             "Para criar NLB informe ao menos duas --nlb-subnet-id."
         )
+    ensure_internet_facing_nlb_network(ec2_client, config)
     response = elbv2_client.create_load_balancer(
         Name=config["nlb_name"],
         Subnets=config["nlb_subnet_ids"],
@@ -1198,7 +1508,11 @@ def create_network_load_balancer(elbv2_client: Any, config: Dict[str, Any]) -> D
     return response["LoadBalancers"][0]
 
 
-def ensure_network_load_balancer(elbv2_client: Any, config: Dict[str, Any]) -> Dict[str, Any]:
+def ensure_network_load_balancer(
+    elbv2_client: Any,
+    ec2_client: Any,
+    config: Dict[str, Any],
+) -> Dict[str, Any]:
     if config["nlb_arn"]:
         LOGGER.info("Reutilizando NLB informado por ARN: %s", config["nlb_arn"])
         return wait_for_nlb_active(elbv2_client, config["nlb_arn"], config)
@@ -1213,7 +1527,7 @@ def ensure_network_load_balancer(elbv2_client: Any, config: Dict[str, Any]) -> D
         )
 
     LOGGER.info("Criando NLB %s", config["nlb_name"])
-    created_load_balancer = create_network_load_balancer(elbv2_client, config)
+    created_load_balancer = create_network_load_balancer(elbv2_client, ec2_client, config)
     return wait_for_nlb_active(elbv2_client, created_load_balancer["LoadBalancerArn"], config)
 
 
@@ -1380,8 +1694,8 @@ def ensure_nlb_listener(
     return response["Listeners"][0]
 
 
-def ensure_direct_nlb_backend(elbv2_client: Any, config: Dict[str, Any]) -> Dict[str, Any]:
-    load_balancer = ensure_network_load_balancer(elbv2_client, config)
+def ensure_direct_nlb_backend(elbv2_client: Any, ec2_client: Any, config: Dict[str, Any]) -> Dict[str, Any]:
+    load_balancer = ensure_network_load_balancer(elbv2_client, ec2_client, config)
     target_group = ensure_target_group(elbv2_client, load_balancer, config)
 
     if target_group is not None:
@@ -1687,6 +2001,7 @@ def build_dry_run_payload(config: Dict[str, Any]) -> Dict[str, Any]:
             "nlb_arn": config["nlb_arn"],
             "nlb_name": config["nlb_name"],
             "nlb_scheme": config["nlb_scheme"],
+            "ensure_public_nlb_network": config["ensure_public_nlb_network"],
             "nlb_subnet_ids": config["nlb_subnet_ids"],
             "target_group_arn": config["target_group_arn"],
             "target_group_name": config["target_group_name"],
@@ -1718,7 +2033,7 @@ def execute(config: Dict[str, Any]) -> Dict[str, Any]:
     try:
         if config["mode"] == DIRECT_NLB_MODE:
             hydrate_direct_mode_target_ids(config, clients)
-            direct_backend = ensure_direct_nlb_backend(clients["elbv2"], config)
+            direct_backend = ensure_direct_nlb_backend(clients["elbv2"], clients["ec2"], config)
             load_balancer = direct_backend["load_balancer"]
             nlb_dns_name = normalize_dns_name(load_balancer["DNSName"])
             nlb_arn = load_balancer["LoadBalancerArn"]

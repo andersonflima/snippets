@@ -29,6 +29,7 @@ class EksPrivateServiceApiGatewayTests(unittest.TestCase):
             selector=[],
             annotation=[],
             nlb_scheme="internal",
+            ensure_public_nlb_network=False,
             vpc_link_name=None,
             api_name=None,
             stage_name="prod",
@@ -339,6 +340,7 @@ users:
             "nlb_arn": None,
             "nlb_name": "autoservice-app-dev",
             "nlb_subnet_ids": ["subnet-a", "subnet-b"],
+            "ensure_public_nlb_network": False,
             "target_group_arn": None,
             "target_group_name": "autoservice-app-dev-tg",
             "target_ids": ["i-abc123"],
@@ -363,6 +365,8 @@ users:
             "build_clients",
             return_value={
                 "eks": object(),
+                "autoscaling": object(),
+                "ec2": object(),
                 "apigateway": object(),
                 "elbv2": object(),
             },
@@ -464,6 +468,7 @@ users:
             "nlb_subnet_ids": ["subnet-a", "subnet-b"],
             "target_group_arn": None,
             "target_group_name": "autoservice-app-dev-tg",
+            "ensure_public_nlb_network": False,
             "target_ids": [],
             "target_type": "instance",
             "listener_protocol": "TCP",
@@ -524,6 +529,50 @@ users:
         ensure_commands_exist_mock.assert_called_once_with(())
         discover_cluster_instance_target_ids_mock.assert_called_once()
         self.assertEqual(config["target_ids"], ["i-node-a", "i-node-b"])
+
+    def test_ensure_internet_facing_nlb_network_requires_flag_when_igw_is_missing(self) -> None:
+        ec2_client = Mock()
+        ec2_client.describe_subnets.return_value = {
+            "Subnets": [
+                {"SubnetId": "subnet-a", "VpcId": "vpc-123"},
+                {"SubnetId": "subnet-b", "VpcId": "vpc-123"},
+            ]
+        }
+        ec2_client.describe_internet_gateways.return_value = {"InternetGateways": []}
+        config = {
+            "nlb_scheme": "internet-facing",
+            "ensure_public_nlb_network": False,
+            "nlb_subnet_ids": ["subnet-a", "subnet-b"],
+        }
+
+        with self.assertRaises(RuntimeError) as raised_error:
+            eks_script.ensure_internet_facing_nlb_network(ec2_client, config)
+
+        self.assertIn("--ensure-public-nlb-network", str(raised_error.exception))
+
+    def test_create_network_load_balancer_repairs_public_network_when_enabled(self) -> None:
+        elbv2_client = Mock()
+        ec2_client = Mock()
+        elbv2_client.create_load_balancer.return_value = {
+            "LoadBalancers": [{"LoadBalancerArn": "arn:nlb"}]
+        }
+        config = {
+            "nlb_name": "autoservice-app-dev",
+            "nlb_subnet_ids": ["subnet-a", "subnet-b"],
+            "nlb_scheme": "internet-facing",
+            "ensure_public_nlb_network": True,
+        }
+
+        with patch.object(
+            eks_script,
+            "ensure_internet_facing_nlb_network",
+            return_value=None,
+        ) as ensure_internet_facing_nlb_network_mock:
+            result = eks_script.create_network_load_balancer(elbv2_client, ec2_client, config)
+
+        ensure_internet_facing_nlb_network_mock.assert_called_once_with(ec2_client, config)
+        elbv2_client.create_load_balancer.assert_called_once()
+        self.assertEqual(result["LoadBalancerArn"], "arn:nlb")
 
     def test_ensure_vpc_link_recreates_when_target_arn_differs(self) -> None:
         apigateway_client = Mock()
