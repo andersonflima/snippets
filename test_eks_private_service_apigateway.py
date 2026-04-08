@@ -45,6 +45,7 @@ class EksPrivateServiceApiGatewayTests(unittest.TestCase):
 
         self.assertEqual(config["mode"], eks_script.DIRECT_NLB_MODE)
         self.assertEqual(config["nlb_name"], "autoservice-app-dev")
+        self.assertEqual(config["nlb_scheme"], "internal")
         self.assertEqual(config["target_group_name"], "autoservice-app-dev-tg")
         self.assertEqual(config["service_name"], "autoservice-app-dev")
 

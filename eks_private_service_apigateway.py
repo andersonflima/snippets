@@ -382,6 +382,7 @@ def build_config_from_args(args: argparse.Namespace) -> Dict[str, Any]:
         "annotations": annotations,
         "nlb_arn": first_non_empty_text(args.nlb_arn),
         "nlb_name": first_non_empty_text(args.nlb_name),
+        "nlb_scheme": args.nlb_scheme,
         "nlb_subnet_ids": list(args.nlb_subnet_id),
         "target_group_arn": first_non_empty_text(args.target_group_arn),
         "target_group_name": (
@@ -1527,6 +1528,7 @@ def build_dry_run_payload(config: Dict[str, Any]) -> Dict[str, Any]:
             "annotations": config["annotations"],
             "nlb_arn": config["nlb_arn"],
             "nlb_name": config["nlb_name"],
+            "nlb_scheme": config["nlb_scheme"],
             "nlb_subnet_ids": config["nlb_subnet_ids"],
             "target_group_arn": config["target_group_arn"],
             "target_group_name": config["target_group_name"],
