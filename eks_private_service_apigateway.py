@@ -67,6 +67,8 @@ Observacao:
 - para AWS real, nao passe --aws-endpoint-url
 - se o aws CLI nao estiver instalado, use --skip-kubeconfig-update apenas quando
   o kubectl ja estiver apontando para o cluster correto
+- o script normaliza automaticamente exec apiVersion legado no kubeconfig
+  (`v1alpha1` ou typo `v1aplha1`) para `v1beta1` antes de usar o kubectl
 """
 
 from __future__ import annotations
@@ -89,6 +91,9 @@ DEFAULT_SERVICE_PORT = 80
 DEFAULT_TARGET_PORT = 3000
 DEFAULT_TIMEOUT_SECONDS = 900
 DEFAULT_POLL_INTERVAL_SECONDS = 10
+LEGACY_EXEC_API_VERSION_TYPO = "client.authentication.k8s.io/v1aplha1"
+LEGACY_EXEC_API_VERSION = "client.authentication.k8s.io/v1alpha1"
+SUPPORTED_EXEC_API_VERSION = "client.authentication.k8s.io/v1beta1"
 
 
 def parse_args(argv: Sequence[str]) -> argparse.Namespace:
@@ -358,6 +363,58 @@ def update_kubeconfig(config: Dict[str, Any]) -> None:
     if config["aws_endpoint_url"]:
         command.extend(["--endpoint-url", config["aws_endpoint_url"]])
     run_command(command)
+
+
+def resolve_kubeconfig_paths() -> list[str]:
+    configured_paths = first_non_empty_text(os.getenv("KUBECONFIG"))
+    if configured_paths:
+        return [
+            path
+            for path in configured_paths.split(os.pathsep)
+            if path.strip()
+        ]
+    return [os.path.expanduser("~/.kube/config")]
+
+
+def normalize_kubeconfig_exec_api_version_file(kubeconfig_path: str) -> bool:
+    if not kubeconfig_path or not os.path.exists(kubeconfig_path):
+        return False
+
+    with open(kubeconfig_path, "r", encoding="utf-8") as kubeconfig_file:
+        original_content = kubeconfig_file.read()
+
+    normalized_content = (
+        original_content
+        .replace(LEGACY_EXEC_API_VERSION_TYPO, SUPPORTED_EXEC_API_VERSION)
+        .replace(LEGACY_EXEC_API_VERSION, SUPPORTED_EXEC_API_VERSION)
+    )
+    if normalized_content == original_content:
+        return False
+
+    backup_path = f"{kubeconfig_path}.bak"
+    shutil.copyfile(kubeconfig_path, backup_path)
+    with open(kubeconfig_path, "w", encoding="utf-8") as kubeconfig_file:
+        kubeconfig_file.write(normalized_content)
+    LOGGER.info(
+        "Kubeconfig normalizado: %s (backup em %s)",
+        kubeconfig_path,
+        backup_path,
+    )
+    return True
+
+
+def normalize_kubeconfig_exec_api_versions() -> list[str]:
+    changed_paths = [
+        kubeconfig_path
+        for kubeconfig_path in resolve_kubeconfig_paths()
+        if normalize_kubeconfig_exec_api_version_file(kubeconfig_path)
+    ]
+    if changed_paths:
+        LOGGER.info(
+            "Exec apiVersion legado corrigido em: %s",
+            ", ".join(changed_paths),
+        )
+    return changed_paths
 
 
 def build_service_manifest(config: Dict[str, Any]) -> Dict[str, Any]:
@@ -776,6 +833,7 @@ def execute(config: Dict[str, Any]) -> Dict[str, Any]:
     else:
         assert_cluster_available(clients["eks"], config["cluster_name"])
     update_kubeconfig(config)
+    normalize_kubeconfig_exec_api_versions()
 
     apply_service_manifest(config)
     nlb_dns_name = wait_for_nlb_hostname(config)
