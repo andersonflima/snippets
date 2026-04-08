@@ -388,9 +388,27 @@ write_env_file() {
 export CURL_WRAPPER_REAL_CURL=$(shell_quote "${REAL_CURL_BIN}")
 export WGET_WRAPPER_REAL_WGET=$(shell_quote "${REAL_WGET_BIN}")
 export GIT_ZIP_WRAPPER_REAL_GIT=$(shell_quote "${REAL_GIT_BIN}")
-export CURL=$(shell_quote "${CURL_INSTALL_DIR}/curl")
-export WGET=$(shell_quote "${CURL_INSTALL_DIR}/wget")
-export GIT=$(shell_quote "${GIT_INSTALL_DIR}/git")
+__wrapper_env_curl_bin=$(shell_quote "${REAL_CURL_BIN}")
+if [ -x $(shell_quote "${CURL_INSTALL_DIR}/curl") ]; then
+  __wrapper_env_curl_bin=$(shell_quote "${CURL_INSTALL_DIR}/curl")
+fi
+export CURL="\${__wrapper_env_curl_bin}"
+
+if [ -n $(shell_quote "${REAL_WGET_BIN}") ]; then
+  __wrapper_env_wget_bin=$(shell_quote "${REAL_WGET_BIN}")
+  if [ -x $(shell_quote "${CURL_INSTALL_DIR}/wget") ]; then
+    __wrapper_env_wget_bin=$(shell_quote "${CURL_INSTALL_DIR}/wget")
+  fi
+  export WGET="\${__wrapper_env_wget_bin}"
+else
+  unset WGET
+fi
+
+__wrapper_env_git_bin=$(shell_quote "${REAL_GIT_BIN}")
+if [ -x $(shell_quote "${GIT_INSTALL_DIR}/git") ]; then
+  __wrapper_env_git_bin=$(shell_quote "${GIT_INSTALL_DIR}/git")
+fi
+export GIT="\${__wrapper_env_git_bin}"
 EOF
     cat <<EOF
 export BREW_WRAPPER_ENABLED="0"
@@ -403,7 +421,7 @@ unset BREW_WRAPPER_NO_AUTO_UPDATE
 unset BREW
 
 export CURL_WRAPPER_ENABLE_MASON_SMART_RELEASES="1"
-export CURL_WRAPPER_RELEASE_FALLBACK_REPOS="elixir-lsp/elixir-ls,luals/lua-language-server,omnisharp/omnisharp-roslyn"
+export CURL_WRAPPER_RELEASE_FALLBACK_REPOS="elixir-lsp/elixir-ls,johnnymorganz/stylua,luals/lua-language-server,omnisharp/omnisharp-roslyn"
 export CURL_WRAPPER_ALLOW_DIRECT_RELEASE_FALLBACK="1"
 export CURL_WRAPPER_RELEASE_CACHE_DIR=$(shell_quote "${HOME}/.cache/curl-python-wrapper/releases")
 export CURL_WRAPPER_MASON_SOURCE_BUILD_REPOS="omnisharp/omnisharp-roslyn"
@@ -442,6 +460,9 @@ unset __wrapper_env_entry
 unset __wrapper_env_old_ifs
 unset __wrapper_env_original_path
 unset __wrapper_env_sanitized_path
+unset __wrapper_env_curl_bin
+unset __wrapper_env_wget_bin
+unset __wrapper_env_git_bin
 EOF
     render_optional_exports
   } > "${ENV_FILE}"
