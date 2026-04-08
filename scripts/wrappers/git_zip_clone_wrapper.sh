@@ -623,7 +623,7 @@ clone_with_ec2_backend() {
   local -a helper_cmd=("${GIT_ZIP_WRAPPER_EC2_CLONE_HELPER}" --repo-url "${repo_url}" --output "${archive_path}" --create-dirs)
   local clone_arg
 
-  for clone_arg in "${CLONE_FORWARD_ARGS[@]}"; do
+  for clone_arg in "${CLONE_FORWARD_ARGS[@]+"${CLONE_FORWARD_ARGS[@]}"}"; do
     helper_cmd+=(--git-arg "${clone_arg}")
   done
   if [[ "${GIT_ZIP_WRAPPER_LFS_MODE}" == "ec2" ]]; then
@@ -643,7 +643,7 @@ resolve_fetch_git_dir() {
   local real_git git_dir
   real_git="$1"
 
-  git_dir="$("${real_git}" "${GIT_GLOBAL_ARGS[@]}" rev-parse --absolute-git-dir 2>/dev/null || true)"
+  git_dir="$("${real_git}" "${GIT_GLOBAL_ARGS[@]+"${GIT_GLOBAL_ARGS[@]}"}" rev-parse --absolute-git-dir 2>/dev/null || true)"
   [[ -n "${git_dir}" ]] || return 1
   [[ -d "${git_dir}" ]] || return 1
   printf '%s\n' "${git_dir}"
@@ -655,7 +655,7 @@ fetch_with_ec2_backend() {
 
   local -a helper_cmd=("${GIT_ZIP_WRAPPER_EC2_GIT_FETCH_HELPER}" --git-dir "${git_dir}")
 
-  for fetch_arg in "${GIT_SUBCOMMAND_ARGS[@]}"; do
+  for fetch_arg in "${GIT_SUBCOMMAND_ARGS[@]+"${GIT_SUBCOMMAND_ARGS[@]}"}"; do
     helper_cmd+=(--git-arg "${fetch_arg}")
   done
   if [[ -n "${GIT_ZIP_WRAPPER_EC2_PROXY}" ]]; then
@@ -675,7 +675,7 @@ checkout_with_ec2_backend() {
 
   local -a helper_cmd=("${GIT_ZIP_WRAPPER_EC2_GIT_CHECKOUT_HELPER}" --repo-url "${repo_url}" --output "${archive_path}" --create-dirs)
 
-  for checkout_arg in "${GIT_SUBCOMMAND_ARGS[@]}"; do
+  for checkout_arg in "${GIT_SUBCOMMAND_ARGS[@]+"${GIT_SUBCOMMAND_ARGS[@]}"}"; do
     helper_cmd+=(--git-arg "${checkout_arg}")
   done
   if [[ "${GIT_ZIP_WRAPPER_LFS_MODE}" == "ec2" ]]; then
@@ -709,7 +709,7 @@ resolve_fetch_worktree_dir() {
   local real_git worktree_dir
   real_git="$1"
 
-  worktree_dir="$("${real_git}" "${GIT_GLOBAL_ARGS[@]}" rev-parse --show-toplevel 2>/dev/null || true)"
+  worktree_dir="$("${real_git}" "${GIT_GLOBAL_ARGS[@]+"${GIT_GLOBAL_ARGS[@]}"}" rev-parse --show-toplevel 2>/dev/null || true)"
   [[ -n "${worktree_dir}" ]] || return 1
   [[ -d "${worktree_dir}" ]] || return 1
   printf '%s\n' "${worktree_dir}"
@@ -749,14 +749,14 @@ resolve_fetch_origin_url() {
   local real_git origin_url
   real_git="$1"
 
-  origin_url="$("${real_git}" "${GIT_GLOBAL_ARGS[@]}" config --get remote.origin.url 2>/dev/null || true)"
+  origin_url="$("${real_git}" "${GIT_GLOBAL_ARGS[@]+"${GIT_GLOBAL_ARGS[@]}"}" config --get remote.origin.url 2>/dev/null || true)"
   [[ -n "${origin_url}" ]] || return 1
   printf '%s\n' "${origin_url}"
 }
 
 extract_requested_fetch_ref() {
   local arg
-  for arg in "${GIT_SUBCOMMAND_ARGS[@]}"; do
+  for arg in "${GIT_SUBCOMMAND_ARGS[@]+"${GIT_SUBCOMMAND_ARGS[@]}"}"; do
     case "${arg}" in
       -*)
         ;;
@@ -1329,7 +1329,7 @@ main() {
     command -v unzip >/dev/null 2>&1 || die "unzip não encontrado"
   fi
 
-  parse_clone_arguments "clone" "${GIT_SUBCOMMAND_ARGS[@]}"
+  parse_clone_arguments "clone" "${GIT_SUBCOMMAND_ARGS[@]+"${GIT_SUBCOMMAND_ARGS[@]}"}"
   local repo_url destination branch normalized_repo_url
   repo_url="${CLONE_REPO_URL}"
   destination="${CLONE_DESTINATION}"
