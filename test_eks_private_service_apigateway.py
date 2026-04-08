@@ -399,6 +399,132 @@ users:
         self.assertEqual(result["nlb_arn"], "arn:aws:elasticloadbalancing:sa-east-1:123:loadbalancer/net/autoservice/abc")
         self.assertEqual(result["vpc_link_id"], "vpclink-123")
 
+    def test_discover_cluster_instance_target_ids_merges_managed_and_tagged_instances(self) -> None:
+        eks_client = Mock()
+        autoscaling_client = Mock()
+        ec2_client = Mock()
+        eks_client.list_nodegroups.return_value = {"nodegroups": ["managed-a"]}
+        eks_client.describe_nodegroup.return_value = {
+            "nodegroup": {
+                "resources": {
+                    "autoScalingGroups": [
+                        {"name": "asg-managed-a"},
+                    ]
+                }
+            }
+        }
+        autoscaling_client.describe_auto_scaling_groups.return_value = {
+            "AutoScalingGroups": [
+                {
+                    "AutoScalingGroupName": "asg-managed-a",
+                    "Instances": [
+                        {"InstanceId": "i-managed-1"},
+                        {"InstanceId": "i-managed-2"},
+                    ],
+                }
+            ]
+        }
+        ec2_client.describe_instances.return_value = {
+            "Reservations": [
+                {
+                    "Instances": [
+                        {"InstanceId": "i-managed-2"},
+                        {"InstanceId": "i-self-1"},
+                    ]
+                }
+            ]
+        }
+
+        target_ids = eks_script.discover_cluster_instance_target_ids(
+            eks_client,
+            autoscaling_client,
+            ec2_client,
+            "cluster-dev",
+        )
+
+        self.assertEqual(
+            target_ids,
+            ["i-managed-1", "i-managed-2", "i-self-1"],
+        )
+
+    def test_execute_direct_mode_autodiscovers_target_ids_from_cluster(self) -> None:
+        config = {
+            "mode": eks_script.DIRECT_NLB_MODE,
+            "region": "sa-east-1",
+            "cluster_name": "cluster-dev",
+            "service_name": "autoservice-app-dev",
+            "namespace": "default",
+            "aws_endpoint_url": None,
+            "service_port": 80,
+            "target_port": 3000,
+            "selector": {"app": "autoservice-app-dev"},
+            "annotations": {},
+            "nlb_arn": None,
+            "nlb_name": "autoservice-app-dev",
+            "nlb_subnet_ids": ["subnet-a", "subnet-b"],
+            "target_group_arn": None,
+            "target_group_name": "autoservice-app-dev-tg",
+            "target_ids": [],
+            "target_type": "instance",
+            "listener_protocol": "TCP",
+            "vpc_link_name": "autoservice-app-dev-vpc-link",
+            "api_name": "autoservice-app-dev-api",
+            "stage_name": "prod",
+            "api_endpoint_type": "REGIONAL",
+            "timeout_seconds": 900,
+            "poll_interval_seconds": 10,
+            "skip_kubeconfig_update": False,
+            "skip_cluster_check": False,
+            "_kubectl_auth_state": None,
+        }
+
+        with patch.object(
+            eks_script,
+            "ensure_commands_exist",
+        ) as ensure_commands_exist_mock, patch.object(
+            eks_script,
+            "build_clients",
+            return_value={
+                "eks": object(),
+                "autoscaling": object(),
+                "ec2": object(),
+                "apigateway": object(),
+                "elbv2": object(),
+            },
+        ), patch.object(
+            eks_script,
+            "discover_cluster_instance_target_ids",
+            return_value=["i-node-a", "i-node-b"],
+        ) as discover_cluster_instance_target_ids_mock, patch.object(
+            eks_script,
+            "ensure_direct_nlb_backend",
+            return_value={
+                "load_balancer": {
+                    "DNSName": "internal-autoservice-app-dev.amazonaws.com",
+                    "LoadBalancerArn": "arn:aws:elasticloadbalancing:sa-east-1:123:loadbalancer/net/autoservice/abc",
+                },
+                "target_group": None,
+                "listener": {"ListenerArn": "listener-arn"},
+            },
+        ), patch.object(
+            eks_script,
+            "ensure_vpc_link",
+            return_value={"id": "vpclink-123"},
+        ), patch.object(
+            eks_script,
+            "ensure_api_gateway",
+            return_value={
+                "api_id": "api-123",
+                "deployment_id": "deploy-123",
+                "api_url": "https://api.example.com/prod",
+            },
+        ):
+            eks_script.execute(config)
+
+        ensure_commands_exist_mock.assert_called_once_with(())
+        discover_cluster_instance_target_ids_mock.assert_called_once()
+        self.assertEqual(config["target_ids"], ["i-node-a", "i-node-b"])
+
     def test_ensure_vpc_link_recreates_when_target_arn_differs(self) -> None:
         apigateway_client = Mock()
         apigateway_client.create_vpc_link.return_value = {"id": "vpclink-new"}

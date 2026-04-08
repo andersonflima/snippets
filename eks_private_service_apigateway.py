@@ -52,6 +52,7 @@ Quando usar alguns parametros:
 - --nlb-subnet-id: subnets usadas para criar o NLB quando ele ainda nao existe
 - --target-group-name: nome do target group a reutilizar ou criar
 - --target-id: targets a registrar no target group quando ele ainda nao existir ou estiver incompleto
+- --cluster-name no modo direto: permite autodescobrir worker nodes do EKS para target-type instance
 - --namespace: quando o Service nao fica em default
 - --target-port: quando a aplicacao escuta em outra porta
 - --selector chave=valor: quando o label selector nao eh app=<service-name>
@@ -136,7 +137,10 @@ def parse_args(argv: Sequence[str]) -> argparse.Namespace:
         ),
         help="Região AWS. Default: AWS_REGION, AWS_DEFAULT_REGION ou us-east-1.",
     )
-    parser.add_argument("--cluster-name", help="Nome do cluster EKS no modo legado.")
+    parser.add_argument(
+        "--cluster-name",
+        help="Nome do cluster EKS no modo legado ou para autodescoberta no modo direto.",
+    )
     parser.add_argument("--service-name", help="Nome do Service Kubernetes no modo legado.")
     parser.add_argument("--nlb-arn", help="ARN do NLB existente a integrar.")
     parser.add_argument(
@@ -161,7 +165,11 @@ def parse_args(argv: Sequence[str]) -> argparse.Namespace:
         "--target-id",
         action="append",
         default=[],
-        help="Target do target group no modo direto. Pode ser repetido.",
+        help=(
+            "Target do target group no modo direto. Pode ser repetido. "
+            "Quando omitido com --cluster-name e --target-type instance, "
+            "o script tenta autodescobrir os nodes do EKS."
+        ),
     )
     parser.add_argument(
         "--target-type",
@@ -426,6 +434,8 @@ def build_clients(region: str, endpoint_url: Optional[str]) -> Dict[str, Any]:
     return {
         "eks": boto3.client("eks", region_name=region, endpoint_url=endpoint_url),
         "apigateway": boto3.client("apigateway", region_name=region, endpoint_url=endpoint_url),
+        "autoscaling": boto3.client("autoscaling", region_name=region, endpoint_url=endpoint_url),
+        "ec2": boto3.client("ec2", region_name=region, endpoint_url=endpoint_url),
         "elbv2": boto3.client("elbv2", region_name=region, endpoint_url=endpoint_url),
     }
 
@@ -965,6 +975,18 @@ def paginate(fetch_page: Callable[[Optional[str]], Dict[str, Any]], key: str) ->
             return items
 
 
+def unique_preserving_order(values: Iterable[str]) -> list[str]:
+    seen: set[str] = set()
+    result: list[str] = []
+    for value in values:
+        normalized_value = value.strip()
+        if not normalized_value or normalized_value in seen:
+            continue
+        seen.add(normalized_value)
+        result.append(normalized_value)
+    return result
+
+
 def normalize_dns_name(dns_name: str) -> str:
     return dns_name.rstrip(".")
 
@@ -1000,6 +1022,141 @@ def assert_network_load_balancer(load_balancer: Dict[str, Any]) -> Dict[str, Any
 
 def load_load_balancer_state(load_balancer: Dict[str, Any]) -> str:
     return first_non_empty_text(load_balancer.get("State", {}).get("Code"), "unknown") or "unknown"
+
+
+def list_cluster_nodegroups(eks_client: Any, cluster_name: str) -> list[str]:
+    nodegroups: list[str] = []
+    next_token: Optional[str] = None
+    while True:
+        request_arguments: Dict[str, Any] = {"clusterName": cluster_name}
+        if next_token:
+            request_arguments["nextToken"] = next_token
+        response = eks_client.list_nodegroups(**request_arguments)
+        nodegroups.extend(response.get("nodegroups", []))
+        next_token = response.get("nextToken")
+        if not next_token:
+            return nodegroups
+
+
+def load_managed_nodegroup_autoscaling_group_names(
+    eks_client: Any,
+    cluster_name: str,
+) -> list[str]:
+    auto_scaling_group_names: list[str] = []
+    for nodegroup_name in list_cluster_nodegroups(eks_client, cluster_name):
+        response = eks_client.describe_nodegroup(
+            clusterName=cluster_name,
+            nodegroupName=nodegroup_name,
+        )
+        nodegroup = response.get("nodegroup", {})
+        resources = nodegroup.get("resources", {})
+        auto_scaling_groups = resources.get("autoScalingGroups", [])
+        auto_scaling_group_names.extend(
+            item.get("name", "")
+            for item in auto_scaling_groups
+            if item.get("name")
+        )
+    return unique_preserving_order(auto_scaling_group_names)
+
+
+def chunked(values: Sequence[str], size: int) -> Iterable[Sequence[str]]:
+    for index in range(0, len(values), size):
+        yield values[index:index + size]
+
+
+def load_autoscaling_instance_ids(
+    autoscaling_client: Any,
+    auto_scaling_group_names: Sequence[str],
+) -> list[str]:
+    instance_ids: list[str] = []
+    for name_batch in chunked(list(auto_scaling_group_names), 50):
+        response = autoscaling_client.describe_auto_scaling_groups(
+            AutoScalingGroupNames=list(name_batch),
+        )
+        auto_scaling_groups = response.get("AutoScalingGroups", [])
+        instance_ids.extend(
+            instance.get("InstanceId", "")
+            for auto_scaling_group in auto_scaling_groups
+            for instance in auto_scaling_group.get("Instances", [])
+            if instance.get("InstanceId")
+        )
+    return unique_preserving_order(instance_ids)
+
+
+def load_cluster_tagged_instance_ids(ec2_client: Any, cluster_name: str) -> list[str]:
+    instance_ids: list[str] = []
+    next_token: Optional[str] = None
+    filters = [
+        {
+            "Name": f"tag:kubernetes.io/cluster/{cluster_name}",
+            "Values": ["owned", "shared"],
+        },
+        {
+            "Name": "instance-state-name",
+            "Values": ["running"],
+        },
+    ]
+    while True:
+        request_arguments: Dict[str, Any] = {"Filters": filters}
+        if next_token:
+            request_arguments["NextToken"] = next_token
+        response = ec2_client.describe_instances(**request_arguments)
+        reservations = response.get("Reservations", [])
+        instance_ids.extend(
+            instance.get("InstanceId", "")
+            for reservation in reservations
+            for instance in reservation.get("Instances", [])
+            if instance.get("InstanceId")
+        )
+        next_token = response.get("NextToken")
+        if not next_token:
+            return unique_preserving_order(instance_ids)
+
+
+def discover_cluster_instance_target_ids(
+    eks_client: Any,
+    autoscaling_client: Any,
+    ec2_client: Any,
+    cluster_name: str,
+) -> list[str]:
+    auto_scaling_group_names = load_managed_nodegroup_autoscaling_group_names(
+        eks_client,
+        cluster_name,
+    )
+    managed_instance_ids = load_autoscaling_instance_ids(
+        autoscaling_client,
+        auto_scaling_group_names,
+    )
+    tagged_instance_ids = load_cluster_tagged_instance_ids(ec2_client, cluster_name)
+    target_ids = unique_preserving_order([*managed_instance_ids, *tagged_instance_ids])
+    if not target_ids:
+        raise RuntimeError(
+            f"Não foi possível autodescobrir worker nodes do cluster {cluster_name}. "
+            "Informe --target-id explicitamente."
+        )
+    LOGGER.info(
+        "Autodescobertos %s target(s) instance do cluster %s",
+        len(target_ids),
+        cluster_name,
+    )
+    return target_ids
+
+
+def hydrate_direct_mode_target_ids(config: Dict[str, Any], clients: Dict[str, Any]) -> None:
+    if config["mode"] != DIRECT_NLB_MODE:
+        return
+    if config["target_ids"]:
+        return
+    if config["target_type"] != "instance":
+        return
+    if not config["cluster_name"]:
+        return
+    config["target_ids"] = discover_cluster_instance_target_ids(
+        clients["eks"],
+        clients["autoscaling"],
+        clients["ec2"],
+        config["cluster_name"],
+    )
 
 
 def wait_for_nlb_active(elbv2_client: Any, load_balancer_arn: str, config: Dict[str, Any]) -> Dict[str, Any]:
@@ -1239,7 +1396,8 @@ def ensure_direct_nlb_backend(elbv2_client: Any, config: Dict[str, Any]) -> Dict
     if listener is None:
         raise RuntimeError(
             "NLB sem listener utilizável na porta configurada. "
-            "Informe --target-group-arn/--target-group-name/--target-id para o modo direto."
+            "Informe --target-group-arn/--target-group-name/--target-id para o modo direto, "
+            "ou use --cluster-name para autodescobrir nodes do EKS com target-type instance."
         )
 
     return {
@@ -1559,6 +1717,7 @@ def execute(config: Dict[str, Any]) -> Dict[str, Any]:
 
     try:
         if config["mode"] == DIRECT_NLB_MODE:
+            hydrate_direct_mode_target_ids(config, clients)
             direct_backend = ensure_direct_nlb_backend(clients["elbv2"], config)
             load_balancer = direct_backend["load_balancer"]
             nlb_dns_name = normalize_dns_name(load_balancer["DNSName"])
