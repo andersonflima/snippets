@@ -376,6 +376,48 @@ extract_github_slug() {
   printf '%s\n' "${slug}"
 }
 
+extract_repo_source_owner() {
+  local repo_url normalized_repo_url host_and_path path owner
+  repo_url="$1"
+  normalized_repo_url="$(normalize_clone_url_for_http_transport "${repo_url}" 2>/dev/null || true)"
+  [[ -n "${normalized_repo_url}" ]] || normalized_repo_url="${repo_url}"
+
+  case "${normalized_repo_url}" in
+    https://*)
+      host_and_path="${normalized_repo_url#https://}"
+      ;;
+    http://*)
+      host_and_path="${normalized_repo_url#http://}"
+      ;;
+    *)
+      return 1
+      ;;
+  esac
+
+  path="${host_and_path#*/}"
+  [[ -n "${path}" && "${path}" != "${host_and_path}" ]] || return 1
+  owner="${path%%/*}"
+  owner="${owner#/}"
+  [[ -n "${owner}" && "${owner}" != "${path}" ]] || return 1
+  printf '%s\n' "${owner}"
+}
+
+repo_source_requires_plain_git() {
+  local repo_url owner normalized_owner
+  repo_url="$1"
+  owner="$(extract_repo_source_owner "${repo_url}" 2>/dev/null || true)"
+  [[ -n "${owner}" ]] || return 1
+  normalized_owner="$(printf '%s' "${owner}" | tr '[:upper:]' '[:lower:]')"
+
+  case "${normalized_owner}" in
+    itau-*)
+      return 0
+      ;;
+  esac
+
+  return 1
+}
+
 download_github_archive() {
   local slug branch archive_path
   slug="$1"
@@ -515,6 +557,9 @@ should_use_ec2_backend_for_git_url() {
     return 1
   fi
   [[ -n "${url}" && -n "${archive_path}" ]] || return 1
+  if repo_source_requires_plain_git "${url}"; then
+    return 1
+  fi
   if [[ ! -x "${GIT_ZIP_WRAPPER_EC2_FETCH_HELPER}" ]]; then
     if is_truthy "${GIT_ZIP_WRAPPER_EC2_REQUIRED}"; then
       die "helper do backend EC2 não encontrado/executável: ${GIT_ZIP_WRAPPER_EC2_FETCH_HELPER}"
@@ -544,6 +589,9 @@ should_use_ec2_backend_for_clone_url() {
     return 1
   fi
   [[ -n "${url}" ]] || return 1
+  if repo_source_requires_plain_git "${url}"; then
+    return 1
+  fi
   if [[ ! -x "${GIT_ZIP_WRAPPER_EC2_CLONE_HELPER}" ]]; then
     if is_truthy "${GIT_ZIP_WRAPPER_EC2_REQUIRED}"; then
       die "helper de clone do backend EC2 não encontrado/executável: ${GIT_ZIP_WRAPPER_EC2_CLONE_HELPER}"
@@ -752,6 +800,14 @@ resolve_fetch_origin_url() {
   origin_url="$("${real_git}" "${GIT_GLOBAL_ARGS[@]+"${GIT_GLOBAL_ARGS[@]}"}" config --get remote.origin.url 2>/dev/null || true)"
   [[ -n "${origin_url}" ]] || return 1
   printf '%s\n' "${origin_url}"
+}
+
+current_repo_origin_requires_plain_git() {
+  local real_git origin_url
+  real_git="$1"
+  origin_url="$(resolve_fetch_origin_url "${real_git}" 2>/dev/null || true)"
+  [[ -n "${origin_url}" ]] || return 1
+  repo_source_requires_plain_git "${origin_url}"
 }
 
 extract_requested_fetch_ref() {
@@ -1268,6 +1324,10 @@ main() {
     fetch)
       resolve_proxy_config
       local fetch_git_dir fetch_exit_code
+      if current_repo_origin_requires_plain_git "${real_git}"; then
+        log "source itau-* detectado no origin; usando git comum para fetch"
+        exec "${real_git}" "$@"
+      fi
       if should_use_ec2_backend_for_fetch; then
         fetch_git_dir="$(resolve_fetch_git_dir "${real_git}" || true)"
         if [[ -n "${fetch_git_dir}" ]]; then
@@ -1304,6 +1364,10 @@ main() {
     checkout)
       resolve_proxy_config
       local checkout_git_dir
+      if current_repo_origin_requires_plain_git "${real_git}"; then
+        log "source itau-* detectado no origin; usando git comum para checkout"
+        exec "${real_git}" "$@"
+      fi
       if should_use_ec2_backend_for_checkout; then
         checkout_git_dir="$(resolve_fetch_git_dir "${real_git}" || true)"
         if [[ -n "${checkout_git_dir}" ]] && replace_mix_install_repo_with_checkout "${real_git}" "${checkout_git_dir}"; then
@@ -1334,6 +1398,10 @@ main() {
   repo_url="${CLONE_REPO_URL}"
   destination="${CLONE_DESTINATION}"
   branch="$(first_forward_value_for_option --branch || true)"
+  if repo_source_requires_plain_git "${repo_url}"; then
+    log "source itau-* detectado no clone; usando git comum sem backend EC2"
+    exec "${real_git}" "$@"
+  fi
   resolve_proxy_config
   if [[ -n "${GIT_ZIP_WRAPPER_ACTIVE_PROXY}" ]]; then
     log "proxy ativo para wrapper git clone: ${GIT_ZIP_WRAPPER_ACTIVE_PROXY}"
