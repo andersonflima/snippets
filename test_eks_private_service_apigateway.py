@@ -1,6 +1,7 @@
 import os
 import tempfile
 import unittest
+from datetime import datetime, timedelta, timezone
 from unittest.mock import patch
 
 import eks_private_service_apigateway as eks_script
@@ -88,6 +89,14 @@ users:
         self.assertEqual(kubeconfig["users"][0]["user"]["token"], "token-123")
         self.assertEqual(kubeconfig["current-context"], "cluster-dev-context")
 
+    def test_parse_eks_token_expiration_supports_z_suffix(self) -> None:
+        expiration = eks_script.parse_eks_token_expiration("2026-04-08T20:10:00Z")
+
+        self.assertEqual(
+            expiration,
+            datetime(2026, 4, 8, 20, 10, 0, tzinfo=timezone.utc),
+        )
+
     def test_run_kubectl_command_falls_back_to_static_token_on_legacy_exec_error(self) -> None:
         config = {
             "region": "sa-east-1",
@@ -104,7 +113,14 @@ users:
         with patch.object(
             eks_script,
             "run_command",
-            side_effect=[legacy_error, '{"status":{"token":"k8s-token"}}', "applied"],
+            side_effect=[
+                legacy_error,
+                (
+                    '{"status":{"token":"k8s-token",'
+                    '"expirationTimestamp":"2026-04-08T20:10:00Z"}}'
+                ),
+                "applied",
+            ],
         ) as run_command_mock, patch.object(
             eks_script,
             "load_cluster_details",
@@ -141,6 +157,47 @@ users:
         )
         self.assertEqual(third_command[0:2], ["kubectl", "--kubeconfig"])
         self.assertEqual(third_command[-3:], ["apply", "-f", "-"])
+
+    def test_run_kubectl_command_reuses_static_token_mode_without_retrying_default_exec(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            kubeconfig_path = os.path.join(temp_dir, "cluster-dev-kubeconfig.json")
+            with open(kubeconfig_path, "w", encoding="utf-8") as kubeconfig_file:
+                kubeconfig_file.write("{}")
+
+            config = {
+                "region": "sa-east-1",
+                "cluster_name": "cluster-dev",
+                "aws_endpoint_url": None,
+                "_kubectl_auth_state": {
+                    "mode": "static-token",
+                    "warning_logged": True,
+                    "cluster": {
+                        "name": "cluster-dev",
+                        "endpoint": "https://example.eks.amazonaws.com",
+                        "certificateAuthority": {"data": "Y2VydA=="},
+                    },
+                    "token": "cached-token",
+                    "token_expiration": datetime.now(timezone.utc) + timedelta(minutes=10),
+                    "kubeconfig_path": kubeconfig_path,
+                },
+            }
+
+            with patch.object(
+                eks_script,
+                "run_command",
+                return_value="service-json",
+            ) as run_command_mock:
+                output = eks_script.run_kubectl_command(
+                    config,
+                    object(),
+                    ["get", "svc", "autoservice-app-dev", "-n", "default", "-o", "json"],
+                )
+
+        self.assertEqual(output, "service-json")
+        self.assertEqual(run_command_mock.call_count, 1)
+        command = run_command_mock.call_args.args[0]
+        self.assertEqual(command[0:2], ["kubectl", "--kubeconfig"])
+        self.assertNotIn("aws", command)
 
 
 if __name__ == "__main__":

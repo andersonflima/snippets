@@ -82,6 +82,7 @@ import subprocess
 import sys
 import tempfile
 import time
+from datetime import datetime, timedelta, timezone
 from typing import Any, Callable, Dict, Iterable, Optional, Sequence
 from urllib.parse import urlparse
 
@@ -95,6 +96,7 @@ DEFAULT_POLL_INTERVAL_SECONDS = 10
 LEGACY_EXEC_API_VERSION_TYPO = "client.authentication.k8s.io/v1aplha1"
 LEGACY_EXEC_API_VERSION = "client.authentication.k8s.io/v1alpha1"
 SUPPORTED_EXEC_API_VERSION = "client.authentication.k8s.io/v1beta1"
+STATIC_TOKEN_REFRESH_SKEW_SECONDS = 60
 
 
 def parse_args(argv: Sequence[str]) -> argparse.Namespace:
@@ -336,6 +338,17 @@ def run_command(
     return result.stdout
 
 
+def build_kubectl_auth_state() -> Dict[str, Any]:
+    return {
+        "mode": "default",
+        "warning_logged": False,
+        "cluster": None,
+        "token": None,
+        "token_expiration": None,
+        "kubeconfig_path": None,
+    }
+
+
 def is_legacy_exec_credential_error(message: str) -> bool:
     normalized_message = message.lower()
     return (
@@ -433,6 +446,16 @@ def load_cluster_details(eks_client: Any, cluster_name: str) -> Dict[str, Any]:
     return eks_client.describe_cluster(name=cluster_name)["cluster"]
 
 
+def ensure_kubectl_auth_state(config: Dict[str, Any]) -> Dict[str, Any]:
+    existing_state = config.get("_kubectl_auth_state")
+    if existing_state is not None:
+        return existing_state
+
+    auth_state = build_kubectl_auth_state()
+    config["_kubectl_auth_state"] = auth_state
+    return auth_state
+
+
 def build_eks_get_token_command(config: Dict[str, Any]) -> list[str]:
     command = [
         "aws",
@@ -448,7 +471,14 @@ def build_eks_get_token_command(config: Dict[str, Any]) -> list[str]:
     return command
 
 
-def extract_eks_token(config: Dict[str, Any]) -> str:
+def parse_eks_token_expiration(expiration_timestamp: str) -> datetime:
+    normalized_timestamp = expiration_timestamp.strip()
+    if normalized_timestamp.endswith("Z"):
+        normalized_timestamp = normalized_timestamp[:-1] + "+00:00"
+    return datetime.fromisoformat(normalized_timestamp).astimezone(timezone.utc)
+
+
+def extract_eks_token(config: Dict[str, Any]) -> tuple[str, datetime]:
     output = run_command(build_eks_get_token_command(config))
     try:
         payload = json.loads(output)
@@ -462,7 +492,12 @@ def extract_eks_token(config: Dict[str, Any]) -> str:
         raise RuntimeError(
             "aws eks get-token não retornou status.token."
         )
-    return token
+    expiration_timestamp = payload.get("status", {}).get("expirationTimestamp")
+    if not expiration_timestamp:
+        raise RuntimeError(
+            "aws eks get-token não retornou status.expirationTimestamp."
+        )
+    return token, parse_eks_token_expiration(expiration_timestamp)
 
 
 def build_ephemeral_kubeconfig(cluster: Dict[str, Any], token: str) -> Dict[str, Any]:
@@ -498,6 +533,54 @@ def build_ephemeral_kubeconfig(cluster: Dict[str, Any], token: str) -> Dict[str,
     }
 
 
+def ensure_static_token_kubeconfig(
+    config: Dict[str, Any],
+    eks_client: Any,
+    auth_state: Dict[str, Any],
+) -> str:
+    now = datetime.now(timezone.utc)
+    token_expiration = auth_state.get("token_expiration")
+    kubeconfig_path = auth_state.get("kubeconfig_path")
+    refresh_deadline = now + timedelta(seconds=STATIC_TOKEN_REFRESH_SKEW_SECONDS)
+    token_is_still_valid = (
+        isinstance(token_expiration, datetime)
+        and token_expiration > refresh_deadline
+        and isinstance(kubeconfig_path, str)
+        and bool(kubeconfig_path)
+        and os.path.exists(kubeconfig_path)
+    )
+    if token_is_still_valid:
+        return kubeconfig_path
+
+    cluster = auth_state.get("cluster")
+    if cluster is None:
+        cluster = load_cluster_details(eks_client, config["cluster_name"])
+        auth_state["cluster"] = cluster
+
+    cluster_name = cluster.get("name", config["cluster_name"])
+    token, token_expiration = extract_eks_token(config)
+    kubeconfig_payload = build_ephemeral_kubeconfig(cluster, token)
+    kubeconfig_path = auth_state.get("kubeconfig_path")
+
+    if not isinstance(kubeconfig_path, str) or not kubeconfig_path:
+        with tempfile.NamedTemporaryFile(
+            mode="w",
+            encoding="utf-8",
+            prefix=f"{cluster_name}-kubectl-",
+            suffix=".json",
+            delete=False,
+        ) as kubeconfig_file:
+            kubeconfig_path = kubeconfig_file.name
+    with open(kubeconfig_path, "w", encoding="utf-8") as kubeconfig_file:
+        json.dump(kubeconfig_payload, kubeconfig_file)
+
+    auth_state["token"] = token
+    auth_state["token_expiration"] = token_expiration
+    auth_state["kubeconfig_path"] = kubeconfig_path
+    auth_state["mode"] = "static-token"
+    return kubeconfig_path
+
+
 def run_kubectl_with_static_eks_token(
     config: Dict[str, Any],
     eks_client: Any,
@@ -505,31 +588,29 @@ def run_kubectl_with_static_eks_token(
     *,
     input_text: Optional[str] = None,
 ) -> str:
-    cluster = load_cluster_details(eks_client, config["cluster_name"])
-    cluster_name = cluster.get("name", config["cluster_name"])
-    token = extract_eks_token(config)
-    kubeconfig_payload = build_ephemeral_kubeconfig(cluster, token)
+    auth_state = ensure_kubectl_auth_state(config)
+    kubeconfig_path = ensure_static_token_kubeconfig(config, eks_client, auth_state)
 
-    with tempfile.NamedTemporaryFile(
-        mode="w",
-        encoding="utf-8",
-        prefix=f"{cluster_name}-kubectl-",
-        suffix=".json",
-        delete=False,
-    ) as kubeconfig_file:
-        kubeconfig_path = kubeconfig_file.name
-        json.dump(kubeconfig_payload, kubeconfig_file)
-
-    try:
+    if not auth_state.get("warning_logged"):
         LOGGER.warning(
             "ExecCredential legado detectado no kubeconfig. "
-            "Reexecutando kubectl com token estático do aws eks get-token."
+            "Reexecutando kubectl com token estático do aws eks get-token "
+            "e reutilizando esse modo durante o polling."
         )
-        return run_command(
-            ["kubectl", "--kubeconfig", kubeconfig_path, *kubectl_args],
-            input_text=input_text,
-        )
-    finally:
+        auth_state["warning_logged"] = True
+    return run_command(
+        ["kubectl", "--kubeconfig", kubeconfig_path, *kubectl_args],
+        input_text=input_text,
+    )
+
+
+def cleanup_kubectl_auth_state(config: Dict[str, Any]) -> None:
+    auth_state = config.get("_kubectl_auth_state")
+    if not isinstance(auth_state, dict):
+        return
+
+    kubeconfig_path = auth_state.get("kubeconfig_path")
+    if isinstance(kubeconfig_path, str) and kubeconfig_path:
         try:
             os.remove(kubeconfig_path)
         except OSError:
@@ -543,6 +624,15 @@ def run_kubectl_command(
     *,
     input_text: Optional[str] = None,
 ) -> str:
+    auth_state = ensure_kubectl_auth_state(config)
+    if auth_state.get("mode") == "static-token":
+        return run_kubectl_with_static_eks_token(
+            config,
+            eks_client,
+            kubectl_args,
+            input_text=input_text,
+        )
+
     try:
         return run_command(["kubectl", *kubectl_args], input_text=input_text)
     except RuntimeError as exc:
@@ -973,39 +1063,42 @@ def execute(config: Dict[str, Any]) -> Dict[str, Any]:
     ensure_commands_exist(required_commands)
     clients = build_clients(config["region"], config["aws_endpoint_url"])
 
-    if config["skip_cluster_check"]:
-        LOGGER.info("Pulando validação de status do cluster por configuração explícita.")
-    else:
-        assert_cluster_available(clients["eks"], config["cluster_name"])
-    update_kubeconfig(config)
-    normalize_kubeconfig_exec_api_versions()
+    try:
+        if config["skip_cluster_check"]:
+            LOGGER.info("Pulando validação de status do cluster por configuração explícita.")
+        else:
+            assert_cluster_available(clients["eks"], config["cluster_name"])
+        update_kubeconfig(config)
+        normalize_kubeconfig_exec_api_versions()
 
-    apply_service_manifest(config, clients["eks"])
-    nlb_dns_name = wait_for_nlb_hostname(config, clients["eks"])
-    LOGGER.info("NLB resolvido: %s", nlb_dns_name)
+        apply_service_manifest(config, clients["eks"])
+        nlb_dns_name = wait_for_nlb_hostname(config, clients["eks"])
+        LOGGER.info("NLB resolvido: %s", nlb_dns_name)
 
-    nlb_arn = find_nlb_arn(clients["elbv2"], nlb_dns_name)
-    LOGGER.info("ARN do NLB: %s", nlb_arn)
+        nlb_arn = find_nlb_arn(clients["elbv2"], nlb_dns_name)
+        LOGGER.info("ARN do NLB: %s", nlb_arn)
 
-    vpc_link = ensure_vpc_link(clients["apigateway"], nlb_arn, config)
-    api = ensure_api_gateway(
-        clients["apigateway"],
-        nlb_dns_name=nlb_dns_name,
-        vpc_link_id=vpc_link["id"],
-        config=config,
-    )
+        vpc_link = ensure_vpc_link(clients["apigateway"], nlb_arn, config)
+        api = ensure_api_gateway(
+            clients["apigateway"],
+            nlb_dns_name=nlb_dns_name,
+            vpc_link_id=vpc_link["id"],
+            config=config,
+        )
 
-    return {
-        "cluster_name": config["cluster_name"],
-        "service_name": config["service_name"],
-        "namespace": config["namespace"],
-        "nlb_dns_name": nlb_dns_name,
-        "nlb_arn": nlb_arn,
-        "vpc_link_id": vpc_link["id"],
-        "rest_api_id": api["api_id"],
-        "deployment_id": api["deployment_id"],
-        "api_url": api["api_url"],
-    }
+        return {
+            "cluster_name": config["cluster_name"],
+            "service_name": config["service_name"],
+            "namespace": config["namespace"],
+            "nlb_dns_name": nlb_dns_name,
+            "nlb_arn": nlb_arn,
+            "vpc_link_id": vpc_link["id"],
+            "rest_api_id": api["api_id"],
+            "deployment_id": api["deployment_id"],
+            "api_url": api["api_url"],
+        }
+    finally:
+        cleanup_kubectl_auth_state(config)
 
 
 def main(argv: Sequence[str]) -> int:
