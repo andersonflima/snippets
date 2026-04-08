@@ -33,6 +33,7 @@ GIT_ZIP_WRAPPER_EC2_CLONE_HELPER="${GIT_ZIP_WRAPPER_EC2_CLONE_HELPER:-${WRAPPER_
 GIT_ZIP_WRAPPER_EC2_GIT_FETCH_HELPER="${GIT_ZIP_WRAPPER_EC2_GIT_FETCH_HELPER:-${WRAPPER_DIR}/git-fetch-via-ec2}"
 GIT_ZIP_WRAPPER_EC2_GIT_CHECKOUT_HELPER="${GIT_ZIP_WRAPPER_EC2_GIT_CHECKOUT_HELPER:-${WRAPPER_DIR}/git-checkout-via-ec2}"
 GIT_ZIP_WRAPPER_EC2_REQUIRED="${GIT_ZIP_WRAPPER_EC2_REQUIRED:-0}"
+GIT_ZIP_WRAPPER_FORCE_LOCAL_DOWNLOADS="${GIT_ZIP_WRAPPER_FORCE_LOCAL_DOWNLOADS:-0}"
 GIT_ZIP_WRAPPER_EC2_PROXY="${GIT_ZIP_WRAPPER_EC2_PROXY:-${WRAPPERS_VIA_EC2_PROXY:-}}"
 GIT_ZIP_WRAPPER_LFS_AUTORUN="${GIT_ZIP_WRAPPER_LFS_AUTORUN:-1}"
 GIT_ZIP_WRAPPER_LFS_FORCE="${GIT_ZIP_WRAPPER_LFS_FORCE:-0}"
@@ -553,6 +554,9 @@ should_use_ec2_backend_for_git_url() {
   url="$1"
   archive_path="$2"
 
+  if is_truthy "${GIT_ZIP_WRAPPER_FORCE_LOCAL_DOWNLOADS}"; then
+    return 1
+  fi
   if ! is_truthy "${GIT_ZIP_WRAPPER_USE_EC2}"; then
     return 1
   fi
@@ -1411,67 +1415,84 @@ main() {
   GIT_ZIP_WRAPPER_TMP_DIR="$(mktemp -d -t git-zip-clone-XXXXXX)"
 
   if normalized_repo_url="$(normalize_clone_url_for_http_transport "${repo_url}" 2>/dev/null)"; then
-    local clone_archive_path
-    clone_archive_path="${GIT_ZIP_WRAPPER_TMP_DIR}/repo-clone.tar.gz"
-    if should_use_ec2_backend_for_clone_url "${normalized_repo_url}"; then
-      log "backend selecionado: ec2 git-clone (${normalized_repo_url})"
-      if clone_with_ec2_backend "${normalized_repo_url}" "${clone_archive_path}"; then
-        extract_archive_to_destination "${clone_archive_path}" "${destination}"
-        if [[ "${GIT_ZIP_WRAPPER_LFS_MODE}" == "ec2" ]]; then
-          log "repositório extraído com Git LFS materializado no EC2"
-        else
-          run_git_lfs_post_clone "${destination}"
-        fi
-        log "clone remoto(http) concluído: ${repo_url} -> ${destination} (source: ${normalized_repo_url})"
-        return 0
-      fi
-      if is_truthy "${GIT_ZIP_WRAPPER_EC2_REQUIRED}"; then
-        die "backend EC2 falhou para git clone ${repo_url} e o fallback local está desabilitado"
-      fi
-      log "backend EC2 do git clone falhou; seguindo com fallback local"
-    fi
+    :
+  else
+    normalized_repo_url=""
   fi
 
-  local slug
+  local slug archive_path source_url local_clone_failed
   if ! slug="$(extract_github_slug "${repo_url}")"; then
-    log "host não suportado para clone por arquivo (${repo_url}); fallback para git clone normal."
     exec "${real_git}" "$@"
   fi
 
-  command -v curl >/dev/null 2>&1 || die "curl não encontrado"
-  local archive_path source_url
-  case "${ARCHIVE_FORMAT}" in
-    tar.gz)
-      archive_path="${GIT_ZIP_WRAPPER_TMP_DIR}/repo.tar.gz"
-      ;;
-    tgz)
-      archive_path="${GIT_ZIP_WRAPPER_TMP_DIR}/repo.tgz"
-      ;;
-    tar)
-      archive_path="${GIT_ZIP_WRAPPER_TMP_DIR}/repo.tar"
-      ;;
-    zip)
-      archive_path="${GIT_ZIP_WRAPPER_TMP_DIR}/repo.zip"
-      ;;
-    *)
-      archive_path="${GIT_ZIP_WRAPPER_TMP_DIR}/repo.tar.gz"
-      ;;
-  esac
+  local_clone_failed=0
+  if command -v curl >/dev/null 2>&1; then
+    case "${ARCHIVE_FORMAT}" in
+      tar.gz)
+        archive_path="${GIT_ZIP_WRAPPER_TMP_DIR}/repo.tar.gz"
+        ;;
+      tgz)
+        archive_path="${GIT_ZIP_WRAPPER_TMP_DIR}/repo.tgz"
+        ;;
+      tar)
+        archive_path="${GIT_ZIP_WRAPPER_TMP_DIR}/repo.tar"
+        ;;
+      zip)
+        archive_path="${GIT_ZIP_WRAPPER_TMP_DIR}/repo.zip"
+        ;;
+      *)
+        archive_path="${GIT_ZIP_WRAPPER_TMP_DIR}/repo.tar.gz"
+        ;;
+    esac
 
-  assert_supported_archive_format "${archive_path}"
+    assert_supported_archive_format "${archive_path}"
 
-  if ! source_url="$(download_github_archive "${slug}" "${branch}" "${archive_path}")"; then
+    GIT_ZIP_WRAPPER_FORCE_LOCAL_DOWNLOADS=1
+    source_url="$(download_github_archive "${slug}" "${branch}" "${archive_path}" || true)"
+    GIT_ZIP_WRAPPER_FORCE_LOCAL_DOWNLOADS=0
+    if [[ -n "${source_url}" ]]; then
+      extract_archive_to_destination "${archive_path}" "${destination}"
+      bootstrap_archive_clone_repository "${real_git}" "${repo_url}" "${destination}" "${branch}" "${source_url}"
+      run_git_lfs_post_clone "${destination}"
+      log "clone(${ARCHIVE_FORMAT}) concluído: ${repo_url} -> ${destination} (source: ${source_url})"
+      return 0
+    fi
+    local_clone_failed=1
     if is_truthy "${GIT_ZIP_WRAPPER_STRICT:-0}"; then
       die "falha ao baixar arquivo para ${repo_url} (branch/tag: ${branch:-HEAD})"
     fi
-    log "falha ao baixar arquivo para ${repo_url}; fallback para git clone normal."
-    exec "${real_git}" "$@"
+    log "falha ao baixar arquivo para ${repo_url}; tentando backend EC2 antes do git clone normal."
+  else
+    local_clone_failed=1
+    log "curl não encontrado; pulando clone local por arquivo para ${repo_url}"
   fi
 
-  extract_archive_to_destination "${archive_path}" "${destination}"
-  bootstrap_archive_clone_repository "${real_git}" "${repo_url}" "${destination}" "${branch}" "${source_url}"
-  run_git_lfs_post_clone "${destination}"
-  log "clone(${ARCHIVE_FORMAT}) concluído: ${repo_url} -> ${destination} (source: ${source_url})"
+  if [[ -n "${normalized_repo_url}" ]] && should_use_ec2_backend_for_clone_url "${normalized_repo_url}"; then
+    local clone_archive_path
+    clone_archive_path="${GIT_ZIP_WRAPPER_TMP_DIR}/repo-clone.tar.gz"
+    log "backend selecionado: ec2 git-clone (${normalized_repo_url})"
+    if clone_with_ec2_backend "${normalized_repo_url}" "${clone_archive_path}"; then
+      extract_archive_to_destination "${clone_archive_path}" "${destination}"
+      if [[ "${GIT_ZIP_WRAPPER_LFS_MODE}" == "ec2" ]]; then
+        log "repositório extraído com Git LFS materializado no EC2"
+      else
+        run_git_lfs_post_clone "${destination}"
+      fi
+      log "clone remoto(http) concluído: ${repo_url} -> ${destination} (source: ${normalized_repo_url})"
+      return 0
+    fi
+    if is_truthy "${GIT_ZIP_WRAPPER_EC2_REQUIRED}"; then
+      if [[ "${local_clone_failed}" -eq 1 ]]; then
+        die "clone local falhou e o backend EC2 falhou para git clone ${repo_url}"
+      fi
+      die "backend EC2 falhou para git clone ${repo_url} e o fallback local está desabilitado"
+    fi
+    log "backend EC2 do git clone falhou; fallback para git clone normal"
+  elif is_truthy "${GIT_ZIP_WRAPPER_EC2_REQUIRED}" && [[ "${local_clone_failed}" -eq 1 ]]; then
+    die "clone local falhou e o backend EC2 não está disponível para ${repo_url}"
+  fi
+
+  exec "${real_git}" "$@"
 }
 
 main "$@"
