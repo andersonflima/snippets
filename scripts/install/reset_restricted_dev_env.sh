@@ -169,10 +169,8 @@ if [[ "${RESET_SHELL_RC}" == "1" ]]; then
     log "shell rc limpo: ${shell_rc_target}"
   done
 
-  restricted_dev_env_remove_elixir_ls_setup_sh_block "${ELIXIR_LS_SETUP_SH}"
-  log "elixir_ls setup limpo: ${ELIXIR_LS_SETUP_SH}"
-  restricted_dev_env_remove_elixir_ls_setup_fish_block "${ELIXIR_LS_SETUP_FISH}"
-  log "elixir_ls setup limpo: ${ELIXIR_LS_SETUP_FISH}"
+  remove_file_if_exists "${ELIXIR_LS_SETUP_SH}"
+  remove_file_if_exists "${ELIXIR_LS_SETUP_FISH}"
 fi
 
 if [[ "${RESET_ENV_FILES}" == "1" ]]; then

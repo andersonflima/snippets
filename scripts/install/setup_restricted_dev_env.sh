@@ -456,6 +456,15 @@ validate_persisted_env_files() {
   [[ -f "${WRAPPER_ENV_FILE}" ]] || die "env-file compartilhado dos wrappers não foi criado: ${WRAPPER_ENV_FILE}"
 }
 
+validate_elixir_ls_setup_files() {
+  [[ -f "${ELIXIR_LS_SETUP_SH}" ]] || die "setup.sh do elixir_ls não foi criado: ${ELIXIR_LS_SETUP_SH}"
+  [[ -f "${ELIXIR_LS_SETUP_FISH}" ]] || die "setup.fish do elixir_ls não foi criado: ${ELIXIR_LS_SETUP_FISH}"
+  grep -Fq "${MIX_ENV_FILE}" "${ELIXIR_LS_SETUP_SH}" || die "setup.sh do elixir_ls não referencia ${MIX_ENV_FILE}"
+  grep -Fq "${WRAPPER_ENV_FILE}" "${ELIXIR_LS_SETUP_SH}" || die "setup.sh do elixir_ls não referencia ${WRAPPER_ENV_FILE}"
+  grep -Fq "${MIX_ENV_FILE}" "${ELIXIR_LS_SETUP_FISH}" || die "setup.fish do elixir_ls não referencia ${MIX_ENV_FILE}"
+  grep -Fq "${WRAPPER_ENV_FILE}" "${ELIXIR_LS_SETUP_FISH}" || die "setup.fish do elixir_ls não referencia ${WRAPPER_ENV_FILE}"
+}
+
 validate_installed_wrappers() {
   [[ -x "${HOME}/.local/share/mix-ec2-wrapper/bin/mix" ]] || die "wrapper do mix não foi instalado"
   [[ -x "${HOME}/.local/share/mix-ec2-wrapper/bin/mix-via-ec2" ]] || die "entrypoint mix-via-ec2 não foi instalado"
@@ -523,6 +532,7 @@ validate_shell_rc_persistence() {
 
 validate_restricted_dev_env_result() {
   validate_persisted_env_files
+  validate_elixir_ls_setup_files
   validate_installed_wrappers
   validate_mix_wrapper_env_activation
   validate_mix_remote_runtime_prerequisites

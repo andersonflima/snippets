@@ -147,20 +147,29 @@ restricted_dev_env_apply_elixir_ls_setup_sh_block() {
   wrapper_env_file="$3"
 
   mkdir -p "$(dirname "${setup_file}")"
-  touch "${setup_file}"
+  cat > "${setup_file}" <<EOF
+#!/usr/bin/env sh
+# Gerado por scripts/install/setup_restricted_dev_env.sh
 
-  restricted_dev_env_remove_exact_block \
-    "${setup_file}" \
-    "${RESTRICTED_DEV_ENV_ELIXIR_LS_BEGIN}" \
-    "${RESTRICTED_DEV_ENV_ELIXIR_LS_END}" \
-    "elixir-ls-setup-sh"
+case ":\${PATH:-}:" in
+  *:/usr/bin:*) ;;
+  *)
+    if [ -n "\${PATH:-}" ]; then
+      PATH="/usr/bin:/bin:/usr/sbin:/sbin:\${PATH}"
+    else
+      PATH="/usr/bin:/bin:/usr/sbin:/sbin"
+    fi
+    ;;
+esac
 
-  {
-    printf '\n%s\n' "${RESTRICTED_DEV_ENV_ELIXIR_LS_BEGIN}"
-    printf '[ -f "%s" ] && . "%s"\n' "${mix_env_file}" "${mix_env_file}"
-    printf '[ -f "%s" ] && . "%s"\n' "${wrapper_env_file}" "${wrapper_env_file}"
-    printf '%s\n' "${RESTRICTED_DEV_ENV_ELIXIR_LS_END}"
-  } >> "${setup_file}"
+export PATH
+
+${RESTRICTED_DEV_ENV_ELIXIR_LS_BEGIN}
+[ -f "${mix_env_file}" ] && . "${mix_env_file}"
+[ -f "${wrapper_env_file}" ] && . "${wrapper_env_file}"
+${RESTRICTED_DEV_ENV_ELIXIR_LS_END}
+EOF
+  chmod 0644 "${setup_file}"
 }
 
 restricted_dev_env_apply_elixir_ls_setup_fish_block() {
@@ -170,24 +179,24 @@ restricted_dev_env_apply_elixir_ls_setup_fish_block() {
   wrapper_env_file="$3"
 
   mkdir -p "$(dirname "${setup_file}")"
-  touch "${setup_file}"
+  cat > "${setup_file}" <<EOF
+#!/usr/bin/env fish
+# Gerado por scripts/install/setup_restricted_dev_env.sh
 
-  restricted_dev_env_remove_exact_block \
-    "${setup_file}" \
-    "${RESTRICTED_DEV_ENV_ELIXIR_LS_BEGIN}" \
-    "${RESTRICTED_DEV_ENV_ELIXIR_LS_END}" \
-    "elixir-ls-setup-fish"
+if not contains -- /usr/bin \$PATH
+    set -gx PATH /usr/bin /bin /usr/sbin /sbin \$PATH
+end
 
-  {
-    printf '\n%s\n' "${RESTRICTED_DEV_ENV_ELIXIR_LS_BEGIN}"
-    printf 'if test -f "%s"\n' "${mix_env_file}"
-    printf '    source "%s"\n' "${mix_env_file}"
-    printf 'end\n'
-    printf 'if test -f "%s"\n' "${wrapper_env_file}"
-    printf '    source "%s"\n' "${wrapper_env_file}"
-    printf 'end\n'
-    printf '%s\n' "${RESTRICTED_DEV_ENV_ELIXIR_LS_END}"
-  } >> "${setup_file}"
+${RESTRICTED_DEV_ENV_ELIXIR_LS_BEGIN}
+if test -f "${mix_env_file}"
+    source "${mix_env_file}"
+end
+if test -f "${wrapper_env_file}"
+    source "${wrapper_env_file}"
+end
+${RESTRICTED_DEV_ENV_ELIXIR_LS_END}
+EOF
+  chmod 0644 "${setup_file}"
 }
 
 restricted_dev_env_remove_elixir_ls_setup_sh_block() {
