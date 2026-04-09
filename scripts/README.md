@@ -16,18 +16,18 @@ sh scripts/configure.sh "<bucket>"
 ```
 
 Se o bucket informado não existir, o bootstrap cria automaticamente no `--aws-region` efetivo.
+No fluxo público acima, o backend EC2 dos wrappers já é habilitado por padrão.
 
-Com backend EC2 dos wrappers habilitado explicitamente:
+Para desligar o backend EC2 dos wrappers:
 
 ```bash
-sh scripts/configure.sh "<bucket>" --enable-ec2-backend
+sh scripts/configure.sh "<bucket>" --disable-ec2-backend
 ```
 
 Com proxy/CA corporativo no remoto (mix + wrappers via EC2):
 
 ```bash
 sh scripts/configure.sh "<bucket>" \
-  --enable-ec2-backend \
   --ec2-proxy "http://proxy.corp:3128" \
   --ca-cert "/etc/ssl/certs/corp-ca.pem"
 ```

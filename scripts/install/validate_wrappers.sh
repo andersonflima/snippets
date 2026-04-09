@@ -238,6 +238,19 @@ validate_fail_open_policy() {
   fi
 }
 
+validate_git_clone_order_policy() {
+  local clone_order
+  clone_order="${GIT_ZIP_WRAPPER_CLONE_ORDER:-local-first}"
+  case "${clone_order}" in
+    local-first)
+      ok "GIT_ZIP_WRAPPER_CLONE_ORDER=local-first (clone local antes do EC2)"
+      ;;
+    *)
+      warn "GIT_ZIP_WRAPPER_CLONE_ORDER=${clone_order} (valor não suportado; wrapper forçará local-first)"
+      ;;
+  esac
+}
+
 validate_required_wrapper curl "${HOME}/.local/share/curl-python-wrapper/bin/curl" "${HOME}/.local/share/curl-python-wrapper/bin"
 validate_optional_wrapper wget "${HOME}/.local/share/curl-python-wrapper/bin/wget" "${HOME}/.local/share/curl-python-wrapper/bin"
 validate_required_wrapper git "${HOME}/.local/share/git-zip-wrapper/bin/git" "${HOME}/.local/share/git-zip-wrapper/bin"
@@ -260,6 +273,7 @@ else
 fi
 
 validate_fail_open_policy
+validate_git_clone_order_policy
 
 printf '\nResumo: %s falhas, %s avisos\n' "${FAILURES}" "${WARNINGS}"
 

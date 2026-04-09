@@ -19,6 +19,7 @@ sanitize_legacy_brew_wrapper_env() {
   unset BREW_WRAPPER_CURL_EC2_REQUIRED 2>/dev/null || true
   unset BREW_WRAPPER_GIT_EC2_REQUIRED 2>/dev/null || true
   unset BREW_WRAPPER_NO_AUTO_UPDATE 2>/dev/null || true
+  unset GIT_ZIP_WRAPPER_CLONE_ORDER 2>/dev/null || true
 
   IFS=':'
   for path_entry in ${old_path}; do

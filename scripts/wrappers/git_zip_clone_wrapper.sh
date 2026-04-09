@@ -35,6 +35,7 @@ GIT_ZIP_WRAPPER_EC2_GIT_CHECKOUT_HELPER="${GIT_ZIP_WRAPPER_EC2_GIT_CHECKOUT_HELP
 GIT_ZIP_WRAPPER_EC2_REQUIRED="${GIT_ZIP_WRAPPER_EC2_REQUIRED:-0}"
 GIT_ZIP_WRAPPER_FORCE_LOCAL_DOWNLOADS="${GIT_ZIP_WRAPPER_FORCE_LOCAL_DOWNLOADS:-0}"
 GIT_ZIP_WRAPPER_EC2_PROXY="${GIT_ZIP_WRAPPER_EC2_PROXY:-${WRAPPERS_VIA_EC2_PROXY:-}}"
+GIT_ZIP_WRAPPER_CLONE_ORDER="${GIT_ZIP_WRAPPER_CLONE_ORDER:-local-first}"
 GIT_ZIP_WRAPPER_LFS_AUTORUN="${GIT_ZIP_WRAPPER_LFS_AUTORUN:-1}"
 GIT_ZIP_WRAPPER_LFS_FORCE="${GIT_ZIP_WRAPPER_LFS_FORCE:-0}"
 GIT_ZIP_WRAPPER_LFS_STRICT="${GIT_ZIP_WRAPPER_LFS_STRICT:-0}"
@@ -164,8 +165,24 @@ normalize_lfs_mode() {
   esac
 }
 
+normalize_clone_order() {
+  local requested
+  requested="$(printf '%s' "${1:-}" | tr '[:upper:]' '[:lower:]')"
+
+  case "${requested}" in
+    ""|local-first)
+      printf '%s\n' "local-first"
+      ;;
+    *)
+      log "valor inválido em GIT_ZIP_WRAPPER_CLONE_ORDER=${requested}; forçando local-first"
+      printf '%s\n' "local-first"
+      ;;
+  esac
+}
+
 ARCHIVE_FORMAT="$(normalize_archive_format "${ARCHIVE_FORMAT}")"
 GIT_ZIP_WRAPPER_LFS_MODE="$(normalize_lfs_mode "${GIT_ZIP_WRAPPER_LFS_MODE}")"
+GIT_ZIP_WRAPPER_CLONE_ORDER="$(normalize_clone_order "${GIT_ZIP_WRAPPER_CLONE_ORDER}")"
 
 resolve_real_git() {
   if [[ -n "${GIT_ZIP_WRAPPER_REAL_GIT:-}" ]]; then
@@ -981,6 +998,14 @@ validate_clone_destination() {
   mkdir -p "${destination}"
 }
 
+reset_clone_destination_after_failed_local_clone() {
+  local destination
+  destination="$1"
+
+  mkdir -p "${destination}"
+  find "${destination}" -mindepth 1 -maxdepth 1 -exec rm -rf {} +
+}
+
 extract_archive_to_destination() {
   local archive_path destination temp_extract top_dir
   archive_path="$1"
@@ -1420,12 +1445,11 @@ main() {
     normalized_repo_url=""
   fi
 
-  local slug archive_path source_url local_clone_failed
+  local slug archive_path source_url local_git_clone_exit_code
   if ! slug="$(extract_github_slug "${repo_url}")"; then
     exec "${real_git}" "$@"
   fi
 
-  local_clone_failed=0
   if command -v curl >/dev/null 2>&1; then
     case "${ARCHIVE_FORMAT}" in
       tar.gz)
@@ -1457,19 +1481,27 @@ main() {
       log "clone(${ARCHIVE_FORMAT}) concluído: ${repo_url} -> ${destination} (source: ${source_url})"
       return 0
     fi
-    local_clone_failed=1
     if is_truthy "${GIT_ZIP_WRAPPER_STRICT:-0}"; then
       die "falha ao baixar arquivo para ${repo_url} (branch/tag: ${branch:-HEAD})"
     fi
-    log "falha ao baixar arquivo para ${repo_url}; tentando backend EC2 antes do git clone normal."
+    log "falha ao baixar arquivo para ${repo_url}; tentando git clone normal antes do backend EC2."
   else
-    local_clone_failed=1
     log "curl não encontrado; pulando clone local por arquivo para ${repo_url}"
+  fi
+
+  set +e
+  "${real_git}" "$@"
+  local_git_clone_exit_code=$?
+  set -e
+  if [[ "${local_git_clone_exit_code}" -eq 0 ]]; then
+    return 0
   fi
 
   if [[ -n "${normalized_repo_url}" ]] && should_use_ec2_backend_for_clone_url "${normalized_repo_url}"; then
     local clone_archive_path
     clone_archive_path="${GIT_ZIP_WRAPPER_TMP_DIR}/repo-clone.tar.gz"
+    log "git clone local falhou; tentando backend EC2 para ${repo_url}"
+    reset_clone_destination_after_failed_local_clone "${destination}"
     log "backend selecionado: ec2 git-clone (${normalized_repo_url})"
     if clone_with_ec2_backend "${normalized_repo_url}" "${clone_archive_path}"; then
       extract_archive_to_destination "${clone_archive_path}" "${destination}"
@@ -1482,17 +1514,14 @@ main() {
       return 0
     fi
     if is_truthy "${GIT_ZIP_WRAPPER_EC2_REQUIRED}"; then
-      if [[ "${local_clone_failed}" -eq 1 ]]; then
-        die "clone local falhou e o backend EC2 falhou para git clone ${repo_url}"
-      fi
-      die "backend EC2 falhou para git clone ${repo_url} e o fallback local está desabilitado"
+      die "git clone local falhou e o backend EC2 falhou para git clone ${repo_url}"
     fi
-    log "backend EC2 do git clone falhou; fallback para git clone normal"
-  elif is_truthy "${GIT_ZIP_WRAPPER_EC2_REQUIRED}" && [[ "${local_clone_failed}" -eq 1 ]]; then
-    die "clone local falhou e o backend EC2 não está disponível para ${repo_url}"
+    log "backend EC2 do git clone falhou; mantendo erro do git clone local"
+  elif is_truthy "${GIT_ZIP_WRAPPER_EC2_REQUIRED}"; then
+    die "git clone local falhou e o backend EC2 não está disponível para ${repo_url}"
   fi
 
-  exec "${real_git}" "$@"
+  exit "${local_git_clone_exit_code}"
 }
 
 main "$@"

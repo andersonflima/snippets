@@ -61,6 +61,7 @@ sanitize_current_wrapper_env() {
   unset GIT_ZIP_WRAPPER_CURL_CACERT 2>/dev/null || true
   unset GIT_ZIP_WRAPPER_ARCHIVE_FORMAT 2>/dev/null || true
   unset GIT_ZIP_WRAPPER_ALLOW_ZIP_FALLBACK 2>/dev/null || true
+  unset GIT_ZIP_WRAPPER_CLONE_ORDER 2>/dev/null || true
   unset GIT_ZIP_WRAPPER_LFS_MODE 2>/dev/null || true
 
   unset MIX_VIA_EC2_INSTANCE_NAME 2>/dev/null || true
@@ -121,6 +122,18 @@ should_apply_shell_rc_by_default() {
   while [ "$#" -gt 0 ]; do
     case "$1" in
       --apply-shell-rc|--no-shell-rc|--shell-rc)
+        return 1
+        ;;
+    esac
+    shift
+  done
+  return 0
+}
+
+should_set_ec2_backend_by_default() {
+  while [ "$#" -gt 0 ]; do
+    case "$1" in
+      --enable-ec2-backend|--disable-ec2-backend)
         return 1
         ;;
     esac
@@ -229,6 +242,9 @@ if [ "${1:-}" = "" ]; then
 fi
 
 if [ "${1#-}" != "$1" ]; then
+  if should_set_ec2_backend_by_default "$@"; then
+    set -- --enable-ec2-backend "$@"
+  fi
   if should_apply_shell_rc_by_default "$@"; then
     set -- --apply-shell-rc --shell-rc "${DEFAULT_SHELL_RC}" "$@"
   fi
@@ -241,6 +257,10 @@ S3_BUCKET="$1"
 shift
 
 set -- --s3-bucket "${S3_BUCKET}" "$@"
+
+if should_set_ec2_backend_by_default "$@"; then
+  set -- --enable-ec2-backend "$@"
+fi
 
 if should_apply_shell_rc_by_default "$@"; then
   set -- --apply-shell-rc --shell-rc "${DEFAULT_SHELL_RC}" "$@"

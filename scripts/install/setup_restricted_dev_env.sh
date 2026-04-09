@@ -78,7 +78,7 @@ Opções:
   --aws-profile <profile>      Profile AWS.
   --s3-prefix <prefixo>        Prefixo compartilhado para os wrappers. Padrão: wrappers-via-ec2
   --mix-s3-prefix <prefixo>    Prefixo específico do mix. Padrão: mix-via-ec2
-  --enable-ec2-backend         Liga backend remoto via EC2 nos wrappers (opcional).
+  --enable-ec2-backend         Liga backend remoto via EC2 nos wrappers.
   --disable-ec2-backend        Desliga backend remoto via EC2 nos wrappers.
   --shell-rc <arquivo>         Arquivo rc do shell.
   --apply-shell-rc             Persiste os env-files no shell rc.
@@ -113,7 +113,7 @@ AWS_REGION_NAME="sa-east-1"
 AWS_PROFILE_NAME=""
 WRAPPERS_S3_PREFIX="wrappers-via-ec2"
 MIX_S3_PREFIX="mix-via-ec2"
-ENABLE_WRAPPER_EC2_BACKEND="0"
+ENABLE_WRAPPER_EC2_BACKEND="1"
 SHELL_RC_PATH="${HOME}/.zshrc"
 APPLY_SHELL_RC="0"
 REAL_MIX_BIN=""
