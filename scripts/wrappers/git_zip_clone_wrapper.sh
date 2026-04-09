@@ -841,30 +841,38 @@ EOF2
 }
 
 fetch_archive_clone_target() {
-  local real_git destination target_ref fetch_depth fetch_exit_code
+  local real_git destination target_ref fetch_depth fetch_exit_code clone_filter
+  local -a fetch_args
   real_git="$1"
   destination="$2"
   target_ref="$3"
   fetch_depth="$4"
+  clone_filter="$(first_forward_value_for_option --filter || true)"
+  fetch_args=("${real_git}" -C "${destination}" fetch --quiet)
+
+  if [[ -n "${fetch_depth}" ]]; then
+    fetch_args+=(--depth "${fetch_depth}")
+  fi
+  if [[ -n "${clone_filter}" ]]; then
+    fetch_args+=(--filter "${clone_filter}")
+  fi
 
   set +e
   if [[ -n "${target_ref}" ]]; then
-    "${real_git}" -C "${destination}" fetch --quiet --depth "${fetch_depth}" origin \
-      "+refs/heads/${target_ref}:refs/remotes/origin/${target_ref}"
+    "${fetch_args[@]}" origin "+refs/heads/${target_ref}:refs/remotes/origin/${target_ref}"
     fetch_exit_code=$?
     if [[ "${fetch_exit_code}" -eq 0 ]]; then
       set -e
       return 0
     fi
 
-    "${real_git}" -C "${destination}" fetch --quiet --depth "${fetch_depth}" origin \
-      "+refs/tags/${target_ref}:refs/tags/${target_ref}"
+    "${fetch_args[@]}" origin "+refs/tags/${target_ref}:refs/tags/${target_ref}"
     fetch_exit_code=$?
     set -e
     return "${fetch_exit_code}"
   fi
 
-  "${real_git}" -C "${destination}" fetch --quiet --depth "${fetch_depth}" origin HEAD
+  "${fetch_args[@]}" origin HEAD
   fetch_exit_code=$?
   set -e
   return "${fetch_exit_code}"
@@ -987,6 +995,22 @@ configure_archive_clone_origin_head() {
   "${real_git}" -C "${destination}" symbolic-ref refs/remotes/origin/HEAD "refs/remotes/origin/${branch_name}"
 }
 
+configure_archive_clone_partial_clone() {
+  local real_git destination clone_filter
+  real_git="$1"
+  destination="$2"
+  clone_filter="$(first_forward_value_for_option --filter || true)"
+
+  if [[ -n "${clone_filter}" ]]; then
+    "${real_git}" -C "${destination}" config remote.origin.promisor true
+    "${real_git}" -C "${destination}" config remote.origin.partialclonefilter "${clone_filter}"
+    return 0
+  fi
+
+  "${real_git}" -C "${destination}" config --unset-all remote.origin.promisor >/dev/null 2>&1 || true
+  "${real_git}" -C "${destination}" config --unset-all remote.origin.partialclonefilter >/dev/null 2>&1 || true
+}
+
 create_archive_snapshot_commit() {
   local real_git destination repo_url target_ref branch_name commit_message
   real_git="$1"
@@ -1039,9 +1063,9 @@ bootstrap_archive_clone_repository() {
   create_archive_snapshot_commit "${real_git}" "${destination}" "${repo_url}" "${target_ref}"
   materialize_archive_clone_snapshot_branch_ref "${real_git}" "${destination}" "${target_ref}" || true
   configure_archive_clone_fetch_refspec "${real_git}" "${destination}" "${target_ref}" || true
+  configure_archive_clone_partial_clone "${real_git}" "${destination}" || true
 
   fetch_depth="$(first_forward_value_for_option --depth || true)"
-  [[ -n "${fetch_depth}" ]] || fetch_depth="1"
 
   fetch_archive_clone_target "${real_git}" "${destination}" "${target_ref}" "${fetch_depth}" || true
   configure_archive_clone_origin_head "${real_git}" "${destination}" "${remote_default_branch}" "${target_ref}" || true
