@@ -1489,11 +1489,13 @@ main() {
     log "curl não encontrado; pulando clone local por arquivo para ${repo_url}"
   fi
 
+  log "tentando git clone local com git real: ${repo_url} -> ${destination}"
   set +e
   "${real_git}" "$@"
   local_git_clone_exit_code=$?
   set -e
   if [[ "${local_git_clone_exit_code}" -eq 0 ]]; then
+    log "git clone local concluído: ${repo_url} -> ${destination}"
     return 0
   fi
 
