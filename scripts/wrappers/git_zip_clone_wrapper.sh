@@ -426,70 +426,185 @@ repo_source_requires_plain_git() {
   return 1
 }
 
+resolve_archive_ref_type() {
+  local ref
+  ref="$1"
+
+  if [[ -z "${ref}" || "${ref}" == "HEAD" ]]; then
+    printf '%s\n' "head"
+    return 0
+  fi
+
+  if looks_like_git_commit_sha "${ref}"; then
+    printf '%s\n' "commit"
+    return 0
+  fi
+
+  case "${ref}" in
+    refs/tags/*|tags/*)
+      printf '%s\n' "tag"
+      return 0
+      ;;
+    refs/remotes/origin/*|remotes/origin/*|refs/heads/*|heads/*|origin/*)
+      printf '%s\n' "branch"
+      return 0
+      ;;
+    *)
+      printf '%s\n' "branch"
+      return 0
+      ;;
+  esac
+}
+
+normalize_archive_ref_name() {
+  local ref ref_type normalized_ref
+  ref="$1"
+  ref_type="$(resolve_archive_ref_type "${ref}")"
+  normalized_ref="${ref}"
+
+  case "${ref_type}" in
+    head)
+      normalized_ref=""
+      ;;
+    commit)
+      ;;
+    tag)
+      case "${normalized_ref}" in
+        refs/tags/*)
+          normalized_ref="${normalized_ref#refs/tags/}"
+          ;;
+        tags/*)
+          normalized_ref="${normalized_ref#tags/}"
+          ;;
+      esac
+      ;;
+    branch)
+      case "${normalized_ref}" in
+        refs/remotes/origin/*)
+          normalized_ref="${normalized_ref#refs/remotes/origin/}"
+          ;;
+        remotes/origin/*)
+          normalized_ref="${normalized_ref#remotes/origin/}"
+          ;;
+        refs/heads/*)
+          normalized_ref="${normalized_ref#refs/heads/}"
+          ;;
+        heads/*)
+          normalized_ref="${normalized_ref#heads/}"
+          ;;
+        origin/*)
+          normalized_ref="${normalized_ref#origin/}"
+          ;;
+      esac
+      ;;
+  esac
+
+  printf '%s\n' "${normalized_ref}"
+}
+
+normalize_archive_branch_name() {
+  local ref ref_type normalized_ref
+  ref="$1"
+  ref_type="$(resolve_archive_ref_type "${ref}")"
+  [[ "${ref_type}" == "branch" ]] || return 1
+
+  normalized_ref="$(normalize_archive_ref_name "${ref}")"
+  [[ -n "${normalized_ref}" ]] || return 1
+  printf '%s\n' "${normalized_ref}"
+}
+
 download_github_archive() {
-  local slug branch archive_path
+  local slug branch archive_path ref_type normalized_ref
   slug="$1"
   branch="$2"
   archive_path="$3"
+  ref_type="$(resolve_archive_ref_type "${branch}")"
+  normalized_ref="$(normalize_archive_ref_name "${branch}")"
 
   if [[ "${ARCHIVE_FORMAT}" == "zip" ]]; then
-    if [[ -n "${branch}" ]]; then
-      if looks_like_git_commit_sha "${branch}"; then
+    case "${ref_type}" in
+      commit)
         try_download_candidate_urls "${archive_path}" \
-          "https://codeload.github.com/${slug}/zip/${branch}" \
-          "https://github.com/${slug}/archive/${branch}.zip" && return 0
-      fi
-      try_download_candidate_urls "${archive_path}" \
-        "https://github.com/${slug}/archive/refs/heads/${branch}.zip" \
-        "https://github.com/${slug}/archive/refs/tags/${branch}.zip" \
-        "https://codeload.github.com/${slug}/zip/refs/heads/${branch}" \
-        "https://codeload.github.com/${slug}/zip/refs/tags/${branch}" \
-        "https://codeload.github.com/${slug}/zip/${branch}" && return 0
-    else
-      try_download_candidate_urls "${archive_path}" \
-        "https://github.com/${slug}/archive/HEAD.zip" \
-        "https://codeload.github.com/${slug}/zip/HEAD" && return 0
-    fi
-  else
-    if [[ -n "${branch}" ]]; then
-      if looks_like_git_commit_sha "${branch}"; then
+          "https://codeload.github.com/${slug}/zip/${normalized_ref}" \
+          "https://github.com/${slug}/archive/${normalized_ref}.zip" && return 0
+        ;;
+      tag)
         try_download_candidate_urls "${archive_path}" \
-          "https://codeload.github.com/${slug}/tar.gz/${branch}" \
-          "https://github.com/${slug}/archive/${branch}.tar.gz" && return 0
-      fi
-      try_download_candidate_urls "${archive_path}" \
-        "https://github.com/${slug}/archive/refs/heads/${branch}.tar.gz" \
-        "https://github.com/${slug}/archive/refs/tags/${branch}.tar.gz" \
-        "https://codeload.github.com/${slug}/tar.gz/refs/heads/${branch}" \
-        "https://codeload.github.com/${slug}/tar.gz/refs/tags/${branch}" \
-        "https://codeload.github.com/${slug}/tar.gz/${branch}" && return 0
-    else
-      try_download_candidate_urls "${archive_path}" \
-        "https://github.com/${slug}/archive/HEAD.tar.gz" \
-        "https://codeload.github.com/${slug}/tar.gz/HEAD" \
-        "https://github.com/${slug}/archive/refs/heads/main.tar.gz" \
-        "https://codeload.github.com/${slug}/tar.gz/refs/heads/main" \
-        "https://github.com/${slug}/archive/refs/heads/master.tar.gz" \
-        "https://codeload.github.com/${slug}/tar.gz/refs/heads/master" && return 0
-    fi
-
-    if is_truthy "${ALLOW_ZIP_FALLBACK}"; then
-      if [[ -n "${branch}" ]]; then
+          "https://github.com/${slug}/archive/refs/tags/${normalized_ref}.zip" \
+          "https://codeload.github.com/${slug}/zip/refs/tags/${normalized_ref}" \
+          "https://codeload.github.com/${slug}/zip/${normalized_ref}" && return 0
+        ;;
+      branch)
         try_download_candidate_urls "${archive_path}" \
-          "https://github.com/${slug}/archive/refs/heads/${branch}.zip" \
-          "https://github.com/${slug}/archive/refs/tags/${branch}.zip" \
-          "https://codeload.github.com/${slug}/zip/refs/heads/${branch}" \
-          "https://codeload.github.com/${slug}/zip/refs/tags/${branch}" \
-          "https://codeload.github.com/${slug}/zip/${branch}" && return 0
-      else
+          "https://github.com/${slug}/archive/refs/heads/${normalized_ref}.zip" \
+          "https://codeload.github.com/${slug}/zip/refs/heads/${normalized_ref}" \
+          "https://codeload.github.com/${slug}/zip/${normalized_ref}" && return 0
+        ;;
+      *)
         try_download_candidate_urls "${archive_path}" \
           "https://github.com/${slug}/archive/HEAD.zip" \
-          "https://codeload.github.com/${slug}/zip/HEAD" \
-          "https://github.com/${slug}/archive/refs/heads/main.zip" \
-          "https://codeload.github.com/${slug}/zip/refs/heads/main" \
-          "https://github.com/${slug}/archive/refs/heads/master.zip" \
-          "https://codeload.github.com/${slug}/zip/refs/heads/master" && return 0
-      fi
+          "https://codeload.github.com/${slug}/zip/HEAD" && return 0
+        ;;
+    esac
+  else
+    case "${ref_type}" in
+      commit)
+        try_download_candidate_urls "${archive_path}" \
+          "https://codeload.github.com/${slug}/tar.gz/${normalized_ref}" \
+          "https://github.com/${slug}/archive/${normalized_ref}.tar.gz" && return 0
+        ;;
+      tag)
+        try_download_candidate_urls "${archive_path}" \
+          "https://github.com/${slug}/archive/refs/tags/${normalized_ref}.tar.gz" \
+          "https://codeload.github.com/${slug}/tar.gz/refs/tags/${normalized_ref}" \
+          "https://codeload.github.com/${slug}/tar.gz/${normalized_ref}" && return 0
+        ;;
+      branch)
+        try_download_candidate_urls "${archive_path}" \
+          "https://github.com/${slug}/archive/refs/heads/${normalized_ref}.tar.gz" \
+          "https://codeload.github.com/${slug}/tar.gz/refs/heads/${normalized_ref}" \
+          "https://codeload.github.com/${slug}/tar.gz/${normalized_ref}" && return 0
+        ;;
+      *)
+        try_download_candidate_urls "${archive_path}" \
+          "https://github.com/${slug}/archive/HEAD.tar.gz" \
+          "https://codeload.github.com/${slug}/tar.gz/HEAD" \
+          "https://github.com/${slug}/archive/refs/heads/main.tar.gz" \
+          "https://codeload.github.com/${slug}/tar.gz/refs/heads/main" \
+          "https://github.com/${slug}/archive/refs/heads/master.tar.gz" \
+          "https://codeload.github.com/${slug}/tar.gz/refs/heads/master" && return 0
+        ;;
+    esac
+
+    if is_truthy "${ALLOW_ZIP_FALLBACK}"; then
+      case "${ref_type}" in
+        commit)
+          try_download_candidate_urls "${archive_path}" \
+            "https://codeload.github.com/${slug}/zip/${normalized_ref}" \
+            "https://github.com/${slug}/archive/${normalized_ref}.zip" && return 0
+          ;;
+        tag)
+          try_download_candidate_urls "${archive_path}" \
+            "https://github.com/${slug}/archive/refs/tags/${normalized_ref}.zip" \
+            "https://codeload.github.com/${slug}/zip/refs/tags/${normalized_ref}" \
+            "https://codeload.github.com/${slug}/zip/${normalized_ref}" && return 0
+          ;;
+        branch)
+          try_download_candidate_urls "${archive_path}" \
+            "https://github.com/${slug}/archive/refs/heads/${normalized_ref}.zip" \
+            "https://codeload.github.com/${slug}/zip/refs/heads/${normalized_ref}" \
+            "https://codeload.github.com/${slug}/zip/${normalized_ref}" && return 0
+          ;;
+        *)
+          try_download_candidate_urls "${archive_path}" \
+            "https://github.com/${slug}/archive/HEAD.zip" \
+            "https://codeload.github.com/${slug}/zip/HEAD" \
+            "https://github.com/${slug}/archive/refs/heads/main.zip" \
+            "https://codeload.github.com/${slug}/zip/refs/heads/main" \
+            "https://github.com/${slug}/archive/refs/heads/master.zip" \
+            "https://codeload.github.com/${slug}/zip/refs/heads/master" && return 0
+          ;;
+      esac
     fi
   fi
 
@@ -720,8 +835,8 @@ fallback_fetch_repo_with_archive() {
       target_ref="${current_branch}"
     fi
   fi
+  target_ref="$(normalize_archive_branch_name "${target_ref}" || true)"
   [[ -n "${target_ref}" ]] || return 1
-  looks_like_git_commit_sha "${target_ref}" && return 1
 
   archive_info="$(build_archive_snapshot_repository "${real_git}" "${origin_url}" "${target_ref}" || true)"
   [[ -n "${archive_info}" ]] || return 1
@@ -1020,11 +1135,13 @@ EOF2
 }
 
 fetch_archive_clone_target() {
-  local real_git destination target_ref fetch_depth fetch_exit_code clone_filter
+  local real_git destination target_ref normalized_target_ref target_ref_type fetch_depth fetch_exit_code clone_filter
   local -a fetch_args
   real_git="$1"
   destination="$2"
   target_ref="$3"
+  target_ref_type="$(resolve_archive_ref_type "${target_ref}")"
+  normalized_target_ref="$(normalize_archive_ref_name "${target_ref}")"
   fetch_depth="$4"
   clone_filter="$(first_forward_value_for_option --filter || true)"
   fetch_args=("${real_git}" -C "${destination}" fetch --quiet)
@@ -1037,15 +1154,22 @@ fetch_archive_clone_target() {
   fi
 
   set +e
-  if [[ -n "${target_ref}" ]]; then
-    "${fetch_args[@]}" origin "+refs/heads/${target_ref}:refs/remotes/origin/${target_ref}"
+  if [[ "${target_ref_type}" == "branch" && -n "${normalized_target_ref}" ]]; then
+    "${fetch_args[@]}" origin "+refs/heads/${normalized_target_ref}:refs/remotes/origin/${normalized_target_ref}"
     fetch_exit_code=$?
     if [[ "${fetch_exit_code}" -eq 0 ]]; then
       set -e
       return 0
     fi
 
-    "${fetch_args[@]}" origin "+refs/tags/${target_ref}:refs/tags/${target_ref}"
+    "${fetch_args[@]}" origin "+refs/tags/${normalized_target_ref}:refs/tags/${normalized_target_ref}"
+    fetch_exit_code=$?
+    set -e
+    return "${fetch_exit_code}"
+  fi
+
+  if [[ "${target_ref_type}" == "tag" && -n "${normalized_target_ref}" ]]; then
+    "${fetch_args[@]}" origin "+refs/tags/${normalized_target_ref}:refs/tags/${normalized_target_ref}"
     fetch_exit_code=$?
     set -e
     return "${fetch_exit_code}"
@@ -1058,28 +1182,30 @@ fetch_archive_clone_target() {
 }
 
 checkout_archive_clone_target() {
-  local real_git destination target_ref
+  local real_git destination target_ref normalized_target_ref target_ref_type
   real_git="$1"
   destination="$2"
   target_ref="$3"
+  target_ref_type="$(resolve_archive_ref_type "${target_ref}")"
+  normalized_target_ref="$(normalize_archive_ref_name "${target_ref}")"
 
-  if [[ -n "${target_ref}" ]] &&
-    "${real_git}" -C "${destination}" rev-parse --verify "refs/remotes/origin/${target_ref}" >/dev/null 2>&1; then
-    if "${real_git}" -C "${destination}" checkout --quiet -B "${target_ref}" "refs/remotes/origin/${target_ref}"; then
+  if [[ "${target_ref_type}" == "branch" && -n "${normalized_target_ref}" ]] &&
+    "${real_git}" -C "${destination}" rev-parse --verify "refs/remotes/origin/${normalized_target_ref}" >/dev/null 2>&1; then
+    if "${real_git}" -C "${destination}" checkout --quiet -B "${normalized_target_ref}" "refs/remotes/origin/${normalized_target_ref}"; then
       return 0
     fi
   fi
 
-  if [[ -n "${target_ref}" ]] &&
-    "${real_git}" -C "${destination}" rev-parse --verify "refs/tags/${target_ref}" >/dev/null 2>&1; then
-    if "${real_git}" -C "${destination}" checkout --quiet --detach "refs/tags/${target_ref}"; then
+  if [[ "${target_ref_type}" == "tag" && -n "${normalized_target_ref}" ]] &&
+    "${real_git}" -C "${destination}" rev-parse --verify "refs/tags/${normalized_target_ref}" >/dev/null 2>&1; then
+    if "${real_git}" -C "${destination}" checkout --quiet --detach "refs/tags/${normalized_target_ref}"; then
       return 0
     fi
   fi
 
   if "${real_git}" -C "${destination}" rev-parse --verify FETCH_HEAD >/dev/null 2>&1; then
-    if [[ -n "${target_ref}" ]]; then
-      if "${real_git}" -C "${destination}" checkout --quiet -B "${target_ref}" FETCH_HEAD; then
+    if [[ "${target_ref_type}" == "branch" && -n "${normalized_target_ref}" ]]; then
+      if "${real_git}" -C "${destination}" checkout --quiet -B "${normalized_target_ref}" FETCH_HEAD; then
         return 0
       fi
     else
@@ -1116,7 +1242,7 @@ archive_clone_has_remote_branch_ref() {
   local real_git destination branch_name
   real_git="$1"
   destination="$2"
-  branch_name="$3"
+  branch_name="$(normalize_archive_branch_name "${3:-}" || true)"
 
   [[ -n "${branch_name}" ]] || return 1
   "${real_git}" -C "${destination}" rev-parse --verify "refs/remotes/origin/${branch_name}" >/dev/null 2>&1
@@ -1134,7 +1260,7 @@ materialize_archive_clone_snapshot_branch_ref() {
   local real_git destination branch_name snapshot_commit
   real_git="$1"
   destination="$2"
-  branch_name="$3"
+  branch_name="$(normalize_archive_branch_name "${3:-}" || true)"
 
   [[ -n "${branch_name}" ]] || return 1
   archive_clone_has_remote_branch_ref "${real_git}" "${destination}" "${branch_name}" && return 0
@@ -1148,7 +1274,7 @@ configure_archive_clone_fetch_refspec() {
   local real_git destination branch_name
   real_git="$1"
   destination="$2"
-  branch_name="$3"
+  branch_name="$(normalize_archive_branch_name "${3:-}" || true)"
 
   [[ -n "${branch_name}" ]] || return 1
   archive_clone_has_remote_branch_ref "${real_git}" "${destination}" "${branch_name}" || return 1
@@ -1162,8 +1288,8 @@ configure_archive_clone_origin_head() {
   local real_git destination preferred_branch fallback_branch branch_name
   real_git="$1"
   destination="$2"
-  preferred_branch="$3"
-  fallback_branch="$4"
+  preferred_branch="$(normalize_archive_branch_name "${3:-}" || true)"
+  fallback_branch="$(normalize_archive_branch_name "${4:-}" || true)"
 
   branch_name="${preferred_branch}"
   if ! archive_clone_has_remote_branch_ref "${real_git}" "${destination}" "${branch_name}"; then
