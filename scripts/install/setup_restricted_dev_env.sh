@@ -602,10 +602,18 @@ Para aplicar na sessão atual:
   . "${WRAPPER_ENV_FILE}"
   rehash 2>/dev/null || true
   hash -r 2>/dev/null || true
+  # reinicie o nvim/tmux já aberto depois disso
 
 Para aplicar na sessão atual (fish):
   source "${FISH_ENV_FILE}"
+  # reinicie o nvim/tmux já aberto depois disso
 
-Para validar se o Mason/LazyVim estão vendo os wrappers:
+Para validar o env persistido:
   sh "${ROOT_DIR}/install/validate_wrappers.sh"
+
+Para validar o shell atual:
+  sh "${ROOT_DIR}/install/validate_wrappers.sh" --current-shell
+
+Para validar o Neovim atual:
+  nvim --headless '+lua print(vim.fn.exepath("git"))' +qa
 EOF2

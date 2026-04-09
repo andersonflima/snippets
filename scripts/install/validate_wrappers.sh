@@ -21,12 +21,14 @@ Uso:
 
 Opções:
   --env-file <arquivo>   Env-file dos wrappers. Padrão: $HOME/.config/wrapper-envs.sh
+  --current-shell        Valida o shell atual sem carregar o env-file persistido.
   --strict-brew          Exige wrapper do brew ativo.
   -h, --help             Mostra esta ajuda.
 USAGE
 }
 
 ENV_FILE="${HOME}/.config/wrapper-envs.sh"
+CURRENT_SHELL_ONLY="0"
 STRICT_BREW="0"
 FAILURES=0
 WARNINGS=0
@@ -36,6 +38,10 @@ while [[ $# -gt 0 ]]; do
     --env-file)
       ENV_FILE="${2:-}"
       shift 2
+      ;;
+    --current-shell)
+      CURRENT_SHELL_ONLY="1"
+      shift
       ;;
     --strict-brew)
       STRICT_BREW="1"
@@ -52,18 +58,20 @@ while [[ $# -gt 0 ]]; do
   esac
 done
 
-if [[ ! -f "${ENV_FILE}" ]]; then
-  log "erro: env-file não encontrado: ${ENV_FILE}"
-  exit 1
+if [[ "${CURRENT_SHELL_ONLY}" == "0" ]]; then
+  if [[ ! -f "${ENV_FILE}" ]]; then
+    log "erro: env-file não encontrado: ${ENV_FILE}"
+    exit 1
+  fi
+
+  set +u
+  # shellcheck disable=SC1090
+  . "${ENV_FILE}"
+  set -u
+
+  rehash 2>/dev/null || true
+  hash -r 2>/dev/null || true
 fi
-
-set +u
-# shellcheck disable=SC1090
-. "${ENV_FILE}"
-set -u
-
-rehash 2>/dev/null || true
-hash -r 2>/dev/null || true
 
 ok() {
   printf 'OK   %s\n' "$*"
@@ -77,6 +85,15 @@ warn() {
 fail() {
   printf 'FAIL %s\n' "$*"
   FAILURES=$((FAILURES + 1))
+}
+
+env_scope_label() {
+  if [[ "${CURRENT_SHELL_ONLY}" == "1" ]]; then
+    printf '%s\n' "ambiente atual"
+    return 0
+  fi
+
+  printf '%s\n' "env-file"
 }
 
 path_is_under() {
@@ -158,11 +175,12 @@ validate_disabled_brew_wrapper() {
 }
 
 validate_real_binary_env() {
-  local var_name value
+  local var_name value scope_label
   var_name="$1"
   value="${!var_name:-}"
+  scope_label="$(env_scope_label)"
   if [[ -z "${value}" ]]; then
-    fail "${var_name}: não definido no env-file"
+    fail "${var_name}: não definido no ${scope_label}"
     return 0
   fi
   if [[ ! -x "${value}" ]]; then
