@@ -45,9 +45,22 @@ GIT_WRAPPER_DIR="${HOME}/.local/share/git-zip-wrapper/bin"
   exit 1
 }
 
+resolve_target_shell_name() {
+  target_shell="${RESTRICTED_DEV_ENV_TARGET_SHELL:-zsh}"
+  target_shell="${target_shell##*/}"
+
+  case "${target_shell}" in
+    zsh|bash|fish|sh)
+      printf '%s\n' "${target_shell}"
+      ;;
+    *)
+      printf '%s\n' "zsh"
+      ;;
+  esac
+}
+
 resolve_default_shell_rc() {
-  active_shell="${SHELL-}"
-  shell_name="${active_shell##*/}"
+  shell_name="$(resolve_target_shell_name)"
 
   case "${shell_name}" in
     fish)
@@ -60,13 +73,7 @@ resolve_default_shell_rc() {
       printf '%s\n' "${HOME}/.bashrc"
       ;;
     *)
-      if [ -f "${HOME}/.zshrc" ]; then
-        printf '%s\n' "${HOME}/.zshrc"
-      elif [ -f "${HOME}/.bashrc" ]; then
-        printf '%s\n' "${HOME}/.bashrc"
-      else
-        printf '%s\n' "${HOME}/.profile"
-      fi
+      printf '%s\n' "${HOME}/.profile"
       ;;
   esac
 }

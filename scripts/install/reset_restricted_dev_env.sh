@@ -25,7 +25,7 @@ Uso:
   scripts/install/reset_restricted_dev_env.sh [opções]
 
 Opções:
-  --shell-rc <arquivo>         Arquivo rc a ser limpo. Padrão: detectado a partir de $SHELL
+  --shell-rc <arquivo>         Arquivo rc a ser limpo.
   --keep-shell-rc              Não remove linhas do shell rc.
   --keep-env-files             Não remove env-files em ~/.config.
   --keep-install-dirs          Não remove wrappers instalados em ~/.local/share.
@@ -33,13 +33,51 @@ Opções:
   --keep-mason-elixir-ls       Não remove artefatos do elixir-ls sob ~/.local/share/nvim/mason.
   --keep-hex-config            Não restaura/remove a config persistida do Hex.
   -h, --help                   Mostra esta ajuda.
+
+Ambiente:
+  RESTRICTED_DEV_ENV_TARGET_SHELL
+                               Shell alvo para o shell rc padrão. Default: zsh.
 USAGE
 }
 
+resolve_target_shell_name() {
+  local target_shell
+  target_shell="${RESTRICTED_DEV_ENV_TARGET_SHELL:-zsh}"
+  target_shell="${target_shell##*/}"
+
+  case "${target_shell}" in
+    zsh|bash|fish|sh)
+      printf '%s\n' "${target_shell}"
+      ;;
+    *)
+      printf '%s\n' "zsh"
+      ;;
+  esac
+}
+
+resolve_target_shell_executable() {
+  local shell_name
+  shell_name="$(resolve_target_shell_name)"
+
+  case "${shell_name}" in
+    zsh)
+      command -v zsh 2>/dev/null || printf '%s\n' "/bin/zsh"
+      ;;
+    bash)
+      command -v bash 2>/dev/null || printf '%s\n' "/bin/bash"
+      ;;
+    fish)
+      command -v fish 2>/dev/null || printf '%s\n' "/usr/bin/env fish"
+      ;;
+    *)
+      command -v sh 2>/dev/null || printf '%s\n' "/bin/sh"
+      ;;
+  esac
+}
+
 detect_default_shell_rc() {
-  local active_shell shell_name
-  active_shell="${SHELL:-}"
-  shell_name="${active_shell##*/}"
+  local shell_name
+  shell_name="$(resolve_target_shell_name)"
 
   case "${shell_name}" in
     fish)
@@ -52,13 +90,7 @@ detect_default_shell_rc() {
       printf '%s\n' "${HOME}/.bashrc"
       ;;
     *)
-      if [[ -f "${HOME}/.zshrc" ]]; then
-        printf '%s\n' "${HOME}/.zshrc"
-      elif [[ -f "${HOME}/.bashrc" ]]; then
-        printf '%s\n' "${HOME}/.bashrc"
-      else
-        printf '%s\n' "${HOME}/.profile"
-      fi
+      printf '%s\n' "${HOME}/.profile"
       ;;
   esac
 }
@@ -118,6 +150,8 @@ while [[ $# -gt 0 ]]; do
       ;;
   esac
 done
+
+TARGET_SHELL_EXECUTABLE="$(resolve_target_shell_executable)"
 
 restricted_dev_env_load_state
 RESTRICTED_DEV_ENV_MANAGED_SHELL_RC="${RESTRICTED_DEV_ENV_MANAGED_SHELL_RC:-}"
@@ -256,10 +290,10 @@ Shell rc:
   ${SHELL_RC_PATH}
 
 Para abrir uma sessão limpa agora:
-  exec "${SHELL:-/bin/zsh}" -l
+  exec "${TARGET_SHELL_EXECUTABLE}" -l
 
 Para limpar a sessão atual:
-  exec "${SHELL:-/bin/zsh}" -l
+  exec "${TARGET_SHELL_EXECUTABLE}" -l
 
 Para reconfigurar do zero:
   sh scripts/configure.sh

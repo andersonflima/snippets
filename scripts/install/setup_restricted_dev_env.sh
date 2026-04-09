@@ -71,10 +71,24 @@ EOF2
   return 1
 }
 
+resolve_target_shell_name() {
+  local target_shell
+  target_shell="${RESTRICTED_DEV_ENV_TARGET_SHELL:-zsh}"
+  target_shell="${target_shell##*/}"
+
+  case "${target_shell}" in
+    zsh|bash|fish|sh)
+      printf '%s\n' "${target_shell}"
+      ;;
+    *)
+      printf '%s\n' "zsh"
+      ;;
+  esac
+}
+
 detect_default_shell_rc() {
-  local active_shell shell_name
-  active_shell="${SHELL:-}"
-  shell_name="${active_shell##*/}"
+  local shell_name
+  shell_name="$(resolve_target_shell_name)"
 
   case "${shell_name}" in
     fish)
@@ -87,13 +101,7 @@ detect_default_shell_rc() {
       printf '%s\n' "${HOME}/.bashrc"
       ;;
     *)
-      if [[ -f "${HOME}/.zshrc" ]]; then
-        printf '%s\n' "${HOME}/.zshrc"
-      elif [[ -f "${HOME}/.bashrc" ]]; then
-        printf '%s\n' "${HOME}/.bashrc"
-      else
-        printf '%s\n' "${HOME}/.profile"
-      fi
+      printf '%s\n' "${HOME}/.profile"
       ;;
   esac
 }
@@ -104,7 +112,7 @@ Uso:
   scripts/install/setup_restricted_dev_env.sh [opções]
 
 Opções:
-  --shell-rc <arquivo>         Arquivo rc do shell (padrão detectado a partir de $SHELL).
+  --shell-rc <arquivo>         Arquivo rc do shell alvo.
   --apply-shell-rc             Persiste os env-files no shell rc.
   --real-curl <path>           Binário real do curl.
   --real-wget <path>           Binário real do wget.
@@ -121,6 +129,10 @@ Opções:
   --hex-no-test                Não executa mix hex.info ao final da config do Hex.
   --no-shell-rc                Não altera o arquivo rc do shell.
   -h, --help                   Mostra esta ajuda.
+
+Ambiente:
+  RESTRICTED_DEV_ENV_TARGET_SHELL
+                               Shell alvo para o shell rc padrão. Default: zsh.
 USAGE
 }
 

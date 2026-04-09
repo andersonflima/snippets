@@ -223,12 +223,29 @@ case "$(printf '%s' "${GIT_LFS_MODE}" | tr '[:upper:]' '[:lower:]')" in
     ;;
 esac
 
+resolve_target_shell_name() {
+  local target_shell
+  target_shell="${RESTRICTED_DEV_ENV_TARGET_SHELL:-zsh}"
+  target_shell="${target_shell##*/}"
+
+  case "${target_shell}" in
+    zsh|bash|fish|sh)
+      printf '%s\n' "${target_shell}"
+      ;;
+    *)
+      printf '%s\n' "zsh"
+      ;;
+  esac
+}
+
 detect_shell_rc() {
-  local active_shell shell_name
-  active_shell="${SHELL:-}"
-  shell_name="${active_shell##*/}"
+  local shell_name
+  shell_name="$(resolve_target_shell_name)"
 
   case "${shell_name}" in
+    fish)
+      printf '%s\n' "${HOME}/.config/fish/config.fish"
+      ;;
     zsh)
       printf '%s\n' "${HOME}/.zshrc"
       ;;
