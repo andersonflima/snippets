@@ -66,6 +66,33 @@ EOF
   return 1
 }
 
+detect_default_shell_rc() {
+  local active_shell shell_name
+  active_shell="${SHELL:-}"
+  shell_name="${active_shell##*/}"
+
+  case "${shell_name}" in
+    fish)
+      printf '%s\n' "${HOME}/.config/fish/config.fish"
+      ;;
+    zsh)
+      printf '%s\n' "${HOME}/.zshrc"
+      ;;
+    bash)
+      printf '%s\n' "${HOME}/.bashrc"
+      ;;
+    *)
+      if [[ -f "${HOME}/.zshrc" ]]; then
+        printf '%s\n' "${HOME}/.zshrc"
+      elif [[ -f "${HOME}/.bashrc" ]]; then
+        printf '%s\n' "${HOME}/.bashrc"
+      else
+        printf '%s\n' "${HOME}/.profile"
+      fi
+      ;;
+  esac
+}
+
 usage() {
   cat <<'USAGE'
 Uso:
@@ -80,7 +107,7 @@ Opções:
   --mix-s3-prefix <prefixo>    Prefixo específico do mix. Padrão: mix-via-ec2
   --enable-ec2-backend         Liga backend remoto via EC2 nos wrappers.
   --disable-ec2-backend        Desliga backend remoto via EC2 nos wrappers.
-  --shell-rc <arquivo>         Arquivo rc do shell.
+  --shell-rc <arquivo>         Arquivo rc do shell (padrão detectado a partir de $SHELL).
   --apply-shell-rc             Persiste os env-files no shell rc.
   --real-mix <path>            Binário real do mix.
   --real-curl <path>           Binário real do curl.
@@ -114,7 +141,7 @@ AWS_PROFILE_NAME=""
 WRAPPERS_S3_PREFIX="wrappers-via-ec2"
 MIX_S3_PREFIX="mix-via-ec2"
 ENABLE_WRAPPER_EC2_BACKEND="1"
-SHELL_RC_PATH="${HOME}/.zshrc"
+SHELL_RC_PATH="$(detect_default_shell_rc)"
 APPLY_SHELL_RC="0"
 REAL_MIX_BIN=""
 REAL_CURL_BIN=""
@@ -131,6 +158,7 @@ HEX_UNSAFE_HTTPS="${MIX_VIA_EC2_HEX_UNSAFE_HTTPS:-${HEX_UNSAFE_HTTPS:-0}}"
 HEX_RUN_TEST="1"
 MIX_ENV_FILE="${HOME}/.config/mix-via-ec2-envs.sh"
 WRAPPER_ENV_FILE="${HOME}/.config/wrapper-envs.sh"
+FISH_ENV_FILE="${HOME}/.config/restricted-dev-env.fish"
 ELIXIR_LS_SETUP_SH="${HOME}/.config/elixir_ls/setup.sh"
 ELIXIR_LS_SETUP_FISH="${HOME}/.config/elixir_ls/setup.fish"
 
@@ -423,6 +451,116 @@ snapshot_hex_config_state_if_needed() {
   RESTRICTED_DEV_ENV_HEX_CONFIG_EXISTED_BEFORE="0"
 }
 
+shell_rc_looks_like_fish() {
+  local shell_rc_path
+  shell_rc_path="$1"
+  case "${shell_rc_path}" in
+    *.fish|*/fish/config.fish)
+      return 0
+      ;;
+  esac
+  return 1
+}
+
+collect_export_keys_from_env_file() {
+  local env_file
+  env_file="$1"
+  [[ -f "${env_file}" ]] || return 0
+  awk '
+    $1 == "export" && $2 ~ /^[A-Za-z_][A-Za-z0-9_]*=.*/ {
+      split($2, parts, "=")
+      print parts[1]
+    }
+  ' "${env_file}"
+}
+
+collect_unset_keys_from_env_file() {
+  local env_file
+  env_file="$1"
+  [[ -f "${env_file}" ]] || return 0
+  awk '
+    $1 == "unset" && $2 ~ /^[A-Za-z_][A-Za-z0-9_]*$/ {
+      print $2
+    }
+  ' "${env_file}"
+}
+
+escape_double_quotes_for_fish() {
+  local value
+  value="$1"
+  value="${value//\\/\\\\}"
+  value="${value//\"/\\\"}"
+  value="${value//\$/\\$}"
+  printf '%s' "${value}"
+}
+
+write_fish_env_file() {
+  local -a exported_keys unset_keys path_entries
+  local env_entry key value escaped_value escaped_path_entry
+
+  mapfile -t exported_keys < <(
+    {
+      collect_export_keys_from_env_file "${MIX_ENV_FILE}"
+      collect_export_keys_from_env_file "${WRAPPER_ENV_FILE}"
+    } | awk '!seen[$0]++'
+  )
+
+  mapfile -t unset_keys < <(
+    {
+      collect_unset_keys_from_env_file "${MIX_ENV_FILE}"
+      collect_unset_keys_from_env_file "${WRAPPER_ENV_FILE}"
+    } | awk '!seen[$0]++'
+  )
+
+  mkdir -p "$(dirname "${FISH_ENV_FILE}")"
+  {
+    cat <<'EOF'
+#!/usr/bin/env fish
+# Gerado por scripts/install/setup_restricted_dev_env.sh
+
+EOF
+  } > "${FISH_ENV_FILE}"
+
+  if [[ ${#exported_keys[@]} -gt 0 ]]; then
+    while IFS= read -r -d '' env_entry; do
+      key="${env_entry%%=*}"
+      value="${env_entry#*=}"
+      if [[ "${key}" == "PATH" ]]; then
+        IFS=':' read -r -a path_entries <<< "${value}"
+        printf 'set -gx PATH' >> "${FISH_ENV_FILE}"
+        for value in "${path_entries[@]}"; do
+          [[ -n "${value}" ]] || continue
+          escaped_path_entry="$(escape_double_quotes_for_fish "${value}")"
+          printf ' "%s"' "${escaped_path_entry}" >> "${FISH_ENV_FILE}"
+        done
+        printf '\n' >> "${FISH_ENV_FILE}"
+        continue
+      fi
+
+      escaped_value="$(escape_double_quotes_for_fish "${value}")"
+      printf 'set -gx %s "%s"\n' "${key}" "${escaped_value}" >> "${FISH_ENV_FILE}"
+    done < <(
+      set +u
+      # shellcheck disable=SC1090
+      . "${MIX_ENV_FILE}"
+      # shellcheck disable=SC1090
+      . "${WRAPPER_ENV_FILE}"
+      set -u
+      for key in "${exported_keys[@]}"; do
+        eval "value=\${${key}:-}"
+        printf '%s=%s\0' "${key}" "${value}"
+      done
+    )
+    printf '\n' >> "${FISH_ENV_FILE}"
+  fi
+
+  for key in "${unset_keys[@]}"; do
+    printf 'set -e %s\n' "${key}" >> "${FISH_ENV_FILE}"
+  done
+
+  chmod 0644 "${FISH_ENV_FILE}"
+}
+
 sync_shell_rc_state() {
   local previous_shell_rc
   previous_shell_rc="${RESTRICTED_DEV_ENV_MANAGED_SHELL_RC:-}"
@@ -432,7 +570,11 @@ sync_shell_rc_state() {
   fi
 
   if [[ "${APPLY_SHELL_RC}" == "1" ]]; then
-    restricted_dev_env_apply_shell_rc_block "${SHELL_RC_PATH}" "${MIX_ENV_FILE}" "${WRAPPER_ENV_FILE}"
+    if shell_rc_looks_like_fish "${SHELL_RC_PATH}"; then
+      restricted_dev_env_apply_shell_rc_fish_block "${SHELL_RC_PATH}" "${FISH_ENV_FILE}"
+    else
+      restricted_dev_env_apply_shell_rc_block "${SHELL_RC_PATH}" "${MIX_ENV_FILE}" "${WRAPPER_ENV_FILE}"
+    fi
     RESTRICTED_DEV_ENV_MANAGED_SHELL_RC="${SHELL_RC_PATH}"
     return 0
   fi
@@ -448,12 +590,14 @@ sync_elixir_ls_setup_state() {
   restricted_dev_env_apply_elixir_ls_setup_fish_block \
     "${ELIXIR_LS_SETUP_FISH}" \
     "${MIX_ENV_FILE}" \
-    "${WRAPPER_ENV_FILE}"
+    "${WRAPPER_ENV_FILE}" \
+    "${FISH_ENV_FILE}"
 }
 
 validate_persisted_env_files() {
   [[ -f "${MIX_ENV_FILE}" ]] || die "env-file do mix via EC2 não foi criado: ${MIX_ENV_FILE}"
   [[ -f "${WRAPPER_ENV_FILE}" ]] || die "env-file compartilhado dos wrappers não foi criado: ${WRAPPER_ENV_FILE}"
+  [[ -f "${FISH_ENV_FILE}" ]] || die "env-file fish compartilhado não foi criado: ${FISH_ENV_FILE}"
 }
 
 validate_elixir_ls_setup_files() {
@@ -461,8 +605,7 @@ validate_elixir_ls_setup_files() {
   [[ -f "${ELIXIR_LS_SETUP_FISH}" ]] || die "setup.fish do elixir_ls não foi criado: ${ELIXIR_LS_SETUP_FISH}"
   grep -Fq "${MIX_ENV_FILE}" "${ELIXIR_LS_SETUP_SH}" || die "setup.sh do elixir_ls não referencia ${MIX_ENV_FILE}"
   grep -Fq "${WRAPPER_ENV_FILE}" "${ELIXIR_LS_SETUP_SH}" || die "setup.sh do elixir_ls não referencia ${WRAPPER_ENV_FILE}"
-  grep -Fq "${MIX_ENV_FILE}" "${ELIXIR_LS_SETUP_FISH}" || die "setup.fish do elixir_ls não referencia ${MIX_ENV_FILE}"
-  grep -Fq "${WRAPPER_ENV_FILE}" "${ELIXIR_LS_SETUP_FISH}" || die "setup.fish do elixir_ls não referencia ${WRAPPER_ENV_FILE}"
+  grep -Fq "${FISH_ENV_FILE}" "${ELIXIR_LS_SETUP_FISH}" || die "setup.fish do elixir_ls não referencia ${FISH_ENV_FILE}"
 }
 
 validate_installed_wrappers() {
@@ -526,8 +669,12 @@ validate_shell_rc_persistence() {
   [[ -n "${managed_shell_rc}" ]] || die "shell rc gerenciado não foi registrado no estado"
   [[ -f "${managed_shell_rc}" ]] || die "shell rc gerenciado não existe: ${managed_shell_rc}"
   grep -Fq "${RESTRICTED_DEV_ENV_SHELL_RC_BEGIN}" "${managed_shell_rc}" || die "bloco gerenciado não foi gravado em ${managed_shell_rc}"
-  grep -Fq "${MIX_ENV_FILE}" "${managed_shell_rc}" || die "shell rc não referencia ${MIX_ENV_FILE}"
-  grep -Fq "${WRAPPER_ENV_FILE}" "${managed_shell_rc}" || die "shell rc não referencia ${WRAPPER_ENV_FILE}"
+  if shell_rc_looks_like_fish "${managed_shell_rc}"; then
+    grep -Fq "${FISH_ENV_FILE}" "${managed_shell_rc}" || die "shell rc fish não referencia ${FISH_ENV_FILE}"
+  else
+    grep -Fq "${MIX_ENV_FILE}" "${managed_shell_rc}" || die "shell rc não referencia ${MIX_ENV_FILE}"
+    grep -Fq "${WRAPPER_ENV_FILE}" "${managed_shell_rc}" || die "shell rc não referencia ${WRAPPER_ENV_FILE}"
+  fi
 }
 
 validate_restricted_dev_env_result() {
@@ -604,6 +751,7 @@ run_step "configurando ambiente do mix via EC2" \
   sh "${ROOT_DIR}/install/configure_mix_via_ec2_envs.sh" "${MIX_ENV_ARGS[@]}"
 run_step "configurando ambiente compartilhado dos wrappers" \
   sh "${ROOT_DIR}/install/configure_wrapper_envs.sh" "${WRAPPER_ENV_ARGS[@]}"
+run_step "gerando env fish compartilhado para wrappers/mix" write_fish_env_file
 
 if [[ "${CONFIGURE_HEX}" == "1" ]]; then
   snapshot_hex_config_state_if_needed
@@ -652,6 +800,7 @@ Wrappers EC2 backend:
 
 Persistência:
   shell rc: ${RESTRICTED_DEV_ENV_MANAGED_SHELL_RC:-não alterado}
+  env fish: ${FISH_ENV_FILE}
   elixir_ls setup.sh: ${ELIXIR_LS_SETUP_SH}
   elixir_ls setup.fish: ${ELIXIR_LS_SETUP_FISH}
   state: ${RESTRICTED_DEV_ENV_STATE_FILE}
@@ -667,6 +816,9 @@ Para aplicar na sessão atual:
   . "${WRAPPER_ENV_FILE}"
   rehash 2>/dev/null || true
   hash -r 2>/dev/null || true
+
+Para aplicar na sessão atual (fish):
+  source "${FISH_ENV_FILE}"
 
 Para validar se o Mason está vendo os wrappers:
   sh "${ROOT_DIR}/install/validate_wrappers.sh"

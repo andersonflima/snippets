@@ -47,7 +47,7 @@ Esse fluxo instala e configura:
 - bloco gerenciado no shell rc
 - manifesto de estado em `~/.config/restricted-dev-env/state.sh`
 
-No entrypoint público, a configuração agora é persistida automaticamente no `~/.zshrc` por um bloco gerenciado centralmente pelo bootstrap.
+No entrypoint público, a configuração é persistida automaticamente no rc detectado via `$SHELL` (por exemplo `~/.zshrc`, `~/.bashrc` ou `~/.config/fish/config.fish`) por um bloco gerenciado centralmente pelo bootstrap.
 
 Se você quiser ativar só na sessão atual, sem persistir:
 
@@ -68,7 +68,7 @@ sh scripts/install/validate_wrappers.sh
 Se você quiser mudar o rc de destino:
 
 ```bash
-sh scripts/configure.sh "<bucket>" --shell-rc "$HOME/.zshrc"
+sh scripts/configure.sh "<bucket>" --shell-rc "$HOME/.config/fish/config.fish"
 ```
 
 Se o bucket informado ainda não existir, o bootstrap tenta criá-lo automaticamente na região configurada.

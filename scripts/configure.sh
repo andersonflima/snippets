@@ -4,7 +4,6 @@ set -eu
 SCRIPT_DIR="$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)"
 SETUP_SCRIPT="${SCRIPT_DIR}/install/setup_restricted_dev_env.sh"
 RESET_SCRIPT="${SCRIPT_DIR}/install/reset_restricted_dev_env.sh"
-DEFAULT_SHELL_RC="${HOME}/.zshrc"
 WRAPPER_ENV_FILE="${HOME}/.config/wrapper-envs.sh"
 MIX_ENV_FILE="${HOME}/.config/mix-via-ec2-envs.sh"
 LEGACY_BREW_WRAPPER_DIR="${HOME}/.local/share/homebrew-install-wrapper/bin"
@@ -13,6 +12,34 @@ CURL_WRAPPER_DIR="${HOME}/.local/share/curl-python-wrapper/bin"
 GIT_WRAPPER_DIR="${HOME}/.local/share/git-zip-wrapper/bin"
 MIX_WRAPPER_DIR="${HOME}/.local/share/mix-ec2-wrapper/bin"
 NVIM_WRAPPER_DIR="${HOME}/.local/share/nvim-ec2-wrapper/bin"
+
+resolve_default_shell_rc() {
+  active_shell="${SHELL-}"
+  shell_name="${active_shell##*/}"
+
+  case "${shell_name}" in
+    fish)
+      printf '%s\n' "${HOME}/.config/fish/config.fish"
+      ;;
+    zsh)
+      printf '%s\n' "${HOME}/.zshrc"
+      ;;
+    bash)
+      printf '%s\n' "${HOME}/.bashrc"
+      ;;
+    *)
+      if [ -f "${HOME}/.zshrc" ]; then
+        printf '%s\n' "${HOME}/.zshrc"
+      elif [ -f "${HOME}/.bashrc" ]; then
+        printf '%s\n' "${HOME}/.bashrc"
+      else
+        printf '%s\n' "${HOME}/.profile"
+      fi
+      ;;
+  esac
+}
+
+DEFAULT_SHELL_RC="$(resolve_default_shell_rc)"
 
 sanitize_current_wrapper_env() {
   old_path="${PATH-}"

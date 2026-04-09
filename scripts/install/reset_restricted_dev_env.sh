@@ -25,7 +25,7 @@ Uso:
   scripts/install/reset_restricted_dev_env.sh [opções]
 
 Opções:
-  --shell-rc <arquivo>         Arquivo rc a ser limpo. Padrão: $HOME/.zshrc
+  --shell-rc <arquivo>         Arquivo rc a ser limpo. Padrão: detectado a partir de $SHELL
   --keep-shell-rc              Não remove linhas do shell rc.
   --keep-env-files             Não remove env-files em ~/.config.
   --keep-install-dirs          Não remove wrappers instalados em ~/.local/share.
@@ -36,13 +36,40 @@ Opções:
 USAGE
 }
 
+detect_default_shell_rc() {
+  local active_shell shell_name
+  active_shell="${SHELL:-}"
+  shell_name="${active_shell##*/}"
+
+  case "${shell_name}" in
+    fish)
+      printf '%s\n' "${HOME}/.config/fish/config.fish"
+      ;;
+    zsh)
+      printf '%s\n' "${HOME}/.zshrc"
+      ;;
+    bash)
+      printf '%s\n' "${HOME}/.bashrc"
+      ;;
+    *)
+      if [[ -f "${HOME}/.zshrc" ]]; then
+        printf '%s\n' "${HOME}/.zshrc"
+      elif [[ -f "${HOME}/.bashrc" ]]; then
+        printf '%s\n' "${HOME}/.bashrc"
+      else
+        printf '%s\n' "${HOME}/.profile"
+      fi
+      ;;
+  esac
+}
+
 SCRIPT_DIR="$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)"
 STATE_HELPER="${SCRIPT_DIR}/restricted_dev_env_state.sh"
 
 # shellcheck disable=SC1090
 . "${STATE_HELPER}"
 
-SHELL_RC_PATH="${HOME}/.zshrc"
+SHELL_RC_PATH="$(detect_default_shell_rc)"
 ELIXIR_LS_SETUP_SH="${HOME}/.config/elixir_ls/setup.sh"
 ELIXIR_LS_SETUP_FISH="${HOME}/.config/elixir_ls/setup.fish"
 RESET_SHELL_RC="1"
@@ -176,6 +203,7 @@ fi
 if [[ "${RESET_ENV_FILES}" == "1" ]]; then
   remove_file_if_exists "${HOME}/.config/mix-via-ec2-envs.sh"
   remove_file_if_exists "${HOME}/.config/wrapper-envs.sh"
+  remove_file_if_exists "${HOME}/.config/restricted-dev-env.fish"
   remove_file_if_exists "${HOME}/.config/mix-hex-envs.sh"
 fi
 
@@ -216,7 +244,7 @@ Shell rc:
   ${SHELL_RC_PATH}
 
 Para abrir uma sessão limpa agora:
-  zsh -f
+  exec "${SHELL:-/bin/zsh}" -l
 
 Para limpar a sessão atual:
   exec "${SHELL:-/bin/zsh}" -l
