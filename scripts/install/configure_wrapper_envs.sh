@@ -86,11 +86,6 @@ Opções:
   --auto-insecure-on-cert-error
                                Ativa retry inseguro no wrapper de curl.
   -h, --help                   Mostra esta ajuda.
-
-Compatibilidade legada:
-  --instance-name, --aws-profile, --aws-region, --s3-bucket, --s3-prefix,
-  --enable-ec2-backend, --disable-ec2-backend e --ec2-proxy são aceitos,
-  mas ignorados. O env-file gerado é sempre local-only.
 USAGE
 }
 
@@ -108,7 +103,6 @@ PROXY_URL=""
 CA_CERT_PATH=""
 AUTO_INSECURE_ON_CERT_ERROR="0"
 MASON_SEED_DIR="${CURL_WRAPPER_MASON_SEED_DIR:-}"
-IGNORED_LEGACY_ARGS=()
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
@@ -172,14 +166,6 @@ while [[ $# -gt 0 ]]; do
       AUTO_INSECURE_ON_CERT_ERROR="1"
       shift
       ;;
-    --instance-name|--aws-profile|--aws-region|--s3-bucket|--s3-prefix|--ec2-proxy)
-      IGNORED_LEGACY_ARGS+=("$1")
-      shift 2
-      ;;
-    --enable-ec2-backend|--disable-ec2-backend)
-      IGNORED_LEGACY_ARGS+=("$1")
-      shift
-      ;;
     -h|--help)
       usage
       exit 0
@@ -189,10 +175,6 @@ while [[ $# -gt 0 ]]; do
       ;;
   esac
 done
-
-if [[ ${#IGNORED_LEGACY_ARGS[@]} -gt 0 ]]; then
-  log "parâmetros legados EC2/S3 ignorados: ${IGNORED_LEGACY_ARGS[*]}"
-fi
 
 [[ -n "${ENV_FILE}" ]] || die "--env-file não pode ser vazio"
 [[ -n "${CURL_INSTALL_DIR}" ]] || die "--curl-install-dir não pode ser vazio"
@@ -231,8 +213,7 @@ case "${AUTO_INSECURE_ON_CERT_ERROR}" in
     die "CURL_WRAPPER_AUTO_INSECURE_ON_CERT_ERROR inválido: ${AUTO_INSECURE_ON_CERT_ERROR}"
     ;;
 esac
-GIT_LFS_MODE="$(printf '%s' "${GIT_LFS_MODE}" | tr '[:upper:]' '[:lower:]')"
-case "${GIT_LFS_MODE}" in
+case "$(printf '%s' "${GIT_LFS_MODE}" | tr '[:upper:]' '[:lower:]')" in
   ""|local)
     GIT_LFS_MODE="local"
     ;;
@@ -274,43 +255,10 @@ render_path_prefix() {
   printf '%s\n' "${joined}"
 }
 
-render_local_only_exports() {
-  printf 'export WRAPPERS_VIA_EC2_ENABLED=%s\n' "$(shell_quote "0")"
-  printf 'export WRAPPERS_VIA_EC2_ALL_URLS=%s\n' "$(shell_quote "0")"
-  printf 'export CURL_WRAPPER_USE_EC2=%s\n' "$(shell_quote "0")"
-  printf 'export CURL_WRAPPER_EC2_ALL_URLS=%s\n' "$(shell_quote "0")"
-  printf 'export CURL_WRAPPER_EC2_REQUIRED=%s\n' "$(shell_quote "0")"
-  printf 'export WGET_WRAPPER_USE_EC2=%s\n' "$(shell_quote "0")"
-  printf 'export WGET_WRAPPER_EC2_ALL_URLS=%s\n' "$(shell_quote "0")"
-  printf 'export WGET_WRAPPER_EC2_REQUIRED=%s\n' "$(shell_quote "0")"
-  printf 'export GIT_ZIP_WRAPPER_USE_EC2=%s\n' "$(shell_quote "0")"
-  printf 'export GIT_ZIP_WRAPPER_EC2_ALL_URLS=%s\n' "$(shell_quote "0")"
-  printf 'export GIT_ZIP_WRAPPER_EC2_REQUIRED=%s\n' "$(shell_quote "0")"
+render_local_exports() {
   printf 'export GIT_ZIP_WRAPPER_CLONE_ORDER=%s\n' "$(shell_quote "local-first")"
   printf 'export GIT_ZIP_WRAPPER_FORCE_LOCAL_DOWNLOADS=%s\n' "$(shell_quote "1")"
   printf 'export GIT_ZIP_WRAPPER_LFS_MODE=%s\n' "$(shell_quote "${GIT_LFS_MODE}")"
-
-  cat <<'EOF2'
-unset WRAPPERS_VIA_EC2_INSTANCE_NAME
-unset WRAPPERS_VIA_EC2_AWS_PROFILE
-unset WRAPPERS_VIA_EC2_AWS_REGION
-unset WRAPPERS_VIA_EC2_S3_BUCKET
-unset WRAPPERS_VIA_EC2_S3_PREFIX
-unset WRAPPERS_VIA_EC2_PROXY
-unset CURL_WRAPPER_EC2_PROXY
-unset WGET_WRAPPER_EC2_PROXY
-unset GIT_ZIP_WRAPPER_EC2_PROXY
-unset MIX_VIA_EC2_INSTANCE_NAME
-unset MIX_VIA_EC2_AWS_PROFILE
-unset MIX_VIA_EC2_AWS_REGION
-unset MIX_VIA_EC2_S3_BUCKET
-unset MIX_VIA_EC2_S3_PREFIX
-unset MIX_VIA_EC2_PROXY
-unset MIX_VIA_EC2_SSH_IDENTITY
-unset MIX_VIA_EC2_CA_CERT
-unset MIX_VIA_EC2_HEX_UNSAFE_HTTPS
-unset MIX_WRAPPER_REMOTE_COMMANDS
-EOF2
 
   if [[ -n "${PROXY_URL}" ]]; then
     cat <<EOF2
@@ -387,8 +335,6 @@ export BREW_WRAPPER_ENABLED="0"
 unset BREW_WRAPPER_REAL_BREW
 unset BREW_WRAPPER_CURL_BIN
 unset BREW_WRAPPER_GIT_BIN
-unset BREW_WRAPPER_CURL_EC2_REQUIRED
-unset BREW_WRAPPER_GIT_EC2_REQUIRED
 unset BREW_WRAPPER_NO_AUTO_UPDATE
 unset BREW
 
@@ -408,7 +354,7 @@ __wrapper_env_old_ifs="\${IFS}"
 IFS=':'
 for __wrapper_env_entry in \${__wrapper_env_original_path}; do
   case "\${__wrapper_env_entry}" in
-    ""|$(shell_quote "${BREW_INSTALL_DIR}")|$(shell_quote "${CURL_INSTALL_DIR}")|$(shell_quote "${GIT_INSTALL_DIR}"))
+    ""|$(shell_quote "${BREW_INSTALL_DIR}")|$(shell_quote "${CURL_INSTALL_DIR}")|$(shell_quote "${GIT_INSTALL_DIR}")|$(shell_quote "${HOME}/.local/share/mix-"*"-wrapper/bin")|$(shell_quote "${HOME}/.local/share/nvim-"*"-wrapper/bin"))
       continue
       ;;
   esac
@@ -435,7 +381,7 @@ unset __wrapper_env_curl_bin
 unset __wrapper_env_wget_bin
 unset __wrapper_env_git_bin
 EOF2
-    render_local_only_exports
+    render_local_exports
   } > "${ENV_FILE}"
 
   chmod 0644 "${ENV_FILE}"

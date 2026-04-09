@@ -25,34 +25,25 @@ Uso:
   sh scripts/install/reinstall_wrappers.sh [opções]
 
 Opções:
-  --env-file <arquivo>         Arquivo de env gerado pelo configure_wrapper_envs.
+  --env-file <arquivo>         Arquivo de env gerado por configure_wrapper_envs.
   --shell-rc <arquivo>         Persiste source no rc indicado.
   --apply-shell-rc             Persiste source no shell rc detectado.
   --no-shell-rc                Não altera shell rc.
   --skip-configure             Reinstala binários, mas não regenera env-file.
-  --with-mix-wrapper           Também reinstala o wrapper de mix.
   --real-curl <path>           Binário real do curl.
   --real-wget <path>           Binário real do wget.
   --real-git <path>            Binário real do git.
   --real-brew <path>           Legado. Ignorado; o wrapper de brew foi removido.
-  --instance-name <nome>       Nome da instância EC2 dos wrappers.
-  --aws-profile <profile>      Profile AWS.
-  --aws-region <region>        Região AWS.
-  --s3-bucket <bucket>         Bucket S3 dos wrappers.
-  --s3-prefix <prefixo>        Prefixo S3 dos wrappers.
-  --enable-ec2-backend         Liga backend remoto via EC2 nos wrappers.
-  --disable-ec2-backend        Desliga backend EC2 nos wrappers.
   --proxy <url>                Proxy local para wrappers.
-  --ec2-proxy <url>            Proxy exclusivo para backend EC2.
   --ca-cert <arquivo>          CA customizada para wrapper de git.
   --auto-insecure-on-cert-error
                                Ativa retry inseguro no wrapper de curl.
   --mason-seed-dir <dir>       Diretório seed para artefatos do Mason.
-  --git-lfs-mode <modo>        local|ec2 para pós-clone do git wrapper.
+  --git-lfs-mode <modo>        Aceita apenas local.
   -h, --help                   Mostra esta ajuda.
 
 Comportamento:
-  - Reinstala wrappers de curl e git.
+  - Reinstala wrappers de curl, wget e git.
   - Remove instalação legada do wrapper de brew, quando existir.
   - Se --skip-configure não for usado, regenera o env-file.
   - Quando possível, reaproveita parâmetros do env-file atual.
@@ -66,21 +57,11 @@ ENV_FILE="${HOME}/.config/wrapper-envs.sh"
 SHELL_RC=""
 APPLY_SHELL_RC=""
 SKIP_CONFIGURE="0"
-WITH_MIX_WRAPPER="0"
 
 REAL_CURL_BIN=""
 REAL_WGET_BIN=""
 REAL_GIT_BIN=""
-REAL_BREW_BIN=""
-
-INSTANCE_NAME=""
-AWS_PROFILE_NAME=""
-AWS_REGION_NAME=""
-S3_BUCKET_NAME=""
-S3_PREFIX_NAME=""
-ENABLE_EC2_BACKEND=""
 PROXY_URL=""
-EC2_PROXY_URL=""
 CA_CERT_PATH=""
 AUTO_INSECURE_ON_CERT_ERROR="0"
 MASON_SEED_DIR=""
@@ -109,10 +90,6 @@ while [[ $# -gt 0 ]]; do
       SKIP_CONFIGURE="1"
       shift
       ;;
-    --with-mix-wrapper)
-      WITH_MIX_WRAPPER="1"
-      shift
-      ;;
     --real-curl)
       REAL_CURL_BIN="${2:-}"
       shift 2
@@ -126,43 +103,10 @@ while [[ $# -gt 0 ]]; do
       shift 2
       ;;
     --real-brew)
-      REAL_BREW_BIN="${2:-}"
       shift 2
-      ;;
-    --instance-name)
-      INSTANCE_NAME="${2:-}"
-      shift 2
-      ;;
-    --aws-profile)
-      AWS_PROFILE_NAME="${2:-}"
-      shift 2
-      ;;
-    --aws-region)
-      AWS_REGION_NAME="${2:-}"
-      shift 2
-      ;;
-    --s3-bucket)
-      S3_BUCKET_NAME="${2:-}"
-      shift 2
-      ;;
-    --s3-prefix)
-      S3_PREFIX_NAME="${2:-}"
-      shift 2
-      ;;
-    --enable-ec2-backend)
-      ENABLE_EC2_BACKEND="1"
-      shift
-      ;;
-    --disable-ec2-backend)
-      ENABLE_EC2_BACKEND="0"
-      shift
       ;;
     --proxy)
       PROXY_URL="${2:-}"
-      shift 2
-      ;;
-    --ec2-proxy)
-      EC2_PROXY_URL="${2:-}"
       shift 2
       ;;
     --ca-cert)
@@ -204,24 +148,23 @@ load_existing_env_defaults() {
   [[ -n "${REAL_CURL_BIN}" ]] || REAL_CURL_BIN="${CURL_WRAPPER_REAL_CURL:-}"
   [[ -n "${REAL_WGET_BIN}" ]] || REAL_WGET_BIN="${WGET_WRAPPER_REAL_WGET:-}"
   [[ -n "${REAL_GIT_BIN}" ]] || REAL_GIT_BIN="${GIT_ZIP_WRAPPER_REAL_GIT:-}"
-
-  [[ -n "${INSTANCE_NAME}" ]] || INSTANCE_NAME="${WRAPPERS_VIA_EC2_INSTANCE_NAME:-}"
-  [[ -n "${AWS_PROFILE_NAME}" ]] || AWS_PROFILE_NAME="${WRAPPERS_VIA_EC2_AWS_PROFILE:-}"
-  [[ -n "${AWS_REGION_NAME}" ]] || AWS_REGION_NAME="${WRAPPERS_VIA_EC2_AWS_REGION:-}"
-  [[ -n "${S3_BUCKET_NAME}" ]] || S3_BUCKET_NAME="${WRAPPERS_VIA_EC2_S3_BUCKET:-}"
-  [[ -n "${S3_PREFIX_NAME}" ]] || S3_PREFIX_NAME="${WRAPPERS_VIA_EC2_S3_PREFIX:-}"
-  [[ -n "${ENABLE_EC2_BACKEND}" ]] || ENABLE_EC2_BACKEND="${WRAPPERS_VIA_EC2_ENABLED:-}"
   [[ -n "${PROXY_URL}" ]] || PROXY_URL="${CURL_WRAPPER_PROXY:-${HTTPS_PROXY:-${HTTP_PROXY:-}}}"
   [[ -n "${CA_CERT_PATH}" ]] || CA_CERT_PATH="${GIT_ZIP_WRAPPER_CURL_CACERT:-}"
   [[ -n "${MASON_SEED_DIR}" ]] || MASON_SEED_DIR="${CURL_WRAPPER_MASON_SEED_DIR:-}"
-  [[ -n "${GIT_LFS_MODE}" ]] || GIT_LFS_MODE="${GIT_ZIP_WRAPPER_LFS_MODE:-}"
+  [[ -n "${GIT_LFS_MODE}" ]] || GIT_LFS_MODE="${GIT_ZIP_WRAPPER_LFS_MODE:-local}"
 }
 
 load_existing_env_defaults
 
-if [[ -z "${ENABLE_EC2_BACKEND}" ]]; then
-  ENABLE_EC2_BACKEND="0"
-fi
+case "${GIT_LFS_MODE:-local}" in
+  ""|local)
+    GIT_LFS_MODE="local"
+    ;;
+  *)
+    log "GIT_ZIP_WRAPPER_LFS_MODE=${GIT_LFS_MODE} ignorado; forçando local"
+    GIT_LFS_MODE="local"
+    ;;
+esac
 
 remove_legacy_brew_wrapper_installation() {
   local brew_wrapper_root
@@ -250,11 +193,6 @@ install_wrapper_binaries() {
   sh "${SCRIPT_DIR}/install_git_zip_wrapper.sh" "${git_install_args[@]}"
 
   remove_legacy_brew_wrapper_installation
-
-  if [[ "${WITH_MIX_WRAPPER}" == "1" ]]; then
-    log "reinstalando wrapper de mix"
-    sh "${SCRIPT_DIR}/install_mix_ec2_wrapper.sh"
-  fi
 }
 
 configure_wrapper_env_file() {
@@ -278,53 +216,37 @@ configure_wrapper_env_file() {
   [[ -n "${REAL_CURL_BIN}" ]] && configure_args+=(--real-curl "${REAL_CURL_BIN}")
   [[ -n "${REAL_WGET_BIN}" ]] && configure_args+=(--real-wget "${REAL_WGET_BIN}")
   [[ -n "${REAL_GIT_BIN}" ]] && configure_args+=(--real-git "${REAL_GIT_BIN}")
-  [[ -n "${INSTANCE_NAME}" ]] && configure_args+=(--instance-name "${INSTANCE_NAME}")
-  [[ -n "${AWS_PROFILE_NAME}" ]] && configure_args+=(--aws-profile "${AWS_PROFILE_NAME}")
-  [[ -n "${AWS_REGION_NAME}" ]] && configure_args+=(--aws-region "${AWS_REGION_NAME}")
-  [[ -n "${S3_BUCKET_NAME}" ]] && configure_args+=(--s3-bucket "${S3_BUCKET_NAME}")
-  [[ -n "${S3_PREFIX_NAME}" ]] && configure_args+=(--s3-prefix "${S3_PREFIX_NAME}")
   [[ -n "${PROXY_URL}" ]] && configure_args+=(--proxy "${PROXY_URL}")
-  [[ -n "${EC2_PROXY_URL}" ]] && configure_args+=(--ec2-proxy "${EC2_PROXY_URL}")
   [[ -n "${CA_CERT_PATH}" ]] && configure_args+=(--ca-cert "${CA_CERT_PATH}")
   [[ -n "${MASON_SEED_DIR}" ]] && configure_args+=(--mason-seed-dir "${MASON_SEED_DIR}")
 
-  if [[ "${ENABLE_EC2_BACKEND}" == "1" ]]; then
-    configure_args+=(--enable-ec2-backend)
-  else
-    configure_args+=(--disable-ec2-backend)
-  fi
   if [[ "${AUTO_INSECURE_ON_CERT_ERROR}" == "1" ]]; then
     configure_args+=(--auto-insecure-on-cert-error)
   fi
 
   log "regenerando env dos wrappers em ${ENV_FILE}"
-  if [[ -n "${GIT_LFS_MODE}" ]]; then
-    GIT_ZIP_WRAPPER_LFS_MODE="${GIT_LFS_MODE}" \
-      sh "${SCRIPT_DIR}/configure_wrapper_envs.sh" "${configure_args[@]}"
-    return 0
-  fi
-
-  sh "${SCRIPT_DIR}/configure_wrapper_envs.sh" "${configure_args[@]}"
+  GIT_ZIP_WRAPPER_LFS_MODE="${GIT_LFS_MODE}" \
+    sh "${SCRIPT_DIR}/configure_wrapper_envs.sh" "${configure_args[@]}"
 }
 
 install_wrapper_binaries
 
 if [[ "${SKIP_CONFIGURE}" == "1" ]]; then
-  cat <<EOF
+  cat <<EOF2
 Reinstalação concluída.
 
 Env-file:
   ${ENV_FILE}
 
 Próximo passo:
-  sh "${ROOT_DIR}/validate_wrappers.sh"
-EOF
+  sh "${ROOT_DIR}/install/validate_wrappers.sh"
+EOF2
   exit 0
 fi
 
 configure_wrapper_env_file
 
-cat <<EOF
+cat <<EOF2
 Reinstalação concluída.
 
 Env-file:
@@ -332,5 +254,5 @@ Env-file:
 
 Próximo passo:
   . "${ENV_FILE}"
-  sh "${ROOT_DIR}/validate_wrappers.sh"
-EOF
+  sh "${ROOT_DIR}/install/validate_wrappers.sh"
+EOF2

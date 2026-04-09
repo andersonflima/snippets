@@ -22,7 +22,7 @@ die() {
 usage() {
   cat <<'USAGE'
 Uso:
-  scripts/ec2/elixir/configure_hex_config.sh [opções]
+  scripts/install/configure_hex_config.sh [opções]
 
 Opções:
   --proxy <url>                Define http_proxy e https_proxy no Hex.
@@ -176,11 +176,11 @@ if [[ "${UNSAFE_HTTPS}" == "1" ]]; then
   run_mix_hex_config "no_verify_repo_origin" "true"
 fi
 
-cat <<EOF
+cat <<EOF2
 Configuração do Hex aplicada.
 
 Verificação atual:
-EOF
+EOF2
 mix hex.config
 
 if [[ "${RUN_TEST}" == "1" ]]; then

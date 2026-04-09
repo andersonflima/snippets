@@ -186,6 +186,19 @@ remove_dir_if_exists() {
   fi
 }
 
+remove_glob_matches() {
+  local pattern target
+  pattern="$1"
+  for target in ${pattern}; do
+    [[ -e "${target}" ]] || continue
+    if [[ -d "${target}" ]]; then
+      remove_dir_if_exists "${target}"
+    else
+      remove_file_if_exists "${target}"
+    fi
+  done
+}
+
 if [[ "${RESET_SHELL_RC}" == "1" ]]; then
   SHELL_RC_TARGETS=()
   append_shell_rc_target "${RESTRICTED_DEV_ENV_MANAGED_SHELL_RC}"
@@ -201,18 +214,17 @@ if [[ "${RESET_SHELL_RC}" == "1" ]]; then
 fi
 
 if [[ "${RESET_ENV_FILES}" == "1" ]]; then
-  remove_file_if_exists "${HOME}/.config/mix-via-ec2-envs.sh"
   remove_file_if_exists "${HOME}/.config/wrapper-envs.sh"
   remove_file_if_exists "${HOME}/.config/restricted-dev-env.fish"
-  remove_file_if_exists "${HOME}/.config/mix-hex-envs.sh"
+  remove_glob_matches "${HOME}/.config/mix-*-envs.sh"
 fi
 
 if [[ "${RESET_INSTALL_DIRS}" == "1" ]]; then
-  remove_dir_if_exists "${HOME}/.local/share/mix-ec2-wrapper"
   remove_dir_if_exists "${HOME}/.local/share/homebrew-install-wrapper"
   remove_dir_if_exists "${HOME}/.local/share/curl-python-wrapper"
   remove_dir_if_exists "${HOME}/.local/share/git-zip-wrapper"
-  remove_dir_if_exists "${HOME}/.local/share/nvim-ec2-wrapper"
+  remove_glob_matches "${HOME}/.local/share/mix-*-wrapper"
+  remove_glob_matches "${HOME}/.local/share/nvim-*-wrapper"
 fi
 
 if [[ "${RESET_WRAPPER_CACHE}" == "1" ]]; then

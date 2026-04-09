@@ -26,9 +26,9 @@ resolve_real_curl() {
     fi
     printf '%s\n' "${candidate}"
     return 0
-  done <<EOF
+  done <<EOF2
 $(which -a curl 2>/dev/null || true)
-EOF
+EOF2
 
   return 1
 }
@@ -43,9 +43,9 @@ resolve_real_wget() {
     fi
     printf '%s\n' "${candidate}"
     return 0
-  done <<EOF
+  done <<EOF2
 $(which -a wget 2>/dev/null || true)
-EOF
+EOF2
 
   return 1
 }
@@ -53,14 +53,13 @@ EOF
 usage() {
   cat <<'USAGE'
 Uso:
-  scripts/install/install_curl_python_wrapper.sh [--install-dir <dir>] [--wrapper-source <file>] [--wget-wrapper-source <file>] [--lib-source-dir <dir>] [--ec2-helper-source <file>] [--real-curl <path>] [--real-wget <path>]
+  scripts/install/install_curl_python_wrapper.sh [--install-dir <dir>] [--wrapper-source <file>] [--wget-wrapper-source <file>] [--lib-source-dir <dir>] [--real-curl <path>] [--real-wget <path>]
 
 Padrões:
   --install-dir: $HOME/.local/share/curl-python-wrapper/bin
   --wrapper-source: scripts/wrappers/curl_python_wrapper.sh
-  --wget-wrapper-source: scripts/wrappers/wget_ec2_wrapper.sh
+  --wget-wrapper-source: scripts/wrappers/wget_wrapper.sh
   --lib-source-dir: scripts/wrappers/lib
-  --ec2-helper-source: scripts/ec2/assets/fetch_url_via_ec2.sh
   --real-curl: primeiro curl encontrado no PATH
   --real-wget: primeiro wget encontrado no PATH, se existir
 USAGE
@@ -68,9 +67,8 @@ USAGE
 
 INSTALL_DIR="${HOME}/.local/share/curl-python-wrapper/bin"
 WRAPPER_SOURCE="$(cd "$(dirname "$0")/.." && pwd)/wrappers/curl_python_wrapper.sh"
-WGET_WRAPPER_SOURCE="$(cd "$(dirname "$0")/.." && pwd)/wrappers/wget_ec2_wrapper.sh"
+WGET_WRAPPER_SOURCE="$(cd "$(dirname "$0")/.." && pwd)/wrappers/wget_wrapper.sh"
 LIB_SOURCE_DIR="$(cd "$(dirname "$0")/.." && pwd)/wrappers/lib"
-EC2_HELPER_SOURCE="$(cd "$(dirname "$0")/.." && pwd)/ec2/assets/fetch_url_via_ec2.sh"
 LIB_SOURCE_DIR_EXPLICIT="0"
 REAL_CURL_BIN="${CURL_WRAPPER_REAL_CURL:-}"
 REAL_WGET_BIN="${WGET_WRAPPER_REAL_WGET:-}"
@@ -92,10 +90,6 @@ while [[ $# -gt 0 ]]; do
     --lib-source-dir)
       LIB_SOURCE_DIR="${2:-}"
       LIB_SOURCE_DIR_EXPLICIT="1"
-      shift 2
-      ;;
-    --ec2-helper-source)
-      EC2_HELPER_SOURCE="${2:-}"
       shift 2
       ;;
     --real-curl)
@@ -120,7 +114,6 @@ done
 [[ -n "${WRAPPER_SOURCE}" ]] || die "--wrapper-source não pode ser vazio"
 [[ -f "${WRAPPER_SOURCE}" ]] || die "wrapper não encontrado: ${WRAPPER_SOURCE}"
 [[ -f "${WGET_WRAPPER_SOURCE}" ]] || die "wrapper wget não encontrado: ${WGET_WRAPPER_SOURCE}"
-[[ -f "${EC2_HELPER_SOURCE}" ]] || die "helper EC2 não encontrado: ${EC2_HELPER_SOURCE}"
 if [[ "${LIB_SOURCE_DIR_EXPLICIT}" != "1" ]]; then
   LIB_SOURCE_DIR="$(cd "$(dirname "${WRAPPER_SOURCE}")" && pwd)/lib"
 fi
@@ -145,16 +138,13 @@ fi
 mkdir -p "${INSTALL_DIR}"
 cp "${WRAPPER_SOURCE}" "${INSTALL_DIR}/curl"
 cp "${WGET_WRAPPER_SOURCE}" "${INSTALL_DIR}/wget"
-chmod 0755 "${INSTALL_DIR}/curl"
-chmod 0755 "${INSTALL_DIR}/wget"
-cp "${EC2_HELPER_SOURCE}" "${INSTALL_DIR}/fetch-url-via-ec2"
-chmod 0755 "${INSTALL_DIR}/fetch-url-via-ec2"
+chmod 0755 "${INSTALL_DIR}/curl" "${INSTALL_DIR}/wget"
 if [[ -n "${LIB_SOURCE_DIR}" ]]; then
   mkdir -p "${INSTALL_DIR}/lib"
   cp -R "${LIB_SOURCE_DIR}/." "${INSTALL_DIR}/lib/"
 fi
 
-cat <<EOF
+cat <<EOF2
 Instalação concluída.
 
 1) Exporte no shell:
@@ -166,7 +156,7 @@ export PATH="${INSTALL_DIR}:\$PATH"
 vim.env.CURL_WRAPPER_REAL_CURL = "${REAL_CURL_BIN}"
 vim.env.WGET_WRAPPER_REAL_WGET = "${REAL_WGET_BIN}"
 vim.env.PATH = "${INSTALL_DIR}:" .. vim.env.PATH
-vim.env.CURL_WRAPPER_RELEASE_FALLBACK_REPOS = "elixir-lsp/elixir-ls,luals/lua-language-server,omnisharp/omnisharp-roslyn"
+vim.env.CURL_WRAPPER_RELEASE_FALLBACK_REPOS = "elixir-lsp/elixir-ls,johnnymorganz/stylua,luals/lua-language-server,omnisharp/omnisharp-roslyn"
 vim.env.CURL_WRAPPER_ALLOW_DIRECT_RELEASE_FALLBACK = "1"
 vim.env.CURL_WRAPPER_ENABLE_MASON_SMART_RELEASES = "1"
 vim.env.CURL_WRAPPER_RELEASE_CACHE_DIR = vim.fn.expand("~/.cache/curl-python-wrapper/releases")
@@ -187,7 +177,7 @@ vim.env.CURL_WRAPPER_MASON_BUILDERS = "elixir-lsp/elixir-ls=elixir_ls_release,om
 - quando o pacote só publica .zip, o wrapper também tenta o endpoint de assets da API do GitHub
 - se a estratégia inteligente falhar, o wrapper ainda tenta `gh release`
 - para sobrescrever a lista:
-- export CURL_WRAPPER_RELEASE_FALLBACK_REPOS="elixir-lsp/elixir-ls,luals/lua-language-server,omnisharp/omnisharp-roslyn"
+- export CURL_WRAPPER_RELEASE_FALLBACK_REPOS="elixir-lsp/elixir-ls,johnnymorganz/stylua,luals/lua-language-server,omnisharp/omnisharp-roslyn"
 - para sobrescrever o registro de builders:
 - export CURL_WRAPPER_MASON_BUILDERS="elixir-lsp/elixir-ls=elixir_ls_release,omnisharp/omnisharp-roslyn=omnisharp_source_publish"
 - para sobrescrever os repositórios que devem buildar from scratch:
@@ -216,4 +206,4 @@ vim.env.CURL_WRAPPER_MASON_BUILDERS = "elixir-lsp/elixir-ls=elixir_ls_release,om
 
 4) Teste:
 curl -fsSL https://github.com/neovim/neovim/archive/refs/heads/master.tar.gz -o /tmp/neovim.tar.gz
-EOF
+EOF2

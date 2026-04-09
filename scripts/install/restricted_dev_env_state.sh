@@ -83,27 +83,23 @@ restricted_dev_env_cleanup_legacy_shell_rc_lines() {
       next
     }
 
-    index($0, ".config/mix-via-ec2-envs.sh") > 0 {
+    $0 ~ /\.config\/wrapper-envs\.sh/ {
       next
     }
 
-    index($0, ".config/wrapper-envs.sh") > 0 {
+    $0 ~ /\.config\/restricted-dev-env\.fish/ {
       next
     }
 
-    index($0, ".config/restricted-dev-env.fish") > 0 {
+    $0 ~ /\.config\/mix-[^[:space:]]+-envs\.sh/ {
       next
     }
 
-    index($0, ".config/mix-hex-envs.sh") > 0 {
+    $0 ~ /# wrapper do mix via [A-Za-z0-9_-]+/ {
       next
     }
 
-    index($0, "# wrapper do mix via EC2") > 0 {
-      next
-    }
-
-    index($0, "# wrappers de curl/git para ambiente restrito") > 0 {
+    $0 ~ /# wrappers de curl\/git para ambiente restrito/ {
       next
     }
 
@@ -169,7 +165,7 @@ restricted_dev_env_apply_elixir_ls_setup_sh_block() {
 
   mkdir -p "$(dirname "${setup_file}")"
   {
-    cat <<EOF
+    cat <<EOF2
 #!/usr/bin/env sh
 # Gerado por scripts/install/setup_restricted_dev_env.sh
 
@@ -187,14 +183,14 @@ esac
 export PATH
 
 ${RESTRICTED_DEV_ENV_ELIXIR_LS_BEGIN}
-EOF
+EOF2
     for env_file in "$@"; do
       [[ -n "${env_file}" ]] || continue
       printf '[ -f "%s" ] && . "%s"\n' "${env_file}" "${env_file}"
     done
-    cat <<EOF
+    cat <<EOF2
 ${RESTRICTED_DEV_ENV_ELIXIR_LS_END}
-EOF
+EOF2
   } > "${setup_file}"
   chmod 0644 "${setup_file}"
 }
@@ -206,7 +202,7 @@ restricted_dev_env_apply_elixir_ls_setup_fish_block() {
 
   mkdir -p "$(dirname "${setup_file}")"
   {
-    cat <<EOF
+    cat <<EOF2
 #!/usr/bin/env fish
 # Gerado por scripts/install/setup_restricted_dev_env.sh
 
@@ -215,17 +211,17 @@ if not contains -- /usr/bin \$PATH
 end
 
 ${RESTRICTED_DEV_ENV_ELIXIR_LS_BEGIN}
-EOF
+EOF2
     if [[ -n "${fish_env_file}" ]]; then
-      cat <<EOF
+      cat <<EOF2
 if test -f "${fish_env_file}"
     source "${fish_env_file}"
 end
-EOF
+EOF2
     fi
-    cat <<EOF
+    cat <<EOF2
 ${RESTRICTED_DEV_ENV_ELIXIR_LS_END}
-EOF
+EOF2
   } > "${setup_file}"
   chmod 0644 "${setup_file}"
 }
@@ -253,7 +249,7 @@ restricted_dev_env_remove_elixir_ls_setup_fish_block() {
 restricted_dev_env_write_state() {
   restricted_dev_env_ensure_state_dir
 
-  cat > "${RESTRICTED_DEV_ENV_STATE_FILE}" <<EOF
+  cat > "${RESTRICTED_DEV_ENV_STATE_FILE}" <<EOF2
 #!/usr/bin/env bash
 export RESTRICTED_DEV_ENV_STATE_VERSION="1"
 export RESTRICTED_DEV_ENV_MANAGED_SHELL_RC=$(restricted_dev_env_shell_quote "${RESTRICTED_DEV_ENV_MANAGED_SHELL_RC:-}")
@@ -261,7 +257,7 @@ export RESTRICTED_DEV_ENV_HEX_MANAGED=$(restricted_dev_env_shell_quote "${RESTRI
 export RESTRICTED_DEV_ENV_HEX_CONFIG_PATH=$(restricted_dev_env_shell_quote "${RESTRICTED_DEV_ENV_HEX_CONFIG_PATH:-}")
 export RESTRICTED_DEV_ENV_HEX_BACKUP_PATH=$(restricted_dev_env_shell_quote "${RESTRICTED_DEV_ENV_HEX_BACKUP_PATH:-}")
 export RESTRICTED_DEV_ENV_HEX_CONFIG_EXISTED_BEFORE=$(restricted_dev_env_shell_quote "${RESTRICTED_DEV_ENV_HEX_CONFIG_EXISTED_BEFORE:-0}")
-EOF
+EOF2
 
   chmod 0644 "${RESTRICTED_DEV_ENV_STATE_FILE}"
 }

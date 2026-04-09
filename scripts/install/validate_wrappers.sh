@@ -210,44 +210,15 @@ validate_curl_wrapper_homebrew_contract() {
   ok "curl: contrato --homebrew=print-path OK (${resolved_real_curl})"
 }
 
-validate_fail_open_policy() {
-  local ec2_enabled curl_required wget_required git_required
-  ec2_enabled="${WRAPPERS_VIA_EC2_ENABLED:-0}"
-  curl_required="${CURL_WRAPPER_EC2_REQUIRED:-0}"
-  wget_required="${WGET_WRAPPER_EC2_REQUIRED:-0}"
-  git_required="${GIT_ZIP_WRAPPER_EC2_REQUIRED:-0}"
-
-  if [[ "${ec2_enabled}" != "0" ]]; then
-    fail "WRAPPERS_VIA_EC2_ENABLED=${ec2_enabled} (o modo esperado agora é local-only)"
-    return 0
-  fi
-
-  ok "WRAPPERS_VIA_EC2_ENABLED=0 (modo local-only ativo)"
-
-  if [[ "${curl_required}" != "0" ]]; then
-    fail "CURL_WRAPPER_EC2_REQUIRED=${curl_required} (não deve exigir backend remoto)"
-  else
-    ok "CURL_WRAPPER_EC2_REQUIRED=0"
-  fi
-  if [[ "${wget_required}" != "0" ]]; then
-    fail "WGET_WRAPPER_EC2_REQUIRED=${wget_required} (não deve exigir backend remoto)"
-  else
-    ok "WGET_WRAPPER_EC2_REQUIRED=0"
-  fi
-  if [[ "${git_required}" != "0" ]]; then
-    fail "GIT_ZIP_WRAPPER_EC2_REQUIRED=${git_required} (não deve exigir backend remoto)"
-  else
-    ok "GIT_ZIP_WRAPPER_EC2_REQUIRED=0"
-  fi
-}
-
-validate_git_clone_order_policy() {
-  local clone_order force_local_downloads
+validate_local_policy() {
+  local clone_order force_local_downloads lfs_mode
   clone_order="${GIT_ZIP_WRAPPER_CLONE_ORDER:-local-first}"
   force_local_downloads="${GIT_ZIP_WRAPPER_FORCE_LOCAL_DOWNLOADS:-1}"
+  lfs_mode="${GIT_ZIP_WRAPPER_LFS_MODE:-local}"
+
   case "${clone_order}" in
     local-first)
-      ok "GIT_ZIP_WRAPPER_CLONE_ORDER=local-first (clone local antes do EC2)"
+      ok "GIT_ZIP_WRAPPER_CLONE_ORDER=local-first"
       ;;
     *)
       fail "GIT_ZIP_WRAPPER_CLONE_ORDER=${clone_order} (esperado: local-first)"
@@ -258,6 +229,12 @@ validate_git_clone_order_policy() {
     fail "GIT_ZIP_WRAPPER_FORCE_LOCAL_DOWNLOADS=${force_local_downloads} (esperado: 1)"
   else
     ok "GIT_ZIP_WRAPPER_FORCE_LOCAL_DOWNLOADS=1"
+  fi
+
+  if [[ "${lfs_mode}" != "local" ]]; then
+    fail "GIT_ZIP_WRAPPER_LFS_MODE=${lfs_mode} (esperado: local)"
+  else
+    ok "GIT_ZIP_WRAPPER_LFS_MODE=local"
   fi
 }
 
@@ -282,8 +259,7 @@ else
   warn "BREW_WRAPPER_REAL_BREW não definido (normal quando brew real não existe no host)"
 fi
 
-validate_fail_open_policy
-validate_git_clone_order_policy
+validate_local_policy
 
 printf '\nResumo: %s falhas, %s avisos\n' "${FAILURES}" "${WARNINGS}"
 

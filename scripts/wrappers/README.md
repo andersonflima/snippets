@@ -1,24 +1,12 @@
 # Wrappers
 
-Esta pasta contém os wrappers reais usados para adaptar downloads e clones em ambientes com restrições corporativas.
+Esta pasta contém os wrappers reais usados para adaptar downloads e clones em ambientes com restrições corporativas, sempre com fluxo local.
 
-Arquivos:
+## Arquivos
 
-- `homebrew_install_wrapper.sh`: wrapper legado de `brew` para `install` e `install --cask`, injetando os wrappers de `curl` e `git`
-- `curl_python_wrapper.sh`: wrapper de `curl` com fallback para Python, `gh release` e estratégias inteligentes para Mason
-- `git_zip_clone_wrapper.sh`: wrapper de `git clone` que baixa tarball/zip de repositório e monta o diretório localmente
-- `mix_ec2_wrapper.sh`: wrapper de `mix` para roteamento de comandos de dependência para o EC2
-- `fetch-url-via-ec2`: helper instalado junto dos wrappers para buscar URLs via EC2 + S3 quando a máquina local estiver restrita
-
-## Estrutura
-
-- implementação legada do `brew`: `scripts/wrappers/homebrew_install_wrapper.sh`
-- implementação real do `curl`: `scripts/wrappers/curl_python_wrapper.sh`
-- implementação real do `git`: `scripts/wrappers/git_zip_clone_wrapper.sh`
-- instalador legado do wrapper de `brew`: `scripts/install/install_homebrew_wrapper.sh`
-- instalador do wrapper de `curl`: `scripts/install/install_curl_python_wrapper.sh`
-- instalador do wrapper de `git`: `scripts/install/install_git_zip_wrapper.sh`
-- configurador de ambiente: `scripts/install/configure_wrapper_envs.sh`
+- `curl_python_wrapper.sh`: wrapper de `curl` com fallback para Python, `gh release` e estratégias inteligentes para Mason.
+- `wget_wrapper.sh`: wrapper de `wget` que delega assets `.zip` de release do GitHub para o wrapper de `curl` quando o fluxo do Mason precisa disso.
+- `git_zip_clone_wrapper.sh`: wrapper de `git` que tenta archive local para clones GitHub, cai para `git` real quando necessário e tem fallback local para cache do `Mix.install`.
 
 ## Instalação
 
@@ -27,37 +15,24 @@ Arquivos:
 Fluxo público recomendado:
 
 ```bash
-sh scripts/configure.sh "<bucket>"
-```
-
-Nesse modo padrão, o backend EC2 dos wrappers (`curl`, `wget`, `git`) fica habilitado para garantir instalação de dependências do `LazyVim`/`Mason` em ambientes restritos.
-
-Para desligar o backend remoto dos wrappers explicitamente:
-
-```bash
-sh scripts/configure.sh "<bucket>" --disable-ec2-backend
+sh scripts/configure.sh
 ```
 
 Esse fluxo instala e configura:
 
-- wrapper do `mix`
 - wrapper do `curl`
+- wrapper do `wget`
 - wrapper do `git`
-- envs compartilhadas do EC2/S3
+- envs compartilhadas locais
 - bloco gerenciado no shell rc
 - manifesto de estado em `~/.config/restricted-dev-env/state.sh`
-
-No entrypoint público, a configuração é persistida automaticamente no rc detectado via `$SHELL` (por exemplo `~/.zshrc`, `~/.bashrc` ou `~/.config/fish/config.fish`) por um bloco gerenciado centralmente pelo bootstrap.
 
 Se você quiser ativar só na sessão atual, sem persistir:
 
 ```bash
-sh scripts/configure.sh "<bucket>" --no-shell-rc
-[ -f "$HOME/.config/mix-via-ec2-envs.sh" ] && . "$HOME/.config/mix-via-ec2-envs.sh"
-[ -f "$HOME/.config/wrapper-envs.sh" ] && . "$HOME/.config/wrapper-envs.sh"
+sh scripts/configure.sh --no-shell-rc
+. "$HOME/.config/wrapper-envs.sh"
 ```
-
-Depois disso, abra o `nvim` normalmente.
 
 Para diagnosticar se o Mason está vendo os wrappers:
 
@@ -68,50 +43,13 @@ sh scripts/install/validate_wrappers.sh
 Se você quiser mudar o rc de destino:
 
 ```bash
-sh scripts/configure.sh "<bucket>" --shell-rc "$HOME/.config/fish/config.fish"
+sh scripts/configure.sh --shell-rc "$HOME/.config/fish/config.fish"
 ```
-
-Se o bucket informado ainda não existir, o bootstrap tenta criá-lo automaticamente na região configurada.
 
 Para zerar tudo depois:
 
 ```bash
 sh scripts/reset.sh
-```
-
-O reset remove o bloco gerenciado do shell rc, apaga os wrappers/env-files e restaura a configuração do Hex quando ela tiver sido alterada pelo bootstrap com `--configure-hex`.
-
-No fluxo atual, ele também remove o cache do wrapper em `~/.cache/curl-python-wrapper`, o seed local em `~/.cache/mason-seeds` e os artefatos do `elixir-ls` em `~/.local/share/nvim/mason`, para que a próxima execução de `configure.sh` comece do zero.
-
-Para limpar a sessão atual sem abrir outro shell:
-
-```bash
-exec "${SHELL:-/bin/zsh}" -l
-```
-
-Opcionalmente, ele também pode aplicar `mix hex.config`:
-
-```bash
-sh scripts/configure.sh \
-  "<bucket>" \
-  --configure-hex \
-  --hex-unsafe-https
-```
-
-### Homebrew wrapper legado
-
-O bootstrap atual não instala nem ativa mais o wrapper de `brew`. O `brew` usa o binário real do host diretamente. Esta seção fica apenas para manutenção legada.
-
-```bash
-sh scripts/install/install_homebrew_wrapper.sh
-```
-
-Opcionalmente:
-
-```bash
-sh scripts/install/install_homebrew_wrapper.sh \
-  --install-dir "$HOME/.local/share/homebrew-install-wrapper/bin" \
-  --real-brew "$(command -v brew)"
 ```
 
 ### Curl wrapper
@@ -142,24 +80,14 @@ sh scripts/install/install_git_zip_wrapper.sh \
   --real-git "$(command -v git)"
 ```
 
-### Configurar envs do ambiente
-
-O caminho público recomendado é usar só o bootstrap:
-
-```bash
-sh scripts/configure.sh "<bucket>"
-```
-
-Os configuradores individuais continuam existindo apenas em `scripts/install/` para manutenção interna e cenários avançados.
-
 ## Shell
 
 Se você não usar o configurador automático, exporte manualmente os paths e variáveis principais no shell:
 
 ```bash
 export CURL_WRAPPER_REAL_CURL="$(command -v curl)"
+export WGET_WRAPPER_REAL_WGET="$(command -v wget)"
 export GIT_ZIP_WRAPPER_REAL_GIT="$(command -v git)"
-
 export PATH="$HOME/.local/share/curl-python-wrapper/bin:$HOME/.local/share/git-zip-wrapper/bin:$PATH"
 ```
 
@@ -169,6 +97,7 @@ Exemplo de configuração por ambiente:
 
 ```lua
 vim.env.CURL_WRAPPER_REAL_CURL = "/usr/bin/curl"
+vim.env.WGET_WRAPPER_REAL_WGET = "/usr/bin/wget"
 vim.env.GIT_ZIP_WRAPPER_REAL_GIT = "/usr/bin/git"
 vim.env.PATH = table.concat({
   vim.fn.expand("~/.local/share/curl-python-wrapper/bin"),
@@ -183,216 +112,59 @@ vim.env.CURL_WRAPPER_RELEASE_CACHE_DIR = vim.fn.expand("~/.cache/curl-python-wra
 vim.env.CURL_WRAPPER_MASON_BUILDERS = "elixir-lsp/elixir-ls=elixir_ls_release,omnisharp/omnisharp-roslyn=omnisharp_source_publish"
 vim.env.CURL_WRAPPER_MASON_SOURCE_BUILD_REPOS = "omnisharp/omnisharp-roslyn"
 vim.env.GIT_ZIP_WRAPPER_ARCHIVE_FORMAT = "tar.gz"
+vim.env.GIT_ZIP_WRAPPER_CLONE_ORDER = "local-first"
+vim.env.GIT_ZIP_WRAPPER_FORCE_LOCAL_DOWNLOADS = "1"
+vim.env.GIT_ZIP_WRAPPER_LFS_MODE = "local"
 ```
 
 ## Variáveis de ambiente
 
-### `homebrew_install_wrapper.sh`
-
-Principais variáveis:
-
-- `BREW_WRAPPER_REAL_BREW`
-  Caminho do `brew` real.
-
-- `BREW_WRAPPER_CURL_BIN`
-  Caminho do wrapper de `curl` a ser injetado em `brew install`.
-
-- `BREW_WRAPPER_GIT_BIN`
-  Caminho do wrapper de `git` a ser injetado em `brew install`.
-
-- `BREW_WRAPPER_CURL_EC2_REQUIRED`
-  Define se `brew install` deve falhar quando o backend EC2 do wrapper de `curl` falhar.
-  Padrão: `0` (fallback local habilitado).
-
-- `BREW_WRAPPER_GIT_EC2_REQUIRED`
-  Define se `brew install` deve falhar quando o backend EC2 do wrapper de `git` falhar.
-  Padrão: `0` (fallback local habilitado).
-
-- `BREW_WRAPPER_NO_AUTO_UPDATE`
-  Quando `1`, exporta `HOMEBREW_NO_AUTO_UPDATE=1` ao rodar `brew install`.
-
 ### `curl_python_wrapper.sh`
 
-Principais variáveis:
-
-- `CURL_WRAPPER_REAL_CURL`
-  Caminho do `curl` real.
-
-- `CURL_WRAPPER_USE_EC2`
-  Quando `1`, delega downloads suportados para o helper remoto via EC2.
-  Padrão: herda `WRAPPERS_VIA_EC2_ENABLED` (bootstrap padrão mantém `1`).
-
-- `WRAPPERS_VIA_EC2_INSTANCE_NAME`
-  Instância EC2 compartilhada usada pelos wrappers.
-  Padrão: `Dander`.
-
-- `WRAPPERS_VIA_EC2_AWS_REGION`
-  Region AWS do backend remoto compartilhado.
-  Padrão: `sa-east-1`.
-
-- `WRAPPERS_VIA_EC2_S3_BUCKET`
-  Bucket S3 intermediário compartilhado com o backend remoto.
-
-- `WRAPPERS_VIA_EC2_S3_PREFIX`
-  Prefixo S3 compartilhado.
-  Padrão: `wrappers-via-ec2`.
-
-- `CURL_WRAPPER_PROXY`
-  Proxy explícito do wrapper. Tem precedência sobre `HTTPS_PROXY`, `ALL_PROXY` e `HTTP_PROXY`.
-
-- `CURL_WRAPPER_ALLOW_ZIP_DOWNLOAD`
-  Libera download direto de `.zip` quando necessário.
-  Padrão: `0`.
-
-- `CURL_WRAPPER_AUTO_INSECURE_ON_CERT_ERROR`
-  Se ativado, o fallback tenta novamente sem validação TLS quando o erro for de certificado.
-  Padrão: `0`.
-
-- `CURL_WRAPPER_RELEASE_FALLBACK_REPOS`
-  Lista CSV de repositórios GitHub tratados como releases restritas.
-  Padrão:
-  `elixir-lsp/elixir-ls,johnnymorganz/stylua,luals/lua-language-server,omnisharp/omnisharp-roslyn`
-
-- `CURL_WRAPPER_ALLOW_DIRECT_RELEASE_FALLBACK`
-  Reabilita tentativa direta do asset remoto da release, mesmo para repositórios restritos.
-  Padrão: `0`.
-
-- `CURL_WRAPPER_ENABLE_MASON_SMART_RELEASES`
-  Ativa a estratégia inteligente do Mason para montar artefatos localmente.
-  Padrão: `1`.
-
-- `CURL_WRAPPER_RELEASE_CACHE_DIR`
-  Diretório de cache dos artefatos gerados localmente.
-  Padrão: `$XDG_CACHE_HOME/curl-python-wrapper/releases`.
-
-- `CURL_WRAPPER_MASON_BUILDERS`
-  Registro CSV `repo=builder` para builders especiais quando não houver asset alternativo.
-  Padrão: `elixir-lsp/elixir-ls=elixir_ls_release,omnisharp/omnisharp-roslyn=omnisharp_source_publish`.
-
-- `CURL_WRAPPER_MASON_SOURCE_BUILD_REPOS`
-  Lista CSV de repositórios que devem preferir build local a partir do source tarball, sem cair em asset de release.
-  Padrão: `omnisharp/omnisharp-roslyn`.
-
-- `CURL_WRAPPER_MASON_SEED_DIR`
-  Diretório opcional com artefatos `.zip` já gerados fora da máquina restrita.
-  Formato esperado: `<seed-dir>/<owner>/<repo>/<tag>/<asset>` ou `<seed-dir>/<asset>`.
-  Quando definido, o wrapper tenta esse diretório antes de buildar localmente.
-
-- `CURL_WRAPPER_MASON_REPACKAGE_EXTENSIONS`
-  Extensões candidatas que a engine dinâmica pode baixar e reempacotar em `.zip`.
-  Padrão: `tar.gz,tgz,tar`.
-
-- `CURL_WRAPPER_STRICT`
-  Desativa fallbacks e faz o wrapper retornar o erro do `curl` real.
+- `CURL_WRAPPER_REAL_CURL`: caminho do `curl` real.
+- `CURL_WRAPPER_PROXY`: proxy explícito do wrapper; tem precedência sobre `HTTPS_PROXY`, `ALL_PROXY` e `HTTP_PROXY`.
+- `CURL_WRAPPER_ALLOW_ZIP_DOWNLOAD`: libera download direto de `.zip` quando necessário. Padrão: `0`.
+- `CURL_WRAPPER_AUTO_INSECURE_ON_CERT_ERROR`: tenta novamente sem validação TLS quando o erro for de certificado. Padrão: `0`.
+- `CURL_WRAPPER_RELEASE_FALLBACK_REPOS`: lista CSV de repositórios GitHub tratados como releases restritas.
+- `CURL_WRAPPER_ALLOW_DIRECT_RELEASE_FALLBACK`: reabilita tentativa direta do asset remoto da release. Padrão: `0`.
+- `CURL_WRAPPER_ENABLE_MASON_SMART_RELEASES`: ativa a estratégia inteligente do Mason. Padrão: `1`.
+- `CURL_WRAPPER_RELEASE_CACHE_DIR`: diretório de cache dos artefatos gerados localmente.
+- `CURL_WRAPPER_MASON_BUILDERS`: registro CSV `repo=builder` para builders especiais.
+- `CURL_WRAPPER_MASON_SOURCE_BUILD_REPOS`: lista CSV de repositórios que devem preferir build local a partir do source tarball.
+- `CURL_WRAPPER_MASON_SEED_DIR`: diretório opcional com artefatos `.zip` já gerados fora da máquina restrita.
+- `CURL_WRAPPER_MASON_REPACKAGE_EXTENSIONS`: extensões candidatas que a engine dinâmica pode baixar e reempacotar em `.zip`.
+- `CURL_WRAPPER_STRICT`: desativa fallbacks e faz o wrapper retornar o erro do `curl` real.
 
 ### `git_zip_clone_wrapper.sh`
 
-Principais variáveis:
-
-- `GIT_ZIP_WRAPPER_REAL_GIT`
-  Caminho do `git` real.
-
-- `GIT_ZIP_WRAPPER_USE_EC2`
-  Quando `1`, delega downloads dos archives suportados para o helper remoto via EC2.
-  Padrão: herda `WRAPPERS_VIA_EC2_ENABLED` (bootstrap padrão mantém `1`).
-
-- `GIT_ZIP_WRAPPER_PROXY`
-  Proxy explícito para os downloads do wrapper.
-
-- `GIT_ZIP_WRAPPER_ARCHIVE_FORMAT`
-  Formato preferido do archive.
-  Valores válidos: `tar.gz`, `tgz`, `tar`, `zip`.
-  Padrão: `tar.gz`.
-
-- `GIT_ZIP_WRAPPER_ALLOW_ZIP_FALLBACK`
-  Libera fallback para `.zip` quando o `.tar.gz` não estiver disponível.
-
-- `GIT_ZIP_WRAPPER_CLONE_ORDER`
-  Política do fallback de clone do wrapper.
-  Valor suportado: `local-first`.
-  Comportamento: tenta clone local antes do backend EC2.
-
-- `GIT_ZIP_WRAPPER_CURL_CACERT`
-  Caminho para CA customizada em ambiente corporativo.
-
-- `GIT_ZIP_WRAPPER_CURL_INSECURE`
-  Desativa validação TLS do `curl` usado pelo wrapper.
-
-- `GIT_ZIP_WRAPPER_LFS_MODE`
-  Define onde os blobs do Git LFS serão materializados quando o clone usar o backend remoto.
-  Valores válidos: `local`, `ec2`.
-  Padrão no bootstrap com backend EC2: `local`.
-
-- `GIT_ZIP_WRAPPER_STRICT`
-  Impede fallback para `git clone` normal.
+- `GIT_ZIP_WRAPPER_REAL_GIT`: caminho do `git` real.
+- `GIT_ZIP_WRAPPER_PROXY`: proxy explícito para os downloads do wrapper.
+- `GIT_ZIP_WRAPPER_ARCHIVE_FORMAT`: formato preferido do archive. Valores válidos: `tar.gz`, `tgz`, `tar`, `zip`. Padrão: `tar.gz`.
+- `GIT_ZIP_WRAPPER_ALLOW_ZIP_FALLBACK`: libera fallback para `.zip` quando o `.tar.gz` não estiver disponível.
+- `GIT_ZIP_WRAPPER_CLONE_ORDER`: política do clone do wrapper. Valor suportado: `local-first`.
+- `GIT_ZIP_WRAPPER_FORCE_LOCAL_DOWNLOADS`: força downloads locais do wrapper. Padrão: `1`.
+- `GIT_ZIP_WRAPPER_CURL_CACERT`: caminho para CA customizada em ambiente corporativo.
+- `GIT_ZIP_WRAPPER_CURL_INSECURE`: desativa validação TLS do `curl` usado pelo wrapper.
+- `GIT_ZIP_WRAPPER_LFS_MODE`: modo do Git LFS. Valor suportado: `local`.
+- `GIT_ZIP_WRAPPER_STRICT`: impede fallback para `git clone` normal.
 
 Comportamento adicional para ElixirLS/Mix.install:
 
-- quando `git fetch` falha dentro do cache `mix/installs`, o wrapper tenta fallback local por archive (`tar.gz`) do GitHub para materializar o tag/branch solicitado.
+- quando `git fetch` falha dentro do cache `mix/installs`, o wrapper tenta fallback local por archive (`tar.gz`) do GitHub para materializar o tag ou branch solicitado.
 
 ## Mason inteligente
-
-## Backend compartilhado via EC2
-
-Os wrappers de `curl` e `git` agora podem usar o mesmo backend remoto do `mix`, compartilhando:
-
-- instância EC2
-- region AWS
-- bucket S3 intermediário
-- prefixo S3
-
-Isso é controlado pelas envs:
-
-```bash
-export WRAPPERS_VIA_EC2_ENABLED=1
-export WRAPPERS_VIA_EC2_INSTANCE_NAME="Dander"
-export WRAPPERS_VIA_EC2_AWS_REGION="sa-east-1"
-export WRAPPERS_VIA_EC2_S3_BUCKET="<bucket-compartilhado>"
-export WRAPPERS_VIA_EC2_S3_PREFIX="wrappers-via-ec2"
-```
-
-Política de falha:
-
-- `CURL_WRAPPER_EC2_REQUIRED=0` por padrão (falha remota cai para local)
-- `WGET_WRAPPER_EC2_REQUIRED=0` por padrão (falha remota cai para local)
-- `GIT_ZIP_WRAPPER_EC2_REQUIRED=0` por padrão (falha remota cai para local)
-
-Quando esse backend está ativo:
-
-- o `curl` wrapper tenta buscar assets suportados via EC2 antes do download local
-- o `git` wrapper tenta clone/download local primeiro e usa EC2 apenas como fallback quando necessário
-- o `git` wrapper pode materializar Git LFS no EC2 antes de empacotar o repositório
-- o `curl` do Mason pode aproveitar o EC2 para baixar `.zip` oficiais de release quando a máquina local não consegue
-
-No modo configurado pelo bootstrap atual:
-
-- `curl` usa EC2 por padrão para URLs suportadas, mas o fallback local permanece habilitado por padrão
-- `git` tenta clone local primeiro e só cai para EC2 quando o clone local falha
-- `git` exporta `GIT_ZIP_WRAPPER_LFS_MODE=local` por padrão, então `git lfs pull` roda localmente após o clone
-
-Pré-requisito adicional para esse modo:
-
-- `git-lfs` instalado na instância EC2 que executa o backend remoto
 
 No `curl` wrapper existe uma engine adicional para pacotes do Mason que falham em ambiente corporativo por dependerem de asset `.zip` de release.
 
 Comportamento atual:
 
 - quando a URL é de GitHub release e o Mason pede `.zip`, a engine tenta descobrir assets equivalentes da release via API
-- para repositórios marcados em `CURL_WRAPPER_MASON_SOURCE_BUILD_REPOS`, a engine tenta primeiro gerar o artefato localmente a partir do source tarball (`archive/refs/tags/*.tar.gz`)
+- para repositórios marcados em `CURL_WRAPPER_MASON_SOURCE_BUILD_REPOS`, a engine tenta primeiro gerar o artefato localmente a partir do source tarball
 - se existir twin exato em `.tar.gz`, `.tgz` ou `.tar`, ele é preferido antes da heurística de similaridade
 - se encontrar `.tar.gz`, `.tgz` ou `.tar` compatível, baixa, extrai e reempacota localmente em `.zip`
 - se não encontrar asset equivalente, consulta o registro de builders especiais
-- os builders padrão atuais cobrem:
-  - `elixir-lsp/elixir-ls`, gerando o release localmente com `mix elixir_ls.release2` ou caindo para `mix elixir_ls.release`
-  - `omnisharp/omnisharp-roslyn`, gerando o pacote localmente com `dotnet publish` a partir do source tarball
-- quando o pacote só publica `.zip`, o wrapper também tenta o endpoint de assets da API do GitHub antes de desistir
 - o artefato gerado fica em cache local para reutilização automática nas próximas instalações
-
-Se a estratégia inteligente falhar:
-
-- o wrapper ainda tenta `gh release download`
-- se isso também falhar, retorna erro claro
+- se a estratégia inteligente falhar, o wrapper ainda tenta `gh release download`
 
 ## Pré-requisitos
 
@@ -417,62 +189,3 @@ Opcional:
 ### Seed local para hosts restritos
 
 Se a máquina do serviço não consegue rodar `mix deps.get` ou `dotnet restore` de forma confiável, gere o artefato em outra máquina e copie para o host restrito.
-
-Gerando o seed:
-
-```bash
-sh scripts/install/build_mason_seed_artifact.sh \
-  --release-url https://github.com/elixir-lsp/elixir-ls/releases/download/v0.30.0/elixir-ls-v0.30.0.zip \
-  --seed-dir "$HOME/.cache/mason-seeds"
-```
-
-No host restrito:
-
-```bash
-export CURL_WRAPPER_MASON_SEED_DIR="$HOME/.cache/mason-seeds"
-```
-
-Depois disso, o wrapper tenta o seed local antes de chamar o builder.
-
-Se quiser persistir isso no shell rc, use o bootstrap com `--apply-shell-rc`.
-
-## Ambientes com proxy/certificado
-
-Exemplo:
-
-```bash
-export HTTPS_PROXY="http://proxy.seu-dominio:3128"
-export HTTP_PROXY="http://proxy.seu-dominio:3128"
-export ALL_PROXY="http://proxy.seu-dominio:3128"
-
-export CURL_WRAPPER_PROXY="http://proxy.seu-dominio:3128"
-export GIT_ZIP_WRAPPER_PROXY="http://proxy.seu-dominio:3128"
-
-export GIT_ZIP_WRAPPER_CURL_CACERT="/etc/pki/ca-trust/source/anchors/corp-ca.pem"
-```
-
-Se o ambiente for muito restrito:
-
-```bash
-export CURL_WRAPPER_AUTO_INSECURE_ON_CERT_ERROR=1
-```
-
-## Testes rápidos
-
-### Curl wrapper
-
-```bash
-curl -fsSL https://github.com/neovim/neovim/archive/refs/heads/master.tar.gz -o /tmp/neovim.tar.gz
-```
-
-### Git wrapper
-
-```bash
-git clone https://github.com/neovim/neovim ~/tmp/neovim-zip-clone
-```
-
-## Observações
-
-- A descoberta de asset alternativo agora é genérica para releases do GitHub que tenham formato compatível.
-- O ponto de extensão para builders especiais está em `scripts/wrappers/lib/mason_release_engine.sh`.
-- Para adicionar outro builder especial, registre `repo=builder` em `CURL_WRAPPER_MASON_BUILDERS` e implemente o builder na engine.

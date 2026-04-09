@@ -2,7 +2,7 @@
 set -euo pipefail
 
 log() {
-  printf '[wget-ec2-wrapper] %s\n' "$*" >&2
+  printf '[wget-wrapper] %s\n' "$*" >&2
 }
 
 die() {
@@ -22,11 +22,6 @@ is_truthy() {
 }
 
 WRAPPER_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-WGET_WRAPPER_USE_EC2="0"
-WGET_WRAPPER_EC2_ALL_URLS="0"
-WGET_WRAPPER_EC2_HELPER="${WGET_WRAPPER_EC2_HELPER:-${WRAPPER_DIR}/fetch-url-via-ec2}"
-WGET_WRAPPER_EC2_REQUIRED="0"
-WGET_WRAPPER_EC2_PROXY=""
 WGET_WRAPPER_PROXY="${WGET_WRAPPER_PROXY:-${HTTPS_PROXY:-${https_proxy:-${ALL_PROXY:-${all_proxy:-${HTTP_PROXY:-${http_proxy:-}}}}}}}"
 
 resolve_real_wget() {
@@ -45,9 +40,9 @@ resolve_real_wget() {
       printf '%s\n' "${candidate}"
       return 0
     fi
-  done <<EOF
+  done <<EOF2
 $(which -a wget 2>/dev/null || true)
-EOF
+EOF2
 
   return 1
 }
@@ -57,7 +52,7 @@ usage() {
 Uso:
   wget [opções-suportadas] <url>
 
-Opções suportadas no modo EC2:
+Opções suportadas:
   -O <arquivo>
   --output-document=<arquivo>
   -P <diretório>
@@ -254,64 +249,6 @@ parse_args() {
   fi
 }
 
-should_use_ec2_backend_for_url() {
-  local url url_without_query
-  url="$1"
-
-  if ! is_truthy "${WGET_WRAPPER_USE_EC2}"; then
-    return 1
-  fi
-  [[ -n "${url}" ]] || return 1
-  if [[ ! -x "${WGET_WRAPPER_EC2_HELPER}" ]]; then
-    if is_truthy "${WGET_WRAPPER_EC2_REQUIRED}"; then
-      die "helper do backend EC2 não encontrado/executável: ${WGET_WRAPPER_EC2_HELPER}"
-    fi
-    return 1
-  fi
-
-  if is_truthy "${WGET_WRAPPER_EC2_ALL_URLS}"; then
-    return 0
-  fi
-
-  url_without_query="${url%%\?*}"
-  case "${url_without_query}" in
-    https://github.com/*|https://codeload.github.com/*|https://api.github.com/*|https://hex.pm/*|https://repo.hex.pm/*|https://builds.hex.pm/*)
-      return 0
-      ;;
-  esac
-
-  return 1
-}
-
-download_with_ec2_backend() {
-  local -a helper_cmd=("${WGET_WRAPPER_EC2_HELPER}" --url "${WGET_URL}" --output "${WGET_OUTPUT}")
-  local header
-
-  if [[ "${WGET_CREATE_DIRS}" == "1" ]]; then
-    helper_cmd+=(--create-dirs)
-  fi
-  if [[ -n "${WGET_USER_AGENT}" ]]; then
-    helper_cmd+=(--user-agent "${WGET_USER_AGENT}")
-  fi
-  if [[ -n "${WGET_WRAPPER_EC2_PROXY}" ]]; then
-    helper_cmd+=(--proxy "${WGET_WRAPPER_EC2_PROXY}")
-  fi
-  if [[ "${WGET_INSECURE}" == "1" ]]; then
-    helper_cmd+=(--insecure)
-  fi
-  if [[ -n "${WGET_CONNECT_TIMEOUT}" ]]; then
-    helper_cmd+=(--connect-timeout "${WGET_CONNECT_TIMEOUT}")
-  fi
-  if [[ -n "${WGET_MAX_TIME}" ]]; then
-    helper_cmd+=(--max-time "${WGET_MAX_TIME}")
-  fi
-  for header in "${WGET_HEADERS[@]+"${WGET_HEADERS[@]}"}"; do
-    helper_cmd+=(--header "${header}")
-  done
-
-  "${helper_cmd[@]}"
-}
-
 run_local_wget() {
   local real_wget local_exit_code
   real_wget="$1"
@@ -335,8 +272,7 @@ run_local_wget() {
 }
 
 main() {
-  local real_wget local_wget_exit_code
-  local ec2_backend_available=0
+  local real_wget
   real_wget="$(resolve_real_wget || true)"
 
   if [[ $# -eq 0 ]]; then
@@ -357,61 +293,24 @@ main() {
     log "curl wrapper falhou; seguindo fluxo padrão do wget"
   fi
 
+  [[ -n "${real_wget}" ]] || die "wget real não encontrado para execução local"
+
   if [[ "${WGET_CAN_HANDLE}" == "1" ]]; then
-    if should_use_ec2_backend_for_url "${WGET_URL}"; then
-      ec2_backend_available=1
-      log "backend selecionado: local-first (fallback ec2 habilitado) (${WGET_URL})"
-    else
-      log "backend selecionado: local (${WGET_URL})"
-    fi
+    run_local_wget "${real_wget}" "$@"
+    exit $?
   fi
 
-  if [[ -n "${real_wget}" ]]; then
-    if [[ "${WGET_CAN_HANDLE}" == "1" ]]; then
-      if run_local_wget "${real_wget}" "$@"; then
-        exit 0
-      else
-        local_wget_exit_code=$?
-      fi
-
-      if [[ "${ec2_backend_available}" -eq 1 ]]; then
-        log "wget local falhou; tentando backend EC2 (${WGET_URL})"
-        if download_with_ec2_backend; then
-          exit 0
-        fi
-        if is_truthy "${WGET_WRAPPER_EC2_REQUIRED}"; then
-          die "wget local falhou e backend EC2 falhou para ${WGET_URL}"
-        fi
-        log "backend EC2 falhou após tentativa local (${WGET_URL})"
-      fi
-
-      exit "${local_wget_exit_code}"
-    fi
-
-    if [[ -n "${WGET_WRAPPER_PROXY}" ]]; then
-      HTTPS_PROXY="${WGET_WRAPPER_PROXY}" \
-      HTTP_PROXY="${WGET_WRAPPER_PROXY}" \
-      ALL_PROXY="${WGET_WRAPPER_PROXY}" \
-      https_proxy="${WGET_WRAPPER_PROXY}" \
-      http_proxy="${WGET_WRAPPER_PROXY}" \
-      all_proxy="${WGET_WRAPPER_PROXY}" \
-      exec "${real_wget}" "$@"
-    fi
-
+  if [[ -n "${WGET_WRAPPER_PROXY}" ]]; then
+    HTTPS_PROXY="${WGET_WRAPPER_PROXY}" \
+    HTTP_PROXY="${WGET_WRAPPER_PROXY}" \
+    ALL_PROXY="${WGET_WRAPPER_PROXY}" \
+    https_proxy="${WGET_WRAPPER_PROXY}" \
+    http_proxy="${WGET_WRAPPER_PROXY}" \
+    all_proxy="${WGET_WRAPPER_PROXY}" \
     exec "${real_wget}" "$@"
   fi
 
-  if [[ "${ec2_backend_available}" -eq 1 ]]; then
-    log "wget real não encontrado; tentando backend EC2 (${WGET_URL})"
-    if download_with_ec2_backend; then
-      exit 0
-    fi
-    if is_truthy "${WGET_WRAPPER_EC2_REQUIRED}"; then
-      die "wget real não encontrado e backend EC2 falhou para ${WGET_URL}"
-    fi
-  fi
-
-  die "wget real não encontrado para execução local"
+  exec "${real_wget}" "$@"
 }
 
 main "$@"

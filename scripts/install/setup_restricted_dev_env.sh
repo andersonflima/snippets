@@ -35,7 +35,12 @@ is_wrapper_binary_path() {
       wrapper_path="${HOME}/.local/share/git-zip-wrapper/bin/git"
       ;;
     mix)
-      wrapper_path="${HOME}/.local/share/mix-ec2-wrapper/bin/mix"
+      case "${candidate_path}" in
+        "${HOME}"/.local/share/mix-*-wrapper/bin/mix)
+          return 0
+          ;;
+      esac
+      return 1
       ;;
     brew)
       wrapper_path="${HOME}/.local/share/homebrew-install-wrapper/bin/brew"
@@ -116,11 +121,6 @@ Opções:
   --hex-no-test                Não executa mix hex.info ao final da config do Hex.
   --no-shell-rc                Não altera o arquivo rc do shell.
   -h, --help                   Mostra esta ajuda.
-
-Compatibilidade legada:
-  --s3-bucket, --instance-name, --aws-region, --aws-profile, --s3-prefix,
-  --mix-s3-prefix, --enable-ec2-backend, --disable-ec2-backend,
-  --ssh-identity e --ec2-proxy são aceitos, mas ignorados neste modo local-only.
 USAGE
 }
 
@@ -148,7 +148,6 @@ WRAPPER_ENV_FILE="${HOME}/.config/wrapper-envs.sh"
 FISH_ENV_FILE="${HOME}/.config/restricted-dev-env.fish"
 ELIXIR_LS_SETUP_SH="${HOME}/.config/elixir_ls/setup.sh"
 ELIXIR_LS_SETUP_FISH="${HOME}/.config/elixir_ls/setup.fish"
-IGNORED_LEGACY_ARGS=()
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
@@ -213,14 +212,6 @@ while [[ $# -gt 0 ]]; do
       APPLY_SHELL_RC="0"
       shift
       ;;
-    --s3-bucket|--instance-name|--aws-region|--aws-profile|--s3-prefix|--mix-s3-prefix|--ssh-identity|--ec2-proxy)
-      IGNORED_LEGACY_ARGS+=("$1")
-      shift 2
-      ;;
-    --enable-ec2-backend|--disable-ec2-backend)
-      IGNORED_LEGACY_ARGS+=("$1")
-      shift
-      ;;
     -h|--help)
       usage
       exit 0
@@ -230,10 +221,6 @@ while [[ $# -gt 0 ]]; do
       ;;
   esac
 done
-
-if [[ ${#IGNORED_LEGACY_ARGS[@]} -gt 0 ]]; then
-  log "parâmetros legados EC2/S3 ignorados: ${IGNORED_LEGACY_ARGS[*]}"
-fi
 
 restricted_dev_env_load_state
 RESTRICTED_DEV_ENV_MANAGED_SHELL_RC="${RESTRICTED_DEV_ENV_MANAGED_SHELL_RC:-}"
@@ -584,7 +571,7 @@ if [[ "${CONFIGURE_HEX}" == "1" ]]; then
   fi
 
   run_step "configurando Hex no host local" \
-    sh "${ROOT_DIR}/ec2/elixir/configure_hex_config.sh" "${HEX_ARGS[@]}"
+    sh "${ROOT_DIR}/install/configure_hex_config.sh" "${HEX_ARGS[@]}"
 fi
 
 run_step "sincronizando persistência do ambiente restrito" sync_shell_rc_state

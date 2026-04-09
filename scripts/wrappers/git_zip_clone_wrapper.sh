@@ -26,15 +26,7 @@ GIT_ZIP_WRAPPER_CURL_INSECURE="${GIT_ZIP_WRAPPER_CURL_INSECURE:-0}"
 GIT_ZIP_WRAPPER_CURL_CACERT="${GIT_ZIP_WRAPPER_CURL_CACERT:-}"
 GIT_ZIP_WRAPPER_ACTIVE_PROXY=""
 WRAPPER_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-GIT_ZIP_WRAPPER_USE_EC2="0"
-GIT_ZIP_WRAPPER_EC2_ALL_URLS="0"
-GIT_ZIP_WRAPPER_EC2_FETCH_HELPER="${GIT_ZIP_WRAPPER_EC2_HELPER:-${WRAPPER_DIR}/fetch-url-via-ec2}"
-GIT_ZIP_WRAPPER_EC2_CLONE_HELPER="${GIT_ZIP_WRAPPER_EC2_CLONE_HELPER:-${WRAPPER_DIR}/git-clone-via-ec2}"
-GIT_ZIP_WRAPPER_EC2_GIT_FETCH_HELPER="${GIT_ZIP_WRAPPER_EC2_GIT_FETCH_HELPER:-${WRAPPER_DIR}/git-fetch-via-ec2}"
-GIT_ZIP_WRAPPER_EC2_GIT_CHECKOUT_HELPER="${GIT_ZIP_WRAPPER_EC2_GIT_CHECKOUT_HELPER:-${WRAPPER_DIR}/git-checkout-via-ec2}"
-GIT_ZIP_WRAPPER_EC2_REQUIRED="0"
 GIT_ZIP_WRAPPER_FORCE_LOCAL_DOWNLOADS="1"
-GIT_ZIP_WRAPPER_EC2_PROXY=""
 GIT_ZIP_WRAPPER_CLONE_ORDER="${GIT_ZIP_WRAPPER_CLONE_ORDER:-local-first}"
 GIT_ZIP_WRAPPER_LFS_AUTORUN="${GIT_ZIP_WRAPPER_LFS_AUTORUN:-1}"
 GIT_ZIP_WRAPPER_LFS_FORCE="${GIT_ZIP_WRAPPER_LFS_FORCE:-0}"
@@ -156,11 +148,9 @@ normalize_lfs_mode() {
     ""|local)
       printf '%s\n' "local"
       ;;
-    ec2|remote)
-      printf '%s\n' "ec2"
-      ;;
     *)
-      die "modo de LFS inválido: ${requested}. Valores válidos: local, ec2"
+      log "modo de LFS inválido: ${requested}; forçando local"
+      printf '%s\n' "local"
       ;;
   esac
 }
@@ -540,11 +530,7 @@ download_url_with_retries() {
     log "download usando proxy: ${GIT_ZIP_WRAPPER_ACTIVE_PROXY}"
   fi
 
-  if should_use_ec2_backend_for_git_url "${url}" "${archive_path}"; then
-    log "backend selecionado: local-first (fallback ec2 habilitado) (${url})"
-  else
-    log "backend selecionado: local (${url})"
-  fi
+  log "backend selecionado: local (${url})"
 
   for mode_name in default http1 ipv4 ipv4_http1; do
     mode_label="$(curl_mode_label "${mode_name}")"
@@ -557,160 +543,7 @@ download_url_with_retries() {
     done
   done
 
-  if should_use_ec2_backend_for_git_url "${url}" "${archive_path}"; then
-    log "tentando backend EC2 após falha local (${url})"
-    if download_with_ec2_backend "${url}" "${archive_path}" "${user_agent}"; then
-      return 0
-    fi
-    if is_truthy "${GIT_ZIP_WRAPPER_EC2_REQUIRED}"; then
-      die "falha local e backend EC2 falhou para ${url}"
-    fi
-    log "backend EC2 falhou após tentativa local (${url})"
-  fi
-
   return 1
-}
-
-should_use_ec2_backend_for_git_url() {
-  local url archive_path url_without_query
-  url="$1"
-  archive_path="$2"
-
-  if is_truthy "${GIT_ZIP_WRAPPER_FORCE_LOCAL_DOWNLOADS}"; then
-    return 1
-  fi
-  if ! is_truthy "${GIT_ZIP_WRAPPER_USE_EC2}"; then
-    return 1
-  fi
-  [[ -n "${url}" && -n "${archive_path}" ]] || return 1
-  if repo_source_requires_plain_git "${url}"; then
-    return 1
-  fi
-  if [[ ! -x "${GIT_ZIP_WRAPPER_EC2_FETCH_HELPER}" ]]; then
-    if is_truthy "${GIT_ZIP_WRAPPER_EC2_REQUIRED}"; then
-      die "helper do backend EC2 não encontrado/executável: ${GIT_ZIP_WRAPPER_EC2_FETCH_HELPER}"
-    fi
-    return 1
-  fi
-
-  if is_truthy "${GIT_ZIP_WRAPPER_EC2_ALL_URLS}"; then
-    return 0
-  fi
-
-  url_without_query="${url%%\?*}"
-  case "${url_without_query}" in
-    https://github.com/*|https://codeload.github.com/*|https://api.github.com/*)
-      return 0
-      ;;
-  esac
-
-  return 1
-}
-
-should_use_ec2_backend_for_clone_url() {
-  local url
-  url="$1"
-
-  if ! is_truthy "${GIT_ZIP_WRAPPER_USE_EC2}"; then
-    return 1
-  fi
-  [[ -n "${url}" ]] || return 1
-  if repo_source_requires_plain_git "${url}"; then
-    return 1
-  fi
-  if [[ ! -x "${GIT_ZIP_WRAPPER_EC2_CLONE_HELPER}" ]]; then
-    if is_truthy "${GIT_ZIP_WRAPPER_EC2_REQUIRED}"; then
-      die "helper de clone do backend EC2 não encontrado/executável: ${GIT_ZIP_WRAPPER_EC2_CLONE_HELPER}"
-    fi
-    return 1
-  fi
-
-  if is_truthy "${GIT_ZIP_WRAPPER_EC2_ALL_URLS}"; then
-    return 0
-  fi
-
-  case "${url}" in
-    https://*|http://*)
-      return 0
-      ;;
-  esac
-
-  return 1
-}
-
-should_use_ec2_backend_for_fetch() {
-  if ! is_truthy "${GIT_ZIP_WRAPPER_USE_EC2}"; then
-    return 1
-  fi
-
-  if [[ ! -x "${GIT_ZIP_WRAPPER_EC2_GIT_FETCH_HELPER}" ]]; then
-    if is_truthy "${GIT_ZIP_WRAPPER_EC2_REQUIRED}"; then
-      die "helper de fetch do backend EC2 não encontrado/executável: ${GIT_ZIP_WRAPPER_EC2_GIT_FETCH_HELPER}"
-    fi
-    return 1
-  fi
-
-  return 0
-}
-
-should_use_ec2_backend_for_checkout() {
-  if ! is_truthy "${GIT_ZIP_WRAPPER_USE_EC2}"; then
-    return 1
-  fi
-
-  if [[ ! -x "${GIT_ZIP_WRAPPER_EC2_GIT_CHECKOUT_HELPER}" ]]; then
-    if is_truthy "${GIT_ZIP_WRAPPER_EC2_REQUIRED}"; then
-      die "helper de checkout do backend EC2 não encontrado/executável: ${GIT_ZIP_WRAPPER_EC2_GIT_CHECKOUT_HELPER}"
-    fi
-    return 1
-  fi
-
-  return 0
-}
-
-download_with_ec2_backend() {
-  local url archive_path user_agent
-  url="$1"
-  archive_path="$2"
-  user_agent="$3"
-
-  local -a helper_cmd=("${GIT_ZIP_WRAPPER_EC2_FETCH_HELPER}" --url "${url}" --output "${archive_path}" --create-dirs)
-
-  if [[ -n "${user_agent}" ]]; then
-    helper_cmd+=(--user-agent "${user_agent}")
-  fi
-  if [[ -n "${GIT_ZIP_WRAPPER_EC2_PROXY}" ]]; then
-    helper_cmd+=(--proxy "${GIT_ZIP_WRAPPER_EC2_PROXY}")
-  fi
-  if is_truthy "${GIT_ZIP_WRAPPER_CURL_INSECURE}"; then
-    helper_cmd+=(--insecure)
-  fi
-
-  "${helper_cmd[@]}"
-}
-
-clone_with_ec2_backend() {
-  local repo_url archive_path
-  repo_url="$1"
-  archive_path="$2"
-
-  local -a helper_cmd=("${GIT_ZIP_WRAPPER_EC2_CLONE_HELPER}" --repo-url "${repo_url}" --output "${archive_path}" --create-dirs)
-  local clone_arg
-
-  for clone_arg in "${CLONE_FORWARD_ARGS[@]+"${CLONE_FORWARD_ARGS[@]}"}"; do
-    helper_cmd+=(--git-arg "${clone_arg}")
-  done
-  if [[ "${GIT_ZIP_WRAPPER_LFS_MODE}" == "ec2" ]]; then
-    helper_cmd+=(--materialize-lfs)
-  fi
-  if [[ -n "${GIT_ZIP_WRAPPER_EC2_PROXY}" ]]; then
-    helper_cmd+=(--proxy "${GIT_ZIP_WRAPPER_EC2_PROXY}")
-  fi
-  if is_truthy "${GIT_ZIP_WRAPPER_CURL_INSECURE}"; then
-    helper_cmd+=(--insecure)
-  fi
-
-  "${helper_cmd[@]}"
 }
 
 resolve_fetch_git_dir() {
@@ -721,48 +554,6 @@ resolve_fetch_git_dir() {
   [[ -n "${git_dir}" ]] || return 1
   [[ -d "${git_dir}" ]] || return 1
   printf '%s\n' "${git_dir}"
-}
-
-fetch_with_ec2_backend() {
-  local git_dir fetch_arg
-  git_dir="$1"
-
-  local -a helper_cmd=("${GIT_ZIP_WRAPPER_EC2_GIT_FETCH_HELPER}" --git-dir "${git_dir}")
-
-  for fetch_arg in "${GIT_SUBCOMMAND_ARGS[@]+"${GIT_SUBCOMMAND_ARGS[@]}"}"; do
-    helper_cmd+=(--git-arg "${fetch_arg}")
-  done
-  if [[ -n "${GIT_ZIP_WRAPPER_EC2_PROXY}" ]]; then
-    helper_cmd+=(--proxy "${GIT_ZIP_WRAPPER_EC2_PROXY}")
-  fi
-  if is_truthy "${GIT_ZIP_WRAPPER_CURL_INSECURE}"; then
-    helper_cmd+=(--insecure)
-  fi
-
-  "${helper_cmd[@]}"
-}
-
-checkout_with_ec2_backend() {
-  local repo_url archive_path checkout_arg
-  repo_url="$1"
-  archive_path="$2"
-
-  local -a helper_cmd=("${GIT_ZIP_WRAPPER_EC2_GIT_CHECKOUT_HELPER}" --repo-url "${repo_url}" --output "${archive_path}" --create-dirs)
-
-  for checkout_arg in "${GIT_SUBCOMMAND_ARGS[@]+"${GIT_SUBCOMMAND_ARGS[@]}"}"; do
-    helper_cmd+=(--git-arg "${checkout_arg}")
-  done
-  if [[ "${GIT_ZIP_WRAPPER_LFS_MODE}" == "ec2" ]]; then
-    helper_cmd+=(--materialize-lfs)
-  fi
-  if [[ -n "${GIT_ZIP_WRAPPER_EC2_PROXY}" ]]; then
-    helper_cmd+=(--proxy "${GIT_ZIP_WRAPPER_EC2_PROXY}")
-  fi
-  if is_truthy "${GIT_ZIP_WRAPPER_CURL_INSECURE}"; then
-    helper_cmd+=(--insecure)
-  fi
-
-  "${helper_cmd[@]}"
 }
 
 path_looks_like_mix_install_git_dir() {
@@ -787,36 +578,6 @@ resolve_fetch_worktree_dir() {
   [[ -n "${worktree_dir}" ]] || return 1
   [[ -d "${worktree_dir}" ]] || return 1
   printf '%s\n' "${worktree_dir}"
-}
-
-replace_mix_install_repo_with_checkout() {
-  local real_git git_dir worktree_dir origin_url archive_path temp_dir extracted_repo_dir normalized_origin_url
-  real_git="$1"
-  git_dir="$2"
-
-  path_looks_like_mix_install_git_dir "${git_dir}" || return 1
-  worktree_dir="$(resolve_fetch_worktree_dir "${real_git}" || true)"
-  origin_url="$(resolve_fetch_origin_url "${real_git}" || true)"
-  [[ -n "${worktree_dir}" && -n "${origin_url}" ]] || return 1
-
-  normalized_origin_url="$(normalize_clone_url_for_http_transport "${origin_url}" 2>/dev/null || true)"
-  [[ -n "${normalized_origin_url}" ]] || normalized_origin_url="${origin_url}"
-
-  temp_dir="$(mktemp -d -t git-zip-checkout-clone-XXXXXX)"
-  archive_path="${temp_dir}/repo-checkout.tar.gz"
-
-  checkout_with_ec2_backend "${normalized_origin_url}" "${archive_path}" || {
-    rm -rf "${temp_dir}"
-    return 1
-  }
-
-  extracted_repo_dir="${temp_dir}/repo"
-  mkdir -p "${extracted_repo_dir}"
-  tar -xzf "${archive_path}" -C "${extracted_repo_dir}" --strip-components=1
-  rm -rf "${worktree_dir}"
-  mkdir -p "$(dirname "${worktree_dir}")"
-  cp -a "${extracted_repo_dir}" "${worktree_dir}"
-  rm -rf "${temp_dir}"
 }
 
 resolve_fetch_origin_url() {
@@ -858,46 +619,6 @@ overlay_directory_tree() {
   source_dir="$1"
   destination_dir="$2"
   cp -a "${source_dir}/." "${destination_dir}/"
-}
-
-replace_mix_install_repo_with_clone() {
-  local real_git git_dir worktree_dir origin_url ref archive_path temp_dir extracted_repo_dir
-  real_git="$1"
-  git_dir="$2"
-
-  path_looks_like_mix_install_git_dir "${git_dir}" || return 1
-  worktree_dir="$(resolve_fetch_worktree_dir "${real_git}" || true)"
-  origin_url="$(resolve_fetch_origin_url "${real_git}" || true)"
-  [[ -n "${worktree_dir}" && -n "${origin_url}" ]] || return 1
-
-  temp_dir="$(mktemp -d -t git-zip-fetch-clone-XXXXXX)"
-  archive_path="${temp_dir}/repo-clone.tar.gz"
-
-  local -a helper_cmd=("${GIT_ZIP_WRAPPER_EC2_CLONE_HELPER}" --repo-url "${origin_url}" --output "${archive_path}" --create-dirs)
-  ref="$(extract_requested_fetch_ref || true)"
-  if [[ -n "${ref}" ]]; then
-    helper_cmd+=(--git-arg --branch --git-arg "${ref}" --git-arg --single-branch)
-  fi
-  if [[ "${GIT_ZIP_WRAPPER_LFS_MODE}" == "ec2" ]]; then
-    helper_cmd+=(--materialize-lfs)
-  fi
-  if [[ -n "${GIT_ZIP_WRAPPER_EC2_PROXY}" ]]; then
-    helper_cmd+=(--proxy "${GIT_ZIP_WRAPPER_EC2_PROXY}")
-  fi
-  if is_truthy "${GIT_ZIP_WRAPPER_CURL_INSECURE}"; then
-    helper_cmd+=(--insecure)
-  fi
-
-  "${helper_cmd[@]}" || {
-    rm -rf "${temp_dir}"
-    return 1
-  }
-
-  extracted_repo_dir="${temp_dir}/repo"
-  mkdir -p "${extracted_repo_dir}"
-  tar -xzf "${archive_path}" -C "${extracted_repo_dir}" --strip-components=1
-  overlay_directory_tree "${extracted_repo_dir}" "${worktree_dir}"
-  rm -rf "${temp_dir}"
 }
 
 replace_mix_install_repo_with_archive() {
@@ -1184,6 +905,88 @@ checkout_archive_clone_target() {
   return 1
 }
 
+clone_forward_flag_enabled() {
+  local enabled_flag disabled_flag current state
+  enabled_flag="$1"
+  disabled_flag="${2:-}"
+  state=""
+
+  for current in "${CLONE_FORWARD_ARGS[@]+"${CLONE_FORWARD_ARGS[@]}"}"; do
+    if [[ "${current}" == "${enabled_flag}" ]]; then
+      state="enabled"
+      continue
+    fi
+
+    if [[ -n "${disabled_flag}" && "${current}" == "${disabled_flag}" ]]; then
+      state="disabled"
+    fi
+  done
+
+  [[ "${state}" == "enabled" ]]
+}
+
+archive_clone_has_remote_branch_ref() {
+  local real_git destination branch_name
+  real_git="$1"
+  destination="$2"
+  branch_name="$3"
+
+  [[ -n "${branch_name}" ]] || return 1
+  "${real_git}" -C "${destination}" rev-parse --verify "refs/remotes/origin/${branch_name}" >/dev/null 2>&1
+}
+
+archive_clone_snapshot_commit() {
+  local real_git destination
+  real_git="$1"
+  destination="$2"
+
+  "${real_git}" -C "${destination}" rev-parse --verify HEAD 2>/dev/null || return 1
+}
+
+materialize_archive_clone_snapshot_branch_ref() {
+  local real_git destination branch_name snapshot_commit
+  real_git="$1"
+  destination="$2"
+  branch_name="$3"
+
+  [[ -n "${branch_name}" ]] || return 1
+  archive_clone_has_remote_branch_ref "${real_git}" "${destination}" "${branch_name}" && return 0
+
+  snapshot_commit="$(archive_clone_snapshot_commit "${real_git}" "${destination}" || true)"
+  [[ -n "${snapshot_commit}" ]] || return 1
+  "${real_git}" -C "${destination}" update-ref "refs/remotes/origin/${branch_name}" "${snapshot_commit}"
+}
+
+configure_archive_clone_fetch_refspec() {
+  local real_git destination branch_name
+  real_git="$1"
+  destination="$2"
+  branch_name="$3"
+
+  [[ -n "${branch_name}" ]] || return 1
+  archive_clone_has_remote_branch_ref "${real_git}" "${destination}" "${branch_name}" || return 1
+  clone_forward_flag_enabled --single-branch --no-single-branch || return 0
+
+  "${real_git}" -C "${destination}" config --unset-all remote.origin.fetch >/dev/null 2>&1 || true
+  "${real_git}" -C "${destination}" config remote.origin.fetch "+refs/heads/${branch_name}:refs/remotes/origin/${branch_name}"
+}
+
+configure_archive_clone_origin_head() {
+  local real_git destination preferred_branch fallback_branch branch_name
+  real_git="$1"
+  destination="$2"
+  preferred_branch="$3"
+  fallback_branch="$4"
+
+  branch_name="${preferred_branch}"
+  if ! archive_clone_has_remote_branch_ref "${real_git}" "${destination}" "${branch_name}"; then
+    branch_name="${fallback_branch}"
+  fi
+
+  archive_clone_has_remote_branch_ref "${real_git}" "${destination}" "${branch_name}" || return 1
+  "${real_git}" -C "${destination}" symbolic-ref refs/remotes/origin/HEAD "refs/remotes/origin/${branch_name}"
+}
+
 create_archive_snapshot_commit() {
   local real_git destination repo_url target_ref branch_name commit_message
   real_git="$1"
@@ -1211,7 +1014,7 @@ create_archive_snapshot_commit() {
 }
 
 bootstrap_archive_clone_repository() {
-  local real_git repo_url destination requested_ref source_url target_ref fetch_depth
+  local real_git repo_url destination requested_ref source_url target_ref remote_default_branch fetch_depth
   real_git="$1"
   repo_url="$2"
   destination="$3"
@@ -1226,22 +1029,26 @@ bootstrap_archive_clone_repository() {
   "${real_git}" -C "${destination}" remote add origin "${repo_url}"
 
   target_ref="$(resolve_archive_clone_target_ref "${requested_ref}" "${source_url}" || true)"
+  remote_default_branch="$(resolve_remote_default_branch "${real_git}" "${destination}" || true)"
   if [[ -z "${target_ref}" ]]; then
-    target_ref="$(resolve_remote_default_branch "${real_git}" "${destination}" || true)"
+    target_ref="${remote_default_branch}"
   fi
 
   # Commit the extracted archive first so a later checkout can safely replace
   # tracked files instead of aborting on an untracked working tree.
   create_archive_snapshot_commit "${real_git}" "${destination}" "${repo_url}" "${target_ref}"
+  materialize_archive_clone_snapshot_branch_ref "${real_git}" "${destination}" "${target_ref}" || true
+  configure_archive_clone_fetch_refspec "${real_git}" "${destination}" "${target_ref}" || true
 
   fetch_depth="$(first_forward_value_for_option --depth || true)"
   [[ -n "${fetch_depth}" ]] || fetch_depth="1"
 
-  if fetch_archive_clone_target "${real_git}" "${destination}" "${target_ref}" "${fetch_depth}"; then
-    if checkout_archive_clone_target "${real_git}" "${destination}" "${target_ref}"; then
-      log "metadados Git materializados após clone por archive: ${destination}"
-      return 0
-    fi
+  fetch_archive_clone_target "${real_git}" "${destination}" "${target_ref}" "${fetch_depth}" || true
+  configure_archive_clone_origin_head "${real_git}" "${destination}" "${remote_default_branch}" "${target_ref}" || true
+
+  if checkout_archive_clone_target "${real_git}" "${destination}" "${target_ref}"; then
+    log "metadados Git materializados após clone por archive: ${destination}"
+    return 0
   fi
 
   log "clone por archive materializado como snapshot Git local: ${destination}"
@@ -1381,25 +1188,6 @@ main() {
       if [[ -n "${fetch_git_dir}" ]] && replace_mix_install_repo_with_archive "${real_git}" "${fetch_git_dir}"; then
         return 0
       fi
-      if should_use_ec2_backend_for_fetch; then
-        if [[ -n "${fetch_git_dir}" ]]; then
-          log "git fetch local falhou; tentando backend EC2 (${fetch_git_dir})"
-          if fetch_with_ec2_backend "${fetch_git_dir}"; then
-            log "fetch remoto concluído: ${fetch_git_dir}"
-            return 0
-          fi
-          if replace_mix_install_repo_with_clone "${real_git}" "${fetch_git_dir}"; then
-            log "fallback por clone remoto concluído para cache do Mix.install: ${fetch_git_dir}"
-            return 0
-          fi
-          if is_truthy "${GIT_ZIP_WRAPPER_EC2_REQUIRED}"; then
-            die "git fetch local falhou e backend EC2 falhou em ${fetch_git_dir}"
-          fi
-          log "backend EC2 do git fetch falhou após tentativa local"
-        elif is_truthy "${GIT_ZIP_WRAPPER_EC2_REQUIRED}"; then
-          die "git fetch local falhou e não foi possível resolver o diretório git para fallback EC2"
-        fi
-      fi
       exit "${fetch_exit_code}"
       ;;
     checkout)
@@ -1416,12 +1204,6 @@ main() {
       set -e
       if [[ "${checkout_exit_code}" -eq 0 ]]; then
         return 0
-      fi
-      if should_use_ec2_backend_for_checkout; then
-        if [[ -n "${checkout_git_dir}" ]] && replace_mix_install_repo_with_checkout "${real_git}" "${checkout_git_dir}"; then
-          log "fallback por checkout remoto concluído para cache do Mix.install: ${checkout_git_dir}"
-          return 0
-        fi
       fi
       exit "${checkout_exit_code}"
       ;;
@@ -1442,12 +1224,12 @@ main() {
   fi
 
   parse_clone_arguments "clone" "${GIT_SUBCOMMAND_ARGS[@]+"${GIT_SUBCOMMAND_ARGS[@]}"}"
-  local repo_url destination branch normalized_repo_url
+  local repo_url destination branch
   repo_url="${CLONE_REPO_URL}"
   destination="${CLONE_DESTINATION}"
   branch="$(first_forward_value_for_option --branch || true)"
   if repo_source_requires_plain_git "${repo_url}"; then
-    log "source itau-* detectado no clone; usando git comum sem backend EC2"
+    log "source itau-* detectado no clone; usando git comum"
     exec "${real_git}" "$@"
   fi
   resolve_proxy_config
@@ -1457,12 +1239,6 @@ main() {
 
   validate_clone_destination "${destination}"
   GIT_ZIP_WRAPPER_TMP_DIR="$(mktemp -d -t git-zip-clone-XXXXXX)"
-
-  if normalized_repo_url="$(normalize_clone_url_for_http_transport "${repo_url}" 2>/dev/null)"; then
-    :
-  else
-    normalized_repo_url=""
-  fi
 
   local slug archive_path source_url local_git_clone_exit_code
   if ! slug="$(extract_github_slug "${repo_url}")"; then
@@ -1503,7 +1279,7 @@ main() {
     if is_truthy "${GIT_ZIP_WRAPPER_STRICT:-0}"; then
       die "falha ao baixar arquivo para ${repo_url} (branch/tag: ${branch:-HEAD})"
     fi
-    log "falha ao baixar arquivo para ${repo_url}; tentando git clone normal antes do backend EC2."
+    log "falha ao baixar arquivo para ${repo_url}; tentando git clone normal."
   else
     log "curl não encontrado; pulando clone local por arquivo para ${repo_url}"
   fi
@@ -1516,30 +1292,6 @@ main() {
   if [[ "${local_git_clone_exit_code}" -eq 0 ]]; then
     log "git clone local concluído: ${repo_url} -> ${destination}"
     return 0
-  fi
-
-  if [[ -n "${normalized_repo_url}" ]] && should_use_ec2_backend_for_clone_url "${normalized_repo_url}"; then
-    local clone_archive_path
-    clone_archive_path="${GIT_ZIP_WRAPPER_TMP_DIR}/repo-clone.tar.gz"
-    log "git clone local falhou; tentando backend EC2 para ${repo_url}"
-    reset_clone_destination_after_failed_local_clone "${destination}"
-    log "backend selecionado: ec2 git-clone (${normalized_repo_url})"
-    if clone_with_ec2_backend "${normalized_repo_url}" "${clone_archive_path}"; then
-      extract_archive_to_destination "${clone_archive_path}" "${destination}"
-      if [[ "${GIT_ZIP_WRAPPER_LFS_MODE}" == "ec2" ]]; then
-        log "repositório extraído com Git LFS materializado no EC2"
-      else
-        run_git_lfs_post_clone "${destination}"
-      fi
-      log "clone remoto(http) concluído: ${repo_url} -> ${destination} (source: ${normalized_repo_url})"
-      return 0
-    fi
-    if is_truthy "${GIT_ZIP_WRAPPER_EC2_REQUIRED}"; then
-      die "git clone local falhou e o backend EC2 falhou para git clone ${repo_url}"
-    fi
-    log "backend EC2 do git clone falhou; mantendo erro do git clone local"
-  elif is_truthy "${GIT_ZIP_WRAPPER_EC2_REQUIRED}"; then
-    die "git clone local falhou e o backend EC2 não está disponível para ${repo_url}"
   fi
 
   exit "${local_git_clone_exit_code}"

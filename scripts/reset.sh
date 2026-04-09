@@ -6,7 +6,7 @@ RESET_SCRIPT="${SCRIPT_DIR}/install/reset_restricted_dev_env.sh"
 LEGACY_BREW_WRAPPER_DIR="${HOME}/.local/share/homebrew-install-wrapper/bin"
 LEGACY_BREW_WRAPPER_ROOT="${HOME}/.local/share/homebrew-install-wrapper"
 
-sanitize_legacy_brew_wrapper_env() {
+sanitize_legacy_wrapper_env() {
   old_path="${PATH-}"
   new_path=""
   old_ifs="${IFS}"
@@ -16,15 +16,18 @@ sanitize_legacy_brew_wrapper_env() {
   unset BREW_WRAPPER_REAL_BREW 2>/dev/null || true
   unset BREW_WRAPPER_CURL_BIN 2>/dev/null || true
   unset BREW_WRAPPER_GIT_BIN 2>/dev/null || true
-  unset BREW_WRAPPER_CURL_EC2_REQUIRED 2>/dev/null || true
-  unset BREW_WRAPPER_GIT_EC2_REQUIRED 2>/dev/null || true
   unset BREW_WRAPPER_NO_AUTO_UPDATE 2>/dev/null || true
   unset GIT_ZIP_WRAPPER_CLONE_ORDER 2>/dev/null || true
+  unset GIT_ZIP_WRAPPER_FORCE_LOCAL_DOWNLOADS 2>/dev/null || true
 
   IFS=':'
   for path_entry in ${old_path}; do
     [ -n "${path_entry}" ] || continue
-    [ "${path_entry}" = "${LEGACY_BREW_WRAPPER_DIR}" ] && continue
+    case "${path_entry}" in
+      "${LEGACY_BREW_WRAPPER_DIR}"|"${HOME}"/.local/share/mix-*-wrapper/bin|"${HOME}"/.local/share/nvim-*-wrapper/bin)
+        continue
+        ;;
+    esac
 
     if [ -z "${new_path}" ]; then
       new_path="${path_entry}"
@@ -59,7 +62,7 @@ remove_legacy_brew_wrapper_installation() {
   rm -rf "${LEGACY_BREW_WRAPPER_ROOT}"
 }
 
-sanitize_legacy_brew_wrapper_env
+sanitize_legacy_wrapper_env
 if ! should_keep_install_dirs "$@"; then
   remove_legacy_brew_wrapper_installation
 fi

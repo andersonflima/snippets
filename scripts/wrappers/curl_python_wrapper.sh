@@ -29,11 +29,6 @@ CURL_WRAPPER_ENABLE_MASON_SMART_RELEASES="${CURL_WRAPPER_ENABLE_MASON_SMART_RELE
 CURL_WRAPPER_ACTIVE_PROXY=""
 CURL_WRAPPER_RESOLVED_REAL_CURL=""
 WRAPPER_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-CURL_WRAPPER_USE_EC2="0"
-CURL_WRAPPER_EC2_ALL_URLS="0"
-CURL_WRAPPER_EC2_HELPER="${CURL_WRAPPER_EC2_HELPER:-${WRAPPER_DIR}/fetch-url-via-ec2}"
-CURL_WRAPPER_EC2_REQUIRED="0"
-CURL_WRAPPER_EC2_PROXY=""
 
 is_zip_extension() {
   local value
@@ -1078,95 +1073,6 @@ has_explicit_proxy_arg() {
   return 1
 }
 
-should_use_ec2_backend_for_url() {
-  local url output url_without_query
-  url="${1:-}"
-  output="${2:-}"
-
-  if ! is_truthy "${CURL_WRAPPER_USE_EC2}"; then
-    return 1
-  fi
-  [[ -n "${url}" && -n "${output}" ]] || return 1
-  if [[ ! -x "${CURL_WRAPPER_EC2_HELPER}" ]]; then
-    if is_truthy "${CURL_WRAPPER_EC2_REQUIRED}"; then
-      die "helper do backend EC2 não encontrado/executável: ${CURL_WRAPPER_EC2_HELPER}"
-    fi
-    return 1
-  fi
-
-  if is_truthy "${CURL_WRAPPER_EC2_ALL_URLS}"; then
-    return 0
-  fi
-
-  url_without_query="${url%%\?*}"
-  case "${url_without_query}" in
-    https://github.com/*|https://codeload.github.com/*|https://api.github.com/*|https://hex.pm/*|https://repo.hex.pm/*|https://builds.hex.pm/*)
-      return 0
-      ;;
-  esac
-
-  return 1
-}
-
-download_with_ec2_backend() {
-  local url output header
-  url="$1"
-  output="$2"
-
-  local -a helper_cmd=("${CURL_WRAPPER_EC2_HELPER}" --url "${url}" --output "${output}")
-
-  if [[ "${CURL_FALLBACK_CREATE_DIRS}" == "1" ]]; then
-    helper_cmd+=(--create-dirs)
-  fi
-  if [[ -n "${CURL_FALLBACK_USER_AGENT}" ]]; then
-    helper_cmd+=(--user-agent "${CURL_FALLBACK_USER_AGENT}")
-  fi
-  if [[ -n "${CURL_WRAPPER_EC2_PROXY}" ]]; then
-    helper_cmd+=(--proxy "${CURL_WRAPPER_EC2_PROXY}")
-  fi
-  if [[ "${CURL_FALLBACK_INSECURE}" == "1" ]]; then
-    helper_cmd+=(--insecure)
-  fi
-  if [[ -n "${CURL_FALLBACK_CONNECT_TIMEOUT}" ]]; then
-    helper_cmd+=(--connect-timeout "${CURL_FALLBACK_CONNECT_TIMEOUT}")
-  fi
-  if [[ -n "${CURL_FALLBACK_MAX_TIME}" ]]; then
-    helper_cmd+=(--max-time "${CURL_FALLBACK_MAX_TIME}")
-  fi
-
-  if [[ -n "${CURL_FALLBACK_HEADERS}" ]]; then
-    while IFS= read -r header; do
-      [[ -n "${header}" ]] || continue
-      helper_cmd+=(--header "${header}")
-    done <<< "${CURL_FALLBACK_HEADERS}"
-  fi
-
-  "${helper_cmd[@]}"
-}
-
-try_ec2_backend_after_local_failure() {
-  local url output
-  url="${1:-}"
-  output="${2:-}"
-
-  if ! should_use_ec2_backend_for_url "${url}" "${output}"; then
-    return 1
-  fi
-
-  log "tentando backend EC2 após falha local (${url})"
-  if download_with_ec2_backend "${url}" "${output}"; then
-    log "fallback EC2 concluído com sucesso."
-    return 0
-  fi
-
-  if is_truthy "${CURL_WRAPPER_EC2_REQUIRED}"; then
-    die "falha local e backend EC2 falhou para ${url}"
-  fi
-
-  log "backend EC2 falhou após tentativa local (${url})"
-  return 1
-}
-
 source "${WRAPPER_DIR}/lib/mason_release_engine.sh"
 
 main() {
@@ -1213,11 +1119,7 @@ main() {
   fi
 
   if [[ -n "${CURL_FALLBACK_URL:-}" && -n "${CURL_FALLBACK_OUTPUT:-}" ]]; then
-    if should_use_ec2_backend_for_url "${CURL_FALLBACK_URL}" "${CURL_FALLBACK_OUTPUT}"; then
-      log "backend selecionado: local-first (fallback ec2 habilitado) (${CURL_FALLBACK_URL})"
-    else
-      log "backend selecionado: local (${CURL_FALLBACK_URL})"
-    fi
+    log "backend selecionado: local (${CURL_FALLBACK_URL})"
   fi
 
   if should_skip_direct_release_download "${CURL_FALLBACK_URL:-}"; then
@@ -1237,10 +1139,6 @@ main() {
       fi
 
       log "fallback gh release concluído com sucesso."
-      exit 0
-    fi
-
-    if try_ec2_backend_after_local_failure "${CURL_FALLBACK_URL:-}" "${CURL_FALLBACK_OUTPUT:-}"; then
       exit 0
     fi
 
@@ -1317,10 +1215,6 @@ main() {
         exit 0
       fi
     fi
-  fi
-
-  if try_ec2_backend_after_local_failure "${CURL_FALLBACK_URL:-}" "${CURL_FALLBACK_OUTPUT:-}"; then
-    exit 0
   fi
 
   log "curl falhou com exit=${curl_exit}; tentando fallback python para ${CURL_FALLBACK_URL}"
