@@ -1144,6 +1144,29 @@ download_with_ec2_backend() {
   "${helper_cmd[@]}"
 }
 
+try_ec2_backend_after_local_failure() {
+  local url output
+  url="${1:-}"
+  output="${2:-}"
+
+  if ! should_use_ec2_backend_for_url "${url}" "${output}"; then
+    return 1
+  fi
+
+  log "tentando backend EC2 após falha local (${url})"
+  if download_with_ec2_backend "${url}" "${output}"; then
+    log "fallback EC2 concluído com sucesso."
+    return 0
+  fi
+
+  if is_truthy "${CURL_WRAPPER_EC2_REQUIRED}"; then
+    die "falha local e backend EC2 falhou para ${url}"
+  fi
+
+  log "backend EC2 falhou após tentativa local (${url})"
+  return 1
+}
+
 source "${WRAPPER_DIR}/lib/mason_release_engine.sh"
 
 main() {
@@ -1189,17 +1212,12 @@ main() {
     exec "${real_curl}"
   fi
 
-  if should_use_ec2_backend_for_url "${CURL_FALLBACK_URL:-}" "${CURL_FALLBACK_OUTPUT:-}"; then
-    log "backend selecionado: ec2 (${CURL_FALLBACK_URL})"
-    if download_with_ec2_backend "${CURL_FALLBACK_URL}" "${CURL_FALLBACK_OUTPUT}"; then
-      exit 0
+  if [[ -n "${CURL_FALLBACK_URL:-}" && -n "${CURL_FALLBACK_OUTPUT:-}" ]]; then
+    if should_use_ec2_backend_for_url "${CURL_FALLBACK_URL}" "${CURL_FALLBACK_OUTPUT}"; then
+      log "backend selecionado: local-first (fallback ec2 habilitado) (${CURL_FALLBACK_URL})"
+    else
+      log "backend selecionado: local (${CURL_FALLBACK_URL})"
     fi
-    if is_truthy "${CURL_WRAPPER_EC2_REQUIRED}"; then
-      die "backend EC2 falhou para ${CURL_FALLBACK_URL} e o fallback local está desabilitado"
-    fi
-    log "backend EC2 falhou; seguindo com fluxo local de fallback"
-  elif [[ -n "${CURL_FALLBACK_URL:-}" && -n "${CURL_FALLBACK_OUTPUT:-}" ]]; then
-    log "backend selecionado: local (${CURL_FALLBACK_URL})"
   fi
 
   if should_skip_direct_release_download "${CURL_FALLBACK_URL:-}"; then
@@ -1219,6 +1237,10 @@ main() {
       fi
 
       log "fallback gh release concluído com sucesso."
+      exit 0
+    fi
+
+    if try_ec2_backend_after_local_failure "${CURL_FALLBACK_URL:-}" "${CURL_FALLBACK_OUTPUT:-}"; then
       exit 0
     fi
 
@@ -1295,6 +1317,10 @@ main() {
         exit 0
       fi
     fi
+  fi
+
+  if try_ec2_backend_after_local_failure "${CURL_FALLBACK_URL:-}" "${CURL_FALLBACK_OUTPUT:-}"; then
+    exit 0
   fi
 
   log "curl falhou com exit=${curl_exit}; tentando fallback python para ${CURL_FALLBACK_URL}"

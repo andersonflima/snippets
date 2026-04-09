@@ -541,14 +541,7 @@ download_url_with_retries() {
   fi
 
   if should_use_ec2_backend_for_git_url "${url}" "${archive_path}"; then
-    log "backend selecionado: ec2 (${url})"
-    if download_with_ec2_backend "${url}" "${archive_path}" "${user_agent}"; then
-      return 0
-    fi
-    if is_truthy "${GIT_ZIP_WRAPPER_EC2_REQUIRED}"; then
-      die "backend EC2 falhou para ${url} e o fallback local está desabilitado"
-    fi
-    log "backend EC2 falhou; seguindo com tentativas locais"
+    log "backend selecionado: local-first (fallback ec2 habilitado) (${url})"
   else
     log "backend selecionado: local (${url})"
   fi
@@ -563,6 +556,18 @@ download_url_with_retries() {
       sleep 2
     done
   done
+
+  if should_use_ec2_backend_for_git_url "${url}" "${archive_path}"; then
+    log "tentando backend EC2 após falha local (${url})"
+    if download_with_ec2_backend "${url}" "${archive_path}" "${user_agent}"; then
+      return 0
+    fi
+    if is_truthy "${GIT_ZIP_WRAPPER_EC2_REQUIRED}"; then
+      die "falha local e backend EC2 falhou para ${url}"
+    fi
+    log "backend EC2 falhou após tentativa local (${url})"
+  fi
+
   return 1
 }
 
@@ -1357,26 +1362,6 @@ main() {
         log "source itau-* detectado no origin; usando git comum para fetch"
         exec "${real_git}" "$@"
       fi
-      if should_use_ec2_backend_for_fetch; then
-        fetch_git_dir="$(resolve_fetch_git_dir "${real_git}" || true)"
-        if [[ -n "${fetch_git_dir}" ]]; then
-          log "backend selecionado: ec2 git-fetch (${fetch_git_dir})"
-          if fetch_with_ec2_backend "${fetch_git_dir}"; then
-            log "fetch remoto concluído: ${fetch_git_dir}"
-            return 0
-          fi
-          if replace_mix_install_repo_with_clone "${real_git}" "${fetch_git_dir}"; then
-            log "fallback por clone remoto concluído para cache do Mix.install: ${fetch_git_dir}"
-            return 0
-          fi
-          if is_truthy "${GIT_ZIP_WRAPPER_EC2_REQUIRED}"; then
-            die "backend EC2 falhou para git fetch em ${fetch_git_dir} e o fallback local está desabilitado"
-          fi
-          log "backend EC2 do git fetch falhou; seguindo com fallback local"
-        elif is_truthy "${GIT_ZIP_WRAPPER_EC2_REQUIRED}"; then
-          die "não foi possível resolver o diretório git para o fetch remoto"
-        fi
-      fi
       fetch_git_dir="$(resolve_fetch_git_dir "${real_git}" || true)"
       set +e
       "${real_git}" "$@"
@@ -1388,23 +1373,49 @@ main() {
       if [[ -n "${fetch_git_dir}" ]] && replace_mix_install_repo_with_archive "${real_git}" "${fetch_git_dir}"; then
         return 0
       fi
+      if should_use_ec2_backend_for_fetch; then
+        if [[ -n "${fetch_git_dir}" ]]; then
+          log "git fetch local falhou; tentando backend EC2 (${fetch_git_dir})"
+          if fetch_with_ec2_backend "${fetch_git_dir}"; then
+            log "fetch remoto concluído: ${fetch_git_dir}"
+            return 0
+          fi
+          if replace_mix_install_repo_with_clone "${real_git}" "${fetch_git_dir}"; then
+            log "fallback por clone remoto concluído para cache do Mix.install: ${fetch_git_dir}"
+            return 0
+          fi
+          if is_truthy "${GIT_ZIP_WRAPPER_EC2_REQUIRED}"; then
+            die "git fetch local falhou e backend EC2 falhou em ${fetch_git_dir}"
+          fi
+          log "backend EC2 do git fetch falhou após tentativa local"
+        elif is_truthy "${GIT_ZIP_WRAPPER_EC2_REQUIRED}"; then
+          die "git fetch local falhou e não foi possível resolver o diretório git para fallback EC2"
+        fi
+      fi
       exit "${fetch_exit_code}"
       ;;
     checkout)
       resolve_proxy_config
-      local checkout_git_dir
+      local checkout_git_dir checkout_exit_code
       if current_repo_origin_requires_plain_git "${real_git}"; then
         log "source itau-* detectado no origin; usando git comum para checkout"
         exec "${real_git}" "$@"
       fi
+      checkout_git_dir="$(resolve_fetch_git_dir "${real_git}" || true)"
+      set +e
+      "${real_git}" "$@"
+      checkout_exit_code=$?
+      set -e
+      if [[ "${checkout_exit_code}" -eq 0 ]]; then
+        return 0
+      fi
       if should_use_ec2_backend_for_checkout; then
-        checkout_git_dir="$(resolve_fetch_git_dir "${real_git}" || true)"
         if [[ -n "${checkout_git_dir}" ]] && replace_mix_install_repo_with_checkout "${real_git}" "${checkout_git_dir}"; then
           log "fallback por checkout remoto concluído para cache do Mix.install: ${checkout_git_dir}"
           return 0
         fi
       fi
-      exec "${real_git}" "$@"
+      exit "${checkout_exit_code}"
       ;;
     clone)
       if [[ ${#GIT_GLOBAL_ARGS[@]} -gt 0 ]]; then
