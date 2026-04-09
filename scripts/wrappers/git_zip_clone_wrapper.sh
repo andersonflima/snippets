@@ -434,6 +434,11 @@ download_github_archive() {
 
   if [[ "${ARCHIVE_FORMAT}" == "zip" ]]; then
     if [[ -n "${branch}" ]]; then
+      if looks_like_git_commit_sha "${branch}"; then
+        try_download_candidate_urls "${archive_path}" \
+          "https://codeload.github.com/${slug}/zip/${branch}" \
+          "https://github.com/${slug}/archive/${branch}.zip" && return 0
+      fi
       try_download_candidate_urls "${archive_path}" \
         "https://github.com/${slug}/archive/refs/heads/${branch}.zip" \
         "https://github.com/${slug}/archive/refs/tags/${branch}.zip" \
@@ -447,6 +452,11 @@ download_github_archive() {
     fi
   else
     if [[ -n "${branch}" ]]; then
+      if looks_like_git_commit_sha "${branch}"; then
+        try_download_candidate_urls "${archive_path}" \
+          "https://codeload.github.com/${slug}/tar.gz/${branch}" \
+          "https://github.com/${slug}/archive/${branch}.tar.gz" && return 0
+      fi
       try_download_candidate_urls "${archive_path}" \
         "https://github.com/${slug}/archive/refs/heads/${branch}.tar.gz" \
         "https://github.com/${slug}/archive/refs/tags/${branch}.tar.gz" \
@@ -614,11 +624,177 @@ extract_requested_fetch_ref() {
   return 1
 }
 
+extract_requested_checkout_ref() {
+  local arg
+  for arg in "${GIT_SUBCOMMAND_ARGS[@]+"${GIT_SUBCOMMAND_ARGS[@]}"}"; do
+    case "${arg}" in
+      -*)
+        ;;
+      *)
+        printf '%s\n' "${arg}"
+        return 0
+        ;;
+    esac
+  done
+  return 1
+}
+
+looks_like_git_commit_sha() {
+  local value
+  value="$1"
+  [[ "${value}" =~ ^[0-9a-fA-F]{7,40}$ ]]
+}
+
+resolve_current_local_branch() {
+  local real_git worktree_dir current_branch
+  real_git="$1"
+  worktree_dir="$2"
+
+  current_branch="$("${real_git}" -C "${worktree_dir}" symbolic-ref --quiet --short HEAD 2>/dev/null || true)"
+  [[ -n "${current_branch}" ]] || return 1
+  printf '%s\n' "${current_branch}"
+}
+
 overlay_directory_tree() {
   local source_dir destination_dir
   source_dir="$1"
   destination_dir="$2"
   cp -a "${source_dir}/." "${destination_dir}/"
+}
+
+build_archive_snapshot_repository() {
+  local real_git repo_url target_ref temp_dir archive_path extracted_repo_dir source_url normalized_origin_url slug snapshot_branch snapshot_commit
+  real_git="$1"
+  repo_url="$2"
+  target_ref="$3"
+
+  normalized_origin_url="$(normalize_clone_url_for_http_transport "${repo_url}" 2>/dev/null || true)"
+  [[ -n "${normalized_origin_url}" ]] || normalized_origin_url="${repo_url}"
+  slug="$(extract_github_slug "${normalized_origin_url}" || true)"
+  [[ -n "${slug}" ]] || return 1
+
+  temp_dir="$(mktemp -d -t git-zip-archive-repo-XXXXXX)"
+  archive_path="${temp_dir}/repo.tar.gz"
+  source_url="$(download_github_archive "${slug}" "${target_ref}" "${archive_path}" || true)"
+  if [[ -z "${source_url}" ]]; then
+    rm -rf "${temp_dir}"
+    return 1
+  fi
+
+  extracted_repo_dir="${temp_dir}/repo"
+  mkdir -p "${extracted_repo_dir}"
+  extract_archive_to_destination "${archive_path}" "${extracted_repo_dir}"
+
+  "${real_git}" init --quiet "${extracted_repo_dir}"
+  create_archive_snapshot_commit "${real_git}" "${extracted_repo_dir}" "${repo_url}" "${target_ref}"
+  snapshot_branch="$(sanitize_archive_clone_branch_name "${target_ref}")"
+  snapshot_commit="$("${real_git}" -C "${extracted_repo_dir}" rev-parse HEAD)"
+
+  printf '%s\t%s\t%s\t%s\n' "${temp_dir}" "${snapshot_branch}" "${snapshot_commit}" "${source_url}"
+}
+
+import_archive_snapshot_ref_into_repo() {
+  local real_git destination source_repo_dir source_branch destination_ref
+  real_git="$1"
+  destination="$2"
+  source_repo_dir="$3"
+  source_branch="$4"
+  destination_ref="$5"
+
+  "${real_git}" -C "${destination}" fetch --quiet "${source_repo_dir}" "+refs/heads/${source_branch}:${destination_ref}"
+}
+
+fallback_fetch_repo_with_archive() {
+  local real_git git_dir worktree_dir origin_url target_ref archive_info archive_dir snapshot_branch snapshot_commit source_url current_branch
+  real_git="$1"
+  git_dir="$2"
+
+  worktree_dir="$(resolve_fetch_worktree_dir "${real_git}" || true)"
+  origin_url="$(resolve_fetch_origin_url "${real_git}" || true)"
+  [[ -n "${worktree_dir}" && -n "${origin_url}" ]] || return 1
+
+  target_ref="$(extract_requested_fetch_ref || true)"
+  if [[ -z "${target_ref}" ]]; then
+    current_branch="$(resolve_current_local_branch "${real_git}" "${worktree_dir}" || true)"
+    if [[ -n "${current_branch}" ]]; then
+      target_ref="${current_branch}"
+    fi
+  fi
+  [[ -n "${target_ref}" ]] || return 1
+  looks_like_git_commit_sha "${target_ref}" && return 1
+
+  archive_info="$(build_archive_snapshot_repository "${real_git}" "${origin_url}" "${target_ref}" || true)"
+  [[ -n "${archive_info}" ]] || return 1
+
+  archive_dir="${archive_info%%$'\t'*}"
+  archive_info="${archive_info#*$'\t'}"
+  snapshot_branch="${archive_info%%$'\t'*}"
+  archive_info="${archive_info#*$'\t'}"
+  snapshot_commit="${archive_info%%$'\t'*}"
+  source_url="${archive_info#*$'\t'}"
+
+  if import_archive_snapshot_ref_into_repo "${real_git}" "${worktree_dir}" "${archive_dir}/repo" "${snapshot_branch}" "refs/remotes/origin/${target_ref}"; then
+    "${real_git}" -C "${worktree_dir}" symbolic-ref refs/remotes/origin/HEAD "refs/remotes/origin/${target_ref}" >/dev/null 2>&1 || true
+    rm -rf "${archive_dir}"
+    log "fallback por archive local concluído para fetch: ${worktree_dir} (${target_ref} -> ${snapshot_commit}, source: ${source_url})"
+    return 0
+  fi
+
+  rm -rf "${archive_dir}"
+  return 1
+}
+
+fallback_checkout_repo_with_archive() {
+  local real_git worktree_dir origin_url target_ref archive_info archive_dir snapshot_branch snapshot_commit source_url import_ref replaced_target
+  local -a checkout_args
+  real_git="$1"
+
+  worktree_dir="$(resolve_fetch_worktree_dir "${real_git}" || true)"
+  origin_url="$(resolve_fetch_origin_url "${real_git}" || true)"
+  target_ref="$(extract_requested_checkout_ref || true)"
+  [[ -n "${worktree_dir}" && -n "${origin_url}" && -n "${target_ref}" ]] || return 1
+
+  archive_info="$(build_archive_snapshot_repository "${real_git}" "${origin_url}" "${target_ref}" || true)"
+  [[ -n "${archive_info}" ]] || return 1
+
+  archive_dir="${archive_info%%$'\t'*}"
+  archive_info="${archive_info#*$'\t'}"
+  snapshot_branch="${archive_info%%$'\t'*}"
+  archive_info="${archive_info#*$'\t'}"
+  snapshot_commit="${archive_info%%$'\t'*}"
+  source_url="${archive_info#*$'\t'}"
+
+  import_ref="refs/archive-fallback/${snapshot_branch}"
+  import_archive_snapshot_ref_into_repo "${real_git}" "${worktree_dir}" "${archive_dir}/repo" "${snapshot_branch}" "${import_ref}" || {
+    rm -rf "${archive_dir}"
+    return 1
+  }
+
+  snapshot_commit="$("${real_git}" -C "${worktree_dir}" rev-parse "${import_ref}")"
+  checkout_args=()
+  replaced_target="0"
+  for arg in "${GIT_SUBCOMMAND_ARGS[@]+"${GIT_SUBCOMMAND_ARGS[@]}"}"; do
+    if [[ "${replaced_target}" == "0" && "${arg}" == "${target_ref}" ]]; then
+      checkout_args+=("${snapshot_commit}")
+      replaced_target="1"
+      continue
+    fi
+    checkout_args+=("${arg}")
+  done
+
+  if [[ "${replaced_target}" == "0" ]]; then
+    rm -rf "${archive_dir}"
+    return 1
+  fi
+
+  if "${real_git}" -C "${worktree_dir}" checkout "${checkout_args[@]}"; then
+    rm -rf "${archive_dir}"
+    log "fallback por archive local concluído para checkout: ${worktree_dir} (${target_ref} -> ${snapshot_commit}, source: ${source_url})"
+    return 0
+  fi
+
+  rm -rf "${archive_dir}"
+  return 1
 }
 
 replace_mix_install_repo_with_archive() {
@@ -771,6 +947,9 @@ sanitize_archive_clone_branch_name() {
   candidate="${candidate//[^[:alnum:]._-]/-}"
   candidate="${candidate#-}"
   candidate="${candidate%-}"
+  if looks_like_git_commit_sha "${candidate}"; then
+    candidate="archive-snapshot-${candidate}"
+  fi
   [[ -n "${candidate}" ]] || candidate="archive-snapshot"
   printf '%s\n' "${candidate}"
 }
@@ -1209,6 +1388,9 @@ main() {
       if [[ "${fetch_exit_code}" -eq 0 ]]; then
         return 0
       fi
+      if [[ -n "${fetch_git_dir}" ]] && fallback_fetch_repo_with_archive "${real_git}" "${fetch_git_dir}"; then
+        return 0
+      fi
       if [[ -n "${fetch_git_dir}" ]] && replace_mix_install_repo_with_archive "${real_git}" "${fetch_git_dir}"; then
         return 0
       fi
@@ -1227,6 +1409,9 @@ main() {
       checkout_exit_code=$?
       set -e
       if [[ "${checkout_exit_code}" -eq 0 ]]; then
+        return 0
+      fi
+      if fallback_checkout_repo_with_archive "${real_git}"; then
         return 0
       fi
       exit "${checkout_exit_code}"
