@@ -84,6 +84,61 @@ WGET_HEADERS=()
 WGET_INSECURE="0"
 WGET_CAN_HANDLE="1"
 
+is_github_release_zip_url() {
+  local url
+  url="${1%%\?*}"
+  [[ "${url}" =~ ^https://github\.com/[^/]+/[^/]+/releases/download/[^/]+/.+\.zip$ ]]
+}
+
+resolve_curl_wrapper() {
+  local candidate
+  candidate="${WGET_WRAPPER_CURL_BIN:-${WRAPPER_DIR}/curl}"
+  [[ -x "${candidate}" ]] || return 1
+  printf '%s\n' "${candidate}"
+}
+
+should_delegate_to_curl_wrapper() {
+  [[ "${WGET_CAN_HANDLE}" == "1" ]] || return 1
+  is_truthy "${CURL_WRAPPER_ENABLE_MASON_SMART_RELEASES:-1}" || return 1
+  [[ -n "${WGET_URL}" ]] || return 1
+  is_github_release_zip_url "${WGET_URL}"
+}
+
+download_with_curl_wrapper() {
+  local curl_wrapper header
+  local -a curl_cmd
+
+  curl_wrapper="$(resolve_curl_wrapper)" || return 1
+  mkdir -p "$(dirname "${WGET_OUTPUT}")"
+
+  curl_cmd=(
+    "${curl_wrapper}"
+    -fL
+    --connect-timeout "${WGET_CONNECT_TIMEOUT}"
+    --max-time "${WGET_MAX_TIME}"
+    -o "${WGET_OUTPUT}"
+  )
+
+  if [[ -n "${WGET_USER_AGENT}" ]]; then
+    curl_cmd+=(-A "${WGET_USER_AGENT}")
+  fi
+
+  if [[ -n "${WGET_WRAPPER_PROXY}" ]]; then
+    curl_cmd+=(--proxy "${WGET_WRAPPER_PROXY}")
+  fi
+
+  if [[ "${WGET_INSECURE}" == "1" ]]; then
+    curl_cmd+=(-k)
+  fi
+
+  for header in "${WGET_HEADERS[@]}"; do
+    curl_cmd+=(-H "${header}")
+  done
+
+  curl_cmd+=("${WGET_URL}")
+  "${curl_cmd[@]}"
+}
+
 parse_args() {
   local positional=()
 
@@ -257,8 +312,31 @@ download_with_ec2_backend() {
   "${helper_cmd[@]}"
 }
 
+run_local_wget() {
+  local real_wget local_exit_code
+  real_wget="$1"
+  shift
+
+  set +e
+  if [[ -n "${WGET_WRAPPER_PROXY}" ]]; then
+    HTTPS_PROXY="${WGET_WRAPPER_PROXY}" \
+    HTTP_PROXY="${WGET_WRAPPER_PROXY}" \
+    ALL_PROXY="${WGET_WRAPPER_PROXY}" \
+    https_proxy="${WGET_WRAPPER_PROXY}" \
+    http_proxy="${WGET_WRAPPER_PROXY}" \
+    all_proxy="${WGET_WRAPPER_PROXY}" \
+    "${real_wget}" "$@"
+  else
+    "${real_wget}" "$@"
+  fi
+  local_exit_code=$?
+  set -e
+  return "${local_exit_code}"
+}
+
 main() {
-  local real_wget
+  local real_wget local_wget_exit_code
+  local ec2_backend_available=0
   real_wget="$(resolve_real_wget || true)"
 
   if [[ $# -eq 0 ]]; then
@@ -271,30 +349,69 @@ main() {
 
   parse_args "$@"
 
-  if [[ "${WGET_CAN_HANDLE}" == "1" ]] && should_use_ec2_backend_for_url "${WGET_URL}"; then
-    log "backend selecionado: ec2 (${WGET_URL})"
+  if should_delegate_to_curl_wrapper; then
+    log "asset zip de release do GitHub detectado; delegando ao curl wrapper para fluxo Mason"
+    if download_with_curl_wrapper; then
+      exit 0
+    fi
+    log "curl wrapper falhou; seguindo fluxo padrão do wget"
+  fi
+
+  if [[ "${WGET_CAN_HANDLE}" == "1" ]]; then
+    if should_use_ec2_backend_for_url "${WGET_URL}"; then
+      ec2_backend_available=1
+      log "backend selecionado: local-first (fallback ec2 habilitado) (${WGET_URL})"
+    else
+      log "backend selecionado: local (${WGET_URL})"
+    fi
+  fi
+
+  if [[ -n "${real_wget}" ]]; then
+    if [[ "${WGET_CAN_HANDLE}" == "1" ]]; then
+      if run_local_wget "${real_wget}" "$@"; then
+        exit 0
+      else
+        local_wget_exit_code=$?
+      fi
+
+      if [[ "${ec2_backend_available}" -eq 1 ]]; then
+        log "wget local falhou; tentando backend EC2 (${WGET_URL})"
+        if download_with_ec2_backend; then
+          exit 0
+        fi
+        if is_truthy "${WGET_WRAPPER_EC2_REQUIRED}"; then
+          die "wget local falhou e backend EC2 falhou para ${WGET_URL}"
+        fi
+        log "backend EC2 falhou após tentativa local (${WGET_URL})"
+      fi
+
+      exit "${local_wget_exit_code}"
+    fi
+
+    if [[ -n "${WGET_WRAPPER_PROXY}" ]]; then
+      HTTPS_PROXY="${WGET_WRAPPER_PROXY}" \
+      HTTP_PROXY="${WGET_WRAPPER_PROXY}" \
+      ALL_PROXY="${WGET_WRAPPER_PROXY}" \
+      https_proxy="${WGET_WRAPPER_PROXY}" \
+      http_proxy="${WGET_WRAPPER_PROXY}" \
+      all_proxy="${WGET_WRAPPER_PROXY}" \
+      exec "${real_wget}" "$@"
+    fi
+
+    exec "${real_wget}" "$@"
+  fi
+
+  if [[ "${ec2_backend_available}" -eq 1 ]]; then
+    log "wget real não encontrado; tentando backend EC2 (${WGET_URL})"
     if download_with_ec2_backend; then
       exit 0
     fi
     if is_truthy "${WGET_WRAPPER_EC2_REQUIRED}"; then
-      die "backend EC2 falhou para ${WGET_URL} e o fallback local está desabilitado"
+      die "wget real não encontrado e backend EC2 falhou para ${WGET_URL}"
     fi
-    log "backend EC2 falhou; seguindo com wget local"
   fi
 
-  [[ -n "${real_wget}" ]] || die "wget real não encontrado para fallback local"
-
-  if [[ -n "${WGET_WRAPPER_PROXY}" ]]; then
-    HTTPS_PROXY="${WGET_WRAPPER_PROXY}" \
-    HTTP_PROXY="${WGET_WRAPPER_PROXY}" \
-    ALL_PROXY="${WGET_WRAPPER_PROXY}" \
-    https_proxy="${WGET_WRAPPER_PROXY}" \
-    http_proxy="${WGET_WRAPPER_PROXY}" \
-    all_proxy="${WGET_WRAPPER_PROXY}" \
-    exec "${real_wget}" "$@"
-  fi
-
-  exec "${real_wget}" "$@"
+  die "wget real não encontrado para execução local"
 }
 
 main "$@"
