@@ -22,11 +22,11 @@ is_truthy() {
 }
 
 WRAPPER_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-WGET_WRAPPER_USE_EC2="${WGET_WRAPPER_USE_EC2:-${WRAPPERS_VIA_EC2_ENABLED:-0}}"
-WGET_WRAPPER_EC2_ALL_URLS="${WGET_WRAPPER_EC2_ALL_URLS:-${WRAPPERS_VIA_EC2_ALL_URLS:-1}}"
+WGET_WRAPPER_USE_EC2="0"
+WGET_WRAPPER_EC2_ALL_URLS="0"
 WGET_WRAPPER_EC2_HELPER="${WGET_WRAPPER_EC2_HELPER:-${WRAPPER_DIR}/fetch-url-via-ec2}"
-WGET_WRAPPER_EC2_REQUIRED="${WGET_WRAPPER_EC2_REQUIRED:-0}"
-WGET_WRAPPER_EC2_PROXY="${WGET_WRAPPER_EC2_PROXY:-${WRAPPERS_VIA_EC2_PROXY:-}}"
+WGET_WRAPPER_EC2_REQUIRED="0"
+WGET_WRAPPER_EC2_PROXY=""
 WGET_WRAPPER_PROXY="${WGET_WRAPPER_PROXY:-${HTTPS_PROXY:-${https_proxy:-${ALL_PROXY:-${all_proxy:-${HTTP_PROXY:-${http_proxy:-}}}}}}}"
 
 resolve_real_wget() {
@@ -131,7 +131,7 @@ download_with_curl_wrapper() {
     curl_cmd+=(-k)
   fi
 
-  for header in "${WGET_HEADERS[@]}"; do
+  for header in "${WGET_HEADERS[@]+"${WGET_HEADERS[@]}"}"; do
     curl_cmd+=(-H "${header}")
   done
 
@@ -305,7 +305,7 @@ download_with_ec2_backend() {
   if [[ -n "${WGET_MAX_TIME}" ]]; then
     helper_cmd+=(--max-time "${WGET_MAX_TIME}")
   fi
-  for header in "${WGET_HEADERS[@]}"; do
+  for header in "${WGET_HEADERS[@]+"${WGET_HEADERS[@]}"}"; do
     helper_cmd+=(--header "${header}")
   done
 

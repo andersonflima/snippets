@@ -250,5 +250,5 @@ Para limpar a sessão atual:
   exec "${SHELL:-/bin/zsh}" -l
 
 Para reconfigurar do zero:
-  sh scripts/configure.sh "<bucket>"
+  sh scripts/configure.sh
 EOF

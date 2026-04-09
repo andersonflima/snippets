@@ -25,9 +25,6 @@ is_wrapper_binary_path() {
   candidate_path="$2"
 
   case "${binary_name}" in
-    mix)
-      wrapper_path="${HOME}/.local/share/mix-ec2-wrapper/bin/mix"
-      ;;
     curl)
       wrapper_path="${HOME}/.local/share/curl-python-wrapper/bin/curl"
       ;;
@@ -36,6 +33,9 @@ is_wrapper_binary_path() {
       ;;
     git)
       wrapper_path="${HOME}/.local/share/git-zip-wrapper/bin/git"
+      ;;
+    mix)
+      wrapper_path="${HOME}/.local/share/mix-ec2-wrapper/bin/mix"
       ;;
     brew)
       wrapper_path="${HOME}/.local/share/homebrew-install-wrapper/bin/brew"
@@ -59,9 +59,9 @@ resolve_real_binary() {
     fi
     printf '%s\n' "${candidate}"
     return 0
-  done <<EOF
+  done <<EOF2
 $(which -a "${binary_name}" 2>/dev/null || true)
-EOF
+EOF2
 
   return 1
 }
@@ -96,34 +96,31 @@ detect_default_shell_rc() {
 usage() {
   cat <<'USAGE'
 Uso:
-  scripts/install/setup_restricted_dev_env.sh --s3-bucket <bucket> [opções]
+  scripts/install/setup_restricted_dev_env.sh [opções]
 
 Opções:
-  --s3-bucket <bucket>         Bucket compartilhado pelos wrappers e pelo mix.
-  --instance-name <nome>       Instância EC2. Padrão: Dander
-  --aws-region <region>        Region AWS. Padrão: sa-east-1
-  --aws-profile <profile>      Profile AWS.
-  --s3-prefix <prefixo>        Prefixo compartilhado para os wrappers. Padrão: wrappers-via-ec2
-  --mix-s3-prefix <prefixo>    Prefixo específico do mix. Padrão: mix-via-ec2
-  --enable-ec2-backend         Liga backend remoto via EC2 nos wrappers.
-  --disable-ec2-backend        Desliga backend remoto via EC2 nos wrappers.
   --shell-rc <arquivo>         Arquivo rc do shell (padrão detectado a partir de $SHELL).
   --apply-shell-rc             Persiste os env-files no shell rc.
-  --real-mix <path>            Binário real do mix.
   --real-curl <path>           Binário real do curl.
+  --real-wget <path>           Binário real do wget.
   --real-git <path>            Binário real do git.
+  --real-mix <path>            Binário real do mix. Necessário apenas com --configure-hex.
   --real-brew <path>           Legado. Ignorado; o wrapper de brew foi removido.
-  --ssh-identity <arquivo>     Chave SSH opcional para o mix via EC2.
   --proxy <url>                Proxy para wrappers e, opcionalmente, Hex.
-  --ec2-proxy <url>            Proxy exclusivo para o backend remoto no EC2.
   --ca-cert <arquivo>          CA customizada para wrappers/Hex.
   --auto-insecure-on-cert-error
                                Ativa retry inseguro no curl wrapper.
+  --mason-seed-dir <dir>       Diretório seed para artefatos do Mason.
   --configure-hex              Também aplica mix hex.config no host local.
   --hex-unsafe-https           Define unsafe_https/registry/origin no Hex.
   --hex-no-test                Não executa mix hex.info ao final da config do Hex.
   --no-shell-rc                Não altera o arquivo rc do shell.
   -h, --help                   Mostra esta ajuda.
+
+Compatibilidade legada:
+  --s3-bucket, --instance-name, --aws-region, --aws-profile, --s3-prefix,
+  --mix-s3-prefix, --enable-ec2-backend, --disable-ec2-backend,
+  --ssh-identity e --ec2-proxy são aceitos, mas ignorados neste modo local-only.
 USAGE
 }
 
@@ -134,68 +131,27 @@ STATE_HELPER="${SCRIPT_DIR}/restricted_dev_env_state.sh"
 # shellcheck disable=SC1090
 . "${STATE_HELPER}"
 
-S3_BUCKET=""
-INSTANCE_NAME="Dander"
-AWS_REGION_NAME="sa-east-1"
-AWS_PROFILE_NAME=""
-WRAPPERS_S3_PREFIX="wrappers-via-ec2"
-MIX_S3_PREFIX="mix-via-ec2"
-ENABLE_WRAPPER_EC2_BACKEND="1"
 SHELL_RC_PATH="$(detect_default_shell_rc)"
 APPLY_SHELL_RC="0"
-REAL_MIX_BIN=""
 REAL_CURL_BIN=""
 REAL_WGET_BIN=""
 REAL_GIT_BIN=""
-REAL_BREW_BIN=""
-SSH_IDENTITY_PATH=""
+REAL_MIX_BIN=""
 PROXY_URL="${HTTPS_PROXY:-${https_proxy:-${ALL_PROXY:-${all_proxy:-${HTTP_PROXY:-${http_proxy:-}}}}}}"
-EC2_PROXY_URL=""
-CA_CERT_PATH="${MIX_VIA_EC2_CA_CERT:-${GIT_ZIP_WRAPPER_CURL_CACERT:-${HEX_CACERTS_PATH:-${SSL_CERT_FILE:-${REQUESTS_CA_BUNDLE:-${AWS_CA_BUNDLE:-}}}}}}"
+CA_CERT_PATH="${GIT_ZIP_WRAPPER_CURL_CACERT:-${HEX_CACERTS_PATH:-${SSL_CERT_FILE:-${REQUESTS_CA_BUNDLE:-${AWS_CA_BUNDLE:-}}}}}"
 AUTO_INSECURE_ON_CERT_ERROR="${CURL_WRAPPER_AUTO_INSECURE_ON_CERT_ERROR:-0}"
+MASON_SEED_DIR="${CURL_WRAPPER_MASON_SEED_DIR:-}"
 CONFIGURE_HEX="0"
-HEX_UNSAFE_HTTPS="${MIX_VIA_EC2_HEX_UNSAFE_HTTPS:-${HEX_UNSAFE_HTTPS:-0}}"
+HEX_UNSAFE_HTTPS="${HEX_UNSAFE_HTTPS:-0}"
 HEX_RUN_TEST="1"
-MIX_ENV_FILE="${HOME}/.config/mix-via-ec2-envs.sh"
 WRAPPER_ENV_FILE="${HOME}/.config/wrapper-envs.sh"
 FISH_ENV_FILE="${HOME}/.config/restricted-dev-env.fish"
 ELIXIR_LS_SETUP_SH="${HOME}/.config/elixir_ls/setup.sh"
 ELIXIR_LS_SETUP_FISH="${HOME}/.config/elixir_ls/setup.fish"
+IGNORED_LEGACY_ARGS=()
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
-    --s3-bucket)
-      S3_BUCKET="${2:-}"
-      shift 2
-      ;;
-    --instance-name)
-      INSTANCE_NAME="${2:-}"
-      shift 2
-      ;;
-    --aws-region)
-      AWS_REGION_NAME="${2:-}"
-      shift 2
-      ;;
-    --aws-profile)
-      AWS_PROFILE_NAME="${2:-}"
-      shift 2
-      ;;
-    --s3-prefix)
-      WRAPPERS_S3_PREFIX="${2:-}"
-      shift 2
-      ;;
-    --mix-s3-prefix)
-      MIX_S3_PREFIX="${2:-}"
-      shift 2
-      ;;
-    --enable-ec2-backend)
-      ENABLE_WRAPPER_EC2_BACKEND="1"
-      shift
-      ;;
-    --disable-ec2-backend)
-      ENABLE_WRAPPER_EC2_BACKEND="0"
-      shift
-      ;;
     --shell-rc)
       SHELL_RC_PATH="${2:-}"
       APPLY_SHELL_RC="1"
@@ -204,10 +160,6 @@ while [[ $# -gt 0 ]]; do
     --apply-shell-rc)
       APPLY_SHELL_RC="1"
       shift
-      ;;
-    --real-mix)
-      REAL_MIX_BIN="${2:-}"
-      shift 2
       ;;
     --real-curl)
       REAL_CURL_BIN="${2:-}"
@@ -221,20 +173,15 @@ while [[ $# -gt 0 ]]; do
       REAL_GIT_BIN="${2:-}"
       shift 2
       ;;
-    --real-brew)
-      REAL_BREW_BIN="${2:-}"
+    --real-mix)
+      REAL_MIX_BIN="${2:-}"
       shift 2
       ;;
-    --ssh-identity)
-      SSH_IDENTITY_PATH="${2:-}"
+    --real-brew)
       shift 2
       ;;
     --proxy)
       PROXY_URL="${2:-}"
-      shift 2
-      ;;
-    --ec2-proxy)
-      EC2_PROXY_URL="${2:-}"
       shift 2
       ;;
     --ca-cert)
@@ -244,6 +191,10 @@ while [[ $# -gt 0 ]]; do
     --auto-insecure-on-cert-error)
       AUTO_INSECURE_ON_CERT_ERROR="1"
       shift
+      ;;
+    --mason-seed-dir)
+      MASON_SEED_DIR="${2:-}"
+      shift 2
       ;;
     --configure-hex)
       CONFIGURE_HEX="1"
@@ -262,6 +213,14 @@ while [[ $# -gt 0 ]]; do
       APPLY_SHELL_RC="0"
       shift
       ;;
+    --s3-bucket|--instance-name|--aws-region|--aws-profile|--s3-prefix|--mix-s3-prefix|--ssh-identity|--ec2-proxy)
+      IGNORED_LEGACY_ARGS+=("$1")
+      shift 2
+      ;;
+    --enable-ec2-backend|--disable-ec2-backend)
+      IGNORED_LEGACY_ARGS+=("$1")
+      shift
+      ;;
     -h|--help)
       usage
       exit 0
@@ -272,7 +231,9 @@ while [[ $# -gt 0 ]]; do
   esac
 done
 
-[[ -n "${S3_BUCKET}" ]] || die "--s3-bucket é obrigatório"
+if [[ ${#IGNORED_LEGACY_ARGS[@]} -gt 0 ]]; then
+  log "parâmetros legados EC2/S3 ignorados: ${IGNORED_LEGACY_ARGS[*]}"
+fi
 
 restricted_dev_env_load_state
 RESTRICTED_DEV_ENV_MANAGED_SHELL_RC="${RESTRICTED_DEV_ENV_MANAGED_SHELL_RC:-}"
@@ -281,9 +242,6 @@ RESTRICTED_DEV_ENV_HEX_CONFIG_PATH="${RESTRICTED_DEV_ENV_HEX_CONFIG_PATH:-}"
 RESTRICTED_DEV_ENV_HEX_BACKUP_PATH="${RESTRICTED_DEV_ENV_HEX_BACKUP_PATH:-${RESTRICTED_DEV_ENV_HEX_BACKUP_FILE}}"
 RESTRICTED_DEV_ENV_HEX_CONFIG_EXISTED_BEFORE="${RESTRICTED_DEV_ENV_HEX_CONFIG_EXISTED_BEFORE:-0}"
 
-if [[ -z "${REAL_MIX_BIN}" ]]; then
-  REAL_MIX_BIN="$(resolve_real_binary mix || true)"
-fi
 if [[ -z "${REAL_CURL_BIN}" ]]; then
   REAL_CURL_BIN="$(resolve_real_binary curl || true)"
 fi
@@ -293,13 +251,25 @@ fi
 if [[ -z "${REAL_GIT_BIN}" ]]; then
   REAL_GIT_BIN="$(resolve_real_binary git || true)"
 fi
+if [[ "${CONFIGURE_HEX}" == "1" ]] && [[ -z "${REAL_MIX_BIN}" ]]; then
+  REAL_MIX_BIN="$(resolve_real_binary mix || true)"
+fi
 
-[[ -n "${REAL_MIX_BIN}" ]] || die "não foi possível localizar mix no PATH"
 [[ -n "${REAL_CURL_BIN}" ]] || die "não foi possível localizar curl no PATH"
 [[ -n "${REAL_GIT_BIN}" ]] || die "não foi possível localizar git no PATH"
-is_wrapper_binary_path mix "${REAL_MIX_BIN}" && die "mix real não pode apontar para o wrapper instalado: ${REAL_MIX_BIN}"
+[[ -x "${REAL_CURL_BIN}" ]] || die "curl inválido/não executável: ${REAL_CURL_BIN}"
+[[ -x "${REAL_GIT_BIN}" ]] || die "git inválido/não executável: ${REAL_GIT_BIN}"
 is_wrapper_binary_path curl "${REAL_CURL_BIN}" && die "curl real não pode apontar para o wrapper instalado: ${REAL_CURL_BIN}"
 is_wrapper_binary_path git "${REAL_GIT_BIN}" && die "git real não pode apontar para o wrapper instalado: ${REAL_GIT_BIN}"
+if [[ -n "${REAL_WGET_BIN}" ]]; then
+  [[ -x "${REAL_WGET_BIN}" ]] || die "wget inválido/não executável: ${REAL_WGET_BIN}"
+  is_wrapper_binary_path wget "${REAL_WGET_BIN}" && die "wget real não pode apontar para o wrapper instalado: ${REAL_WGET_BIN}"
+fi
+if [[ "${CONFIGURE_HEX}" == "1" ]]; then
+  [[ -n "${REAL_MIX_BIN}" ]] || die "não foi possível localizar mix no PATH para configurar o Hex"
+  [[ -x "${REAL_MIX_BIN}" ]] || die "mix inválido/não executável: ${REAL_MIX_BIN}"
+  is_wrapper_binary_path mix "${REAL_MIX_BIN}" && die "mix real não pode apontar para o wrapper instalado: ${REAL_MIX_BIN}"
+fi
 if [[ -n "${CA_CERT_PATH}" ]]; then
   [[ -f "${CA_CERT_PATH}" ]] || die "CA customizada não encontrada: ${CA_CERT_PATH}"
 fi
@@ -319,6 +289,26 @@ run_step() {
   "$@"
 }
 
+install_curl_wrapper() {
+  if [[ -n "${REAL_WGET_BIN}" ]]; then
+    sh "${ROOT_DIR}/install/install_curl_python_wrapper.sh" \
+      --real-curl "${REAL_CURL_BIN}" \
+      --real-wget "${REAL_WGET_BIN}" \
+      >/dev/null
+    return 0
+  fi
+
+  sh "${ROOT_DIR}/install/install_curl_python_wrapper.sh" \
+    --real-curl "${REAL_CURL_BIN}" \
+    >/dev/null
+}
+
+install_git_wrapper() {
+  sh "${ROOT_DIR}/install/install_git_zip_wrapper.sh" \
+    --real-git "${REAL_GIT_BIN}" \
+    >/dev/null
+}
+
 remove_legacy_brew_wrapper_installation() {
   local brew_wrapper_root
   brew_wrapper_root="${HOME}/.local/share/homebrew-install-wrapper"
@@ -329,85 +319,6 @@ remove_legacy_brew_wrapper_installation() {
 
   rm -rf "${brew_wrapper_root}"
   log "wrapper legado do brew removido: ${brew_wrapper_root}"
-}
-
-configure_local_aws_cmd() {
-  AWS_CMD=(aws)
-
-  if [[ -n "${AWS_PROFILE_NAME}" ]]; then
-    AWS_CMD+=(--profile "${AWS_PROFILE_NAME}")
-  fi
-
-  if [[ -n "${AWS_REGION_NAME}" ]]; then
-    AWS_CMD+=(--region "${AWS_REGION_NAME}")
-  fi
-}
-
-shared_s3_bucket_exists() {
-  "${AWS_CMD[@]}" s3api head-bucket --bucket "${S3_BUCKET}" >/dev/null 2>&1
-}
-
-shared_s3_bucket_region_is_resolvable() {
-  local -a region_probe_cmd=(aws)
-  local bucket_region
-
-  if [[ -n "${AWS_PROFILE_NAME}" ]]; then
-    region_probe_cmd+=(--profile "${AWS_PROFILE_NAME}")
-  fi
-
-  bucket_region="$("${region_probe_cmd[@]}" s3api get-bucket-location \
-    --bucket "${S3_BUCKET}" \
-    --query 'LocationConstraint' \
-    --output text 2>/dev/null || true)"
-
-  [[ -n "${bucket_region}" && "${bucket_region}" != "None" && "${bucket_region}" != "null" ]] || [[ "${bucket_region}" == "None" ]]
-}
-
-ensure_shared_s3_bucket() {
-  local bucket_region create_output
-
-  command -v aws >/dev/null 2>&1 || die "aws cli não encontrado no PATH; a configuração exige criar/validar o bucket S3 compartilhado"
-  configure_local_aws_cmd
-
-  if shared_s3_bucket_exists || shared_s3_bucket_region_is_resolvable; then
-    return 0
-  fi
-
-  log "bucket S3 ${S3_BUCKET} não existe. Criando automaticamente"
-
-  if [[ "${AWS_REGION_NAME}" == "us-east-1" ]]; then
-    create_output="$("${AWS_CMD[@]}" s3api create-bucket --bucket "${S3_BUCKET}" 2>&1)" || {
-      if shared_s3_bucket_exists || shared_s3_bucket_region_is_resolvable; then
-        return 0
-      fi
-      die "falha ao criar bucket S3 ${S3_BUCKET}: ${create_output}"
-    }
-    return 0
-  fi
-
-  bucket_region="LocationConstraint=${AWS_REGION_NAME}"
-  create_output="$("${AWS_CMD[@]}" s3api create-bucket \
-    --bucket "${S3_BUCKET}" \
-    --create-bucket-configuration "${bucket_region}" 2>&1)" || {
-      if shared_s3_bucket_exists || shared_s3_bucket_region_is_resolvable; then
-        return 0
-      fi
-      die "falha ao criar bucket S3 ${S3_BUCKET}: ${create_output}"
-    }
-}
-
-path_is_under() {
-  local value base
-  value="$1"
-  base="$2"
-
-  case "${value}" in
-    "${base}"|"${base}/"*)
-      return 0
-      ;;
-  esac
-
-  return 1
 }
 
 resolve_hex_config_path() {
@@ -490,7 +401,7 @@ escape_double_quotes_for_fish() {
   value="$1"
   value="${value//\\/\\\\}"
   value="${value//\"/\\\"}"
-  value="${value//\$/\\$}"
+  value="${value//\$/\\\$}"
   printf '%s' "${value}"
 }
 
@@ -499,26 +410,20 @@ write_fish_env_file() {
   local env_entry key value escaped_value escaped_path_entry
 
   mapfile -t exported_keys < <(
-    {
-      collect_export_keys_from_env_file "${MIX_ENV_FILE}"
-      collect_export_keys_from_env_file "${WRAPPER_ENV_FILE}"
-    } | awk '!seen[$0]++'
+    collect_export_keys_from_env_file "${WRAPPER_ENV_FILE}" | awk '!seen[$0]++'
   )
 
   mapfile -t unset_keys < <(
-    {
-      collect_unset_keys_from_env_file "${MIX_ENV_FILE}"
-      collect_unset_keys_from_env_file "${WRAPPER_ENV_FILE}"
-    } | awk '!seen[$0]++'
+    collect_unset_keys_from_env_file "${WRAPPER_ENV_FILE}" | awk '!seen[$0]++'
   )
 
   mkdir -p "$(dirname "${FISH_ENV_FILE}")"
   {
-    cat <<'EOF'
+    cat <<'EOF2'
 #!/usr/bin/env fish
 # Gerado por scripts/install/setup_restricted_dev_env.sh
 
-EOF
+EOF2
   } > "${FISH_ENV_FILE}"
 
   if [[ ${#exported_keys[@]} -gt 0 ]]; then
@@ -541,8 +446,6 @@ EOF
       printf 'set -gx %s "%s"\n' "${key}" "${escaped_value}" >> "${FISH_ENV_FILE}"
     done < <(
       set +u
-      # shellcheck disable=SC1090
-      . "${MIX_ENV_FILE}"
       # shellcheck disable=SC1090
       . "${WRAPPER_ENV_FILE}"
       set -u
@@ -573,7 +476,7 @@ sync_shell_rc_state() {
     if shell_rc_looks_like_fish "${SHELL_RC_PATH}"; then
       restricted_dev_env_apply_shell_rc_fish_block "${SHELL_RC_PATH}" "${FISH_ENV_FILE}"
     else
-      restricted_dev_env_apply_shell_rc_block "${SHELL_RC_PATH}" "${MIX_ENV_FILE}" "${WRAPPER_ENV_FILE}"
+      restricted_dev_env_apply_shell_rc_block "${SHELL_RC_PATH}" "${WRAPPER_ENV_FILE}"
     fi
     RESTRICTED_DEV_ENV_MANAGED_SHELL_RC="${SHELL_RC_PATH}"
     return 0
@@ -585,17 +488,13 @@ sync_shell_rc_state() {
 sync_elixir_ls_setup_state() {
   restricted_dev_env_apply_elixir_ls_setup_sh_block \
     "${ELIXIR_LS_SETUP_SH}" \
-    "${MIX_ENV_FILE}" \
     "${WRAPPER_ENV_FILE}"
   restricted_dev_env_apply_elixir_ls_setup_fish_block \
     "${ELIXIR_LS_SETUP_FISH}" \
-    "${MIX_ENV_FILE}" \
-    "${WRAPPER_ENV_FILE}" \
     "${FISH_ENV_FILE}"
 }
 
 validate_persisted_env_files() {
-  [[ -f "${MIX_ENV_FILE}" ]] || die "env-file do mix via EC2 não foi criado: ${MIX_ENV_FILE}"
   [[ -f "${WRAPPER_ENV_FILE}" ]] || die "env-file compartilhado dos wrappers não foi criado: ${WRAPPER_ENV_FILE}"
   [[ -f "${FISH_ENV_FILE}" ]] || die "env-file fish compartilhado não foi criado: ${FISH_ENV_FILE}"
 }
@@ -603,59 +502,14 @@ validate_persisted_env_files() {
 validate_elixir_ls_setup_files() {
   [[ -f "${ELIXIR_LS_SETUP_SH}" ]] || die "setup.sh do elixir_ls não foi criado: ${ELIXIR_LS_SETUP_SH}"
   [[ -f "${ELIXIR_LS_SETUP_FISH}" ]] || die "setup.fish do elixir_ls não foi criado: ${ELIXIR_LS_SETUP_FISH}"
-  grep -Fq "${MIX_ENV_FILE}" "${ELIXIR_LS_SETUP_SH}" || die "setup.sh do elixir_ls não referencia ${MIX_ENV_FILE}"
   grep -Fq "${WRAPPER_ENV_FILE}" "${ELIXIR_LS_SETUP_SH}" || die "setup.sh do elixir_ls não referencia ${WRAPPER_ENV_FILE}"
   grep -Fq "${FISH_ENV_FILE}" "${ELIXIR_LS_SETUP_FISH}" || die "setup.fish do elixir_ls não referencia ${FISH_ENV_FILE}"
 }
 
 validate_installed_wrappers() {
-  [[ -x "${HOME}/.local/share/mix-ec2-wrapper/bin/mix" ]] || die "wrapper do mix não foi instalado"
-  [[ -x "${HOME}/.local/share/mix-ec2-wrapper/bin/mix-via-ec2" ]] || die "entrypoint mix-via-ec2 não foi instalado"
   [[ -x "${HOME}/.local/share/curl-python-wrapper/bin/curl" ]] || die "wrapper do curl não foi instalado"
+  [[ -x "${HOME}/.local/share/curl-python-wrapper/bin/wget" ]] || die "wrapper do wget não foi instalado"
   [[ -x "${HOME}/.local/share/git-zip-wrapper/bin/git" ]] || die "wrapper do git não foi instalado"
-}
-
-validate_mix_wrapper_env_activation() {
-  local current_mix expected_mix wrapper_dir
-  expected_mix="${HOME}/.local/share/mix-ec2-wrapper/bin/mix"
-  wrapper_dir="${HOME}/.local/share/mix-ec2-wrapper/bin"
-
-  current_mix="$(
-    set +u
-    # shellcheck disable=SC1090
-    . "${MIX_ENV_FILE}"
-    set -u
-    rehash 2>/dev/null || true
-    hash -r 2>/dev/null || true
-    command -v mix 2>/dev/null || true
-  )"
-
-  [[ -n "${current_mix}" ]] || die "mix não ficou resolvível após carregar ${MIX_ENV_FILE}"
-  if [[ "${current_mix}" != "${expected_mix}" ]] && ! path_is_under "${current_mix}" "${wrapper_dir}"; then
-    die "mix não ficou apontando para o wrapper após carregar ${MIX_ENV_FILE}: ${current_mix}"
-  fi
-}
-
-validate_mix_remote_runtime_prerequisites() {
-  local mix_instance_name mix_transport
-  mix_instance_name="$(
-    set +u
-    # shellcheck disable=SC1090
-    . "${MIX_ENV_FILE}"
-    set -u
-    printf '%s' "${MIX_VIA_EC2_INSTANCE_NAME:-}"
-  )"
-  mix_transport="$(
-    set +u
-    # shellcheck disable=SC1090
-    . "${MIX_ENV_FILE}"
-    set -u
-    printf '%s' "${MIX_VIA_EC2_TRANSPORT:-auto}"
-  )"
-
-  if [[ -n "${mix_instance_name}" ]] && [[ "${mix_transport}" != "ssh" ]]; then
-    command -v aws >/dev/null 2>&1 || die "aws cli não encontrado no PATH; mix-via-ec2 com instance-name exige aws local"
-  fi
 }
 
 validate_shell_rc_persistence() {
@@ -672,7 +526,6 @@ validate_shell_rc_persistence() {
   if shell_rc_looks_like_fish "${managed_shell_rc}"; then
     grep -Fq "${FISH_ENV_FILE}" "${managed_shell_rc}" || die "shell rc fish não referencia ${FISH_ENV_FILE}"
   else
-    grep -Fq "${MIX_ENV_FILE}" "${managed_shell_rc}" || die "shell rc não referencia ${MIX_ENV_FILE}"
     grep -Fq "${WRAPPER_ENV_FILE}" "${managed_shell_rc}" || die "shell rc não referencia ${WRAPPER_ENV_FILE}"
   fi
 }
@@ -681,77 +534,37 @@ validate_restricted_dev_env_result() {
   validate_persisted_env_files
   validate_elixir_ls_setup_files
   validate_installed_wrappers
-  validate_mix_wrapper_env_activation
-  validate_mix_remote_runtime_prerequisites
   validate_shell_rc_persistence
 }
 
-MIX_ENV_ARGS=(
-  --instance-name "${INSTANCE_NAME}"
-  --aws-region "${AWS_REGION_NAME}"
-  --s3-bucket "${S3_BUCKET}"
-  --s3-prefix "${MIX_S3_PREFIX}"
-  --real-mix "${REAL_MIX_BIN}"
-)
 WRAPPER_ENV_ARGS=(
-  --instance-name "${INSTANCE_NAME}"
-  --aws-region "${AWS_REGION_NAME}"
-  --s3-bucket "${S3_BUCKET}"
-  --s3-prefix "${WRAPPERS_S3_PREFIX}"
   --real-curl "${REAL_CURL_BIN}"
-  --real-wget "${REAL_WGET_BIN}"
   --real-git "${REAL_GIT_BIN}"
 )
 
-if [[ -n "${AWS_PROFILE_NAME}" ]]; then
-  MIX_ENV_ARGS+=(--aws-profile "${AWS_PROFILE_NAME}")
-  WRAPPER_ENV_ARGS+=(--aws-profile "${AWS_PROFILE_NAME}")
-fi
-if [[ -n "${SSH_IDENTITY_PATH}" ]]; then
-  MIX_ENV_ARGS+=(--ssh-identity "${SSH_IDENTITY_PATH}")
-fi
-if [[ -n "${EC2_PROXY_URL}" ]]; then
-  MIX_ENV_ARGS+=(--proxy "${EC2_PROXY_URL}")
-fi
-if [[ -n "${CA_CERT_PATH}" ]]; then
-  MIX_ENV_ARGS+=(--ca-cert "${CA_CERT_PATH}")
-fi
-if [[ "${HEX_UNSAFE_HTTPS}" == "1" ]]; then
-  MIX_ENV_ARGS+=(--hex-unsafe-https)
+if [[ -n "${REAL_WGET_BIN}" ]]; then
+  WRAPPER_ENV_ARGS+=(--real-wget "${REAL_WGET_BIN}")
 fi
 if [[ -n "${PROXY_URL}" ]]; then
   WRAPPER_ENV_ARGS+=(--proxy "${PROXY_URL}")
 fi
-if [[ -n "${EC2_PROXY_URL}" ]]; then
-  WRAPPER_ENV_ARGS+=(--ec2-proxy "${EC2_PROXY_URL}")
-fi
 if [[ -n "${CA_CERT_PATH}" ]]; then
   WRAPPER_ENV_ARGS+=(--ca-cert "${CA_CERT_PATH}")
+fi
+if [[ -n "${MASON_SEED_DIR}" ]]; then
+  WRAPPER_ENV_ARGS+=(--mason-seed-dir "${MASON_SEED_DIR}")
 fi
 if [[ "${AUTO_INSECURE_ON_CERT_ERROR}" == "1" ]]; then
   WRAPPER_ENV_ARGS+=(--auto-insecure-on-cert-error)
 fi
-if [[ "${ENABLE_WRAPPER_EC2_BACKEND}" == "1" ]]; then
-  WRAPPER_ENV_ARGS+=(--enable-ec2-backend)
-else
-  WRAPPER_ENV_ARGS+=(--disable-ec2-backend)
-fi
-MIX_ENV_ARGS+=(--no-shell-rc)
 WRAPPER_ENV_ARGS+=(--no-shell-rc)
 
-run_step "garantindo bucket S3 compartilhado" ensure_shared_s3_bucket
-run_step "instalando wrapper do mix" \
-  sh "${ROOT_DIR}/install/install_mix_ec2_wrapper.sh" --real-mix "${REAL_MIX_BIN}"
-run_step "instalando wrapper do curl" \
-  sh "${ROOT_DIR}/install/install_curl_python_wrapper.sh" --real-curl "${REAL_CURL_BIN}"
-run_step "instalando wrapper do git" \
-  sh "${ROOT_DIR}/install/install_git_zip_wrapper.sh" --real-git "${REAL_GIT_BIN}"
+run_step "instalando wrapper do curl" install_curl_wrapper
+run_step "instalando wrapper do git" install_git_wrapper
 run_step "removendo wrapper legado do brew" remove_legacy_brew_wrapper_installation
-run_step "configurando ambiente do mix via EC2" \
-  sh "${ROOT_DIR}/install/configure_mix_via_ec2_envs.sh" "${MIX_ENV_ARGS[@]}"
-run_step "configurando ambiente compartilhado dos wrappers" \
+run_step "configurando ambiente compartilhado dos wrappers em modo local-only" \
   sh "${ROOT_DIR}/install/configure_wrapper_envs.sh" "${WRAPPER_ENV_ARGS[@]}"
-run_step "gerando env fish compartilhado para wrappers/mix" write_fish_env_file
+run_step "gerando env fish compartilhado para wrappers" write_fish_env_file
 
 if [[ "${CONFIGURE_HEX}" == "1" ]]; then
   snapshot_hex_config_state_if_needed
@@ -779,27 +592,15 @@ run_step "sincronizando setup do ElixirLS (sh/fish)" sync_elixir_ls_setup_state
 run_step "persistindo estado do ambiente restrito" restricted_dev_env_write_state
 run_step "validando artefatos persistidos do bootstrap" validate_restricted_dev_env_result
 
-cat <<EOF
+cat <<EOF2
 Bootstrap concluído.
 
-Instância EC2:
-  ${INSTANCE_NAME}
-
-Region AWS:
-  ${AWS_REGION_NAME}
-
-Bucket compartilhado:
-  ${S3_BUCKET}
-
-Prefixos:
-  mix: ${MIX_S3_PREFIX}
-  wrappers: ${WRAPPERS_S3_PREFIX}
-
-Wrappers EC2 backend:
-  ${ENABLE_WRAPPER_EC2_BACKEND}
+Modo:
+  local-only
 
 Persistência:
   shell rc: ${RESTRICTED_DEV_ENV_MANAGED_SHELL_RC:-não alterado}
+  env sh: ${WRAPPER_ENV_FILE}
   env fish: ${FISH_ENV_FILE}
   elixir_ls setup.sh: ${ELIXIR_LS_SETUP_SH}
   elixir_ls setup.fish: ${ELIXIR_LS_SETUP_FISH}
@@ -807,12 +608,10 @@ Persistência:
 
 Rede corporativa efetiva:
   proxy wrappers: ${PROXY_URL:-não definido}
-  proxy mix remoto: ${EC2_PROXY_URL:-não definido}
   ca cert: ${CA_CERT_PATH:-não definida}
   hex unsafe: ${HEX_UNSAFE_HTTPS}
 
 Para aplicar na sessão atual:
-  . "${MIX_ENV_FILE}"
   . "${WRAPPER_ENV_FILE}"
   rehash 2>/dev/null || true
   hash -r 2>/dev/null || true
@@ -820,6 +619,6 @@ Para aplicar na sessão atual:
 Para aplicar na sessão atual (fish):
   source "${FISH_ENV_FILE}"
 
-Para validar se o Mason está vendo os wrappers:
+Para validar se o Mason/LazyVim estão vendo os wrappers:
   sh "${ROOT_DIR}/install/validate_wrappers.sh"
-EOF
+EOF2

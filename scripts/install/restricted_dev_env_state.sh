@@ -116,10 +116,9 @@ restricted_dev_env_cleanup_legacy_shell_rc_lines() {
 }
 
 restricted_dev_env_apply_shell_rc_block() {
-  local rc_file mix_env_file wrapper_env_file
+  local rc_file env_file
   rc_file="$1"
-  mix_env_file="$2"
-  wrapper_env_file="$3"
+  shift
 
   mkdir -p "$(dirname "${rc_file}")"
   touch "${rc_file}"
@@ -128,12 +127,12 @@ restricted_dev_env_apply_shell_rc_block() {
 
   {
     printf '\n%s\n' "${RESTRICTED_DEV_ENV_SHELL_RC_BEGIN}"
-    printf '[ -f %s ] && . %s\n' \
-      "$(restricted_dev_env_shell_quote "${mix_env_file}")" \
-      "$(restricted_dev_env_shell_quote "${mix_env_file}")"
-    printf '[ -f %s ] && . %s\n' \
-      "$(restricted_dev_env_shell_quote "${wrapper_env_file}")" \
-      "$(restricted_dev_env_shell_quote "${wrapper_env_file}")"
+    for env_file in "$@"; do
+      [[ -n "${env_file}" ]] || continue
+      printf '[ -f %s ] && . %s\n' \
+        "$(restricted_dev_env_shell_quote "${env_file}")" \
+        "$(restricted_dev_env_shell_quote "${env_file}")"
+    done
     printf '%s\n' "${RESTRICTED_DEV_ENV_SHELL_RC_END}"
   } >> "${rc_file}"
 }
@@ -164,13 +163,13 @@ restricted_dev_env_remove_shell_rc_block() {
 }
 
 restricted_dev_env_apply_elixir_ls_setup_sh_block() {
-  local setup_file mix_env_file wrapper_env_file
+  local setup_file env_file
   setup_file="$1"
-  mix_env_file="$2"
-  wrapper_env_file="$3"
+  shift
 
   mkdir -p "$(dirname "${setup_file}")"
-  cat > "${setup_file}" <<EOF
+  {
+    cat <<EOF
 #!/usr/bin/env sh
 # Gerado por scripts/install/setup_restricted_dev_env.sh
 
@@ -188,19 +187,22 @@ esac
 export PATH
 
 ${RESTRICTED_DEV_ENV_ELIXIR_LS_BEGIN}
-[ -f "${mix_env_file}" ] && . "${mix_env_file}"
-[ -f "${wrapper_env_file}" ] && . "${wrapper_env_file}"
+EOF
+    for env_file in "$@"; do
+      [[ -n "${env_file}" ]] || continue
+      printf '[ -f "%s" ] && . "%s"\n' "${env_file}" "${env_file}"
+    done
+    cat <<EOF
 ${RESTRICTED_DEV_ENV_ELIXIR_LS_END}
 EOF
+  } > "${setup_file}"
   chmod 0644 "${setup_file}"
 }
 
 restricted_dev_env_apply_elixir_ls_setup_fish_block() {
-  local setup_file mix_env_file wrapper_env_file fish_env_file
+  local setup_file fish_env_file
   setup_file="$1"
-  mix_env_file="$2"
-  wrapper_env_file="$3"
-  fish_env_file="${4:-}"
+  fish_env_file="${2:-}"
 
   mkdir -p "$(dirname "${setup_file}")"
   {
@@ -218,15 +220,6 @@ EOF
       cat <<EOF
 if test -f "${fish_env_file}"
     source "${fish_env_file}"
-end
-EOF
-    else
-      cat <<EOF
-if test -f "${mix_env_file}"
-    source "${mix_env_file}"
-end
-if test -f "${wrapper_env_file}"
-    source "${wrapper_env_file}"
 end
 EOF
     fi

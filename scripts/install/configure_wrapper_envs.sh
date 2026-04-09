@@ -56,9 +56,9 @@ resolve_real_binary() {
     fi
     printf '%s\n' "${candidate}"
     return 0
-  done <<EOF
+  done <<EOF2
 $(which -a "${binary_name}" 2>/dev/null || true)
-EOF
+EOF2
 
   return 1
 }
@@ -81,26 +81,16 @@ Opções:
   --real-git <path>            Caminho do git real.
   --real-brew <path>           Legado. Ignorado; o wrapper de brew foi removido.
   --mason-seed-dir <dir>       Diretório com artefatos seed do Mason.
-  --instance-name <nome>       Instância EC2 compartilhada. Padrão: Dander
-  --aws-profile <profile>      Profile AWS para backend remoto dos wrappers.
-  --aws-region <region>        Region AWS do backend remoto. Padrão: sa-east-1
-  --s3-bucket <bucket>         Bucket compartilhado pelos wrappers no backend EC2.
-  --s3-prefix <prefixo>        Prefixo S3 compartilhado. Padrão: wrappers-via-ec2
-  --enable-ec2-backend         Liga backend remoto via EC2 nos wrappers.
-  --disable-ec2-backend        Desliga o backend remoto via EC2 nos wrappers.
   --proxy <url>                Define proxy para wrappers e env padrão.
-  --ec2-proxy <url>            Define proxy exclusivo para o backend remoto no EC2.
   --ca-cert <arquivo>          Define CA customizada para o wrapper de git.
   --auto-insecure-on-cert-error
                                Ativa retry inseguro no wrapper de curl.
   -h, --help                   Mostra esta ajuda.
 
-Padrões:
-  --env-file: $HOME/.config/wrapper-envs.sh
-  --shell-rc: só usado quando combinado com --apply-shell-rc
-  --curl-install-dir: $HOME/.local/share/curl-python-wrapper/bin
-  --git-install-dir: $HOME/.local/share/git-zip-wrapper/bin
-  --brew-install-dir: $HOME/.local/share/homebrew-install-wrapper/bin
+Compatibilidade legada:
+  --instance-name, --aws-profile, --aws-region, --s3-bucket, --s3-prefix,
+  --enable-ec2-backend, --disable-ec2-backend e --ec2-proxy são aceitos,
+  mas ignorados. O env-file gerado é sempre local-only.
 USAGE
 }
 
@@ -113,18 +103,12 @@ BREW_INSTALL_DIR="${HOME}/.local/share/homebrew-install-wrapper/bin"
 REAL_CURL_BIN="${CURL_WRAPPER_REAL_CURL:-}"
 REAL_WGET_BIN="${WGET_WRAPPER_REAL_WGET:-}"
 REAL_GIT_BIN="${GIT_ZIP_WRAPPER_REAL_GIT:-}"
-GIT_LFS_MODE="${GIT_ZIP_WRAPPER_LFS_MODE:-}"
+GIT_LFS_MODE="${GIT_ZIP_WRAPPER_LFS_MODE:-local}"
 PROXY_URL=""
-EC2_PROXY_URL=""
 CA_CERT_PATH=""
 AUTO_INSECURE_ON_CERT_ERROR="0"
 MASON_SEED_DIR="${CURL_WRAPPER_MASON_SEED_DIR:-}"
-INSTANCE_NAME="${WRAPPERS_VIA_EC2_INSTANCE_NAME:-${MIX_VIA_EC2_INSTANCE_NAME:-Dander}}"
-AWS_PROFILE_NAME="${WRAPPERS_VIA_EC2_AWS_PROFILE:-${MIX_VIA_EC2_AWS_PROFILE:-${AWS_PROFILE:-}}}"
-AWS_REGION_NAME="${WRAPPERS_VIA_EC2_AWS_REGION:-${MIX_VIA_EC2_AWS_REGION:-sa-east-1}}"
-S3_BUCKET_NAME="${WRAPPERS_VIA_EC2_S3_BUCKET:-${MIX_VIA_EC2_S3_BUCKET:-}}"
-S3_PREFIX_NAME="${WRAPPERS_VIA_EC2_S3_PREFIX:-${MIX_VIA_EC2_S3_PREFIX:-wrappers-via-ec2}}"
-ENABLE_EC2_BACKEND="${WRAPPERS_VIA_EC2_ENABLED:-0}"
+IGNORED_LEGACY_ARGS=()
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
@@ -176,40 +160,8 @@ while [[ $# -gt 0 ]]; do
       MASON_SEED_DIR="${2:-}"
       shift 2
       ;;
-    --instance-name)
-      INSTANCE_NAME="${2:-}"
-      shift 2
-      ;;
-    --aws-profile)
-      AWS_PROFILE_NAME="${2:-}"
-      shift 2
-      ;;
-    --aws-region)
-      AWS_REGION_NAME="${2:-}"
-      shift 2
-      ;;
-    --s3-bucket)
-      S3_BUCKET_NAME="${2:-}"
-      shift 2
-      ;;
-    --s3-prefix)
-      S3_PREFIX_NAME="${2:-}"
-      shift 2
-      ;;
-    --enable-ec2-backend)
-      ENABLE_EC2_BACKEND="1"
-      shift
-      ;;
-    --disable-ec2-backend)
-      ENABLE_EC2_BACKEND="0"
-      shift
-      ;;
     --proxy)
       PROXY_URL="${2:-}"
-      shift 2
-      ;;
-    --ec2-proxy)
-      EC2_PROXY_URL="${2:-}"
       shift 2
       ;;
     --ca-cert)
@@ -218,6 +170,14 @@ while [[ $# -gt 0 ]]; do
       ;;
     --auto-insecure-on-cert-error)
       AUTO_INSECURE_ON_CERT_ERROR="1"
+      shift
+      ;;
+    --instance-name|--aws-profile|--aws-region|--s3-bucket|--s3-prefix|--ec2-proxy)
+      IGNORED_LEGACY_ARGS+=("$1")
+      shift 2
+      ;;
+    --enable-ec2-backend|--disable-ec2-backend)
+      IGNORED_LEGACY_ARGS+=("$1")
       shift
       ;;
     -h|--help)
@@ -230,14 +190,14 @@ while [[ $# -gt 0 ]]; do
   esac
 done
 
+if [[ ${#IGNORED_LEGACY_ARGS[@]} -gt 0 ]]; then
+  log "parâmetros legados EC2/S3 ignorados: ${IGNORED_LEGACY_ARGS[*]}"
+fi
+
 [[ -n "${ENV_FILE}" ]] || die "--env-file não pode ser vazio"
 [[ -n "${CURL_INSTALL_DIR}" ]] || die "--curl-install-dir não pode ser vazio"
 [[ -n "${GIT_INSTALL_DIR}" ]] || die "--git-install-dir não pode ser vazio"
 [[ -n "${BREW_INSTALL_DIR}" ]] || die "--brew-install-dir não pode ser vazio"
-[[ "${ENABLE_EC2_BACKEND}" == "0" || "${ENABLE_EC2_BACKEND}" == "1" ]] || die "--enable-ec2-backend/--disable-ec2-backend inválido"
-if [[ "${ENABLE_EC2_BACKEND}" == "1" && -z "${S3_BUCKET_NAME}" ]]; then
-  die "--s3-bucket é obrigatório quando o backend EC2 está habilitado"
-fi
 
 if [[ -z "${REAL_CURL_BIN}" ]]; then
   REAL_CURL_BIN="$(resolve_real_binary curl || true)"
@@ -245,7 +205,6 @@ fi
 if [[ -z "${REAL_WGET_BIN}" ]]; then
   REAL_WGET_BIN="$(resolve_real_binary wget || true)"
 fi
-
 if [[ -z "${REAL_GIT_BIN}" ]]; then
   REAL_GIT_BIN="$(resolve_real_binary git || true)"
 fi
@@ -259,6 +218,29 @@ is_wrapper_binary_path git "${REAL_GIT_BIN}" && die "git real não pode apontar 
 if [[ -n "${REAL_WGET_BIN}" && ! -x "${REAL_WGET_BIN}" ]]; then
   die "wget inválido/não executável: ${REAL_WGET_BIN}"
 fi
+if [[ -n "${REAL_WGET_BIN}" ]] && is_wrapper_binary_path wget "${REAL_WGET_BIN}"; then
+  die "wget real não pode apontar para o wrapper instalado: ${REAL_WGET_BIN}"
+fi
+if [[ -n "${CA_CERT_PATH}" && ! -f "${CA_CERT_PATH}" ]]; then
+  die "CA customizada não encontrada: ${CA_CERT_PATH}"
+fi
+case "${AUTO_INSECURE_ON_CERT_ERROR}" in
+  0|1)
+    ;;
+  *)
+    die "CURL_WRAPPER_AUTO_INSECURE_ON_CERT_ERROR inválido: ${AUTO_INSECURE_ON_CERT_ERROR}"
+    ;;
+esac
+GIT_LFS_MODE="$(printf '%s' "${GIT_LFS_MODE}" | tr '[:upper:]' '[:lower:]')"
+case "${GIT_LFS_MODE}" in
+  ""|local)
+    GIT_LFS_MODE="local"
+    ;;
+  *)
+    log "GIT_ZIP_WRAPPER_LFS_MODE=${GIT_LFS_MODE} ignorado; forçando local"
+    GIT_LFS_MODE="local"
+    ;;
+esac
 
 detect_shell_rc() {
   local active_shell shell_name
@@ -279,7 +261,7 @@ detect_shell_rc() {
 }
 
 shell_quote() {
-  printf "%q" "$1"
+  printf '%q' "$1"
 }
 
 render_path_prefix() {
@@ -292,87 +274,77 @@ render_path_prefix() {
   printf '%s\n' "${joined}"
 }
 
-render_optional_exports() {
-  local ec2_use_value ec2_all_urls_value
-  GIT_LFS_MODE="$(printf '%s' "${GIT_LFS_MODE}" | tr '[:upper:]' '[:lower:]')"
-  if [[ -z "${GIT_LFS_MODE}" ]]; then
-    GIT_LFS_MODE="local"
-  fi
-  case "${GIT_LFS_MODE}" in
-    local|ec2)
-      ;;
-    *)
-      die "GIT_ZIP_WRAPPER_LFS_MODE inválido: ${GIT_LFS_MODE}. Valores válidos: local, ec2"
-      ;;
-  esac
-
-  printf 'export WRAPPERS_VIA_EC2_ENABLED=%s\n' "$(shell_quote "${ENABLE_EC2_BACKEND}")"
-  printf 'export GIT_ZIP_WRAPPER_CLONE_ORDER=%s\n' "$(shell_quote "local-first")"
-  printf 'export GIT_ZIP_WRAPPER_LFS_MODE=%s\n' "$(shell_quote "${GIT_LFS_MODE}")"
+render_local_only_exports() {
+  printf 'export WRAPPERS_VIA_EC2_ENABLED=%s\n' "$(shell_quote "0")"
+  printf 'export WRAPPERS_VIA_EC2_ALL_URLS=%s\n' "$(shell_quote "0")"
+  printf 'export CURL_WRAPPER_USE_EC2=%s\n' "$(shell_quote "0")"
+  printf 'export CURL_WRAPPER_EC2_ALL_URLS=%s\n' "$(shell_quote "0")"
   printf 'export CURL_WRAPPER_EC2_REQUIRED=%s\n' "$(shell_quote "0")"
+  printf 'export WGET_WRAPPER_USE_EC2=%s\n' "$(shell_quote "0")"
+  printf 'export WGET_WRAPPER_EC2_ALL_URLS=%s\n' "$(shell_quote "0")"
   printf 'export WGET_WRAPPER_EC2_REQUIRED=%s\n' "$(shell_quote "0")"
+  printf 'export GIT_ZIP_WRAPPER_USE_EC2=%s\n' "$(shell_quote "0")"
+  printf 'export GIT_ZIP_WRAPPER_EC2_ALL_URLS=%s\n' "$(shell_quote "0")"
   printf 'export GIT_ZIP_WRAPPER_EC2_REQUIRED=%s\n' "$(shell_quote "0")"
+  printf 'export GIT_ZIP_WRAPPER_CLONE_ORDER=%s\n' "$(shell_quote "local-first")"
+  printf 'export GIT_ZIP_WRAPPER_FORCE_LOCAL_DOWNLOADS=%s\n' "$(shell_quote "1")"
+  printf 'export GIT_ZIP_WRAPPER_LFS_MODE=%s\n' "$(shell_quote "${GIT_LFS_MODE}")"
 
-  if [[ "${ENABLE_EC2_BACKEND}" == "1" ]]; then
-    ec2_use_value="1"
-    ec2_all_urls_value="1"
-  else
-    ec2_use_value="0"
-    ec2_all_urls_value="0"
-  fi
-  printf 'export WRAPPERS_VIA_EC2_ALL_URLS=%s\n' "$(shell_quote "${ec2_all_urls_value}")"
-  printf 'export CURL_WRAPPER_USE_EC2=%s\n' "$(shell_quote "${ec2_use_value}")"
-  printf 'export CURL_WRAPPER_EC2_ALL_URLS=%s\n' "$(shell_quote "${ec2_all_urls_value}")"
-  printf 'export WGET_WRAPPER_USE_EC2=%s\n' "$(shell_quote "${ec2_use_value}")"
-  printf 'export WGET_WRAPPER_EC2_ALL_URLS=%s\n' "$(shell_quote "${ec2_all_urls_value}")"
-  printf 'export GIT_ZIP_WRAPPER_USE_EC2=%s\n' "$(shell_quote "${ec2_use_value}")"
-  printf 'export GIT_ZIP_WRAPPER_EC2_ALL_URLS=%s\n' "$(shell_quote "${ec2_all_urls_value}")"
-
-  if [[ "${ENABLE_EC2_BACKEND}" == "1" ]]; then
-    printf 'export WRAPPERS_VIA_EC2_INSTANCE_NAME=%s\n' "$(shell_quote "${INSTANCE_NAME}")"
-    printf 'export WRAPPERS_VIA_EC2_AWS_REGION=%s\n' "$(shell_quote "${AWS_REGION_NAME}")"
-    printf 'export WRAPPERS_VIA_EC2_S3_PREFIX=%s\n' "$(shell_quote "${S3_PREFIX_NAME}")"
-    if [[ -n "${AWS_PROFILE_NAME}" ]]; then
-      printf 'export WRAPPERS_VIA_EC2_AWS_PROFILE=%s\n' "$(shell_quote "${AWS_PROFILE_NAME}")"
-    fi
-    if [[ -n "${S3_BUCKET_NAME}" ]]; then
-      printf 'export WRAPPERS_VIA_EC2_S3_BUCKET=%s\n' "$(shell_quote "${S3_BUCKET_NAME}")"
-    fi
-  fi
-
-  if [[ -n "${EC2_PROXY_URL}" ]]; then
-    printf 'export WRAPPERS_VIA_EC2_PROXY=%s\n' "$(shell_quote "${EC2_PROXY_URL}")"
-    printf 'export CURL_WRAPPER_EC2_PROXY=%s\n' "$(shell_quote "${EC2_PROXY_URL}")"
-    printf 'export WGET_WRAPPER_EC2_PROXY=%s\n' "$(shell_quote "${EC2_PROXY_URL}")"
-    printf 'export GIT_ZIP_WRAPPER_EC2_PROXY=%s\n' "$(shell_quote "${EC2_PROXY_URL}")"
-  else
-    printf 'unset WRAPPERS_VIA_EC2_PROXY\n'
-    printf 'unset CURL_WRAPPER_EC2_PROXY\n'
-    printf 'unset WGET_WRAPPER_EC2_PROXY\n'
-    printf 'unset GIT_ZIP_WRAPPER_EC2_PROXY\n'
-  fi
+  cat <<'EOF2'
+unset WRAPPERS_VIA_EC2_INSTANCE_NAME
+unset WRAPPERS_VIA_EC2_AWS_PROFILE
+unset WRAPPERS_VIA_EC2_AWS_REGION
+unset WRAPPERS_VIA_EC2_S3_BUCKET
+unset WRAPPERS_VIA_EC2_S3_PREFIX
+unset WRAPPERS_VIA_EC2_PROXY
+unset CURL_WRAPPER_EC2_PROXY
+unset WGET_WRAPPER_EC2_PROXY
+unset GIT_ZIP_WRAPPER_EC2_PROXY
+unset MIX_VIA_EC2_INSTANCE_NAME
+unset MIX_VIA_EC2_AWS_PROFILE
+unset MIX_VIA_EC2_AWS_REGION
+unset MIX_VIA_EC2_S3_BUCKET
+unset MIX_VIA_EC2_S3_PREFIX
+unset MIX_VIA_EC2_PROXY
+unset MIX_VIA_EC2_SSH_IDENTITY
+unset MIX_VIA_EC2_CA_CERT
+unset MIX_VIA_EC2_HEX_UNSAFE_HTTPS
+unset MIX_WRAPPER_REMOTE_COMMANDS
+EOF2
 
   if [[ -n "${PROXY_URL}" ]]; then
-    cat <<EOF
+    cat <<EOF2
 export HTTPS_PROXY=$(shell_quote "${PROXY_URL}")
 export HTTP_PROXY=$(shell_quote "${PROXY_URL}")
 export ALL_PROXY=$(shell_quote "${PROXY_URL}")
 export CURL_WRAPPER_PROXY=$(shell_quote "${PROXY_URL}")
 export WGET_WRAPPER_PROXY=$(shell_quote "${PROXY_URL}")
 export GIT_ZIP_WRAPPER_PROXY=$(shell_quote "${PROXY_URL}")
-EOF
+EOF2
+  else
+    cat <<'EOF2'
+unset CURL_WRAPPER_PROXY
+unset WGET_WRAPPER_PROXY
+unset GIT_ZIP_WRAPPER_PROXY
+EOF2
   fi
 
   if [[ -n "${CA_CERT_PATH}" ]]; then
     printf 'export GIT_ZIP_WRAPPER_CURL_CACERT=%s\n' "$(shell_quote "${CA_CERT_PATH}")"
+  else
+    printf 'unset GIT_ZIP_WRAPPER_CURL_CACERT\n'
   fi
 
   if [[ "${AUTO_INSECURE_ON_CERT_ERROR}" == "1" ]]; then
     printf 'export CURL_WRAPPER_AUTO_INSECURE_ON_CERT_ERROR=%s\n' "$(shell_quote "1")"
+  else
+    printf 'unset CURL_WRAPPER_AUTO_INSECURE_ON_CERT_ERROR\n'
   fi
 
   if [[ -n "${MASON_SEED_DIR}" ]]; then
     printf 'export CURL_WRAPPER_MASON_SEED_DIR=%s\n' "$(shell_quote "${MASON_SEED_DIR}")"
+  else
+    printf 'unset CURL_WRAPPER_MASON_SEED_DIR\n'
   fi
 }
 
@@ -382,7 +354,7 @@ write_env_file() {
   mkdir -p "${env_dir}"
 
   {
-    cat <<EOF
+    cat <<EOF2
 #!/usr/bin/env sh
 # Gerado por scripts/install/configure_wrapper_envs.sh
 
@@ -410,8 +382,7 @@ if [ -x $(shell_quote "${GIT_INSTALL_DIR}/git") ]; then
   __wrapper_env_git_bin=$(shell_quote "${GIT_INSTALL_DIR}/git")
 fi
 export GIT="\${__wrapper_env_git_bin}"
-EOF
-    cat <<EOF
+
 export BREW_WRAPPER_ENABLED="0"
 unset BREW_WRAPPER_REAL_BREW
 unset BREW_WRAPPER_CURL_BIN
@@ -428,10 +399,9 @@ export CURL_WRAPPER_RELEASE_CACHE_DIR=$(shell_quote "${HOME}/.cache/curl-python-
 export CURL_WRAPPER_MASON_SOURCE_BUILD_REPOS="omnisharp/omnisharp-roslyn"
 export CURL_WRAPPER_MASON_BUILDERS="elixir-lsp/elixir-ls=elixir_ls_release,omnisharp/omnisharp-roslyn=omnisharp_source_publish"
 export CURL_WRAPPER_MASON_REPACKAGE_EXTENSIONS="tar.gz,tgz,tar"
-
 export GIT_ZIP_WRAPPER_ARCHIVE_FORMAT="tar.gz"
-EOF
-    cat <<EOF
+EOF2
+    cat <<EOF2
 __wrapper_env_original_path="\${PATH:-}"
 __wrapper_env_sanitized_path=""
 __wrapper_env_old_ifs="\${IFS}"
@@ -464,8 +434,8 @@ unset __wrapper_env_sanitized_path
 unset __wrapper_env_curl_bin
 unset __wrapper_env_wget_bin
 unset __wrapper_env_git_bin
-EOF
-    render_optional_exports
+EOF2
+    render_local_only_exports
   } > "${ENV_FILE}"
 
   chmod 0644 "${ENV_FILE}"
@@ -485,7 +455,7 @@ ensure_source_line() {
 
   {
     printf '\n'
-    printf '# wrappers de curl/git para ambiente restrito\n'
+    printf '# wrappers locais de curl/git para ambiente restrito\n'
     printf '%s\n' "${source_line}"
   } >> "${rc_file}"
 }
@@ -500,7 +470,7 @@ if [[ "${APPLY_SHELL_RC}" == "1" ]]; then
   ensure_source_line "${SHELL_RC}"
 fi
 
-cat <<EOF
+cat <<EOF2
 Configuração concluída.
 
 Arquivo de ambiente:
@@ -511,32 +481,30 @@ Wrapper dirs:
   curl: ${CURL_INSTALL_DIR}
   git:  ${GIT_INSTALL_DIR}
 
-Backend EC2:
-  enabled: ${ENABLE_EC2_BACKEND}
-  instance: ${INSTANCE_NAME}
-  region: ${AWS_REGION_NAME}
-  s3-prefix: ${S3_PREFIX_NAME}
+Modo:
+  local-only
 
 Binários reais:
   curl: ${REAL_CURL_BIN}
+  wget: ${REAL_WGET_BIN:-não encontrado}
   git:  ${REAL_GIT_BIN}
-EOF
+EOF2
 
 if [[ "${APPLY_SHELL_RC}" == "1" ]]; then
-  cat <<EOF
+  cat <<EOF2
 
 Arquivo rc atualizado:
   ${SHELL_RC}
 
 Para aplicar na sessão atual:
   . ${ENV_FILE}
-EOF
+EOF2
 else
-  cat <<EOF
+  cat <<EOF2
 
 Nenhum arquivo rc foi alterado.
 
 Para aplicar manualmente:
   . ${ENV_FILE}
-EOF
+EOF2
 fi

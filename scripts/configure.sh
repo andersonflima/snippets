@@ -4,8 +4,6 @@ set -eu
 SCRIPT_DIR="$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)"
 SETUP_SCRIPT="${SCRIPT_DIR}/install/setup_restricted_dev_env.sh"
 RESET_SCRIPT="${SCRIPT_DIR}/install/reset_restricted_dev_env.sh"
-WRAPPER_ENV_FILE="${HOME}/.config/wrapper-envs.sh"
-MIX_ENV_FILE="${HOME}/.config/mix-via-ec2-envs.sh"
 LEGACY_BREW_WRAPPER_DIR="${HOME}/.local/share/homebrew-install-wrapper/bin"
 LEGACY_BREW_WRAPPER_ROOT="${HOME}/.local/share/homebrew-install-wrapper"
 CURL_WRAPPER_DIR="${HOME}/.local/share/curl-python-wrapper/bin"
@@ -102,6 +100,7 @@ sanitize_current_wrapper_env() {
   unset GIT_ZIP_WRAPPER_ALLOW_ZIP_FALLBACK 2>/dev/null || true
   unset GIT_ZIP_WRAPPER_CLONE_ORDER 2>/dev/null || true
   unset GIT_ZIP_WRAPPER_LFS_MODE 2>/dev/null || true
+  unset GIT_ZIP_WRAPPER_FORCE_LOCAL_DOWNLOADS 2>/dev/null || true
 
   unset MIX_VIA_EC2_INSTANCE_NAME 2>/dev/null || true
   unset MIX_VIA_EC2_AWS_PROFILE 2>/dev/null || true
@@ -169,18 +168,6 @@ should_apply_shell_rc_by_default() {
   return 0
 }
 
-should_set_ec2_backend_by_default() {
-  while [ "$#" -gt 0 ]; do
-    case "$1" in
-      --enable-ec2-backend|--disable-ec2-backend)
-        return 1
-        ;;
-    esac
-    shift
-  done
-  return 0
-}
-
 is_help_request() {
   case "${1:-}" in
     -h|--help)
@@ -212,48 +199,6 @@ resolve_shell_rc_target() {
   printf '%s' "${DEFAULT_SHELL_RC}"
 }
 
-extract_bucket_from_env_file() {
-  env_file="$1"
-
-  [ -f "${env_file}" ] || return 1
-
-  (
-    set +u
-    # shellcheck disable=SC1090
-    . "${env_file}" >/dev/null 2>&1 || exit 1
-
-    if [ -n "${WRAPPERS_VIA_EC2_S3_BUCKET:-}" ]; then
-      printf '%s' "${WRAPPERS_VIA_EC2_S3_BUCKET}"
-      exit 0
-    fi
-
-    if [ -n "${MIX_VIA_EC2_S3_BUCKET:-}" ]; then
-      printf '%s' "${MIX_VIA_EC2_S3_BUCKET}"
-      exit 0
-    fi
-
-    exit 1
-  )
-}
-
-resolve_default_bucket() {
-  bucket=""
-
-  bucket="$(extract_bucket_from_env_file "${WRAPPER_ENV_FILE}" 2>/dev/null || true)"
-  if [ -n "${bucket}" ]; then
-    printf '%s' "${bucket}"
-    return 0
-  fi
-
-  bucket="$(extract_bucket_from_env_file "${MIX_ENV_FILE}" 2>/dev/null || true)"
-  if [ -n "${bucket}" ]; then
-    printf '%s' "${bucket}"
-    return 0
-  fi
-
-  return 1
-}
-
 run_full_reset_before_setup() {
   shell_rc_target="$(resolve_shell_rc_target "$@")"
 
@@ -265,46 +210,13 @@ run_full_reset_before_setup() {
 }
 
 if is_help_request "$@"; then
-  if command -v bash >/dev/null 2>&1; then
-    exec bash "${SETUP_SCRIPT}" "$@"
-  fi
-  exec sh "${SETUP_SCRIPT}" "$@"
+  run_script_with_bash_preference "${SETUP_SCRIPT}" "$@"
+  exit $?
 fi
 
-if [ "${1:-}" = "" ]; then
-  resolved_bucket="$(resolve_default_bucket || true)"
-  if [ -n "${resolved_bucket}" ]; then
-    set -- "${resolved_bucket}"
-  else
-    printf 'Uso: sh scripts/configure.sh <bucket> [opções extras do setup]\n' >&2
-    printf 'Padrão do entrypoint público: persiste automaticamente no %s\n' "${DEFAULT_SHELL_RC}" >&2
-    printf 'Dica: após a primeira configuração, você pode executar sem bucket.\n' >&2
-    exit 1
-  fi
-fi
-
-if [ "${1#-}" != "$1" ]; then
-  if should_set_ec2_backend_by_default "$@"; then
-    set -- --enable-ec2-backend "$@"
-  fi
-  if should_apply_shell_rc_by_default "$@"; then
-    set -- --apply-shell-rc --shell-rc "${DEFAULT_SHELL_RC}" "$@"
-  fi
-  sanitize_legacy_brew_wrapper_env
-  remove_legacy_brew_wrapper_installation
-  if command -v bash >/dev/null 2>&1; then
-    exec bash "${SETUP_SCRIPT}" "$@"
-  fi
-  exec sh "${SETUP_SCRIPT}" "$@"
-fi
-
-S3_BUCKET="$1"
-shift
-
-set -- --s3-bucket "${S3_BUCKET}" "$@"
-
-if should_set_ec2_backend_by_default "$@"; then
-  set -- --enable-ec2-backend "$@"
+if [ "${1:-}" != "" ] && [ "${1#-}" = "$1" ]; then
+  printf '[configure] argumento legado ignorado: %s (fluxo agora é local-only, sem bucket/EC2)\n' "$1" >&2
+  shift
 fi
 
 if should_apply_shell_rc_by_default "$@"; then
@@ -312,7 +224,4 @@ if should_apply_shell_rc_by_default "$@"; then
 fi
 
 run_full_reset_before_setup "$@"
-if command -v bash >/dev/null 2>&1; then
-  exec bash "${SETUP_SCRIPT}" "$@"
-fi
-exec sh "${SETUP_SCRIPT}" "$@"
+run_script_with_bash_preference "${SETUP_SCRIPT}" "$@"

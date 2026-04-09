@@ -217,38 +217,48 @@ validate_fail_open_policy() {
   wget_required="${WGET_WRAPPER_EC2_REQUIRED:-0}"
   git_required="${GIT_ZIP_WRAPPER_EC2_REQUIRED:-0}"
 
-  if [[ "${ec2_enabled}" == "1" ]]; then
-    if [[ "${curl_required}" == "1" ]]; then
-      warn "CURL_WRAPPER_EC2_REQUIRED=1 (falha remota pode quebrar Mason/brew)"
-    else
-      ok "CURL_WRAPPER_EC2_REQUIRED=0 (fallback local ativo)"
-    fi
-    if [[ "${wget_required}" == "1" ]]; then
-      warn "WGET_WRAPPER_EC2_REQUIRED=1 (falha remota pode quebrar downloads)"
-    else
-      ok "WGET_WRAPPER_EC2_REQUIRED=0 (fallback local ativo)"
-    fi
-    if [[ "${git_required}" == "1" ]]; then
-      warn "GIT_ZIP_WRAPPER_EC2_REQUIRED=1 (falha remota pode quebrar clone/fetch)"
-    else
-      ok "GIT_ZIP_WRAPPER_EC2_REQUIRED=0 (fallback local ativo)"
-    fi
+  if [[ "${ec2_enabled}" != "0" ]]; then
+    fail "WRAPPERS_VIA_EC2_ENABLED=${ec2_enabled} (o modo esperado agora é local-only)"
+    return 0
+  fi
+
+  ok "WRAPPERS_VIA_EC2_ENABLED=0 (modo local-only ativo)"
+
+  if [[ "${curl_required}" != "0" ]]; then
+    fail "CURL_WRAPPER_EC2_REQUIRED=${curl_required} (não deve exigir backend remoto)"
   else
-    ok "WRAPPERS_VIA_EC2_ENABLED=0 (backend remoto desabilitado)"
+    ok "CURL_WRAPPER_EC2_REQUIRED=0"
+  fi
+  if [[ "${wget_required}" != "0" ]]; then
+    fail "WGET_WRAPPER_EC2_REQUIRED=${wget_required} (não deve exigir backend remoto)"
+  else
+    ok "WGET_WRAPPER_EC2_REQUIRED=0"
+  fi
+  if [[ "${git_required}" != "0" ]]; then
+    fail "GIT_ZIP_WRAPPER_EC2_REQUIRED=${git_required} (não deve exigir backend remoto)"
+  else
+    ok "GIT_ZIP_WRAPPER_EC2_REQUIRED=0"
   fi
 }
 
 validate_git_clone_order_policy() {
-  local clone_order
+  local clone_order force_local_downloads
   clone_order="${GIT_ZIP_WRAPPER_CLONE_ORDER:-local-first}"
+  force_local_downloads="${GIT_ZIP_WRAPPER_FORCE_LOCAL_DOWNLOADS:-1}"
   case "${clone_order}" in
     local-first)
       ok "GIT_ZIP_WRAPPER_CLONE_ORDER=local-first (clone local antes do EC2)"
       ;;
     *)
-      warn "GIT_ZIP_WRAPPER_CLONE_ORDER=${clone_order} (valor não suportado; wrapper forçará local-first)"
+      fail "GIT_ZIP_WRAPPER_CLONE_ORDER=${clone_order} (esperado: local-first)"
       ;;
   esac
+
+  if [[ "${force_local_downloads}" != "1" ]]; then
+    fail "GIT_ZIP_WRAPPER_FORCE_LOCAL_DOWNLOADS=${force_local_downloads} (esperado: 1)"
+  else
+    ok "GIT_ZIP_WRAPPER_FORCE_LOCAL_DOWNLOADS=1"
+  fi
 }
 
 validate_required_wrapper curl "${HOME}/.local/share/curl-python-wrapper/bin/curl" "${HOME}/.local/share/curl-python-wrapper/bin"
