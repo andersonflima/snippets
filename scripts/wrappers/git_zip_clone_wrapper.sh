@@ -1157,23 +1157,28 @@ checkout_archive_clone_target() {
 
   if [[ -n "${target_ref}" ]] &&
     "${real_git}" -C "${destination}" rev-parse --verify "refs/remotes/origin/${target_ref}" >/dev/null 2>&1; then
-    "${real_git}" -C "${destination}" checkout --quiet -B "${target_ref}" "refs/remotes/origin/${target_ref}"
-    return 0
+    if "${real_git}" -C "${destination}" checkout --quiet -B "${target_ref}" "refs/remotes/origin/${target_ref}"; then
+      return 0
+    fi
   fi
 
   if [[ -n "${target_ref}" ]] &&
     "${real_git}" -C "${destination}" rev-parse --verify "refs/tags/${target_ref}" >/dev/null 2>&1; then
-    "${real_git}" -C "${destination}" checkout --quiet --detach "refs/tags/${target_ref}"
-    return 0
+    if "${real_git}" -C "${destination}" checkout --quiet --detach "refs/tags/${target_ref}"; then
+      return 0
+    fi
   fi
 
   if "${real_git}" -C "${destination}" rev-parse --verify FETCH_HEAD >/dev/null 2>&1; then
     if [[ -n "${target_ref}" ]]; then
-      "${real_git}" -C "${destination}" checkout --quiet -B "${target_ref}" FETCH_HEAD
+      if "${real_git}" -C "${destination}" checkout --quiet -B "${target_ref}" FETCH_HEAD; then
+        return 0
+      fi
     else
-      "${real_git}" -C "${destination}" checkout --quiet --detach FETCH_HEAD
+      if "${real_git}" -C "${destination}" checkout --quiet --detach FETCH_HEAD; then
+        return 0
+      fi
     fi
-    return 0
   fi
 
   return 1
@@ -1225,6 +1230,10 @@ bootstrap_archive_clone_repository() {
     target_ref="$(resolve_remote_default_branch "${real_git}" "${destination}" || true)"
   fi
 
+  # Commit the extracted archive first so a later checkout can safely replace
+  # tracked files instead of aborting on an untracked working tree.
+  create_archive_snapshot_commit "${real_git}" "${destination}" "${repo_url}" "${target_ref}"
+
   fetch_depth="$(first_forward_value_for_option --depth || true)"
   [[ -n "${fetch_depth}" ]] || fetch_depth="1"
 
@@ -1235,7 +1244,6 @@ bootstrap_archive_clone_repository() {
     fi
   fi
 
-  create_archive_snapshot_commit "${real_git}" "${destination}" "${repo_url}" "${target_ref}"
   log "clone por archive materializado como snapshot Git local: ${destination}"
 }
 
