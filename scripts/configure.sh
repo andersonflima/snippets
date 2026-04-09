@@ -41,6 +41,18 @@ resolve_default_shell_rc() {
 
 DEFAULT_SHELL_RC="$(resolve_default_shell_rc)"
 
+run_script_with_bash_preference() {
+  script_path="$1"
+  shift
+
+  if command -v bash >/dev/null 2>&1; then
+    bash "${script_path}" "$@"
+    return $?
+  fi
+
+  sh "${script_path}" "$@"
+}
+
 sanitize_current_wrapper_env() {
   old_path="${PATH-}"
   new_path=""
@@ -247,12 +259,15 @@ run_full_reset_before_setup() {
 
   sanitize_current_wrapper_env
   remove_legacy_brew_wrapper_installation
-  sh "${RESET_SCRIPT}" --shell-rc "${shell_rc_target}"
+  run_script_with_bash_preference "${RESET_SCRIPT}" --shell-rc "${shell_rc_target}"
   sanitize_current_wrapper_env
   remove_legacy_brew_wrapper_installation
 }
 
 if is_help_request "$@"; then
+  if command -v bash >/dev/null 2>&1; then
+    exec bash "${SETUP_SCRIPT}" "$@"
+  fi
   exec sh "${SETUP_SCRIPT}" "$@"
 fi
 
@@ -277,6 +292,9 @@ if [ "${1#-}" != "$1" ]; then
   fi
   sanitize_legacy_brew_wrapper_env
   remove_legacy_brew_wrapper_installation
+  if command -v bash >/dev/null 2>&1; then
+    exec bash "${SETUP_SCRIPT}" "$@"
+  fi
   exec sh "${SETUP_SCRIPT}" "$@"
 fi
 
@@ -294,4 +312,7 @@ if should_apply_shell_rc_by_default "$@"; then
 fi
 
 run_full_reset_before_setup "$@"
+if command -v bash >/dev/null 2>&1; then
+  exec bash "${SETUP_SCRIPT}" "$@"
+fi
 exec sh "${SETUP_SCRIPT}" "$@"

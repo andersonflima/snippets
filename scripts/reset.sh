@@ -64,4 +64,8 @@ if ! should_keep_install_dirs "$@"; then
   remove_legacy_brew_wrapper_installation
 fi
 
+if command -v bash >/dev/null 2>&1; then
+  exec bash "${RESET_SCRIPT}" "$@"
+fi
+
 exec sh "${RESET_SCRIPT}" "$@"
