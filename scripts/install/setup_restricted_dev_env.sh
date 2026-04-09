@@ -408,11 +408,17 @@ write_fish_env_file() {
   local -a exported_keys unset_keys path_entries
   local env_entry key value escaped_value escaped_path_entry
 
-  mapfile -t exported_keys < <(
+  while IFS= read -r key; do
+    [[ -n "${key}" ]] || continue
+    exported_keys+=("${key}")
+  done < <(
     collect_export_keys_from_env_file "${WRAPPER_ENV_FILE}" | awk '!seen[$0]++'
   )
 
-  mapfile -t unset_keys < <(
+  while IFS= read -r key; do
+    [[ -n "${key}" ]] || continue
+    unset_keys+=("${key}")
+  done < <(
     collect_unset_keys_from_env_file "${WRAPPER_ENV_FILE}" | awk '!seen[$0]++'
   )
 
