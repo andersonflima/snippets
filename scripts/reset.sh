@@ -1,10 +1,41 @@
 #!/bin/sh
 set -eu
 
-SCRIPT_DIR="$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)"
+resolve_script_path() {
+  current_path="$1"
+
+  if ! command -v readlink >/dev/null 2>&1; then
+    printf '%s\n' "${current_path}"
+    return 0
+  fi
+
+  while [ -L "${current_path}" ]; do
+    current_dir="$(CDPATH= cd -- "$(dirname -- "${current_path}")" && pwd)"
+    link_target="$(readlink "${current_path}")"
+    case "${link_target}" in
+      /*)
+        current_path="${link_target}"
+        ;;
+      *)
+        current_path="${current_dir}/${link_target}"
+        ;;
+    esac
+  done
+
+  printf '%s\n' "${current_path}"
+}
+
+SCRIPT_PATH="$(resolve_script_path "$0")"
+SCRIPT_DIR="$(CDPATH= cd -- "$(dirname -- "${SCRIPT_PATH}")" && pwd)"
 RESET_SCRIPT="${SCRIPT_DIR}/install/reset_restricted_dev_env.sh"
 LEGACY_BREW_WRAPPER_DIR="${HOME}/.local/share/homebrew-install-wrapper/bin"
 LEGACY_BREW_WRAPPER_ROOT="${HOME}/.local/share/homebrew-install-wrapper"
+
+[ -f "${RESET_SCRIPT}" ] || {
+  printf '[reset] script interno ausente: %s\n' "${RESET_SCRIPT}" >&2
+  printf '[reset] script resolvido: %s\n' "${SCRIPT_PATH}" >&2
+  exit 1
+}
 
 sanitize_legacy_wrapper_env() {
   old_path="${PATH-}"

@@ -587,8 +587,8 @@ Modo:
 
 Persistência:
   shell rc: ${RESTRICTED_DEV_ENV_MANAGED_SHELL_RC:-não alterado}
-  env sh: ${WRAPPER_ENV_FILE}
-  env fish: ${FISH_ENV_FILE}
+  arquivo env sh: ${WRAPPER_ENV_FILE}
+  arquivo env fish: ${FISH_ENV_FILE}
   elixir_ls setup.sh: ${ELIXIR_LS_SETUP_SH}
   elixir_ls setup.fish: ${ELIXIR_LS_SETUP_FISH}
   state: ${RESTRICTED_DEV_ENV_STATE_FILE}
@@ -598,13 +598,15 @@ Rede corporativa efetiva:
   ca cert: ${CA_CERT_PATH:-não definida}
   hex unsafe: ${HEX_UNSAFE_HTTPS}
 
-Para aplicar na sessão atual:
+Para aplicar na sessão atual (zsh/bash/sh):
+  arquivo: ${WRAPPER_ENV_FILE}
   . "${WRAPPER_ENV_FILE}"
   rehash 2>/dev/null || true
   hash -r 2>/dev/null || true
   # reinicie o nvim/tmux já aberto depois disso
 
 Para aplicar na sessão atual (fish):
+  arquivo: ${FISH_ENV_FILE}
   source "${FISH_ENV_FILE}"
   # reinicie o nvim/tmux já aberto depois disso
 
