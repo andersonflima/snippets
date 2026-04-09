@@ -30,12 +30,12 @@ Fluxo público recomendado:
 sh scripts/configure.sh "<bucket>"
 ```
 
-Nesse modo padrão, o backend EC2 dos wrappers (`curl`, `wget`, `git`) fica desabilitado para priorizar fallback local e estabilidade de `brew`, `LazyVim` e `Mason`.
+Nesse modo padrão, o backend EC2 dos wrappers (`curl`, `wget`, `git`) fica habilitado para garantir instalação de dependências do `LazyVim`/`Mason` em ambientes restritos.
 
-Para habilitar o backend remoto dos wrappers explicitamente:
+Para desligar o backend remoto dos wrappers explicitamente:
 
 ```bash
-sh scripts/configure.sh "<bucket>" --enable-ec2-backend
+sh scripts/configure.sh "<bucket>" --disable-ec2-backend
 ```
 
 Esse fluxo instala e configura:
@@ -176,7 +176,7 @@ vim.env.PATH = table.concat({
   vim.env.PATH,
 }, ":")
 
-vim.env.CURL_WRAPPER_RELEASE_FALLBACK_REPOS = "elixir-lsp/elixir-ls,luals/lua-language-server,omnisharp/omnisharp-roslyn"
+vim.env.CURL_WRAPPER_RELEASE_FALLBACK_REPOS = "elixir-lsp/elixir-ls,johnnymorganz/stylua,luals/lua-language-server,omnisharp/omnisharp-roslyn"
 vim.env.CURL_WRAPPER_ALLOW_DIRECT_RELEASE_FALLBACK = "1"
 vim.env.CURL_WRAPPER_ENABLE_MASON_SMART_RELEASES = "1"
 vim.env.CURL_WRAPPER_RELEASE_CACHE_DIR = vim.fn.expand("~/.cache/curl-python-wrapper/releases")
@@ -220,7 +220,7 @@ Principais variáveis:
 
 - `CURL_WRAPPER_USE_EC2`
   Quando `1`, delega downloads suportados para o helper remoto via EC2.
-  Padrão: herda `WRAPPERS_VIA_EC2_ENABLED` (bootstrap padrão mantém `0`).
+  Padrão: herda `WRAPPERS_VIA_EC2_ENABLED` (bootstrap padrão mantém `1`).
 
 - `WRAPPERS_VIA_EC2_INSTANCE_NAME`
   Instância EC2 compartilhada usada pelos wrappers.
@@ -251,7 +251,7 @@ Principais variáveis:
 - `CURL_WRAPPER_RELEASE_FALLBACK_REPOS`
   Lista CSV de repositórios GitHub tratados como releases restritas.
   Padrão:
-  `elixir-lsp/elixir-ls,luals/lua-language-server,omnisharp/omnisharp-roslyn`
+  `elixir-lsp/elixir-ls,johnnymorganz/stylua,luals/lua-language-server,omnisharp/omnisharp-roslyn`
 
 - `CURL_WRAPPER_ALLOW_DIRECT_RELEASE_FALLBACK`
   Reabilita tentativa direta do asset remoto da release, mesmo para repositórios restritos.
@@ -294,7 +294,7 @@ Principais variáveis:
 
 - `GIT_ZIP_WRAPPER_USE_EC2`
   Quando `1`, delega downloads dos archives suportados para o helper remoto via EC2.
-  Padrão: herda `WRAPPERS_VIA_EC2_ENABLED` (bootstrap padrão mantém `0`).
+  Padrão: herda `WRAPPERS_VIA_EC2_ENABLED` (bootstrap padrão mantém `1`).
 
 - `GIT_ZIP_WRAPPER_PROXY`
   Proxy explícito para os downloads do wrapper.
@@ -306,6 +306,11 @@ Principais variáveis:
 
 - `GIT_ZIP_WRAPPER_ALLOW_ZIP_FALLBACK`
   Libera fallback para `.zip` quando o `.tar.gz` não estiver disponível.
+
+- `GIT_ZIP_WRAPPER_CLONE_ORDER`
+  Política do fallback de clone do wrapper.
+  Valor suportado: `local-first`.
+  Comportamento: tenta clone local antes do backend EC2.
 
 - `GIT_ZIP_WRAPPER_CURL_CACERT`
   Caminho para CA customizada em ambiente corporativo.
@@ -355,14 +360,14 @@ Política de falha:
 Quando esse backend está ativo:
 
 - o `curl` wrapper tenta buscar assets suportados via EC2 antes do download local
-- o `git` wrapper tenta baixar archives GitHub via EC2 antes das tentativas locais
+- o `git` wrapper tenta clone/download local primeiro e usa EC2 apenas como fallback quando necessário
 - o `git` wrapper pode materializar Git LFS no EC2 antes de empacotar o repositório
 - o `curl` do Mason pode aproveitar o EC2 para baixar `.zip` oficiais de release quando a máquina local não consegue
 
 No modo configurado pelo bootstrap atual:
 
 - `curl` usa EC2 por padrão para URLs suportadas, mas o fallback local permanece habilitado por padrão
-- `git` usa EC2 por padrão para os clones GitHub suportados, mas o fallback local permanece habilitado por padrão
+- `git` tenta clone local primeiro e só cai para EC2 quando o clone local falha
 - `git` exporta `GIT_ZIP_WRAPPER_LFS_MODE=local` por padrão, então `git lfs pull` roda localmente após o clone
 
 Pré-requisito adicional para esse modo:
