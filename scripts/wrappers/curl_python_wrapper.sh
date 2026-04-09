@@ -23,7 +23,7 @@ is_truthy() {
 
 CURL_WRAPPER_ALLOW_ZIP_DOWNLOAD="${CURL_WRAPPER_ALLOW_ZIP_DOWNLOAD:-0}"
 CURL_WRAPPER_AUTO_INSECURE_ON_CERT_ERROR="${CURL_WRAPPER_AUTO_INSECURE_ON_CERT_ERROR:-0}"
-CURL_WRAPPER_RELEASE_FALLBACK_REPOS="${CURL_WRAPPER_RELEASE_FALLBACK_REPOS:-elixir-lsp/elixir-ls,luals/lua-language-server,omnisharp/omnisharp-roslyn}"
+CURL_WRAPPER_RELEASE_FALLBACK_REPOS="${CURL_WRAPPER_RELEASE_FALLBACK_REPOS:-elixir-lsp/elixir-ls,johnnymorganz/stylua,luals/lua-language-server,omnisharp/omnisharp-roslyn}"
 CURL_WRAPPER_ALLOW_DIRECT_RELEASE_FALLBACK="${CURL_WRAPPER_ALLOW_DIRECT_RELEASE_FALLBACK:-0}"
 CURL_WRAPPER_ENABLE_MASON_SMART_RELEASES="${CURL_WRAPPER_ENABLE_MASON_SMART_RELEASES:-1}"
 CURL_WRAPPER_ACTIVE_PROXY=""
@@ -40,6 +40,56 @@ is_zip_extension() {
   value="${1%%\?*}"
   value="${value%%#*}"
   [[ "${value}" == *.zip ]]
+}
+
+is_valid_zip_file() {
+  local file_path
+  file_path="$1"
+  [[ -s "${file_path}" ]] || return 1
+
+  if command -v python3 >/dev/null 2>&1; then
+    python3 - "${file_path}" <<'PY'
+import sys
+import zipfile
+
+file_path = sys.argv[1]
+
+if not zipfile.is_zipfile(file_path):
+    raise SystemExit(1)
+
+with zipfile.ZipFile(file_path, "r") as archive:
+    archive.infolist()
+    if archive.testzip() is not None:
+        raise SystemExit(1)
+PY
+    return $?
+  fi
+
+  if command -v unzip >/dev/null 2>&1; then
+    unzip -tqq "${file_path}" >/dev/null 2>&1
+    return $?
+  fi
+
+  return 1
+}
+
+validate_release_asset_output() {
+  local asset output_path source_label
+  asset="$1"
+  output_path="$2"
+  source_label="${3:-desconhecido}"
+
+  if [[ ! -s "${output_path}" ]]; then
+    log "artefato vazio/inexistente para ${asset} via ${source_label}: ${output_path}"
+    return 1
+  fi
+
+  if [[ "${asset}" == *.zip ]] && ! is_valid_zip_file "${output_path}"; then
+    log "zip inválido para ${asset} via ${source_label}: ${output_path}"
+    return 1
+  fi
+
+  return 0
 }
 
 normalize_repo_slug() {
@@ -191,9 +241,84 @@ normalize_curl_args_for_parser() {
   done
 }
 
+canonicalize_binary_path() {
+  local path dir base
+  path="${1:-}"
+  [[ -n "${path}" ]] || return 1
+
+  if command -v realpath >/dev/null 2>&1; then
+    realpath "${path}" 2>/dev/null && return 0
+  fi
+
+  [[ -e "${path}" ]] || return 1
+  dir="$(cd "$(dirname "${path}")" 2>/dev/null && pwd -P)" || return 1
+  base="$(basename "${path}")"
+  printf '%s/%s\n' "${dir}" "${base}"
+}
+
+binary_paths_match() {
+  local left right
+  left="$(canonicalize_binary_path "${1:-}" 2>/dev/null || true)"
+  right="$(canonicalize_binary_path "${2:-}" 2>/dev/null || true)"
+  [[ -n "${left}" && -n "${right}" && "${left}" == "${right}" ]]
+}
+
+is_homebrew_shim_curl() {
+  local candidate resolved_candidate
+  candidate="${1:-}"
+  [[ -n "${candidate}" ]] || return 1
+  [[ -n "${HOMEBREW_LIBRARY:-}" ]] || return 1
+
+  resolved_candidate="$(canonicalize_binary_path "${candidate}" 2>/dev/null || true)"
+  [[ -n "${resolved_candidate}" ]] || return 1
+  [[ "${resolved_candidate}" == "${HOMEBREW_LIBRARY}/Homebrew/shims/shared/curl" ]]
+}
+
+should_skip_real_curl_candidate() {
+  local candidate self_path
+  candidate="${1:-}"
+  self_path="${2:-}"
+
+  [[ -n "${candidate}" ]] || return 0
+  [[ -x "${candidate}" ]] || return 0
+
+  if binary_paths_match "${candidate}" "${self_path}"; then
+    return 0
+  fi
+
+  if is_homebrew_shim_curl "${candidate}"; then
+    return 0
+  fi
+
+  return 1
+}
+
+extract_homebrew_internal_command() {
+  local arg
+  arg="${1:-}"
+  [[ "${arg}" == --homebrew=* ]] || return 1
+  printf '%s\n' "${arg#--homebrew=}"
+}
+
+handle_homebrew_internal_command() {
+  local command_name real_curl
+  command_name="${1:-}"
+  real_curl="${2:-}"
+
+  case "${command_name}" in
+    print-path)
+      printf '%s\n' "${real_curl}"
+      exit 0
+      ;;
+  esac
+}
+
 resolve_real_curl() {
   if [[ -n "${CURL_WRAPPER_REAL_CURL:-}" ]]; then
     [[ -x "${CURL_WRAPPER_REAL_CURL}" ]] || die "CURL_WRAPPER_REAL_CURL inválido: ${CURL_WRAPPER_REAL_CURL}"
+    if should_skip_real_curl_candidate "${CURL_WRAPPER_REAL_CURL}" "$(cd "$(dirname "$0")" && pwd)/$(basename "$0")"; then
+      die "CURL_WRAPPER_REAL_CURL não pode apontar para o wrapper ou para o shim do Homebrew: ${CURL_WRAPPER_REAL_CURL}"
+    fi
     printf '%s\n' "${CURL_WRAPPER_REAL_CURL}"
     return
   fi
@@ -201,14 +326,14 @@ resolve_real_curl() {
   local self_path shell_path candidate
   self_path="$(cd "$(dirname "$0")" && pwd)/$(basename "$0")"
   shell_path="$(command -v -p curl 2>/dev/null || true)"
-  if [[ -n "${shell_path}" && "${shell_path}" != "${self_path}" ]]; then
+  if ! should_skip_real_curl_candidate "${shell_path}" "${self_path}"; then
     printf '%s\n' "${shell_path}"
     return
   fi
 
   while IFS= read -r candidate; do
     [[ -n "${candidate}" ]] || continue
-    if [[ "${candidate}" != "${self_path}" ]]; then
+    if ! should_skip_real_curl_candidate "${candidate}" "${self_path}"; then
       printf '%s\n' "${candidate}"
       return
     fi
@@ -658,14 +783,20 @@ download_release_asset_by_name() {
       "https://github.com/${owner}/${repo}/releases/download/${tag}/${asset}" \
       "${output_path}" \
       "1"; then
-      return 0
+      if validate_release_asset_output "${asset}" "${output_path}" "curl direto"; then
+        return 0
+      fi
+      rm -f "${output_path}" 2>/dev/null || true
     fi
   fi
 
   if command -v gh >/dev/null 2>&1; then
     mkdir -p "$(dirname "${output_path}")"
     if gh release download "${tag}" -R "${owner}/${repo}" -p "${asset}" -O "${output_path}" --clobber >/dev/null 2>&1; then
-      return 0
+      if validate_release_asset_output "${asset}" "${output_path}" "gh release"; then
+        return 0
+      fi
+      rm -f "${output_path}" 2>/dev/null || true
     fi
   fi
 
@@ -673,9 +804,18 @@ download_release_asset_by_name() {
     return 0
   fi
 
-  download_url_with_python_fallback \
+  if ! download_url_with_python_fallback \
     "https://github.com/${owner}/${repo}/releases/download/${tag}/${asset}" \
-    "${output_path}"
+    "${output_path}"; then
+    return 1
+  fi
+
+  if validate_release_asset_output "${asset}" "${output_path}" "python fallback"; then
+    return 0
+  fi
+
+  rm -f "${output_path}" 2>/dev/null || true
+  return 1
 }
 
 download_release_asset_by_api_endpoint() {
@@ -704,7 +844,10 @@ download_release_asset_by_api_endpoint() {
        CURL_FALLBACK_INSECURE="${CURL_FALLBACK_INSECURE:-0}"
        download_url_with_real_curl "${api_url}" "${output_path}" "1"
      ); then
-    return 0
+    if validate_release_asset_output "${asset}" "${output_path}" "api curl"; then
+      return 0
+    fi
+    rm -f "${output_path}" 2>/dev/null || true
   fi
 
   if command -v gh >/dev/null 2>&1; then
@@ -712,11 +855,14 @@ download_release_asset_by_api_endpoint() {
       -H "Accept: application/octet-stream" \
       -H "X-GitHub-Api-Version: 2022-11-28" \
       "/repos/${owner}/${repo}/releases/assets/${asset_id}" > "${output_path}" 2>/dev/null; then
-      return 0
+      if validate_release_asset_output "${asset}" "${output_path}" "api gh"; then
+        return 0
+      fi
+      rm -f "${output_path}" 2>/dev/null || true
     fi
   fi
 
-  (
+  if ! (
     CURL_FALLBACK_URL="${api_url}"
     CURL_FALLBACK_OUTPUT="${output_path}"
     CURL_FALLBACK_USER_AGENT="${CURL_FALLBACK_USER_AGENT:-curl-python-wrapper}"
@@ -728,7 +874,16 @@ download_release_asset_by_api_endpoint() {
     CURL_FALLBACK_CREATE_DIRS="1"
     CURL_FALLBACK_INSECURE="${CURL_FALLBACK_INSECURE:-0}"
     download_with_python_requests
-  )
+  ); then
+    return 1
+  fi
+
+  if validate_release_asset_output "${asset}" "${output_path}" "api python"; then
+    return 0
+  fi
+
+  rm -f "${output_path}" 2>/dev/null || true
+  return 1
 }
 
 download_source_tarball_for_tag() {
@@ -992,9 +1147,14 @@ download_with_ec2_backend() {
 source "${WRAPPER_DIR}/lib/mason_release_engine.sh"
 
 main() {
-  local real_curl
+  local real_curl homebrew_internal_command
   real_curl="$(resolve_real_curl)"
   CURL_WRAPPER_RESOLVED_REAL_CURL="${real_curl}"
+  homebrew_internal_command="$(extract_homebrew_internal_command "${1:-}" 2>/dev/null || true)"
+  if [[ -n "${homebrew_internal_command}" ]]; then
+    shift
+    handle_homebrew_internal_command "${homebrew_internal_command}" "${real_curl}"
+  fi
   local can_fallback=0
   local parsed_fallback=0
   local -a normalized_args=()

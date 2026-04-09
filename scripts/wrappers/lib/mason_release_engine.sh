@@ -76,6 +76,29 @@ mason_release_store_cached_artifact() {
   cp "${source_path}" "${cache_path}" 2>/dev/null || return 1
 }
 
+mason_release_invalidate_cached_artifact() {
+  local slug tag asset cache_path
+  slug="$1"
+  tag="$2"
+  asset="$3"
+  cache_path="$(mason_release_cache_path "${slug}" "${tag}" "${asset}")"
+  rm -f "${cache_path}" 2>/dev/null || true
+}
+
+mason_release_validate_artifact_output() {
+  local asset output_path source_label
+  asset="$1"
+  output_path="$2"
+  source_label="$3"
+
+  validate_release_asset_output "${asset}" "${output_path}" "${source_label}" || {
+    rm -f "${output_path}" 2>/dev/null || true
+    return 1
+  }
+
+  return 0
+}
+
 mason_release_fetch_metadata_json() {
   local owner repo tag output_path api_path api_url
   owner="$1"
@@ -753,13 +776,17 @@ handle_smart_release_asset() {
     "${GITHUB_RELEASE_TAG}" \
     "${GITHUB_RELEASE_ASSET}" \
     "${output_path}"; then
-    mason_release_store_cached_artifact \
-      "${GITHUB_RELEASE_SLUG}" \
-      "${GITHUB_RELEASE_TAG}" \
-      "${GITHUB_RELEASE_ASSET}" \
-      "${output_path}"
-    log "artefato Mason restaurado do seed local para ${GITHUB_RELEASE_SLUG}"
-    return 0
+    if ! mason_release_validate_artifact_output "${GITHUB_RELEASE_ASSET}" "${output_path}" "seed local"; then
+      log "artefato Mason inválido no seed local para ${GITHUB_RELEASE_SLUG}; ignorando seed"
+    else
+      mason_release_store_cached_artifact \
+        "${GITHUB_RELEASE_SLUG}" \
+        "${GITHUB_RELEASE_TAG}" \
+        "${GITHUB_RELEASE_ASSET}" \
+        "${output_path}"
+      log "artefato Mason restaurado do seed local para ${GITHUB_RELEASE_SLUG}"
+      return 0
+    fi
   fi
 
   if mason_release_restore_cached_artifact \
@@ -767,8 +794,16 @@ handle_smart_release_asset() {
     "${GITHUB_RELEASE_TAG}" \
     "${GITHUB_RELEASE_ASSET}" \
     "${output_path}"; then
-    log "artefato Mason restaurado do cache local para ${GITHUB_RELEASE_SLUG}"
-    return 0
+    if ! mason_release_validate_artifact_output "${GITHUB_RELEASE_ASSET}" "${output_path}" "cache local"; then
+      mason_release_invalidate_cached_artifact \
+        "${GITHUB_RELEASE_SLUG}" \
+        "${GITHUB_RELEASE_TAG}" \
+        "${GITHUB_RELEASE_ASSET}"
+      log "artefato Mason inválido no cache local para ${GITHUB_RELEASE_SLUG}; cache invalidado"
+    else
+      log "artefato Mason restaurado do cache local para ${GITHUB_RELEASE_SLUG}"
+      return 0
+    fi
   fi
 
   tmp_dir="$(mktemp -d -t mason-release-smart-XXXXXX)"
@@ -787,7 +822,8 @@ handle_smart_release_asset() {
     "${GITHUB_RELEASE_REPO}" \
     "${GITHUB_RELEASE_TAG}" \
     "${generated_artifact}" \
-    "${GITHUB_RELEASE_ASSET}"; then
+    "${GITHUB_RELEASE_ASSET}" &&
+    mason_release_validate_artifact_output "${GITHUB_RELEASE_ASSET}" "${generated_artifact}" "builder ${builder_id}"; then
     mkdir -p "$(dirname "${output_path}")"
     cp "${generated_artifact}" "${output_path}"
     mason_release_store_cached_artifact \
@@ -810,7 +846,8 @@ handle_smart_release_asset() {
     "${GITHUB_RELEASE_REPO}" \
     "${GITHUB_RELEASE_TAG}" \
     "${GITHUB_RELEASE_ASSET}" \
-    "${generated_artifact}"; then
+    "${generated_artifact}" &&
+    mason_release_validate_artifact_output "${GITHUB_RELEASE_ASSET}" "${generated_artifact}" "repackage"; then
     mkdir -p "$(dirname "${output_path}")"
     cp "${generated_artifact}" "${output_path}"
     mason_release_store_cached_artifact \
@@ -829,7 +866,8 @@ handle_smart_release_asset() {
     "${GITHUB_RELEASE_REPO}" \
     "${GITHUB_RELEASE_TAG}" \
     "${generated_artifact}" \
-    "${GITHUB_RELEASE_ASSET}"; then
+    "${GITHUB_RELEASE_ASSET}" &&
+    mason_release_validate_artifact_output "${GITHUB_RELEASE_ASSET}" "${generated_artifact}" "builder ${builder_id}"; then
     mkdir -p "$(dirname "${output_path}")"
     cp "${generated_artifact}" "${output_path}"
     mason_release_store_cached_artifact \
