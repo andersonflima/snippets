@@ -920,6 +920,46 @@ extract_requested_checkout_ref() {
   return 1
 }
 
+checkout_target_is_available_locally() {
+  local real_git worktree_dir target_ref
+  real_git="$1"
+  worktree_dir="$2"
+  target_ref="$3"
+
+  [[ -n "${target_ref}" ]] || return 1
+
+  case "${target_ref}" in
+    FETCH_HEAD|HEAD)
+      "${real_git}" -C "${worktree_dir}" rev-parse --verify "${target_ref}" >/dev/null 2>&1
+      return $?
+      ;;
+  esac
+
+  "${real_git}" -C "${worktree_dir}" rev-parse --verify "${target_ref}^{commit}" >/dev/null 2>&1
+}
+
+run_local_checkout_with_suppressed_failure() {
+  local real_git worktree_dir stderr_log checkout_exit_code
+  real_git="$1"
+  worktree_dir="$2"
+  shift 2
+
+  stderr_log="$(mktemp -t git-zip-checkout-stderr-XXXXXX)"
+  set +e
+  "${real_git}" "$@" 2>"${stderr_log}"
+  checkout_exit_code=$?
+  set -e
+
+  if [[ "${checkout_exit_code}" -eq 0 ]]; then
+    rm -f "${stderr_log}"
+    return 0
+  fi
+
+  cat "${stderr_log}" >&2
+  rm -f "${stderr_log}"
+  return "${checkout_exit_code}"
+}
+
 looks_like_git_commit_sha() {
   local value
   value="$1"
@@ -1754,20 +1794,20 @@ main() {
       ;;
     checkout)
       resolve_proxy_config
-      local checkout_git_dir checkout_exit_code checkout_origin_url
+      local checkout_git_dir checkout_exit_code checkout_origin_url checkout_target_ref
       if current_repo_origin_requires_plain_git "${real_git}"; then
         log "source itau-* detectado no origin; usando git comum para checkout"
         exec "${real_git}" "$@"
       fi
       checkout_git_dir="$(resolve_fetch_git_dir "${real_git}" || true)"
       checkout_origin_url="$(resolve_fetch_origin_url "${real_git}" || true)"
+      checkout_target_ref="$(extract_requested_checkout_ref || true)"
       if current_repo_origin_is_github "${real_git}"; then
-        set +e
-        "${real_git}" "$@"
-        checkout_exit_code=$?
-        set -e
-        if [[ "${checkout_exit_code}" -eq 0 ]]; then
-          return 0
+        if [[ -n "${checkout_git_dir}" ]] && [[ -n "${checkout_target_ref}" ]] &&
+          checkout_target_is_available_locally "${real_git}" "${checkout_git_dir%/.git}" "${checkout_target_ref}"; then
+          if run_local_checkout_with_suppressed_failure "${real_git}" "${checkout_git_dir%/.git}" "$@"; then
+            return 0
+          fi
         fi
         if fallback_checkout_repo_with_archive "${real_git}"; then
           return 0
