@@ -934,7 +934,7 @@ import_archive_snapshot_ref_into_repo() {
 }
 
 fallback_fetch_repo_with_archive() {
-  local real_git git_dir worktree_dir origin_url target_ref archive_info archive_dir snapshot_branch snapshot_commit source_url current_branch
+  local real_git git_dir worktree_dir origin_url target_ref archive_info archive_dir snapshot_branch snapshot_commit source_url current_branch destination_ref normalized_branch_ref
   real_git="$1"
   git_dir="$2"
 
@@ -949,8 +949,8 @@ fallback_fetch_repo_with_archive() {
       target_ref="${current_branch}"
     fi
   fi
-  target_ref="$(normalize_archive_branch_name "${target_ref}" || true)"
   [[ -n "${target_ref}" ]] || return 1
+  normalized_branch_ref="$(normalize_archive_branch_name "${target_ref}" || true)"
 
   archive_info="$(build_archive_snapshot_repository "${real_git}" "${origin_url}" "${target_ref}" || true)"
   [[ -n "${archive_info}" ]] || return 1
@@ -962,8 +962,16 @@ fallback_fetch_repo_with_archive() {
   snapshot_commit="${archive_info%%$'\t'*}"
   source_url="${archive_info#*$'\t'}"
 
-  if import_archive_snapshot_ref_into_repo "${real_git}" "${worktree_dir}" "${archive_dir}/repo" "${snapshot_branch}" "refs/remotes/origin/${target_ref}"; then
-    "${real_git}" -C "${worktree_dir}" symbolic-ref refs/remotes/origin/HEAD "refs/remotes/origin/${target_ref}" >/dev/null 2>&1 || true
+  if [[ -n "${normalized_branch_ref}" ]]; then
+    destination_ref="refs/remotes/origin/${normalized_branch_ref}"
+  else
+    destination_ref="refs/archive-fallback/fetch/${snapshot_branch}"
+  fi
+
+  if import_archive_snapshot_ref_into_repo "${real_git}" "${worktree_dir}" "${archive_dir}/repo" "${snapshot_branch}" "${destination_ref}"; then
+    if [[ -n "${normalized_branch_ref}" ]]; then
+      "${real_git}" -C "${worktree_dir}" symbolic-ref refs/remotes/origin/HEAD "refs/remotes/origin/${normalized_branch_ref}" >/dev/null 2>&1 || true
+    fi
     rm -rf "${archive_dir}"
     log "fallback por archive local concluído para fetch: ${worktree_dir} (${target_ref} -> ${snapshot_commit}, source: ${source_url})"
     return 0
