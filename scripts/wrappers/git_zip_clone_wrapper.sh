@@ -532,7 +532,7 @@ repo_source_requires_plain_git() {
 
 resolve_archive_ref_type() {
   local ref
-  ref="$1"
+  ref="$(canonicalize_archive_ref "$1")"
 
   if [[ -z "${ref}" || "${ref}" == "HEAD" ]]; then
     printf '%s\n' "head"
@@ -562,7 +562,7 @@ resolve_archive_ref_type() {
 
 normalize_archive_ref_name() {
   local ref ref_type normalized_ref
-  ref="$1"
+  ref="$(canonicalize_archive_ref "$1")"
   ref_type="$(resolve_archive_ref_type "${ref}")"
   normalized_ref="${ref}"
 
@@ -640,9 +640,11 @@ download_github_archive() {
         ;;
       branch)
         try_download_candidate_urls "${archive_path}" \
+          "https://codeload.github.com/${slug}/zip/${normalized_ref}" \
           "https://github.com/${slug}/archive/refs/heads/${normalized_ref}.zip" \
           "https://codeload.github.com/${slug}/zip/refs/heads/${normalized_ref}" \
-          "https://codeload.github.com/${slug}/zip/${normalized_ref}" && return 0
+          "https://github.com/${slug}/archive/refs/tags/${normalized_ref}.zip" \
+          "https://codeload.github.com/${slug}/zip/refs/tags/${normalized_ref}" && return 0
         ;;
       *)
         try_download_candidate_urls "${archive_path}" \
@@ -665,9 +667,11 @@ download_github_archive() {
         ;;
       branch)
         try_download_candidate_urls "${archive_path}" \
+          "https://codeload.github.com/${slug}/tar.gz/${normalized_ref}" \
           "https://github.com/${slug}/archive/refs/heads/${normalized_ref}.tar.gz" \
           "https://codeload.github.com/${slug}/tar.gz/refs/heads/${normalized_ref}" \
-          "https://codeload.github.com/${slug}/tar.gz/${normalized_ref}" && return 0
+          "https://github.com/${slug}/archive/refs/tags/${normalized_ref}.tar.gz" \
+          "https://codeload.github.com/${slug}/tar.gz/refs/tags/${normalized_ref}" && return 0
         ;;
       *)
         try_download_candidate_urls "${archive_path}" \
@@ -695,9 +699,11 @@ download_github_archive() {
           ;;
         branch)
           try_download_candidate_urls "${archive_path}" \
+            "https://codeload.github.com/${slug}/zip/${normalized_ref}" \
             "https://github.com/${slug}/archive/refs/heads/${normalized_ref}.zip" \
             "https://codeload.github.com/${slug}/zip/refs/heads/${normalized_ref}" \
-            "https://codeload.github.com/${slug}/zip/${normalized_ref}" && return 0
+            "https://github.com/${slug}/archive/refs/tags/${normalized_ref}.zip" \
+            "https://codeload.github.com/${slug}/zip/refs/tags/${normalized_ref}" && return 0
           ;;
         *)
           try_download_candidate_urls "${archive_path}" \
@@ -836,20 +842,66 @@ current_repo_origin_is_github() {
   extract_github_slug "${normalized_origin_url}" >/dev/null 2>&1
 }
 
+canonicalize_archive_ref() {
+  local ref
+  ref="$1"
+
+  [[ -n "${ref}" ]] || {
+    printf '%s\n' ""
+    return 0
+  }
+
+  case "${ref}" in
+    +*)
+      ref="${ref#+}"
+      ;;
+  esac
+
+  case "${ref}" in
+    *:*)
+      ref="${ref%%:*}"
+      ;;
+  esac
+
+  printf '%s\n' "${ref}"
+}
+
 extract_requested_fetch_ref() {
-  local arg
+  local arg positional_ref positional_count skip_next
+  positional_ref=""
+  positional_count=0
+  skip_next=0
+
   for arg in "${GIT_SUBCOMMAND_ARGS[@]+"${GIT_SUBCOMMAND_ARGS[@]}"}"; do
+    if [[ "${skip_next}" == "1" ]]; then
+      skip_next=0
+      continue
+    fi
+
     case "${arg}" in
+      --depth|--deepen|--shallow-since|--shallow-exclude|--negotiation-tip|--recurse-submodules-default|--refmap|--server-option|--upload-pack|--jobs|-j|--filter)
+        skip_next=1
+        ;;
+      --depth=*|--deepen=*|--shallow-since=*|--shallow-exclude=*|--negotiation-tip=*|--recurse-submodules-default=*|--refmap=*|--server-option=*|--upload-pack=*|--jobs=*|--filter=*)
+        ;;
       -*)
         ;;
-      origin)
-        ;;
       *)
-        printf '%s\n' "${arg}"
-        return 0
+        positional_count=$((positional_count + 1))
+        if [[ "${positional_count}" -ge 2 ]]; then
+          canonicalize_archive_ref "${arg}"
+          return 0
+        fi
+        positional_ref="${arg}"
         ;;
     esac
   done
+
+  if [[ -n "${positional_ref}" && "${positional_ref}" != "origin" ]]; then
+    canonicalize_archive_ref "${positional_ref}"
+    return 0
+  fi
+
   return 1
 }
 
@@ -882,6 +934,22 @@ resolve_current_local_branch() {
   current_branch="$("${real_git}" -C "${worktree_dir}" symbolic-ref --quiet --short HEAD 2>/dev/null || true)"
   [[ -n "${current_branch}" ]] || return 1
   printf '%s\n' "${current_branch}"
+}
+
+resolve_remote_origin_head_branch() {
+  local real_git worktree_dir remote_head_ref
+  real_git="$1"
+  worktree_dir="$2"
+
+  remote_head_ref="$("${real_git}" -C "${worktree_dir}" symbolic-ref --quiet refs/remotes/origin/HEAD 2>/dev/null || true)"
+  case "${remote_head_ref}" in
+    refs/remotes/origin/*)
+      printf '%s\n' "${remote_head_ref#refs/remotes/origin/}"
+      return 0
+      ;;
+  esac
+
+  return 1
 }
 
 overlay_directory_tree() {
@@ -947,6 +1015,8 @@ fallback_fetch_repo_with_archive() {
     current_branch="$(resolve_current_local_branch "${real_git}" "${worktree_dir}" || true)"
     if [[ -n "${current_branch}" ]]; then
       target_ref="${current_branch}"
+    else
+      target_ref="$(resolve_remote_origin_head_branch "${real_git}" "${worktree_dir}" || true)"
     fi
   fi
   [[ -n "${target_ref}" ]] || return 1
@@ -1200,7 +1270,7 @@ extract_archive_to_destination() {
 
 sanitize_archive_clone_branch_name() {
   local candidate
-  candidate="$1"
+  candidate="$(canonicalize_archive_ref "$1")"
   if [[ -z "${candidate}" ]]; then
     printf '%s\n' "archive-snapshot"
     return 0
@@ -1448,16 +1518,9 @@ configure_archive_clone_origin_head() {
 }
 
 configure_archive_clone_partial_clone() {
-  local real_git destination clone_filter
+  local real_git destination
   real_git="$1"
   destination="$2"
-  clone_filter="$(first_forward_value_for_option --filter || true)"
-
-  if [[ -n "${clone_filter}" ]]; then
-    "${real_git}" -C "${destination}" config remote.origin.promisor true
-    "${real_git}" -C "${destination}" config remote.origin.partialclonefilter "${clone_filter}"
-    return 0
-  fi
 
   "${real_git}" -C "${destination}" config --unset-all remote.origin.promisor >/dev/null 2>&1 || true
   "${real_git}" -C "${destination}" config --unset-all remote.origin.partialclonefilter >/dev/null 2>&1 || true
@@ -1699,6 +1762,13 @@ main() {
       checkout_git_dir="$(resolve_fetch_git_dir "${real_git}" || true)"
       checkout_origin_url="$(resolve_fetch_origin_url "${real_git}" || true)"
       if current_repo_origin_is_github "${real_git}"; then
+        set +e
+        "${real_git}" "$@"
+        checkout_exit_code=$?
+        set -e
+        if [[ "${checkout_exit_code}" -eq 0 ]]; then
+          return 0
+        fi
         if fallback_checkout_repo_with_archive "${real_git}"; then
           return 0
         fi
