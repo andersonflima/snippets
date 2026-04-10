@@ -202,6 +202,34 @@ EOF2
   printf '%s\n' "/usr/bin/git"
 }
 
+resolve_download_curl() {
+  local candidate
+
+  for candidate in "${GIT_ZIP_WRAPPER_CURL_BIN:-}" "${CURL:-}"; do
+    [[ -n "${candidate}" ]] || continue
+    if [[ "${candidate}" == */* ]]; then
+      [[ -x "${candidate}" ]] || die "curl configurado inválido/não executável: ${candidate}"
+      printf '%s\n' "${candidate}"
+      return 0
+    fi
+
+    candidate="$(command -v "${candidate}" 2>/dev/null || true)"
+    [[ -n "${candidate}" ]] || continue
+    [[ -x "${candidate}" ]] || continue
+    printf '%s\n' "${candidate}"
+    return 0
+  done
+
+  candidate="$(command -v curl 2>/dev/null || true)"
+  if [[ -n "${candidate}" && -x "${candidate}" ]]; then
+    printf '%s\n' "${candidate}"
+    return 0
+  fi
+
+  [[ -x "/usr/bin/curl" ]] || die "não foi possível localizar curl. Defina GIT_ZIP_WRAPPER_CURL_BIN ou CURL."
+  printf '%s\n' "/usr/bin/curl"
+}
+
 default_destination_from_repo() {
   local repo_url repo_name
   repo_url="$1"
@@ -958,13 +986,15 @@ curl_mode_label() {
 }
 
 run_curl_download() {
-  local mode_name url archive_path user_agent
+  local mode_name url archive_path user_agent download_curl
+  local -a curl_env=()
   mode_name="$1"
   url="$2"
   archive_path="$3"
   user_agent="$4"
+  download_curl="$(resolve_download_curl)"
 
-  set -- curl -fsSL \
+  set -- "${download_curl}" -fsSL \
     --connect-timeout 20 \
     --max-time 300 \
     --retry 3 \
@@ -1000,7 +1030,30 @@ run_curl_download() {
     "${url}" \
     -o "${archive_path}"
 
-  "$@"
+  curl_env+=(
+    "CURL_FALLBACK_URL=${url}"
+    "CURL_FALLBACK_OUTPUT=${archive_path}"
+    "CURL_FALLBACK_USER_AGENT=${user_agent}"
+    "CURL_FALLBACK_CONNECT_TIMEOUT=20"
+    "CURL_FALLBACK_MAX_TIME=300"
+    "CURL_FALLBACK_HEADERS=Accept: application/octet-stream,*/*"
+  )
+
+  if [[ -n "${GIT_ZIP_WRAPPER_ACTIVE_PROXY}" ]]; then
+    curl_env+=("CURL_FALLBACK_PROXY=${GIT_ZIP_WRAPPER_ACTIVE_PROXY}")
+  fi
+
+  if is_truthy "${GIT_ZIP_WRAPPER_CURL_INSECURE}"; then
+    curl_env+=("CURL_FALLBACK_INSECURE=1")
+  fi
+
+  case "${archive_path}" in
+    *.zip)
+      curl_env+=("CURL_WRAPPER_ALLOW_ZIP_DOWNLOAD=1")
+      ;;
+  esac
+
+  env "${curl_env[@]}" "$@"
 }
 
 validate_clone_destination() {
