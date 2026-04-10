@@ -21,6 +21,23 @@ is_truthy() {
   return 1
 }
 
+resolve_script_path() {
+  local script_path script_dir link_target
+  script_path="$1"
+
+  while [[ -L "${script_path}" ]]; do
+    script_dir="$(cd "$(dirname "${script_path}")" && pwd)"
+    link_target="$(readlink "${script_path}")"
+    if [[ "${link_target}" == /* ]]; then
+      script_path="${link_target}"
+    else
+      script_path="${script_dir}/${link_target}"
+    fi
+  done
+
+  printf '%s\n' "${script_path}"
+}
+
 CURL_WRAPPER_ALLOW_ZIP_DOWNLOAD="${CURL_WRAPPER_ALLOW_ZIP_DOWNLOAD:-0}"
 CURL_WRAPPER_AUTO_INSECURE_ON_CERT_ERROR="${CURL_WRAPPER_AUTO_INSECURE_ON_CERT_ERROR:-0}"
 CURL_WRAPPER_RELEASE_FALLBACK_REPOS="${CURL_WRAPPER_RELEASE_FALLBACK_REPOS:-elixir-lsp/elixir-ls,johnnymorganz/stylua,luals/lua-language-server,omnisharp/omnisharp-roslyn}"
@@ -28,7 +45,7 @@ CURL_WRAPPER_ALLOW_DIRECT_RELEASE_FALLBACK="${CURL_WRAPPER_ALLOW_DIRECT_RELEASE_
 CURL_WRAPPER_ENABLE_MASON_SMART_RELEASES="${CURL_WRAPPER_ENABLE_MASON_SMART_RELEASES:-1}"
 CURL_WRAPPER_ACTIVE_PROXY=""
 CURL_WRAPPER_RESOLVED_REAL_CURL=""
-WRAPPER_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+WRAPPER_DIR="$(cd "$(dirname "$(resolve_script_path "${BASH_SOURCE[0]}")")" && pwd)"
 
 is_zip_extension() {
   local value

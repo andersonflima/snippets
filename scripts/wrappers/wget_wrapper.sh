@@ -21,25 +21,83 @@ is_truthy() {
   return 1
 }
 
-WRAPPER_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+resolve_script_path() {
+  local script_path script_dir link_target
+  script_path="$1"
+
+  while [[ -L "${script_path}" ]]; do
+    script_dir="$(cd "$(dirname "${script_path}")" && pwd)"
+    link_target="$(readlink "${script_path}")"
+    if [[ "${link_target}" == /* ]]; then
+      script_path="${link_target}"
+    else
+      script_path="${script_dir}/${link_target}"
+    fi
+  done
+
+  printf '%s\n' "${script_path}"
+}
+
+WRAPPER_DIR="$(cd "$(dirname "$(resolve_script_path "${BASH_SOURCE[0]}")")" && pwd)"
 WGET_WRAPPER_PROXY="${WGET_WRAPPER_PROXY:-${HTTPS_PROXY:-${https_proxy:-${ALL_PROXY:-${all_proxy:-${HTTP_PROXY:-${http_proxy:-}}}}}}}"
 
+canonicalize_binary_path() {
+  local path dir base
+  path="${1:-}"
+  [[ -n "${path}" ]] || return 1
+
+  if command -v realpath >/dev/null 2>&1; then
+    realpath "${path}" 2>/dev/null && return 0
+  fi
+
+  [[ -e "${path}" ]] || return 1
+  dir="$(cd "$(dirname "${path}")" 2>/dev/null && pwd -P)" || return 1
+  base="$(basename "${path}")"
+  printf '%s/%s\n' "${dir}" "${base}"
+}
+
+binary_paths_match() {
+  local left right
+  left="$(canonicalize_binary_path "${1:-}" 2>/dev/null || true)"
+  right="$(canonicalize_binary_path "${2:-}" 2>/dev/null || true)"
+  [[ -n "${left}" && -n "${right}" && "${left}" == "${right}" ]]
+}
+
+should_skip_real_wget_candidate() {
+  local candidate self_path
+  candidate="${1:-}"
+  self_path="${2:-}"
+
+  [[ -n "${candidate}" ]] || return 0
+  [[ -x "${candidate}" ]] || return 0
+
+  if binary_paths_match "${candidate}" "${self_path}"; then
+    return 0
+  fi
+
+  return 1
+}
+
 resolve_real_wget() {
+  local self_path
+  self_path="$(cd "$(dirname "$0")" && pwd)/$(basename "$0")"
+
   if [[ -n "${WGET_WRAPPER_REAL_WGET:-}" ]]; then
     [[ -x "${WGET_WRAPPER_REAL_WGET}" ]] || die "WGET_WRAPPER_REAL_WGET inválido: ${WGET_WRAPPER_REAL_WGET}"
+    if should_skip_real_wget_candidate "${WGET_WRAPPER_REAL_WGET}" "${self_path}"; then
+      die "WGET_WRAPPER_REAL_WGET não pode apontar para o wrapper instalado: ${WGET_WRAPPER_REAL_WGET}"
+    fi
     printf '%s\n' "${WGET_WRAPPER_REAL_WGET}"
     return 0
   fi
 
-  local self_path candidate
-  self_path="$(cd "$(dirname "$0")" && pwd)/$(basename "$0")"
+  local candidate
 
   while IFS= read -r candidate; do
     [[ -n "${candidate}" ]] || continue
-    if [[ "${candidate}" != "${self_path}" ]]; then
-      printf '%s\n' "${candidate}"
-      return 0
-    fi
+    should_skip_real_wget_candidate "${candidate}" "${self_path}" && continue
+    printf '%s\n' "${candidate}"
+    return 0
   done <<EOF2
 $(which -a wget 2>/dev/null || true)
 EOF2
@@ -75,14 +133,28 @@ WGET_CREATE_DIRS="0"
 WGET_USER_AGENT=""
 WGET_CONNECT_TIMEOUT="20"
 WGET_MAX_TIME="300"
+WGET_TRIES="2"
 WGET_HEADERS=()
 WGET_INSECURE="0"
 WGET_CAN_HANDLE="1"
+WGET_LOG_FILE=""
 
 is_github_release_zip_url() {
   local url
   url="${1%%\?*}"
   [[ "${url}" =~ ^https://github\.com/[^/]+/[^/]+/releases/download/[^/]+/.+\.zip$ ]]
+}
+
+is_github_url() {
+  local url
+  url="${1%%\?*}"
+  [[ "${url}" =~ ^https://(github\.com|api\.github\.com|codeload\.github\.com)/.+$ ]]
+}
+
+is_mason_registry_api_url() {
+  local url
+  url="${1%%\?*}"
+  [[ "${url}" =~ ^https://api\.mason-registry\.dev/.+$ ]]
 }
 
 resolve_curl_wrapper() {
@@ -94,25 +166,41 @@ resolve_curl_wrapper() {
 
 should_delegate_to_curl_wrapper() {
   [[ "${WGET_CAN_HANDLE}" == "1" ]] || return 1
-  is_truthy "${CURL_WRAPPER_ENABLE_MASON_SMART_RELEASES:-1}" || return 1
   [[ -n "${WGET_URL}" ]] || return 1
+
+  if is_truthy "${WGET_WRAPPER_ALWAYS_USE_CURL:-0}"; then
+    return 0
+  fi
+
+  if is_mason_registry_api_url "${WGET_URL}" || is_github_url "${WGET_URL}"; then
+    return 0
+  fi
+
+  is_truthy "${CURL_WRAPPER_ENABLE_MASON_SMART_RELEASES:-1}" || return 1
   is_github_release_zip_url "${WGET_URL}"
 }
 
 download_with_curl_wrapper() {
   local curl_wrapper header
+  local -a curl_env
   local -a curl_cmd
 
   curl_wrapper="$(resolve_curl_wrapper)" || return 1
-  mkdir -p "$(dirname "${WGET_OUTPUT}")"
 
   curl_cmd=(
     "${curl_wrapper}"
     -fL
     --connect-timeout "${WGET_CONNECT_TIMEOUT}"
     --max-time "${WGET_MAX_TIME}"
-    -o "${WGET_OUTPUT}"
+    --retry "${WGET_TRIES}"
+    --retry-delay "1"
+    --retry-all-errors
   )
+
+  if [[ "${WGET_OUTPUT}" != "-" ]]; then
+    mkdir -p "$(dirname "${WGET_OUTPUT}")"
+    curl_cmd+=(-o "${WGET_OUTPUT}")
+  fi
 
   if [[ -n "${WGET_USER_AGENT}" ]]; then
     curl_cmd+=(-A "${WGET_USER_AGENT}")
@@ -131,6 +219,17 @@ download_with_curl_wrapper() {
   done
 
   curl_cmd+=("${WGET_URL}")
+
+  curl_env=()
+  if [[ "${WGET_URL}" == *.zip* || "${WGET_OUTPUT}" == *.zip ]]; then
+    curl_env+=("CURL_WRAPPER_ALLOW_ZIP_DOWNLOAD=1")
+  fi
+
+  if (( ${#curl_env[@]} > 0 )); then
+    env "${curl_env[@]}" "${curl_cmd[@]}"
+    return $?
+  fi
+
   "${curl_cmd[@]}"
 }
 
@@ -143,6 +242,15 @@ parse_args() {
         [[ $# -ge 2 ]] || return 1
         WGET_OUTPUT="$2"
         shift 2
+        ;;
+      -o)
+        [[ $# -ge 2 ]] || return 1
+        WGET_LOG_FILE="$2"
+        shift 2
+        ;;
+      -o*)
+        WGET_LOG_FILE="${1#-o}"
+        shift
         ;;
       --output-document=*)
         WGET_OUTPUT="${1#--output-document=}"
@@ -191,18 +299,29 @@ parse_args() {
         WGET_MAX_TIME="$2"
         shift 2
         ;;
+      -T)
+        [[ $# -ge 2 ]] || return 1
+        WGET_MAX_TIME="$2"
+        shift 2
+        ;;
+      -T*)
+        WGET_MAX_TIME="${1#-T}"
+        shift
+        ;;
       --timeout=*)
         WGET_MAX_TIME="${1#--timeout=}"
         shift
         ;;
       --tries)
         [[ $# -ge 2 ]] || return 1
+        WGET_TRIES="$2"
         shift 2
         ;;
       --tries=*)
+        WGET_TRIES="${1#--tries=}"
         shift
         ;;
-      --retry-connrefused|--no-verbose|-q|--quiet)
+      --retry-connrefused|--no-verbose|-q|--quiet|-nv)
         shift
         ;;
       --no-check-certificate)
@@ -283,10 +402,10 @@ main() {
     exit 1
   fi
 
-  parse_args "$@"
+  parse_args "$@" || die "argumentos wget não suportados para wrapper local"
 
   if should_delegate_to_curl_wrapper; then
-    log "asset zip de release do GitHub detectado; delegando ao curl wrapper para fluxo Mason"
+    log "delegando download via curl wrapper: ${WGET_URL}"
     if download_with_curl_wrapper; then
       exit 0
     fi
