@@ -33,6 +33,7 @@ LEGACY_BREW_WRAPPER_DIR="${HOME}/.local/share/homebrew-install-wrapper/bin"
 LEGACY_BREW_WRAPPER_ROOT="${HOME}/.local/share/homebrew-install-wrapper"
 CURL_WRAPPER_DIR="${HOME}/.local/share/curl-python-wrapper/bin"
 GIT_WRAPPER_DIR="${HOME}/.local/share/git-zip-wrapper/bin"
+WRAPPER_ENV_FILE="${HOME}/.config/wrapper-envs.sh"
 
 [ -f "${SETUP_SCRIPT}" ] || {
   printf '[configure] script interno ausente: %s\n' "${SETUP_SCRIPT}" >&2
@@ -221,3 +222,9 @@ fi
 
 run_full_reset_before_setup "$@"
 run_script_with_bash_preference "${SETUP_SCRIPT}" "$@"
+
+if [ -f "${WRAPPER_ENV_FILE}" ]; then
+  . "${WRAPPER_ENV_FILE}"
+  rehash 2>/dev/null || true
+  hash -r 2>/dev/null || true
+fi
