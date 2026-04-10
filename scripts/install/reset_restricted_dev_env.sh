@@ -233,6 +233,25 @@ remove_glob_matches() {
   done
 }
 
+remove_wrapper_shim_if_managed() {
+  local command_name shim_path target_path
+  command_name="$1"
+  target_path="$2"
+  shim_path="${HOME}/.local/bin/${command_name}"
+
+  [[ -L "${shim_path}" ]] || return 0
+  if [[ "$(readlink "${shim_path}" 2>/dev/null || true)" == "${target_path}" ]]; then
+    rm -f "${shim_path}"
+    log "shim removido: ${shim_path}"
+  fi
+}
+
+remove_managed_wrapper_shims() {
+  remove_wrapper_shim_if_managed "git" "${HOME}/.local/share/git-zip-wrapper/bin/git"
+  remove_wrapper_shim_if_managed "curl" "${HOME}/.local/share/curl-python-wrapper/bin/curl"
+  remove_wrapper_shim_if_managed "wget" "${HOME}/.local/share/curl-python-wrapper/bin/wget"
+}
+
 if [[ "${RESET_SHELL_RC}" == "1" ]]; then
   SHELL_RC_TARGETS=()
   append_shell_rc_target "${RESTRICTED_DEV_ENV_MANAGED_SHELL_RC}"
@@ -254,6 +273,7 @@ if [[ "${RESET_ENV_FILES}" == "1" ]]; then
 fi
 
 if [[ "${RESET_INSTALL_DIRS}" == "1" ]]; then
+  remove_managed_wrapper_shims
   remove_dir_if_exists "${HOME}/.local/share/homebrew-install-wrapper"
   remove_dir_if_exists "${HOME}/.local/share/curl-python-wrapper"
   remove_dir_if_exists "${HOME}/.local/share/git-zip-wrapper"

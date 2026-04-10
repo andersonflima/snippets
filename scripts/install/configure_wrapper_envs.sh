@@ -27,12 +27,15 @@ is_wrapper_binary_path() {
   case "${binary_name}" in
     curl)
       wrapper_path="${CURL_INSTALL_DIR}/curl"
+      [[ "${candidate_path}" == "${WRAPPER_SHIM_DIR}/curl" ]] && return 0
       ;;
     wget)
       wrapper_path="${CURL_INSTALL_DIR}/wget"
+      [[ "${candidate_path}" == "${WRAPPER_SHIM_DIR}/wget" ]] && return 0
       ;;
     git)
       wrapper_path="${GIT_INSTALL_DIR}/git"
+      [[ "${candidate_path}" == "${WRAPPER_SHIM_DIR}/git" ]] && return 0
       ;;
     brew)
       wrapper_path="${BREW_INSTALL_DIR}/brew"
@@ -92,6 +95,7 @@ USAGE
 ENV_FILE="${HOME}/.config/wrapper-envs.sh"
 SHELL_RC=""
 APPLY_SHELL_RC="0"
+WRAPPER_SHIM_DIR="${HOME}/.local/bin"
 CURL_INSTALL_DIR="${HOME}/.local/share/curl-python-wrapper/bin"
 GIT_INSTALL_DIR="${HOME}/.local/share/git-zip-wrapper/bin"
 BREW_INSTALL_DIR="${HOME}/.local/share/homebrew-install-wrapper/bin"
@@ -266,7 +270,7 @@ render_path_prefix() {
   local -a entries=()
   local joined
 
-  entries+=("${CURL_INSTALL_DIR}" "${GIT_INSTALL_DIR}")
+  entries+=("${WRAPPER_SHIM_DIR}" "${CURL_INSTALL_DIR}" "${GIT_INSTALL_DIR}")
 
   joined="$(IFS=:; printf '%s' "${entries[*]}")"
   printf '%s\n' "${joined}"
@@ -371,7 +375,7 @@ __wrapper_env_old_ifs="\${IFS}"
 IFS=':'
 for __wrapper_env_entry in \${__wrapper_env_original_path}; do
   case "\${__wrapper_env_entry}" in
-    ""|$(shell_quote "${BREW_INSTALL_DIR}")|$(shell_quote "${CURL_INSTALL_DIR}")|$(shell_quote "${GIT_INSTALL_DIR}")|$(shell_quote "${HOME}/.local/share/mix-"*"-wrapper/bin")|$(shell_quote "${HOME}/.local/share/nvim-"*"-wrapper/bin"))
+    ""|$(shell_quote "${BREW_INSTALL_DIR}")|$(shell_quote "${CURL_INSTALL_DIR}")|$(shell_quote "${GIT_INSTALL_DIR}")|$(shell_quote "${WRAPPER_SHIM_DIR}")|$(shell_quote "${HOME}/.local/share/mix-"*"-wrapper/bin")|$(shell_quote "${HOME}/.local/share/nvim-"*"-wrapper/bin"))
       continue
       ;;
   esac

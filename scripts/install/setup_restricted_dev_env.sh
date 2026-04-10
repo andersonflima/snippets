@@ -27,12 +27,15 @@ is_wrapper_binary_path() {
   case "${binary_name}" in
     curl)
       wrapper_path="${HOME}/.local/share/curl-python-wrapper/bin/curl"
+      [[ "${candidate_path}" == "${HOME}/.local/bin/curl" ]] && return 0
       ;;
     wget)
       wrapper_path="${HOME}/.local/share/curl-python-wrapper/bin/wget"
+      [[ "${candidate_path}" == "${HOME}/.local/bin/wget" ]] && return 0
       ;;
     git)
       wrapper_path="${HOME}/.local/share/git-zip-wrapper/bin/git"
+      [[ "${candidate_path}" == "${HOME}/.local/bin/git" ]] && return 0
       ;;
     mix)
       case "${candidate_path}" in
@@ -160,6 +163,7 @@ WRAPPER_ENV_FILE="${HOME}/.config/wrapper-envs.sh"
 FISH_ENV_FILE="${HOME}/.config/restricted-dev-env.fish"
 ELIXIR_LS_SETUP_SH="${HOME}/.config/elixir_ls/setup.sh"
 ELIXIR_LS_SETUP_FISH="${HOME}/.config/elixir_ls/setup.fish"
+WRAPPER_SHIM_DIR="${HOME}/.local/bin"
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
@@ -318,6 +322,30 @@ remove_legacy_brew_wrapper_installation() {
 
   rm -rf "${brew_wrapper_root}"
   log "wrapper legado do brew removido: ${brew_wrapper_root}"
+}
+
+write_wrapper_shim() {
+  local command_name target_path shim_path
+  command_name="$1"
+  target_path="$2"
+  shim_path="${WRAPPER_SHIM_DIR}/${command_name}"
+
+  [[ -x "${target_path}" ]] || die "wrapper alvo inválido para shim ${command_name}: ${target_path}"
+  mkdir -p "${WRAPPER_SHIM_DIR}"
+
+  if [[ -e "${shim_path}" && ! -L "${shim_path}" ]]; then
+    die "shim ${shim_path} já existe e não é symlink; remova manualmente para permitir bootstrap"
+  fi
+
+  ln -sfn "${target_path}" "${shim_path}"
+}
+
+ensure_wrapper_shims() {
+  write_wrapper_shim "git" "${HOME}/.local/share/git-zip-wrapper/bin/git"
+  write_wrapper_shim "curl" "${HOME}/.local/share/curl-python-wrapper/bin/curl"
+  if [[ -x "${HOME}/.local/share/curl-python-wrapper/bin/wget" ]]; then
+    write_wrapper_shim "wget" "${HOME}/.local/share/curl-python-wrapper/bin/wget"
+  fi
 }
 
 resolve_hex_config_path() {
@@ -566,6 +594,7 @@ WRAPPER_ENV_ARGS+=(--no-shell-rc)
 
 run_step "instalando wrapper do curl" install_curl_wrapper
 run_step "instalando wrapper do git" install_git_wrapper
+run_step "sincronizando shims em ~/.local/bin" ensure_wrapper_shims
 run_step "removendo wrapper legado do brew" remove_legacy_brew_wrapper_installation
 run_step "configurando ambiente compartilhado dos wrappers em modo local-only" \
   sh "${ROOT_DIR}/install/configure_wrapper_envs.sh" "${WRAPPER_ENV_ARGS[@]}"

@@ -108,8 +108,27 @@ path_is_under() {
   return 1
 }
 
+resolve_command_target_path() {
+  local candidate dir target
+  candidate="$1"
+  [[ -n "${candidate}" ]] || return 1
+
+  while [[ -L "${candidate}" ]]; do
+    target="$(readlink "${candidate}" 2>/dev/null || true)"
+    [[ -n "${target}" ]] || break
+    if [[ "${target}" == /* ]]; then
+      candidate="${target}"
+      continue
+    fi
+    dir="$(dirname "${candidate}")"
+    candidate="${dir}/${target}"
+  done
+
+  printf '%s\n' "${candidate}"
+}
+
 validate_required_wrapper() {
-  local name expected_bin expected_dir current_bin
+  local name expected_bin expected_dir current_bin resolved_bin
   name="$1"
   expected_bin="$2"
   expected_dir="$3"
@@ -119,7 +138,11 @@ validate_required_wrapper() {
     fail "${name}: comando não encontrado no PATH"
     return 0
   fi
-  if [[ "${current_bin}" != "${expected_bin}" ]] && ! path_is_under "${current_bin}" "${expected_dir}"; then
+  resolved_bin="$(resolve_command_target_path "${current_bin}" || true)"
+  if [[ "${current_bin}" != "${expected_bin}" ]] &&
+    ! path_is_under "${current_bin}" "${expected_dir}" &&
+    [[ "${resolved_bin}" != "${expected_bin}" ]] &&
+    ! path_is_under "${resolved_bin}" "${expected_dir}"; then
     fail "${name}: wrapper não está ativo no PATH (atual: ${current_bin}, esperado: ${expected_bin})"
     return 0
   fi
@@ -127,7 +150,7 @@ validate_required_wrapper() {
 }
 
 validate_optional_wrapper() {
-  local name expected_bin expected_dir current_bin
+  local name expected_bin expected_dir current_bin resolved_bin
   name="$1"
   expected_bin="$2"
   expected_dir="$3"
@@ -141,7 +164,11 @@ validate_optional_wrapper() {
     fi
     return 0
   fi
-  if [[ "${current_bin}" != "${expected_bin}" ]] && ! path_is_under "${current_bin}" "${expected_dir}"; then
+  resolved_bin="$(resolve_command_target_path "${current_bin}" || true)"
+  if [[ "${current_bin}" != "${expected_bin}" ]] &&
+    ! path_is_under "${current_bin}" "${expected_dir}" &&
+    [[ "${resolved_bin}" != "${expected_bin}" ]] &&
+    ! path_is_under "${resolved_bin}" "${expected_dir}"; then
     if [[ "${STRICT_BREW}" == "1" ]]; then
       fail "${name}: wrapper não está ativo no PATH (atual: ${current_bin}, esperado: ${expected_bin})"
     else
