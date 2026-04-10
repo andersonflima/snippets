@@ -826,6 +826,16 @@ current_repo_origin_requires_plain_git() {
   repo_source_requires_plain_git "${origin_url}"
 }
 
+current_repo_origin_is_github() {
+  local real_git origin_url normalized_origin_url
+  real_git="$1"
+  origin_url="$(resolve_fetch_origin_url "${real_git}" 2>/dev/null || true)"
+  [[ -n "${origin_url}" ]] || return 1
+  normalized_origin_url="$(normalize_clone_url_for_http_transport "${origin_url}" 2>/dev/null || true)"
+  [[ -n "${normalized_origin_url}" ]] || normalized_origin_url="${origin_url}"
+  extract_github_slug "${normalized_origin_url}" >/dev/null 2>&1
+}
+
 extract_requested_fetch_ref() {
   local arg
   for arg in "${GIT_SUBCOMMAND_ARGS[@]+"${GIT_SUBCOMMAND_ARGS[@]}"}"; do
@@ -1487,7 +1497,7 @@ bootstrap_archive_clone_repository() {
   "${real_git}" -C "${destination}" remote add origin "${repo_url}"
 
   target_ref="$(resolve_archive_clone_target_ref "${requested_ref}" "${source_url}" || true)"
-  remote_default_branch="$(resolve_remote_default_branch "${real_git}" "${destination}" || true)"
+  remote_default_branch="$(normalize_archive_branch_name "${target_ref}" || true)"
   if [[ -z "${target_ref}" ]]; then
     target_ref="${remote_default_branch}"
   fi
@@ -1499,9 +1509,6 @@ bootstrap_archive_clone_repository() {
   configure_archive_clone_fetch_refspec "${real_git}" "${destination}" "${target_ref}" || true
   configure_archive_clone_partial_clone "${real_git}" "${destination}" || true
 
-  fetch_depth="$(first_forward_value_for_option --depth || true)"
-
-  fetch_archive_clone_target "${real_git}" "${destination}" "${target_ref}" "${fetch_depth}" || true
   configure_archive_clone_origin_head "${real_git}" "${destination}" "${remote_default_branch}" "${target_ref}" || true
 
   if checkout_archive_clone_target "${real_git}" "${destination}" "${target_ref}"; then
@@ -1643,12 +1650,22 @@ main() {
   case "${GIT_SUBCOMMAND}" in
     fetch)
       resolve_proxy_config
-      local fetch_git_dir fetch_exit_code
+      local fetch_git_dir fetch_exit_code fetch_origin_url
       if current_repo_origin_requires_plain_git "${real_git}"; then
         log "source itau-* detectado no origin; usando git comum para fetch"
         exec "${real_git}" "$@"
       fi
       fetch_git_dir="$(resolve_fetch_git_dir "${real_git}" || true)"
+      fetch_origin_url="$(resolve_fetch_origin_url "${real_git}" || true)"
+      if current_repo_origin_is_github "${real_git}"; then
+        if [[ -n "${fetch_git_dir}" ]] && fallback_fetch_repo_with_archive "${real_git}" "${fetch_git_dir}"; then
+          return 0
+        fi
+        if [[ -n "${fetch_git_dir}" ]] && replace_mix_install_repo_with_archive "${real_git}" "${fetch_git_dir}"; then
+          return 0
+        fi
+        die "falha ao atualizar refs via archive para ${fetch_origin_url:-origin}; fetch remoto via git está desabilitado para repositórios GitHub"
+      fi
       set +e
       "${real_git}" "$@"
       fetch_exit_code=$?
@@ -1666,12 +1683,19 @@ main() {
       ;;
     checkout)
       resolve_proxy_config
-      local checkout_git_dir checkout_exit_code
+      local checkout_git_dir checkout_exit_code checkout_origin_url
       if current_repo_origin_requires_plain_git "${real_git}"; then
         log "source itau-* detectado no origin; usando git comum para checkout"
         exec "${real_git}" "$@"
       fi
       checkout_git_dir="$(resolve_fetch_git_dir "${real_git}" || true)"
+      checkout_origin_url="$(resolve_fetch_origin_url "${real_git}" || true)"
+      if current_repo_origin_is_github "${real_git}"; then
+        if fallback_checkout_repo_with_archive "${real_git}"; then
+          return 0
+        fi
+        die "falha ao fazer checkout via archive para ${checkout_origin_url:-origin}; checkout remoto via git está desabilitado para repositórios GitHub"
+      fi
       set +e
       "${real_git}" "$@"
       checkout_exit_code=$?
@@ -1726,7 +1750,7 @@ main() {
     branch="$(resolve_github_default_branch "${slug}" 2>/dev/null || true)"
   fi
 
-  if command -v curl >/dev/null 2>&1; then
+  if resolve_download_curl >/dev/null 2>&1; then
     case "${ARCHIVE_FORMAT}" in
       tar.gz)
         archive_path="${GIT_ZIP_WRAPPER_TMP_DIR}/repo.tar.gz"
@@ -1757,25 +1781,10 @@ main() {
       log "clone(${ARCHIVE_FORMAT}) concluído: ${repo_url} -> ${destination} (source: ${source_url})"
       return 0
     fi
-    if is_truthy "${GIT_ZIP_WRAPPER_STRICT:-0}"; then
-      die "falha ao baixar arquivo para ${repo_url} (branch/tag: ${branch:-HEAD})"
-    fi
-    log "falha ao baixar arquivo para ${repo_url}; tentando git clone normal."
+    die "falha ao baixar arquivo para ${repo_url} (branch/tag: ${branch:-HEAD}); clone remoto via git está desabilitado para repositórios GitHub"
   else
-    log "curl não encontrado; pulando clone local por arquivo para ${repo_url}"
+    die "curl não encontrado para clone local por arquivo: ${repo_url}"
   fi
-
-  log "tentando git clone local com git real: ${repo_url} -> ${destination}"
-  set +e
-  "${real_git}" "$@"
-  local_git_clone_exit_code=$?
-  set -e
-  if [[ "${local_git_clone_exit_code}" -eq 0 ]]; then
-    log "git clone local concluído: ${repo_url} -> ${destination}"
-    return 0
-  fi
-
-  exit "${local_git_clone_exit_code}"
 }
 
 main "$@"
