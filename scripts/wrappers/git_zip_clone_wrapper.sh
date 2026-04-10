@@ -230,6 +230,82 @@ resolve_download_curl() {
   printf '%s\n' "/usr/bin/curl"
 }
 
+run_download_curl_command() {
+  local download_curl="$1"
+  shift
+  local -a curl_env=()
+
+  if [[ -n "${GIT_ZIP_WRAPPER_ACTIVE_PROXY}" ]]; then
+    curl_env+=("CURL_FALLBACK_PROXY=${GIT_ZIP_WRAPPER_ACTIVE_PROXY}")
+  fi
+
+  if is_truthy "${GIT_ZIP_WRAPPER_CURL_INSECURE}"; then
+    curl_env+=("CURL_FALLBACK_INSECURE=1")
+  fi
+
+  if (( ${#curl_env[@]} > 0 )); then
+    env "${curl_env[@]}" "${download_curl}" "$@"
+    return $?
+  fi
+
+  "${download_curl}" "$@"
+}
+
+extract_default_branch_from_github_repo_json() {
+  local json_file
+  json_file="$1"
+
+  if command -v python3 >/dev/null 2>&1; then
+    python3 - "${json_file}" <<'PY'
+import json
+import sys
+
+with open(sys.argv[1], "r", encoding="utf-8") as handle:
+    payload = json.load(handle)
+
+default_branch = payload.get("default_branch")
+if not default_branch:
+    raise SystemExit(1)
+
+print(default_branch)
+PY
+    return $?
+  fi
+
+  sed -n 's/.*"default_branch"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' "${json_file}" | head -n 1
+}
+
+resolve_github_default_branch() {
+  local slug api_url temp_output download_curl default_branch
+  slug="$1"
+  [[ -n "${slug}" ]] || return 1
+
+  download_curl="$(resolve_download_curl)"
+  api_url="https://api.github.com/repos/${slug}"
+  temp_output="$(mktemp -t git-zip-default-branch-XXXXXX.json)"
+
+  if ! run_download_curl_command "${download_curl}" \
+    -fsSL \
+    --connect-timeout 20 \
+    --max-time 60 \
+    --retry 2 \
+    --retry-delay 1 \
+    --retry-all-errors \
+    --tlsv1.2 \
+    -A "git-zip-wrapper" \
+    -H "Accept: application/vnd.github+json" \
+    "${api_url}" \
+    -o "${temp_output}"; then
+    rm -f "${temp_output}"
+    return 1
+  fi
+
+  default_branch="$(extract_default_branch_from_github_repo_json "${temp_output}" 2>/dev/null || true)"
+  rm -f "${temp_output}"
+  [[ -n "${default_branch}" ]] || return 1
+  printf '%s\n' "${default_branch}"
+}
+
 default_destination_from_repo() {
   local repo_url repo_name
   repo_url="$1"
@@ -1541,6 +1617,19 @@ first_forward_value_for_option() {
   return 1
 }
 
+first_clone_branch_value() {
+  local branch_value
+  branch_value="$(first_forward_value_for_option --branch || true)"
+  if [[ -n "${branch_value}" ]]; then
+    printf '%s\n' "${branch_value}"
+    return 0
+  fi
+
+  branch_value="$(first_forward_value_for_option -b || true)"
+  [[ -n "${branch_value}" ]] || return 1
+  printf '%s\n' "${branch_value}"
+}
+
 main() {
   local real_git
   real_git="$(resolve_real_git)"
@@ -1615,7 +1704,7 @@ main() {
   local repo_url destination branch
   repo_url="${CLONE_REPO_URL}"
   destination="${CLONE_DESTINATION}"
-  branch="$(first_forward_value_for_option --branch || true)"
+  branch="$(first_clone_branch_value || true)"
   if repo_source_requires_plain_git "${repo_url}"; then
     log "source itau-* detectado no clone; usando git comum"
     exec "${real_git}" "$@"
@@ -1631,6 +1720,10 @@ main() {
   local slug archive_path source_url local_git_clone_exit_code
   if ! slug="$(extract_github_slug "${repo_url}")"; then
     exec "${real_git}" "$@"
+  fi
+
+  if [[ -z "${branch}" ]]; then
+    branch="$(resolve_github_default_branch "${slug}" 2>/dev/null || true)"
   fi
 
   if command -v curl >/dev/null 2>&1; then
