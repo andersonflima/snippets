@@ -130,6 +130,12 @@ is_proxy_auth_error_log() {
   printf '%s\n' "${output}" | grep -Eiq '(^|[[:space:]])407([[:space:]]|$)|proxy[ -]authentication|required|proxy authent(i|y)cation|Proxy-Authenticate|proxy error|Proxy Error'
 }
 
+is_proxy_or_transport_block_error_log() {
+  local output
+  output="${1:-}"
+  printf '%s\n' "${output}" | grep -Eiq '(^|[[:space:]])407([[:space:]]|$)|(^|[[:space:]])403([[:space:]]|$)|proxy[ -]authentication|required|proxy authent(i|y)cation|Proxy-Authenticate|proxy error|Proxy Error|expected flush after ref listing|The requested URL returned error: 403'
+}
+
 has_explicit_proxy_arg() {
   local arg
   for arg in "$@"; do
@@ -173,6 +179,87 @@ run_command_with_stderr_capture() {
     rm -f "${stderr_file}"
   fi
 
+  return "${command_status}"
+}
+
+extract_requested_ls_remote_target() {
+  local arg skip_next
+  skip_next=0
+
+  for arg in "${GIT_SUBCOMMAND_ARGS[@]+"${GIT_SUBCOMMAND_ARGS[@]}"}"; do
+    if [[ "${skip_next}" == "1" ]]; then
+      skip_next=0
+      continue
+    fi
+
+    case "${arg}" in
+      --upload-pack)
+        skip_next=1
+        ;;
+      --upload-pack=*|--heads|--tags|--refs|--quiet|-q|--exit-code|--get-url|--symref)
+        ;;
+      --)
+        ;;
+      -*)
+        ;;
+      *)
+        printf '%s\n' "${arg}"
+        return 0
+        ;;
+    esac
+  done
+
+  return 1
+}
+
+ls_remote_target_is_github() {
+  local real_git target_url normalized_target_url
+  real_git="$1"
+  target_url="$(extract_requested_ls_remote_target || true)"
+  if [[ -z "${target_url}" ]]; then
+    target_url="$(resolve_fetch_origin_url "${real_git}" 2>/dev/null || true)"
+  fi
+  [[ -n "${target_url}" ]] || return 1
+
+  normalized_target_url="$(normalize_clone_url_for_http_transport "${target_url}" 2>/dev/null || true)"
+  [[ -n "${normalized_target_url}" ]] || normalized_target_url="${target_url}"
+  extract_github_slug "${normalized_target_url}" >/dev/null 2>&1
+}
+
+run_git_command_with_optional_no_proxy_retry() {
+  local command_status
+  local -a command
+  local -a no_proxy_command
+
+  command=("$@")
+
+  if run_command_with_stderr_capture "${command[@]}"; then
+    return 0
+  fi
+  command_status=$?
+
+  if is_truthy "${GIT_ZIP_WRAPPER_RETRY_WITHOUT_PROXY_ON_AUTH_ERROR}" && \
+    [[ -n "${GIT_ZIP_WRAPPER_ACTIVE_PROXY}" ]] && \
+    is_proxy_or_transport_block_error_log "${GIT_ZIP_WRAPPER_LAST_COMMAND_STDERR}"; then
+    log "git falhou com erro de acesso remoto via proxy. Tentando novamente sem proxy"
+    no_proxy_command=(
+      env
+      -u HTTPS_PROXY -u https_proxy
+      -u HTTP_PROXY -u http_proxy
+      -u ALL_PROXY -u all_proxy
+    )
+    no_proxy_command+=("${command[@]:0:1}" -c http.proxy= -c https.proxy=)
+    no_proxy_command+=("${command[@]:1}")
+
+    if run_command_with_stderr_capture "${no_proxy_command[@]}"; then
+      return 0
+    fi
+    command_status=$?
+  fi
+
+  if [[ -n "${GIT_ZIP_WRAPPER_LAST_COMMAND_STDERR}" ]]; then
+    printf '%s\n' "${GIT_ZIP_WRAPPER_LAST_COMMAND_STDERR}" >&2
+  fi
   return "${command_status}"
 }
 
@@ -1857,6 +1944,20 @@ main() {
   parse_git_invocation "$@"
 
   case "${GIT_SUBCOMMAND}" in
+    ls-remote)
+      resolve_proxy_config
+      if current_repo_origin_requires_plain_git "${real_git}" && [[ -z "$(extract_requested_ls_remote_target || true)" ]]; then
+        log "source itau-* detectado no origin; usando git comum para ls-remote"
+        exec "${real_git}" "$@"
+      fi
+
+      if ls_remote_target_is_github "${real_git}"; then
+        run_git_command_with_optional_no_proxy_retry "${real_git}" "$@"
+        return $?
+      fi
+
+      exec "${real_git}" "$@"
+      ;;
     fetch)
       resolve_proxy_config
       local fetch_git_dir fetch_exit_code fetch_origin_url
