@@ -22,22 +22,57 @@ die() {
 is_wrapper_binary_path() {
   local candidate_path
   candidate_path="$1"
-  [[ "${candidate_path}" == "${INSTALL_DIR}/git" ]]
+  [[ "${candidate_path}" == "${INSTALL_DIR}/git" ]] && return 0
+  [[ "${candidate_path}" == "${HOME}/.local/bin/git" ]] && return 0
+}
+
+candidate_paths_for_binary() {
+  local binary_name
+  binary_name="$1"
+
+  case "${binary_name}" in
+    git)
+      printf '/usr/bin/git\n'
+      printf '/usr/local/bin/git\n'
+      printf '/opt/homebrew/bin/git\n'
+      printf '/bin/git\n'
+      printf '/usr/libexec/git-core/git\n'
+      ;;
+    *)
+      :
+      ;;
+  esac
 }
 
 resolve_real_git() {
-  local candidate
+  local candidate seen=""
 
   while IFS= read -r candidate; do
     [[ -n "${candidate}" ]] || continue
     if is_wrapper_binary_path "${candidate}"; then
       continue
     fi
+    [[ "${seen}" == *$'\n'"${candidate}"$'\n'* ]] && continue
+    seen+="${candidate}"$'\n'
     printf '%s\n' "${candidate}"
     return 0
   done <<EOF2
 $(which -a git 2>/dev/null || true)
 EOF2
+
+  while IFS= read -r candidate; do
+    [[ -n "${candidate}" ]] || continue
+    [[ "${seen}" == *$'\n'"${candidate}"$'\n'* ]] && continue
+    seen+="${candidate}"$'\n'
+    [[ -x "${candidate}" ]] || continue
+    if is_wrapper_binary_path "${candidate}"; then
+      continue
+    fi
+    printf '%s\n' "${candidate}"
+    return 0
+  done <<EOF3
+$(candidate_paths_for_binary git)
+EOF3
 
   return 1
 }

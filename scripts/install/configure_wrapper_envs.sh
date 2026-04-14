@@ -51,19 +51,68 @@ is_wrapper_binary_path() {
 resolve_real_binary() {
   local binary_name candidate
   binary_name="$1"
+  local seen=""
 
   while IFS= read -r candidate; do
     [[ -n "${candidate}" ]] || continue
     if is_wrapper_binary_path "${binary_name}" "${candidate}"; then
       continue
     fi
+    [[ "${seen}" == *$'\n'"${candidate}"$'\n'* ]] && continue
+    seen+="${candidate}"$'\n'
     printf '%s\n' "${candidate}"
     return 0
   done <<EOF2
 $(which -a "${binary_name}" 2>/dev/null || true)
 EOF2
 
+  while IFS= read -r candidate; do
+    [[ -n "${candidate}" ]] || continue
+    [[ "${seen}" == *$'\n'"${candidate}"$'\n'* ]] && continue
+    seen+="${candidate}"$'\n'
+    [[ -x "${candidate}" ]] || continue
+    if is_wrapper_binary_path "${binary_name}" "${candidate}"; then
+      continue
+    fi
+    printf '%s\n' "${candidate}"
+    return 0
+  done <<EOF3
+$(candidate_paths_for_binary "${binary_name}")
+EOF3
+
   return 1
+}
+
+candidate_paths_for_binary() {
+  local binary_name
+  binary_name="$1"
+
+  case "${binary_name}" in
+    curl)
+      printf '/usr/bin/curl\n'
+      printf '/usr/local/bin/curl\n'
+      printf '/opt/homebrew/bin/curl\n'
+      printf '/bin/curl\n'
+      printf '/sbin/curl\n'
+      ;;
+    wget)
+      printf '/usr/bin/wget\n'
+      printf '/usr/local/bin/wget\n'
+      printf '/opt/homebrew/bin/wget\n'
+      printf '/bin/wget\n'
+      printf '/sbin/wget\n'
+      ;;
+    git)
+      printf '/usr/bin/git\n'
+      printf '/usr/local/bin/git\n'
+      printf '/opt/homebrew/bin/git\n'
+      printf '/bin/git\n'
+      printf '/usr/libexec/git-core/git\n'
+      ;;
+    *)
+      :
+      ;;
+  esac
 }
 
 usage() {
