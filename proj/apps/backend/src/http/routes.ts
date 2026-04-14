@@ -61,6 +61,10 @@ const listResourceStateSchema = z.object({
   limit: z.coerce.number().int().min(1).max(250).optional()
 });
 
+const finopsOverviewSchema = z.object({
+  staleDays: z.coerce.number().int().min(1).optional()
+});
+
 const createResourceSchema = z.object({
   typeName: z.string().min(3),
   desiredState: z.record(z.string(), z.unknown())
@@ -69,8 +73,8 @@ const createResourceSchema = z.object({
 const updateResourceSchema = z.object({
   typeName: z.string().min(3),
   identifier: z.string().min(1),
-  desiredState: z.record(z.string(), z.unknown()).default({}),
-  patchDocument: z.array(z.record(z.string(), z.unknown())).optional()
+  updateProfileId: z.string().min(1),
+  desiredState: z.record(z.string(), z.unknown()).default({})
 });
 
 const deleteIntentSchema = z.object({
@@ -364,6 +368,15 @@ export const registerRoutes = async (
     };
   });
 
+  app.get('/api/finops/overview', { preHandler: app.authenticate }, async (request) => {
+    const userId = withAuthUserId(request.user as JwtClaims);
+    const query = parseWithSchema(finopsOverviewSchema, request.query);
+
+    return container.resourceService.getFinopsOverview(userId, {
+      staleDays: query.staleDays
+    });
+  });
+
   app.put('/api/resources', { preHandler: app.authenticate }, async (request) => {
     const userId = withAuthUserId(request.user as JwtClaims);
     const payload = parseWithSchema(updateResourceSchema, request.body);
@@ -371,8 +384,8 @@ export const registerRoutes = async (
     const result = await container.resourceService.updateResource(userId, {
       typeName: payload.typeName,
       identifier: payload.identifier,
-      desiredState: payload.desiredState,
-      patchDocument: payload.patchDocument
+      updateProfileId: payload.updateProfileId,
+      desiredState: payload.desiredState
     });
 
     return {

@@ -91,6 +91,12 @@ export type ResourceStateRepository = {
     identifier?: string;
     limit?: number;
   }) => Promise<readonly ResourceStateRecord[]>;
+  listLatestByContext: (input: {
+    accountId: string;
+    region: string;
+    category: AwsCategory;
+    typeName?: string;
+  }) => Promise<readonly ResourceStateRecord[]>;
   getLatestByResource: (input: {
     accountId: string;
     region: string;

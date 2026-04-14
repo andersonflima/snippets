@@ -1,3 +1,5 @@
+import generatedProviderContracts from './generated/tofu-resource-contracts.generated.js';
+
 export type UserRole = 'admin' | 'operator' | 'viewer';
 
 export type AwsCategory =
@@ -38,6 +40,88 @@ export type ResourceTemplate = {
   category: AwsCategory;
   description: string;
   fields: readonly ResourceTemplateField[];
+};
+
+export type ResourceUpdateProfileKind = 'field' | 'group' | 'tags';
+
+export type ResourceUpdateProfile = {
+  id: string;
+  typeName: string;
+  label: string;
+  description: string;
+  kind: ResourceUpdateProfileKind;
+  fieldKeys: readonly string[];
+  fields: readonly ResourceTemplateField[];
+};
+
+export type ProviderContractFieldSource = 'attribute' | 'block';
+export type ResourceProviderMappingStrategy = 'direct' | 'partial' | 'composite' | 'variant';
+export type ResourceTemplateFieldMappingStatus = 'mapped' | 'compound' | 'unsupported' | 'variant';
+
+export type ProviderContractField = {
+  key: string;
+  source: ProviderContractFieldSource;
+  required: boolean;
+  optional: boolean;
+  computed: boolean;
+  sensitive: boolean;
+  deprecated?: boolean;
+  kind: ResourceTemplateFieldKind | 'json';
+  typeSignature: string;
+  description?: string;
+  nestingMode?: string;
+  minItems?: number;
+  maxItems?: number;
+  nestedFields?: readonly ProviderContractField[];
+};
+
+export type ProviderContractGenerator = {
+  tofuImage: string;
+  awsProviderVersion: string;
+};
+
+export type ProviderResourceContract = {
+  providerType: string;
+  role: string;
+  inputFields: readonly ProviderContractField[];
+  computedOnlyFields: readonly ProviderContractField[];
+  warnings: readonly string[];
+};
+
+export type ResourceProviderBinding = {
+  providerType: string;
+  fieldKey: string;
+};
+
+export type ResourceTemplateFieldMapping = {
+  templateKey: string;
+  status: ResourceTemplateFieldMappingStatus;
+  note?: string;
+  providerBindings: readonly ResourceProviderBinding[];
+};
+
+export type ResourceProviderContractCatalogEntry = {
+  typeName: string;
+  category: AwsCategory;
+  mappingStrategy: ResourceProviderMappingStrategy;
+  generatedAt: string;
+  generator: ProviderContractGenerator;
+  warnings: readonly string[];
+  providerContracts: readonly ProviderResourceContract[];
+  templateFieldMappings: readonly ResourceTemplateFieldMapping[];
+};
+
+export type ResourceContractCoverage = {
+  typeName: string;
+  mappingStrategy: ResourceProviderMappingStrategy;
+  templateFieldCount: number;
+  mappedTemplateFieldCount: number;
+  unmappedTemplateFieldKeys: readonly string[];
+  providerInputFieldCount: number;
+  mappedProviderFieldCount: number;
+  unmappedProviderFieldKeys: readonly string[];
+  warnings: readonly string[];
+  templateFieldMappings: readonly ResourceTemplateFieldMapping[];
 };
 
 export type AwsAccount = {
@@ -85,6 +169,30 @@ export type CheckupResult = {
   accountId: string;
   region: string;
   resourceCounts: Record<string, number>;
+};
+
+export type FinOpsResourceSummary = ResourceSummary & {
+  isObsolete: boolean;
+  lastStateAt: number | null;
+  daysWithoutUpdate: number | null;
+  lastStateStatus: ResourceStateRecord['status'] | null;
+  lastStateOperation: ResourceStateRecord['operation'] | null;
+  obsolescenceReason: string;
+};
+
+export type FinOpsOverview = {
+  accountId: string;
+  region: string;
+  category: AwsCategory;
+  staleThresholdDays: number;
+  totalResources: number;
+  obsoleteResources: number;
+  resourcesWithoutState: number;
+  staleRatePercent: number;
+  resourcesByType: Record<string, number>;
+  obsoleteByType: Record<string, number>;
+  resources: readonly FinOpsResourceSummary[];
+  warnings: readonly string[];
 };
 
 export const TOP_AWS_RESOURCE_TYPES = [
@@ -141,6 +249,7 @@ export type ResourceStateRecord = {
 export type UpsertResourcePayload = {
   typeName: string;
   identifier?: string;
+  updateProfileId?: string;
   desiredState: Record<string, unknown>;
   patchDocument?: readonly Record<string, unknown>[];
 };
@@ -332,24 +441,26 @@ export const RESOURCE_TEMPLATES: readonly ResourceTemplate[] = [
       },
       {
         key: 'VersioningConfiguration',
-        label: 'VersioningConfiguration',
+        label: 'Versionamento',
         kind: 'json',
         required: false,
-        defaultValue: { Status: 'Enabled' }
+        defaultValue: { Status: 'Enabled' },
+        description: 'Defina se o bucket mantém versionamento habilitado ou suspenso.'
       },
       {
         key: 'PublicAccessBlockConfiguration',
-        label: 'PublicAccessBlockConfiguration',
+        label: 'Acesso público',
         kind: 'json',
         required: false,
-        defaultValue: { BlockPublicAcls: true, IgnorePublicAcls: true, BlockPublicPolicy: true, RestrictPublicBuckets: true }
+        defaultValue: { BlockPublicAcls: true, IgnorePublicAcls: true, BlockPublicPolicy: true, RestrictPublicBuckets: true },
+        description: 'Controle os bloqueios padrão de acesso público do bucket.'
       },
       {
         key: 'BucketEncryption',
-        label: 'BucketEncryption',
+        label: 'Criptografia padrão',
         kind: 'json',
         required: false,
-        description: 'Configuração SSE'
+        description: 'Escolha a criptografia padrão do bucket.'
       }
     ]
   },
@@ -555,7 +666,7 @@ export const RESOURCE_TEMPLATES: readonly ResourceTemplate[] = [
       },
       {
         key: 'ProvisionedThroughput',
-        label: 'ProvisionedThroughput',
+        label: 'Capacidade provisionada',
         kind: 'json',
         required: false,
         description: 'Somente para BillingMode PROVISIONED',
@@ -970,3 +1081,125 @@ export const getResourceTemplate = (typeName: string): ResourceTemplate | undefi
   RESOURCE_TEMPLATES.find((entry) => entry.typeName === typeName);
 
 export const getResourceTemplates = (): readonly ResourceTemplate[] => RESOURCE_TEMPLATES;
+
+const RESOURCE_IDENTIFIER_FIELD_KEYS = new Set([
+  'Name',
+  'BucketName',
+  'CreationToken',
+  'DBInstanceIdentifier',
+  'DBClusterIdentifier',
+  'TableName',
+  'FunctionName',
+  'ServiceName',
+  'ClusterName',
+  'RoleName',
+  'StackName',
+  'AlarmName',
+  'GroupName'
+]);
+
+const resolveUpdateableFields = (
+  template: ResourceTemplate
+): readonly ResourceTemplateField[] =>
+  template.fields.filter((field) => !RESOURCE_IDENTIFIER_FIELD_KEYS.has(field.key));
+
+export const getResourceUpdateProfiles = (typeName: string): readonly ResourceUpdateProfile[] => {
+  const template = getResourceTemplate(typeName);
+
+  if (!template) {
+    return [];
+  }
+
+  const fields = resolveUpdateableFields(template);
+
+  if (fields.length === 0) {
+    return [];
+  }
+
+  return [
+    {
+      id: 'all-mapped-fields',
+      typeName,
+      label: 'Todos os campos mapeados',
+      description:
+        'Exibe todos os campos mapeados para update deste recurso. Preencha apenas o que deseja alterar.',
+      kind: fields.length > 1 ? 'group' : 'field',
+      fieldKeys: fields.map((field) => field.key),
+      fields
+    }
+  ];
+};
+
+export const getResourceUpdateProfile = (
+  typeName: string,
+  profileId: string
+): ResourceUpdateProfile | undefined =>
+  getResourceUpdateProfiles(typeName).find((profile) => profile.id === profileId);
+
+export const getDefaultResourceUpdateProfile = (
+  typeName: string
+): ResourceUpdateProfile | undefined => getResourceUpdateProfiles(typeName)[0];
+
+export const RESOURCE_PROVIDER_CONTRACTS =
+  generatedProviderContracts as readonly ResourceProviderContractCatalogEntry[];
+
+export const getResourceProviderContracts = (): readonly ResourceProviderContractCatalogEntry[] =>
+  RESOURCE_PROVIDER_CONTRACTS;
+
+export const getResourceProviderContract = (
+  typeName: string
+): ResourceProviderContractCatalogEntry | undefined =>
+  RESOURCE_PROVIDER_CONTRACTS.find((entry) => entry.typeName === typeName);
+
+const toProviderFieldRef = (binding: ResourceProviderBinding): string =>
+  `${binding.providerType}.${binding.fieldKey}`;
+
+const flattenProviderFieldRefs = (
+  contract: ResourceProviderContractCatalogEntry
+): readonly string[] =>
+  contract.providerContracts.flatMap((providerContract) =>
+    providerContract.inputFields.map((field) => `${providerContract.providerType}.${field.key}`)
+  );
+
+export const getResourceContractCoverage = (
+  typeName: string
+): ResourceContractCoverage | undefined => {
+  const contract = getResourceProviderContract(typeName);
+  const template = getResourceTemplate(typeName);
+
+  if (!contract || !template) {
+    return undefined;
+  }
+
+  const templateFieldKeys = template.fields.map((field) => field.key);
+  const mappedTemplateFieldKeys = new Set(
+    contract.templateFieldMappings
+      .filter((mapping) => mapping.providerBindings.length > 0)
+      .map((mapping) => mapping.templateKey)
+  );
+  const providerInputFieldRefs = flattenProviderFieldRefs(contract);
+  const mappedProviderFieldRefs = new Set(
+    contract.templateFieldMappings.flatMap((mapping) => mapping.providerBindings.map(toProviderFieldRef))
+  );
+
+  return {
+    typeName,
+    mappingStrategy: contract.mappingStrategy,
+    templateFieldCount: templateFieldKeys.length,
+    mappedTemplateFieldCount: templateFieldKeys.filter((fieldKey) =>
+      mappedTemplateFieldKeys.has(fieldKey)
+    ).length,
+    unmappedTemplateFieldKeys: templateFieldKeys.filter(
+      (fieldKey) => !mappedTemplateFieldKeys.has(fieldKey)
+    ),
+    providerInputFieldCount: providerInputFieldRefs.length,
+    mappedProviderFieldCount: providerInputFieldRefs.filter((fieldRef) =>
+      mappedProviderFieldRefs.has(fieldRef)
+    ).length,
+    unmappedProviderFieldKeys: providerInputFieldRefs.filter(
+      (fieldRef) => !mappedProviderFieldRefs.has(fieldRef)
+    ),
+    warnings: contract.warnings,
+    templateFieldMappings: contract.templateFieldMappings
+  };
+};

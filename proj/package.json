@@ -7,9 +7,14 @@
     "packages/*"
   ],
   "scripts": {
-    "dev": "npm-run-all --parallel dev:backend dev:frontend",
-    "dev:backend": "npm --workspace @platform/backend run dev",
-    "dev:frontend": "npm --workspace @platform/frontend run start",
+    "generate:resource-contracts": "node scripts/generate-tofu-resource-contracts.mjs",
+    "seed:localstack:resources": "node scripts/localstack/seed-random-resources.mjs",
+    "dev": "npm run watch",
+    "watch": "npm-run-all --parallel watch:backend watch:frontend",
+    "dev:backend": "npm run watch:backend",
+    "dev:frontend": "npm run watch:frontend",
+    "watch:backend": "npm --workspace @platform/backend run watch",
+    "watch:frontend": "npm --workspace @platform/frontend run watch",
     "build": "npm-run-all build:shared build:backend build:frontend",
     "build:shared": "npm --workspace @platform/shared run build",
     "build:backend": "npm --workspace @platform/backend run build",

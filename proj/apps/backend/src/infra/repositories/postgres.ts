@@ -762,6 +762,66 @@ export const createResourceStateRepository = (
     return rows.rows.map(parseResourceStateRecord);
   },
 
+  listLatestByContext: async (input) => {
+    const query = input.typeName
+      ? `
+        SELECT DISTINCT ON (type_name, identifier)
+          id,
+          user_id,
+          account_id,
+          region,
+          category,
+          type_name,
+          identifier,
+          version,
+          operation,
+          status,
+          desired_state,
+          patch_document,
+          created_at,
+          created_by
+        FROM resource_states
+        WHERE
+          account_id = $1
+          AND region = $2
+          AND category = $3
+          AND type_name = $4
+        ORDER BY type_name, identifier, version DESC, created_at DESC;
+      `
+      : `
+        SELECT DISTINCT ON (type_name, identifier)
+          id,
+          user_id,
+          account_id,
+          region,
+          category,
+          type_name,
+          identifier,
+          version,
+          operation,
+          status,
+          desired_state,
+          patch_document,
+          created_at,
+          created_by
+        FROM resource_states
+        WHERE
+          account_id = $1
+          AND region = $2
+          AND category = $3
+        ORDER BY type_name, identifier, version DESC, created_at DESC;
+      `;
+
+    const rows = await databaseClient.query<ResourceStateRow>(
+      query,
+      input.typeName
+        ? [input.accountId, input.region, input.category, input.typeName]
+        : [input.accountId, input.region, input.category]
+    );
+
+    return rows.rows.map(parseResourceStateRecord);
+  },
+
   getLatestByResource: async (input) => {
     const rows = await databaseClient.query<ResourceStateRow>(
       `

@@ -3,6 +3,7 @@
   "version": "0.1.0",
   "private": true,
   "scripts": {
+    "watch": "ng serve --configuration development --host 0.0.0.0 --port 4200",
     "start": "ng serve --configuration development --host 0.0.0.0 --port 4200",
     "build": "ng build",
     "typecheck": "tsc -p tsconfig.app.json --noEmit"

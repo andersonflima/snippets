@@ -84,6 +84,31 @@ Tela unica com:
 - `security`: `AWS::IAM::Role`, `AWS::KMS::Key`, `AWS::SecretsManager::Secret`
 - `management`: `AWS::CloudFormation::Stack`, `AWS::CloudWatch::Alarm`, `AWS::Events::Rule`
 
+## Contratos de recurso via OpenTofu
+
+O projeto agora gera um catalogo de contratos do provider AWS do OpenTofu para os recursos mapeados em `packages/shared/src/generated/tofu-resource-contracts.generated.json`.
+
+Objetivo:
+
+- parar de manter contrato de provider no braco,
+- enxergar todos os campos de entrada do provider, inclusive blocos aninhados,
+- medir cobertura entre o template manual atual do app e o contrato real do provider,
+- explicitar recursos compostos ou variantes, como `AWS::S3::Bucket`, `AWS::SecretsManager::Secret` e `AWS::FSx::FileSystem`.
+
+Comando:
+
+```bash
+npm run generate:resource-contracts
+```
+
+O gerador usa a imagem `ghcr.io/opentofu/opentofu:1.9.1`, inicializa o provider AWS e extrai `providers schema -json`.
+
+Importante:
+
+- O backend da plataforma ainda opera com `CloudControl` e payloads no formato atual do app.
+- O catalogo do OpenTofu nao substitui automaticamente o contrato manual de create/update.
+- Ele passa a ser a fonte canonica para fechar o mapeamento de campos e reduzir divergencia entre template do app e provider real.
+
 ## Credenciais seed
 
 Senha para todos os usuarios: `change-me-please`
@@ -129,7 +154,15 @@ Para usar o `localstack-main` Pro ja rodando na sua maquina com `AssumeRole` e `
 bash scripts/localstack/provision-pro-organization.sh
 ```
 
-2. Configure `apps/backend/.env` com:
+2. Gere recursos aleatorios nas contas provisionadas:
+
+```bash
+npm run seed:localstack:resources
+```
+
+O seed cria um bundle completo de recursos na primeira regiao permitida de cada conta e um conjunto menor nas regioes secundarias. O inventario gerado fica em `apps/backend/.localstack-seeded-resources.json`.
+
+3. Configure `apps/backend/.env` com:
 
 ```bash
 AWS_ASSUME_ROLE_ARN_TEMPLATE=arn:aws:iam::{account_id}:role/PlatformAssumeRole
@@ -137,7 +170,7 @@ AWS_ENDPOINT_URL=http://localhost:4566
 AWS_USE_ACCOUNT_ID_FOR_LOCALSTACK=true
 ```
 
-3. Rode o backend/frontend normalmente com `npm run dev`.
+4. Rode o backend/frontend normalmente com `npm run dev`.
 
 O script gera `apps/backend/.localstack-organization-accounts.json`. Quando esse arquivo existe, o backend passa a seedar as contas da aplicacao com os IDs reais criados na organization do LocalStack Pro.
 

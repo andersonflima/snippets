@@ -1,16 +1,23 @@
 import { CommonModule } from '@angular/common';
-import { Component, OnDestroy, computed, signal } from '@angular/core';
+import { Component, computed, effect, signal } from '@angular/core';
 import { FormsModule } from '@angular/forms';
 import type {
   AwsAccount,
   AwsCategory,
-  ResourceTemplate,
-  ResourceStateRecord,
+  FinOpsOverview,
   PermissionScope,
+  ResourceStateRecord,
   ResourceSummary,
+  ResourceTemplate,
+  ResourceUpdateProfile,
   UserRole
 } from '@platform/shared';
-import { getResourceTemplates } from '@platform/shared';
+import {
+  getDefaultResourceUpdateProfile,
+  getResourceTemplates,
+  getResourceUpdateProfile,
+  getResourceUpdateProfiles
+} from '@platform/shared';
 
 type CategoryDefinition = {
   id: AwsCategory;
@@ -24,7 +31,7 @@ type AwsAccountFormRow = {
 };
 
 type ResourceAction = 'list' | 'get' | 'create' | 'update' | 'delete';
-type ResourceOperationTab = 'create' | 'update' | 'delete';
+type ResourceOperationTab = 'create' | 'update';
 
 type PermissionFormRow = {
   accountId: string;
@@ -36,6 +43,7 @@ type PermissionFormRow = {
 type ResourceFieldValueMode = 'text' | 'number' | 'boolean' | 'json' | 'null';
 
 type ResourceFieldRow = {
+  id: string;
   key: string;
   value: string;
   valueMode: ResourceFieldValueMode;
@@ -50,6 +58,18 @@ type TemplateAwareResourceFieldRow = ResourceFieldRow & {
   required: boolean;
   fieldType: 'template' | 'custom';
 };
+
+type ResourceTagRow = {
+  id: string;
+  key: string;
+  value: string;
+};
+
+type StructuredUpdateFieldKind =
+  | 's3-versioning'
+  | 's3-public-access'
+  | 's3-encryption'
+  | 'dynamodb-throughput';
 
 type ResourceStateHistoryResponse = {
   history: readonly ResourceStateRecord[];
@@ -78,6 +98,8 @@ type LoginResponse = {
   user: PublicUser;
 };
 
+type FinOpsOverviewResponse = FinOpsOverview;
+
 type ContextSwitchResponse = {
   context: {
     accountId: string;
@@ -91,19 +113,7 @@ type ContextSwitchResponse = {
   checkupWarning?: string;
 };
 
-type DiscoveryRegionSummary = {
-  region: string;
-  status: 'ok' | 'error';
-  total: number;
-  message?: string;
-};
-
-type ResourceDiscoveryResponse = {
-  accountId: string;
-  category: AwsCategory;
-  typeName: string;
-  totalResources: number;
-  regions: readonly DiscoveryRegionSummary[];
+type ResourceListResponse = {
   resources: readonly ResourceSummary[];
 };
 
@@ -140,9 +150,41 @@ type PermissionResponse = {
   permissions: readonly PermissionScope[];
 };
 
-type WorkspaceView = 'resources' | 'admin';
+type AuthMode = 'login' | 'register';
+type ToastKind = 'error' | 'info';
+type WorkspaceView = 'resources' | 'finops' | 'admin';
+
+type ContextSelectionSnapshot = {
+  category: AwsCategory;
+  accountId: string;
+  region: string;
+};
+
+type FinOpsResourceTypeSummary = {
+  typeName: string;
+  total: number;
+  obsolete: number;
+  percent: number;
+};
+
+type CheckupCardView = {
+  typeName: string;
+  serviceLabel: string;
+  resourceLabel: string;
+  total: number;
+  fillPercentage: number;
+};
+
+type ToastItem = {
+  id: string;
+  kind: ToastKind;
+  message: string;
+};
+
+type ResourceStateHistoryScope = 'resource' | 'type' | 'context';
 
 const TOKEN_STORAGE_KEY = 'platform.token';
+const HEADER_SELECTION_STORAGE_KEY = 'platform.resource-header-selection';
 const API_BASE_URL = 'http://localhost:3000';
 const validActions = ['list', 'get', 'create', 'update', 'delete'] as const;
 const validRoles = ['admin', 'operator', 'viewer'] as const;
@@ -156,7 +198,13 @@ const categoryDefinitions: readonly CategoryDefinition[] = [
   { id: 'management', label: 'Management' }
 ];
 
-const topAwsResourceTypes: readonly string[] = getResourceTemplates().map((template) => template.typeName);
+const defaultResourceTemplates = getResourceTemplates();
+const topAwsResourceTypes: readonly string[] = defaultResourceTemplates.map((template) => template.typeName);
+const getDefaultResourceTypesForCategory = (category: AwsCategory): readonly string[] =>
+  defaultResourceTemplates
+    .filter((template) => template.category === category)
+    .map((template) => template.typeName);
+const defaultComputeResourceTypes = getDefaultResourceTypesForCategory('compute');
 
 const awsCommonRegions: readonly string[] = [
   'af-south-1',
@@ -192,6 +240,50 @@ const permissionCategoryOptions: readonly (AwsCategory | '*')[] = [
 const patchOperationOptions: readonly PatchOperation[] = ['add', 'remove', 'replace', 'move', 'copy', 'test'];
 
 const resourceFieldValueModes: readonly ResourceFieldValueMode[] = ['text', 'number', 'boolean', 'json', 'null'];
+const createToastId = (): string => `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+const awsTokenLabels: Record<string, string> = {
+  CloudFormation: 'CloudFormation',
+  CloudWatch: 'CloudWatch',
+  DynamoDB: 'DynamoDB',
+  EC2: 'EC2',
+  ECS: 'ECS',
+  EFS: 'EFS',
+  Events: 'Events',
+  FSx: 'FSx',
+  IAM: 'IAM',
+  KMS: 'KMS',
+  Lambda: 'Lambda',
+  RDS: 'RDS',
+  SecretsManager: 'Secrets Manager'
+};
+
+const humanizeAwsToken = (value: string): string =>
+  awsTokenLabels[value] ??
+  value
+    .replace(/([A-Z]+)([A-Z][a-z])/g, '$1 $2')
+    .replace(/([a-z0-9])([A-Z])/g, '$1 $2');
+
+const DEFAULT_FINOPS_STALE_DAYS = 30;
+const toFinitePositiveInt = (value: number | undefined, fallback: number): number => {
+  if (typeof value !== 'number' || !Number.isFinite(value) || !Number.isInteger(value) || value <= 0) {
+    return fallback;
+  }
+
+  return value;
+};
+
+const toCheckupCardLabel = (typeName: string): Pick<CheckupCardView, 'serviceLabel' | 'resourceLabel'> => {
+  const [, serviceName = '', resourceName = typeName] = typeName.split('::');
+
+  return {
+    serviceLabel: humanizeAwsToken(serviceName),
+    resourceLabel: humanizeAwsToken(resourceName)
+  };
+};
+
+let resourceFieldRowSequence = 0;
+
+const createResourceFieldRowId = (prefix: 'template' | 'custom'): string => `${prefix}-${resourceFieldRowSequence++}`;
 
 const createEmptyAccountRow = (): AwsAccountFormRow => ({
   accountId: '',
@@ -200,6 +292,7 @@ const createEmptyAccountRow = (): AwsAccountFormRow => ({
 });
 
 const createEmptyResourceFieldRow = (): TemplateAwareResourceFieldRow => ({
+  id: createResourceFieldRowId('custom'),
   key: '',
   value: '',
   valueMode: 'text',
@@ -208,7 +301,7 @@ const createEmptyResourceFieldRow = (): TemplateAwareResourceFieldRow => ({
 });
 
 const templateCreateValue = (field: ResourceTemplate['fields'][number]): string =>
-  field.required ? '' : toTemplateDefaultText(field.defaultValue);
+  field.required ? toTemplateDefaultText(field.defaultValue) : '';
 
 const createEmptyPatchRow = (): ResourcePatchRow => ({
   op: 'replace',
@@ -217,6 +310,80 @@ const createEmptyPatchRow = (): ResourcePatchRow => ({
   valueMode: 'text',
   from: ''
 });
+
+const createEmptyTagRow = (): ResourceTagRow => ({
+  id: createResourceFieldRowId('custom'),
+  key: '',
+  value: ''
+});
+
+const isPlainObject = (value: unknown): value is Record<string, unknown> =>
+  typeof value === 'object' && value !== null && !Array.isArray(value);
+
+const parseStructuredFieldObject = (value: string): Record<string, unknown> => {
+  const trimmed = value.trim();
+
+  if (trimmed.length === 0) {
+    return {};
+  }
+
+  try {
+    const parsed = JSON.parse(trimmed) as unknown;
+    return isPlainObject(parsed) ? parsed : {};
+  } catch {
+    return {};
+  }
+};
+
+const stringifyStructuredFieldObject = (value: Record<string, unknown>): string =>
+  Object.keys(value).length === 0 ? '' : JSON.stringify(value);
+
+const resolveStructuredUpdateFieldKind = (
+  typeName: string,
+  field: TemplateAwareResourceFieldRow
+): StructuredUpdateFieldKind | null => {
+  if (field.fieldType !== 'template') {
+    return null;
+  }
+
+  if (typeName === 'AWS::S3::Bucket' && field.key === 'VersioningConfiguration') {
+    return 's3-versioning';
+  }
+
+  if (typeName === 'AWS::S3::Bucket' && field.key === 'PublicAccessBlockConfiguration') {
+    return 's3-public-access';
+  }
+
+  if (typeName === 'AWS::S3::Bucket' && field.key === 'BucketEncryption') {
+    return 's3-encryption';
+  }
+
+  if (typeName === 'AWS::DynamoDB::Table' && field.key === 'ProvisionedThroughput') {
+    return 'dynamodb-throughput';
+  }
+
+  return null;
+};
+
+const asOptionalBooleanSelection = (value: unknown): string =>
+  typeof value === 'boolean' ? String(value) : '';
+
+const toOptionalBooleanValue = (value: string): boolean | undefined =>
+  value === 'true' ? true : value === 'false' ? false : undefined;
+
+const asOptionalNumberSelection = (value: unknown): string =>
+  typeof value === 'number' && Number.isFinite(value) ? String(value) : '';
+
+const toOptionalNumberValue = (value: string): number | undefined => {
+  const trimmed = value.trim();
+
+  if (trimmed.length === 0) {
+    return undefined;
+  }
+
+  const parsed = Number(trimmed);
+  return Number.isFinite(parsed) ? parsed : undefined;
+};
 
 const createEmptyPermissionRow = (): PermissionFormRow => ({
   accountId: '',
@@ -262,6 +429,27 @@ const asTemplateLabel = (row: TemplateAwareResourceFieldRow): string => row.labe
 const isTemplateFieldEnum = (row: TemplateAwareResourceFieldRow): boolean =>
   (row.enumValues?.length ?? 0) > 0;
 
+const resolveDeleteConfirmationToken = (resource: ResourceSummary | null): string => {
+  const displayName = resource?.displayName?.trim();
+
+  if (displayName && displayName.toLowerCase() !== 'unknown') {
+    return displayName;
+  }
+
+  return resource?.identifier.trim() ?? '';
+};
+
+const resolveDeleteConfirmationPrompt = (resource: ResourceSummary | null): string => {
+  const token = resolveDeleteConfirmationToken(resource);
+
+  return token.length > 0
+    ? `Digite o nome do recurso (${token}) para habilitar a exclusao`
+    : 'Digite o nome do recurso para habilitar a exclusao';
+};
+
+const resolveDeleteConfirmationPlaceholder = (resource: ResourceSummary | null): string =>
+  resolveDeleteConfirmationToken(resource) || 'Digite o nome do recurso';
+
 const buildTemplateCreateRows = (
   template: ResourceTemplate | undefined
 ): readonly TemplateAwareResourceFieldRow[] => {
@@ -270,6 +458,7 @@ const buildTemplateCreateRows = (
   }
 
   const rows = template.fields.map((field) => ({
+    id: `template-${field.key}`,
     key: field.key,
     label: field.label,
     value: templateCreateValue(field),
@@ -292,12 +481,8 @@ const buildTemplateCreateSeedState = (template: ResourceTemplate | undefined): R
 
   return template.fields.reduce<Record<string, unknown>>((accumulator, field) => {
     if (field.required) {
-      accumulator[field.key] = '';
+      accumulator[field.key] = field.defaultValue ?? '';
       return accumulator;
-    }
-
-    if (field.defaultValue !== undefined) {
-      accumulator[field.key] = field.defaultValue;
     }
 
     return accumulator;
@@ -312,6 +497,7 @@ const buildTemplateUpdateRows = (
   }
 
   const rows = template.fields.map((field) => ({
+    id: `template-${field.key}`,
     key: field.key,
     label: field.label,
     value: '',
@@ -326,6 +512,44 @@ const buildTemplateUpdateRows = (
 
   return rows.length > 0 ? rows : [createEmptyResourceFieldRow()];
 };
+
+const buildFocusedUpdateRows = (
+  profile: ResourceUpdateProfile | undefined
+): readonly TemplateAwareResourceFieldRow[] => {
+  if (!profile || profile.kind === 'tags' || profile.fields.length === 0) {
+    return [];
+  }
+
+  return profile.fields.map((field) => ({
+    id: `update-profile-${profile.id}-${field.key}`,
+    key: field.key,
+    label: field.label,
+    value: '',
+    valueMode: toTemplateFieldMode(field.kind),
+    enumValues: field.enumValues,
+    description: field.description,
+    placeholder: field.placeholder,
+    kind: field.kind,
+    required: false,
+    fieldType: 'template' as const
+  }));
+};
+
+const parseTagRows = (rows: readonly ResourceTagRow[]): readonly { Key: string; Value: string }[] =>
+  rows
+    .filter((entry) => entry.key.trim().length > 0 || entry.value.trim().length > 0)
+    .map((entry, index) => {
+      const key = entry.key.trim();
+
+      if (key.length === 0) {
+        throw new Error(`Tag #${index + 1}: chave obrigatoria.`);
+      }
+
+      return {
+        Key: key,
+        Value: entry.value.trim()
+      };
+    });
 
 const dedupeValues = (values: readonly string[]): readonly string[] => {
   const normalized = values.map((value) => value.trim()).filter((value) => value.length > 0);
@@ -645,6 +869,7 @@ const toResourceFieldText = (rawValue: unknown): string =>
 
 const mapResourceStateRowsToForm = (state: Record<string, unknown>): readonly TemplateAwareResourceFieldRow[] => {
   const rows = Object.entries(state).map(([key, value]) => ({
+    id: createResourceFieldRowId('custom'),
     key,
     valueMode: toResourceFieldValueMode(value),
     value: toResourceFieldText(value)
@@ -728,6 +953,70 @@ const isValidCategory = (value: string): value is AwsCategory =>
 const isValidPermissionCategory = (value: string): value is AwsCategory | '*' =>
   value === '*' || isValidCategory(value);
 
+type PersistedHeaderSelection = {
+  category: AwsCategory;
+  accountId: string;
+  region: string;
+  resourceType: string;
+};
+
+const readPersistedHeaderSelection = (): PersistedHeaderSelection | null => {
+  const rawValue = window.localStorage.getItem(HEADER_SELECTION_STORAGE_KEY);
+
+  if (!rawValue) {
+    return null;
+  }
+
+  try {
+    const parsedValue = JSON.parse(rawValue) as unknown;
+
+    if (typeof parsedValue !== 'object' || parsedValue === null || Array.isArray(parsedValue)) {
+      return null;
+    }
+
+    const {
+      category,
+      accountId,
+      region,
+      resourceType
+    } = parsedValue as Record<string, unknown>;
+
+    return {
+      category: typeof category === 'string' && isValidCategory(category) ? category : 'compute',
+      accountId: typeof accountId === 'string' ? accountId : '',
+      region: typeof region === 'string' ? region : '',
+      resourceType: typeof resourceType === 'string' ? resourceType : ''
+    };
+  } catch {
+    return null;
+  }
+};
+
+const persistHeaderSelection = (selection: PersistedHeaderSelection): void => {
+  window.localStorage.setItem(HEADER_SELECTION_STORAGE_KEY, JSON.stringify(selection));
+};
+
+const clearPersistedHeaderSelection = (): void => {
+  window.localStorage.removeItem(HEADER_SELECTION_STORAGE_KEY);
+};
+
+const initialHeaderSelection = (() => {
+  const persistedSelection = readPersistedHeaderSelection();
+  const category = persistedSelection?.category ?? 'compute';
+  const defaultResourceTypes = getDefaultResourceTypesForCategory(category);
+  const resourceType =
+    persistedSelection?.resourceType.trim().length
+      ? persistedSelection.resourceType.trim()
+      : defaultResourceTypes[0] ?? '';
+
+  return {
+    category,
+    accountId: persistedSelection?.accountId ?? '',
+    region: persistedSelection?.region ?? '',
+    resourceType
+  };
+})();
+
 @Component({
   selector: 'app-root',
   standalone: true,
@@ -735,18 +1024,17 @@ const isValidPermissionCategory = (value: string): value is AwsCategory | '*' =>
   templateUrl: './app.component.html',
   styleUrl: './app.component.css'
 })
-export class AppComponent implements OnDestroy {
-  private readonly operationBreakpoint = 980;
-  private mediaQuery: MediaQueryList | null = null;
-  private mediaQueryListener: ((event: MediaQueryListEvent) => void) | null = null;
+export class AppComponent {
 
   readonly categories = categoryDefinitions;
   readonly loading = signal(false);
   readonly errorMessage = signal('');
   readonly infoMessage = signal('');
+  readonly toasts = signal<readonly ToastItem[]>([]);
 
   readonly loginEmail = signal('admin@platform.local');
   readonly loginPassword = signal('change-me-please');
+  readonly authMode = signal<AuthMode>('login');
   readonly registerName = signal('');
   readonly registerEmail = signal('');
   readonly registerPassword = signal('change-me-please');
@@ -762,35 +1050,55 @@ export class AppComponent implements OnDestroy {
   readonly user = signal<PublicUser | null>(null);
   readonly workspaceView = signal<WorkspaceView>('resources');
 
-  readonly selectedCategory = signal<AwsCategory>('compute');
-  readonly selectedAccountId = signal('');
-  readonly selectedRegion = signal('');
-  readonly resourceTypes = signal<readonly string[]>([]);
-  readonly selectedResourceType = signal('');
+  readonly selectedCategory = signal<AwsCategory>(initialHeaderSelection.category);
+  readonly selectedAccountId = signal(initialHeaderSelection.accountId);
+  readonly selectedRegion = signal(initialHeaderSelection.region);
+  readonly resourceTypes = signal<readonly string[]>(
+    getDefaultResourceTypesForCategory(initialHeaderSelection.category)
+  );
+  readonly selectedResourceType = signal(initialHeaderSelection.resourceType);
   readonly resourceFieldValueModes = resourceFieldValueModes;
   readonly patchOperationOptions = patchOperationOptions;
-  readonly resourceTemplates = signal<readonly ResourceTemplate[]>(getResourceTemplates());
+  readonly resourceTemplates = signal<readonly ResourceTemplate[]>(defaultResourceTemplates);
   readonly selectedResourceTemplate = computed(
     () => this.resourceTemplates().find((template) => template.typeName === this.selectedResourceType())
   );
+  readonly finopsOverview = signal<FinOpsOverviewResponse | null>(null);
+  readonly finopsStaleDays = signal<number>(DEFAULT_FINOPS_STALE_DAYS);
 
   readonly checkupCounts = signal<Record<string, number>>({});
   readonly resources = signal<readonly ResourceSummary[]>([]);
-  readonly resourceDiscoveryRegions = signal<readonly DiscoveryRegionSummary[]>([]);
+  readonly selectedResource = signal<ResourceSummary | null>(null);
   readonly resourceDetails = signal<ResourceDetailsResponse | null>(null);
   readonly resourceStateHistory = signal<readonly ResourceStateRecord[]>([]);
+  readonly resourceStateHistoryScope = signal<ResourceStateHistoryScope>('context');
   readonly awsRegionOptions = awsCommonRegions;
   readonly permissionCategoryOptions = permissionCategoryOptions;
   readonly actionOptions = validActions;
   readonly formatStateDate = formatStateDate;
+  readonly asTemplateLabel = asTemplateLabel;
+  readonly isTemplateFieldRow = isTemplateFieldRow;
+  readonly isTemplateFieldEnum = isTemplateFieldEnum;
+  readonly resourceStateHistoryScopeLabel = computed(() => {
+    switch (this.resourceStateHistoryScope()) {
+      case 'resource':
+        return 'recurso selecionado';
+      case 'type':
+        return 'tipo atual';
+      default:
+        return 'contexto atual';
+    }
+  });
 
   readonly createPayloadText = signal('{}');
   readonly createPayloadRows = signal<readonly TemplateAwareResourceFieldRow[]>([
     createEmptyResourceFieldRow()
   ]);
   readonly useJsonCreatePayload = signal(false);
+  readonly showCreateOptionalTemplateFields = signal(false);
+  readonly showCreateCustomFields = signal(false);
+  readonly showCreateModal = signal(false);
   readonly resourceActionTab = signal<ResourceOperationTab>('create');
-  readonly isMobileResourceActions = signal(false);
   readonly updateIdentifier = signal('');
   readonly updateDesiredStateText = signal(
     '{\n  "Tags": [\n    {"Key": "managed-by", "Value": "platform"}\n  ]\n}'
@@ -798,7 +1106,14 @@ export class AppComponent implements OnDestroy {
   readonly updateDesiredStateRows = signal<readonly TemplateAwareResourceFieldRow[]>([
     createEmptyResourceFieldRow()
   ]);
+  readonly updateTagRows = signal<readonly ResourceTagRow[]>([createEmptyTagRow()]);
+  readonly clearAllUpdateTags = signal(false);
+  readonly selectedUpdateProfileId = signal('');
   readonly useJsonUpdateDesiredState = signal(false);
+  readonly showUpdateOptionalTemplateFields = signal(false);
+  readonly showUpdateCustomFields = signal(false);
+  readonly showUpdateModal = signal(false);
+  readonly showUpdatePatchEditor = signal(false);
   readonly updatePatchText = signal(
     '[\n  {"op": "replace", "path": "/Tags", "value": [{"Key": "managed-by", "Value": "platform"}]}\n]'
   );
@@ -808,6 +1123,15 @@ export class AppComponent implements OnDestroy {
   readonly deleteCandidate = signal<ResourceSummary | null>(null);
   readonly deleteConfirmationText = signal('');
   readonly deleteIntentId = signal<string | null>(null);
+  readonly deleteConfirmationToken = computed(() =>
+    resolveDeleteConfirmationToken(this.deleteCandidate())
+  );
+  readonly deleteConfirmationPrompt = computed(() =>
+    resolveDeleteConfirmationPrompt(this.deleteCandidate())
+  );
+  readonly deleteConfirmationPlaceholder = computed(() =>
+    resolveDeleteConfirmationPlaceholder(this.deleteCandidate())
+  );
 
   readonly adminUsers = signal<readonly AdminUser[]>([]);
   readonly selectedAdminUserId = signal('');
@@ -843,19 +1167,106 @@ export class AppComponent implements OnDestroy {
   readonly selectedAdminUser = computed(
     () => this.adminUsers().find((entry) => entry.id === this.selectedAdminUserId()) ?? null
   );
-  readonly discoveryHealthyRegionCount = computed(
-    () => this.resourceDiscoveryRegions().filter((entry) => entry.status === 'ok').length
-  );
-  readonly discoveryFailureCount = computed(
-    () => this.resourceDiscoveryRegions().filter((entry) => entry.status === 'error').length
-  );
-  readonly activeResourceActionTab = computed(() => {
-    if (this.isMobileResourceActions() && this.deleteCandidate()) {
-      return 'delete' as const;
+  readonly finopsWarnings = computed(() => this.finopsOverview()?.warnings ?? []);
+  readonly finopsResourceTypeRows = computed<readonly FinOpsResourceTypeSummary[]>(() => {
+    const overview = this.finopsOverview();
+    if (!overview) {
+      return [];
     }
 
+    return Object.entries(overview.resourcesByType)
+      .map(([typeName, total]) => {
+        const obsolete = overview.obsoleteByType[typeName] ?? 0;
+        const percent = total === 0 ? 0 : Number(((obsolete / total) * 100).toFixed(1));
+        return {
+          typeName,
+          total,
+          obsolete,
+          percent
+        };
+      })
+      .sort((left, right) =>
+        right.total !== left.total
+          ? right.total - left.total
+          : left.typeName.localeCompare(right.typeName)
+      );
+  });
+  readonly checkupCards = computed<readonly CheckupCardView[]>(() => {
+    const entries = Object.entries(this.checkupCounts());
+    const maxValue = Math.max(1, ...entries.map(([, total]) => total));
+
+    return entries.map(([typeName, total]) => {
+      const { serviceLabel, resourceLabel } = toCheckupCardLabel(typeName);
+
+      return {
+        typeName,
+        serviceLabel,
+        resourceLabel,
+        total,
+        fillPercentage: Math.max(8, Math.round((total / maxValue) * 100))
+      };
+    });
+  });
+  readonly activeResourceActionTab = computed(() => {
     return this.resourceActionTab();
   });
+  readonly createTemplateRows = computed(() =>
+    this.createPayloadRows().filter((entry): entry is TemplateAwareResourceFieldRow => isTemplateFieldRow(entry))
+  );
+  readonly createTemplateRequiredRows = computed(
+    () => this.createTemplateRows().filter((entry) => entry.required)
+  );
+  readonly createTemplateOptionalRows = computed(
+    () => this.createTemplateRows().filter((entry) => !entry.required)
+  );
+  readonly createTemplateRowsForForm = computed(() =>
+    this.showCreateOptionalTemplateFields() ? this.createTemplateRows() : this.createTemplateRequiredRows()
+  );
+  readonly createCustomRows = computed(
+    () => this.createPayloadRows().filter((entry) => !isTemplateFieldRow(entry))
+  );
+  readonly hasCreateTemplateOptionalRows = computed(() => this.createTemplateOptionalRows().length > 0);
+  readonly updateProfiles = computed(() => getResourceUpdateProfiles(this.selectedResourceType()));
+  readonly selectedUpdateProfile = computed(
+    () =>
+      this.updateProfiles().find((profile) => profile.id === this.selectedUpdateProfileId()) ??
+      this.updateProfiles()[0] ??
+      null
+  );
+  readonly isTagUpdateProfile = computed(() => this.selectedUpdateProfile()?.kind === 'tags');
+  readonly updateTemplateRows = computed(() =>
+    this.updateDesiredStateRows().filter((entry): entry is TemplateAwareResourceFieldRow => isTemplateFieldRow(entry))
+  );
+  readonly updateTemplateRequiredRows = computed(
+    () => this.updateTemplateRows().filter((entry) => entry.required)
+  );
+  readonly updateTemplateOptionalRows = computed(
+    () => this.updateTemplateRows().filter((entry) => !entry.required)
+  );
+  readonly updateTemplateRowsForForm = computed(() =>
+    this.showUpdateOptionalTemplateFields() ? this.updateTemplateRows() : this.updateTemplateRequiredRows()
+  );
+  readonly updateTemplateGridMode = computed(() => {
+    const total = this.updateTemplateRowsForForm().length;
+
+    if (total <= 1) {
+      return 'single';
+    }
+
+    if (total === 2) {
+      return 'double';
+    }
+
+    if (total === 3) {
+      return 'triple';
+    }
+
+    return 'quad';
+  });
+  readonly updateCustomRows = computed(
+    () => this.updateDesiredStateRows().filter((entry) => !isTemplateFieldRow(entry))
+  );
+  readonly hasUpdateTemplateOptionalRows = computed(() => this.updateTemplateOptionalRows().length > 0);
   readonly selectedCategoryLabel = computed(
     () => this.categories.find((entry) => entry.id === this.selectedCategory())?.label ?? this.selectedCategory()
   );
@@ -874,40 +1285,245 @@ export class AppComponent implements OnDestroy {
   });
 
   constructor() {
-    this.setupOperationViewportObserver();
-    void this.restoreSession();
-  }
+    effect(() => {
+      const message = this.errorMessage().trim();
+      if (message.length > 0) {
+        this.enqueueToast('error', message);
+      }
+    }, { allowSignalWrites: true });
 
-  ngOnDestroy(): void {
-    if (this.mediaQuery && this.mediaQueryListener) {
-      this.mediaQuery.removeEventListener('change', this.mediaQueryListener);
-      this.mediaQuery = null;
-      this.mediaQueryListener = null;
-    }
+    effect(() => {
+      const message = this.infoMessage().trim();
+      if (message.length > 0) {
+        this.enqueueToast('info', message);
+      }
+    }, { allowSignalWrites: true });
+
+    effect(() => {
+      if (!this.token()) {
+        clearPersistedHeaderSelection();
+        return;
+      }
+
+      persistHeaderSelection({
+        category: this.selectedCategory(),
+        accountId: this.selectedAccountId(),
+        region: this.selectedRegion(),
+        resourceType: this.selectedResourceType()
+      });
+    });
+
+    this.applyTemplateDrivenRows(this.selectedResourceType());
+    void this.restoreSession();
   }
 
   setResourceActionTab(action: ResourceOperationTab): void {
     this.resourceActionTab.set(action);
   }
 
-  private setupOperationViewportObserver(): void {
-    if (typeof window === 'undefined') {
+  setAuthMode(mode: AuthMode): void {
+    this.authMode.set(mode);
+    this.clearMessages();
+  }
+
+  openCreateModal(): void {
+    const resourceType = this.selectedResourceType();
+
+    if (resourceType.length === 0) {
+      this.errorMessage.set('Selecione um tipo de recurso antes de criar.');
       return;
     }
 
-    const media = window.matchMedia(`(max-width: ${this.operationBreakpoint}px)`);
-    this.mediaQuery = media;
-    const onChange = (event: MediaQueryListEvent) => {
-      this.isMobileResourceActions.set(event.matches);
+    this.applyTemplateDrivenRows(resourceType);
+    this.clearMessages();
+    this.showCreateModal.set(true);
+  }
 
-      if (this.deleteCandidate()) {
-        this.resourceActionTab.set('delete');
-      }
-    };
+  closeCreateModal(): void {
+    this.showCreateModal.set(false);
+  }
 
-    this.mediaQueryListener = onChange;
-    media.addEventListener('change', onChange);
-    this.isMobileResourceActions.set(media.matches);
+  async openUpdateModal(resource: ResourceSummary): Promise<void> {
+    try {
+      await this.alignContextForResource(resource);
+    } catch (error) {
+      this.errorMessage.set(error instanceof Error ? error.message : 'Erro ao preparar update.');
+      return;
+    }
+
+    this.selectedResourceType.set(resource.typeName);
+    this.applyTemplateDrivenRows(resource.typeName);
+    this.updateIdentifier.set(resource.identifier);
+    this.clearMessages();
+    this.showUpdatePatchEditor.set(false);
+    this.showUpdateModal.set(true);
+  }
+
+  closeUpdateModal(): void {
+    this.showUpdateModal.set(false);
+  }
+
+  selectUpdateProfile(profileId: string): void {
+    const resourceType = this.selectedResourceType();
+    const profile = getResourceUpdateProfile(resourceType, profileId);
+
+    this.selectedUpdateProfileId.set(profile?.id ?? '');
+    this.updateDesiredStateRows.set(buildFocusedUpdateRows(profile));
+    this.updateTagRows.set([createEmptyTagRow()]);
+    this.clearAllUpdateTags.set(false);
+    this.useJsonUpdateDesiredState.set(false);
+    this.useJsonPatchPayload.set(false);
+    this.showUpdatePatchEditor.set(false);
+    this.showUpdateOptionalTemplateFields.set(false);
+    this.showUpdateCustomFields.set(false);
+  }
+
+  resolveStructuredUpdateFieldKind(field: TemplateAwareResourceFieldRow): StructuredUpdateFieldKind | null {
+    return resolveStructuredUpdateFieldKind(this.selectedResourceType(), field);
+  }
+
+  getStructuredUpdateFieldVersioningStatus(fieldId: string): string {
+    const current = this.getStructuredUpdateFieldObject(fieldId);
+    return typeof current.Status === 'string' ? current.Status : '';
+  }
+
+  updateStructuredUpdateFieldVersioningStatus(fieldId: string, status: string): void {
+    this.setStructuredUpdateFieldObject(fieldId, status.length > 0 ? { Status: status } : {});
+  }
+
+  getStructuredUpdateFieldBooleanValue(fieldId: string, key: string): string {
+    const current = this.getStructuredUpdateFieldObject(fieldId);
+    return asOptionalBooleanSelection(current[key]);
+  }
+
+  updateStructuredUpdateFieldBooleanValue(fieldId: string, key: string, value: string): void {
+    const current = this.getStructuredUpdateFieldObject(fieldId);
+    const nextValue = toOptionalBooleanValue(value);
+    const nextState = { ...current };
+
+    if (nextValue === undefined) {
+      delete nextState[key];
+    } else {
+      nextState[key] = nextValue;
+    }
+
+    this.setStructuredUpdateFieldObject(fieldId, nextState);
+  }
+
+  getStructuredUpdateFieldEncryptionAlgorithm(fieldId: string): string {
+    const configuration = this.getStructuredUpdateFieldEncryptionConfiguration(fieldId);
+    return typeof configuration.SSEAlgorithm === 'string' ? configuration.SSEAlgorithm : '';
+  }
+
+  updateStructuredUpdateFieldEncryptionAlgorithm(fieldId: string, algorithm: string): void {
+    const configuration = this.getStructuredUpdateFieldEncryptionConfiguration(fieldId);
+
+    if (algorithm.length === 0) {
+      this.setStructuredUpdateFieldObject(fieldId, {});
+      return;
+    }
+
+    this.setStructuredUpdateFieldEncryptionConfiguration(fieldId, {
+      ...configuration,
+      SSEAlgorithm: algorithm
+    });
+  }
+
+  getStructuredUpdateFieldEncryptionKeyId(fieldId: string): string {
+    const configuration = this.getStructuredUpdateFieldEncryptionConfiguration(fieldId);
+    return typeof configuration.KMSMasterKeyID === 'string' ? configuration.KMSMasterKeyID : '';
+  }
+
+  updateStructuredUpdateFieldEncryptionKeyId(fieldId: string, keyId: string): void {
+    const configuration = this.getStructuredUpdateFieldEncryptionConfiguration(fieldId);
+
+    if (!configuration.SSEAlgorithm) {
+      return;
+    }
+
+    const nextConfiguration = { ...configuration };
+
+    if (keyId.trim().length === 0) {
+      delete nextConfiguration.KMSMasterKeyID;
+    } else {
+      nextConfiguration.KMSMasterKeyID = keyId.trim();
+    }
+
+    this.setStructuredUpdateFieldEncryptionConfiguration(fieldId, nextConfiguration);
+  }
+
+  getStructuredUpdateFieldThroughputValue(fieldId: string, key: string): string {
+    const current = this.getStructuredUpdateFieldObject(fieldId);
+    return asOptionalNumberSelection(current[key]);
+  }
+
+  updateStructuredUpdateFieldThroughputValue(fieldId: string, key: string, value: string): void {
+    const current = this.getStructuredUpdateFieldObject(fieldId);
+    const nextValue = toOptionalNumberValue(value);
+    const nextState = { ...current };
+
+    if (nextValue === undefined) {
+      delete nextState[key];
+    } else {
+      nextState[key] = nextValue;
+    }
+
+    this.setStructuredUpdateFieldObject(fieldId, nextState);
+  }
+
+  toggleCreateTemplateOptionalFields(): void {
+    this.showCreateOptionalTemplateFields.update((state) => !state);
+  }
+
+  startCreateCustomFields(): void {
+    this.showCreateCustomFields.set(true);
+    if (this.createCustomRows().length === 0) {
+      this.addCreatePayloadFieldRow();
+    }
+  }
+
+  toggleCreateCustomFields(): void {
+    this.showCreateCustomFields.update((state) => !state);
+  }
+
+  toggleUpdateTemplateOptionalFields(): void {
+    this.showUpdateOptionalTemplateFields.update((state) => !state);
+  }
+
+  startUpdateCustomFields(): void {
+    this.showUpdateCustomFields.set(true);
+    if (this.updateCustomRows().length === 0) {
+      this.addUpdateDesiredStateFieldRow();
+    }
+  }
+
+  toggleUpdateCustomFields(): void {
+    this.showUpdateCustomFields.update((state) => !state);
+  }
+
+  toggleUpdatePatchEditor(): void {
+    this.showUpdatePatchEditor.update((state) => !state);
+  }
+
+  addUpdateTagRow(): void {
+    this.updateTagRows.set([...this.updateTagRows(), createEmptyTagRow()]);
+  }
+
+  toggleClearAllUpdateTags(): void {
+    this.clearAllUpdateTags.update((state) => !state);
+  }
+
+  updateUpdateTagRow(id: string, patch: Partial<Omit<ResourceTagRow, 'id'>>): void {
+    this.updateTagRows.set(
+      this.updateTagRows().map((entry) =>
+        entry.id === id ? { ...entry, ...patch } : entry
+      )
+    );
+  }
+
+  removeUpdateTagRow(id: string): void {
+    const nextRows = this.updateTagRows().filter((entry) => entry.id !== id);
+    this.updateTagRows.set(nextRows.length > 0 ? nextRows : [createEmptyTagRow()]);
   }
 
   async onLogin(): Promise<void> {
@@ -924,7 +1540,7 @@ export class AppComponent implements OnDestroy {
       });
 
       this.saveSession(response.token, response.user);
-      this.setDefaultContextFromUser(response.user);
+      this.restoreHeaderContextFromUser(response.user);
       await this.switchContext();
       await this.refreshAdminStateIfNeeded();
       this.infoMessage.set('Login realizado com sucesso.');
@@ -956,7 +1572,7 @@ export class AppComponent implements OnDestroy {
       });
 
       this.saveSession(response.token, response.user);
-      this.setDefaultContextFromUser(response.user);
+      this.restoreHeaderContextFromUser(response.user);
       await this.switchContext();
       await this.refreshAdminStateIfNeeded();
       this.infoMessage.set('Cadastro realizado com sucesso.');
@@ -1006,6 +1622,15 @@ export class AppComponent implements OnDestroy {
     );
   }
 
+  updateCreatePayloadFieldRowById(id: string, patch: Partial<ResourceFieldRow>): void {
+    const rowIndex = this.createPayloadRows().findIndex((entry) => entry.id === id);
+    if (rowIndex < 0) {
+      return;
+    }
+
+    this.updateCreatePayloadFieldRow(rowIndex, patch);
+  }
+
   removeCreatePayloadFieldRow(index: number): void {
     const field = this.createPayloadRows()[index];
     if (field?.fieldType === 'template' && field.required) {
@@ -1017,6 +1642,15 @@ export class AppComponent implements OnDestroy {
     if (this.createPayloadRows().length === 0) {
       this.createPayloadRows.set([createEmptyResourceFieldRow()]);
     }
+  }
+
+  removeCreatePayloadFieldRowById(id: string): void {
+    const rowIndex = this.createPayloadRows().findIndex((entry) => entry.id === id);
+    if (rowIndex < 0) {
+      return;
+    }
+
+    this.removeCreatePayloadFieldRow(rowIndex);
   }
 
   addUpdateDesiredStateFieldRow(): void {
@@ -1036,6 +1670,15 @@ export class AppComponent implements OnDestroy {
     );
   }
 
+  updateUpdateDesiredStateFieldRowById(id: string, patch: Partial<ResourceFieldRow>): void {
+    const rowIndex = this.updateDesiredStateRows().findIndex((entry) => entry.id === id);
+    if (rowIndex < 0) {
+      return;
+    }
+
+    this.updateUpdateDesiredStateFieldRow(rowIndex, patch);
+  }
+
   removeUpdateDesiredStateFieldRow(index: number): void {
     this.updateDesiredStateRows.set(
       this.updateDesiredStateRows().filter((_, rowIndex) => rowIndex !== index)
@@ -1044,6 +1687,15 @@ export class AppComponent implements OnDestroy {
     if (this.updateDesiredStateRows().length === 0) {
       this.updateDesiredStateRows.set([createEmptyResourceFieldRow()]);
     }
+  }
+
+  removeUpdateDesiredStateFieldRowById(id: string): void {
+    const rowIndex = this.updateDesiredStateRows().findIndex((entry) => entry.id === id);
+    if (rowIndex < 0) {
+      return;
+    }
+
+    this.removeUpdateDesiredStateFieldRow(rowIndex);
   }
 
   addUpdatePatchRow(): void {
@@ -1209,62 +1861,113 @@ export class AppComponent implements OnDestroy {
 
     if (nextView === 'admin') {
       await this.loadAdminUsers();
+      return;
     }
+
+    if (nextView === 'finops') {
+      await this.loadFinopsOverview();
+      return;
+    }
+
+    await this.loadResources();
   }
 
   async onCategoryChange(category: AwsCategory): Promise<void> {
-    this.selectedCategory.set(category);
-    this.resetResourcePanelsForContextChange();
-
-    try {
-      await this.switchContext();
-    } catch (error) {
-      this.errorMessage.set(error instanceof Error ? error.message : 'Erro ao trocar categoria.');
-    }
+    await this.updateContextSelection(() => {
+      this.selectedCategory.set(category);
+    }, 'Erro ao trocar categoria.');
   }
 
   async onAccountChange(accountId: string): Promise<void> {
-    this.selectedAccountId.set(accountId);
-    this.resetResourcePanelsForContextChange();
+    await this.updateContextSelection(() => {
+      this.selectedAccountId.set(accountId);
 
-    const regions = this.availableRegions();
-    if (regions.length > 0) {
-      this.selectedRegion.set(regions[0]);
-    }
-
-    try {
-      await this.switchContext();
-    } catch (error) {
-      this.errorMessage.set(error instanceof Error ? error.message : 'Erro ao trocar conta.');
-    }
+      const regions = this.availableRegions();
+      if (regions.length > 0) {
+        this.selectedRegion.set(regions[0]);
+      }
+    }, 'Erro ao trocar conta.');
   }
 
   async onRegionChange(region: string): Promise<void> {
-    this.selectedRegion.set(region);
-    this.resetResourcePanelsForContextChange();
-
-    try {
-      await this.switchContext();
-    } catch (error) {
-      this.errorMessage.set(error instanceof Error ? error.message : 'Erro ao trocar regiao.');
-    }
+    await this.updateContextSelection(() => {
+      this.selectedRegion.set(region);
+    }, 'Erro ao trocar regiao.');
   }
 
   async onResourceTypeChange(resourceType: string): Promise<void> {
     this.selectedResourceType.set(resourceType);
     this.applyTemplateDrivenRows(resourceType);
+    this.selectedResource.set(null);
     this.resourceDetails.set(null);
     this.resourceStateHistory.set([]);
-    await this.loadResources();
+    this.resourceStateHistoryScope.set('context');
+    if (this.workspaceView() === 'resources') {
+      await this.loadResources();
+    }
+    if (this.workspaceView() === 'finops') {
+      await this.loadFinopsOverview();
+    }
   }
 
-  async refreshResources(): Promise<void> {
-    await this.loadResources();
-  }
+  async loadFinopsOverview(): Promise<void> {
+    const accountId = this.selectedAccountId();
+    const region = this.selectedRegion();
 
-  async loadResourceDetails(resource: ResourceSummary): Promise<void> {
+    if (accountId.length === 0 || region.length === 0) {
+      this.finopsOverview.set(null);
+      return;
+    }
+
+    this.setLoading(true);
     this.clearMessages();
+
+    try {
+      const query = new URLSearchParams({
+        staleDays: String(toFinitePositiveInt(this.finopsStaleDays(), DEFAULT_FINOPS_STALE_DAYS))
+      });
+
+      const response = await this.apiRequest<FinOpsOverviewResponse>(
+        `/api/finops/overview?${query.toString()}`
+      );
+
+      this.finopsOverview.set(response);
+      this.finopsStaleDays.set(response.staleThresholdDays);
+    } catch (error) {
+      this.finopsOverview.set(null);
+      this.errorMessage.set(error instanceof Error ? error.message : 'Erro ao carregar resumo FinOps.');
+    } finally {
+      this.setLoading(false);
+    }
+  }
+
+  async onFinopsStaleDaysChange(value: string): Promise<void> {
+    this.finopsStaleDays.set(toFinitePositiveInt(Number(value), DEFAULT_FINOPS_STALE_DAYS));
+    await this.loadFinopsOverview();
+  }
+
+  async refreshCurrentViewData(): Promise<void> {
+    if (this.workspaceView() === 'finops') {
+      await this.loadFinopsOverview();
+      return;
+    }
+
+    if (this.workspaceView() === 'resources') {
+      await this.loadResources();
+    }
+  }
+
+  async loadResourceDetails(
+    resource: ResourceSummary,
+    options?: { silent?: boolean }
+  ): Promise<void> {
+    if (!options?.silent) {
+      this.clearMessages();
+    }
+
+    this.selectedResource.set(resource);
     this.resourceStateHistory.set([]);
+    this.resourceStateHistoryScope.set('resource');
 
     try {
       await this.alignContextForResource(resource);
@@ -1279,28 +1982,70 @@ export class AppComponent implements OnDestroy {
       );
 
       this.resourceDetails.set(details);
-      await this.loadResourceStateHistory(resource.typeName, resource.identifier);
     } catch (error) {
+      this.selectedResource.set(null);
       this.resourceDetails.set(null);
       this.resourceStateHistory.set([]);
-      this.errorMessage.set(error instanceof Error ? error.message : 'Erro ao carregar detalhes.');
+      this.resourceStateHistoryScope.set('context');
+      if (!options?.silent) {
+        this.errorMessage.set(error instanceof Error ? error.message : 'Erro ao carregar detalhes.');
+      }
+      return;
+    }
+
+    try {
+      await this.loadResourceStateHistory(resource.typeName, resource.identifier);
+    } catch (error) {
+      this.resourceStateHistory.set([]);
+      this.resourceStateHistoryScope.set('context');
+      if (!options?.silent) {
+        this.errorMessage.set(error instanceof Error ? error.message : 'Erro ao carregar histórico.');
+      }
     }
   }
 
   private async loadResourceStateHistory(typeName?: string, identifier?: string): Promise<void> {
-    const query = new URLSearchParams();
-    if (typeName && typeName.length > 0) {
-      query.set('typeName', typeName);
-    }
-    if (identifier && identifier.length > 0) {
-      query.set('identifier', identifier);
+    const fetchHistory = async (queryValues: {
+      typeName?: string;
+      identifier?: string;
+    }): Promise<readonly ResourceStateRecord[]> => {
+      const query = new URLSearchParams();
+      if (queryValues.typeName && queryValues.typeName.length > 0) {
+        query.set('typeName', queryValues.typeName);
+      }
+      if (queryValues.identifier && queryValues.identifier.length > 0) {
+        query.set('identifier', queryValues.identifier);
+      }
+
+      const queryString = query.toString();
+      const endpoint =
+        queryString.length > 0 ? `/api/resources/state?${queryString}` : '/api/resources/state';
+
+      const response = await this.apiRequest<ResourceStateHistoryResponse>(endpoint);
+      return response.history;
+    };
+
+    if (typeName && identifier) {
+      const resourceHistory = await fetchHistory({ typeName, identifier });
+      if (resourceHistory.length > 0) {
+        this.resourceStateHistory.set(resourceHistory);
+        this.resourceStateHistoryScope.set('resource');
+        return;
+      }
     }
 
-    const queryString = query.toString();
-    const endpoint = queryString.length > 0 ? `/api/resources/state?${queryString}` : '/api/resources/state';
+    if (typeName) {
+      const typeHistory = await fetchHistory({ typeName });
+      if (typeHistory.length > 0) {
+        this.resourceStateHistory.set(typeHistory);
+        this.resourceStateHistoryScope.set('type');
+        return;
+      }
+    }
 
-    const response = await this.apiRequest<ResourceStateHistoryResponse>(endpoint);
-    this.resourceStateHistory.set(response.history);
+    const contextHistory = await fetchHistory({});
+    this.resourceStateHistory.set(contextHistory);
+    this.resourceStateHistoryScope.set('context');
   }
 
   async createResource(): Promise<void> {
@@ -1343,8 +2088,9 @@ export class AppComponent implements OnDestroy {
       });
 
       this.infoMessage.set('Operacao de create enviada com sucesso.');
+      this.closeCreateModal();
       await this.switchContext();
-      await this.loadResources();
+      await this.refreshCurrentViewData();
     } catch (error) {
       this.errorMessage.set(error instanceof Error ? error.message : 'Erro ao criar recurso.');
     } finally {
@@ -1355,9 +2101,15 @@ export class AppComponent implements OnDestroy {
   async updateResource(): Promise<void> {
     const typeName = this.selectedResourceType();
     const identifier = this.updateIdentifier().trim();
+    const updateProfile = this.selectedUpdateProfile();
 
     if (typeName.length === 0 || identifier.length === 0) {
       this.errorMessage.set('Informe tipo e identifier para atualizar.');
+      return;
+    }
+
+    if (!updateProfile) {
+      this.errorMessage.set('Nao existe mapeamento de update disponivel para este recurso.');
       return;
     }
 
@@ -1365,18 +2117,18 @@ export class AppComponent implements OnDestroy {
     this.clearMessages();
 
     try {
-      const desiredState = this.useJsonUpdateDesiredState()
-        ? parseAsObject(this.updateDesiredStateText(), 'DesiredState')
-        : parseResourceFieldRows(this.updateDesiredStateRows(), 'DesiredState', true);
-      const patchDocument = this.useJsonPatchPayload()
-        ? parseAsPatchArray(this.updatePatchText())
-        : parsePatchRows(this.updatePatchRows(), 'Patch Document', true);
+      const desiredState =
+        updateProfile.kind === 'tags'
+          ? this.clearAllUpdateTags()
+            ? { Tags: [] }
+            : (() => {
+                const tags = parseTagRows(this.updateTagRows());
+                return tags.length > 0 ? { Tags: tags } : {};
+              })()
+          : parseResourceFieldRows(this.updateDesiredStateRows(), 'DesiredState', true);
 
-      const hasDesiredStateChanges = Object.keys(desiredState).length > 0;
-      const hasPatchChanges = patchDocument.length > 0;
-
-      if (!hasDesiredStateChanges && !hasPatchChanges) {
-        throw new Error('Informe dados para desiredState ou patchDocument.');
+      if (Object.keys(desiredState).length === 0) {
+        throw new Error('Informe ao menos um campo para atualizar.');
       }
 
       await this.apiRequest('/api/resources', {
@@ -1384,14 +2136,15 @@ export class AppComponent implements OnDestroy {
         body: JSON.stringify({
           typeName,
           identifier,
-          desiredState,
-          patchDocument
+          updateProfileId: updateProfile.id,
+          desiredState
         })
       });
 
       this.infoMessage.set('Operacao de update enviada com sucesso.');
+      this.closeUpdateModal();
       await this.switchContext();
-      await this.loadResources();
+      await this.refreshCurrentViewData();
     } catch (error) {
       this.errorMessage.set(error instanceof Error ? error.message : 'Erro ao atualizar recurso.');
     } finally {
@@ -1410,7 +2163,6 @@ export class AppComponent implements OnDestroy {
     this.deleteCandidate.set(resource);
     this.deleteConfirmationText.set('');
     this.deleteIntentId.set(null);
-    this.setResourceActionTab('delete');
     this.clearMessages();
   }
 
@@ -1418,18 +2170,20 @@ export class AppComponent implements OnDestroy {
     this.deleteCandidate.set(null);
     this.deleteConfirmationText.set('');
     this.deleteIntentId.set(null);
-    this.setResourceActionTab('create');
   }
 
   async requestDeleteIntent(): Promise<void> {
     const candidate = this.deleteCandidate();
+    const expectedConfirmation = this.deleteConfirmationToken();
 
     if (!candidate) {
       return;
     }
 
-    if (this.deleteConfirmationText().trim() !== 'DELETE') {
-      this.errorMessage.set('Digite DELETE para gerar a segunda confirmacao.');
+    if (this.deleteConfirmationText().trim() !== expectedConfirmation) {
+      this.errorMessage.set(
+        `Digite o nome exato do recurso (${expectedConfirmation}) para gerar a segunda confirmacao.`
+      );
       return;
     }
 
@@ -1482,7 +2236,7 @@ export class AppComponent implements OnDestroy {
 
       this.infoMessage.set('Delete concluido com sucesso.');
       this.cancelDeleteFlow();
-      await this.loadResources();
+      await this.refreshCurrentViewData();
     } catch (error) {
       this.errorMessage.set(error instanceof Error ? error.message : 'Erro ao deletar recurso.');
     } finally {
@@ -1785,11 +2539,12 @@ export class AppComponent implements OnDestroy {
   logout(): void {
     this.token.set(null);
     this.user.set(null);
+    this.authMode.set('login');
+    this.toasts.set([]);
     this.workspaceView.set('resources');
     this.resourceTypes.set([]);
     this.selectedResourceType.set('');
     this.resources.set([]);
-    this.resourceDiscoveryRegions.set([]);
     this.resourceDetails.set(null);
     this.resourceStateHistory.set([]);
     this.checkupCounts.set({});
@@ -1800,7 +2555,10 @@ export class AppComponent implements OnDestroy {
     this.setAdminSelection('');
     this.adminDeleteConfirmationText.set('');
     this.adminDeleteIntentId.set(null);
+    this.finopsOverview.set(null);
+    this.finopsStaleDays.set(DEFAULT_FINOPS_STALE_DAYS);
     window.localStorage.removeItem(TOKEN_STORAGE_KEY);
+    clearPersistedHeaderSelection();
   }
 
   private async alignContextForResource(resource: ResourceSummary): Promise<void> {
@@ -1828,7 +2586,7 @@ export class AppComponent implements OnDestroy {
     try {
       const response = await this.apiRequest<{ user: PublicUser }>('/api/auth/me');
       this.user.set(response.user);
-      this.setDefaultContextFromUser(response.user);
+      this.restoreHeaderContextFromUser(response.user);
       await this.switchContext();
       await this.refreshAdminStateIfNeeded();
     } catch {
@@ -1857,53 +2615,77 @@ export class AppComponent implements OnDestroy {
       return;
     }
 
+    this.setLoading(true);
     this.clearMessages();
 
-    const response = await this.apiRequest<ContextSwitchResponse>('/api/context/switch', {
-      method: 'POST',
-      body: JSON.stringify({
-        accountId,
-        region,
-        category: this.selectedCategory()
-      })
-    });
+    try {
+      const response = await this.apiRequest<ContextSwitchResponse>('/api/context/switch', {
+        method: 'POST',
+        body: JSON.stringify({
+          accountId,
+          region,
+          category: this.selectedCategory()
+        })
+      });
 
-    this.checkupCounts.set(response.checkup.resourceCounts);
+      this.checkupCounts.set(response.checkup.resourceCounts);
 
-    const mergedResourceTypes = [...new Set([...response.resourceTypes, ...topAwsResourceTypes])];
-    this.resourceTypes.set(mergedResourceTypes);
-
-    const currentType = this.selectedResourceType();
-    const fallbackType = mergedResourceTypes[0] ?? '';
-    const typeStillAvailable = mergedResourceTypes.includes(currentType);
-
-    this.selectedResourceType.set(typeStillAvailable ? currentType : fallbackType);
-    this.applyTemplateDrivenRows(this.selectedResourceType());
-
-    if (response.resourceTypes.length === 0) {
-      this.resources.set([]);
-      this.resourceDiscoveryRegions.set([]);
-      this.resourceDetails.set(null);
-      this.infoMessage.set(
-        `Categoria ${this.selectedCategoryLabel()} sem tipos de recurso disponiveis para a conta/regiao atual.`
+      const defaultResourceTypesForCategory = getDefaultResourceTypesForCategory(
+        this.selectedCategory()
       );
-    } else {
+      const mergedResourceTypes = [
+        ...new Set([
+          ...response.resourceTypes,
+          ...defaultResourceTypesForCategory
+        ])
+      ];
+      this.resourceTypes.set(mergedResourceTypes);
+
+      const currentType = this.selectedResourceType();
+      const fallbackType = mergedResourceTypes[0] ?? '';
+      const typeStillAvailable = currentType.length > 0 && mergedResourceTypes.includes(currentType);
+      const nextType = typeStillAvailable ? currentType : fallbackType;
+
+      this.selectedResourceType.set(nextType);
+      this.applyTemplateDrivenRows(this.selectedResourceType());
+
+      if (response.resourceTypes.length === 0) {
+        this.resources.set([]);
+        this.resourceDetails.set(null);
+        this.finopsOverview.set(null);
+        this.infoMessage.set(
+          `Categoria ${this.selectedCategoryLabel()} sem tipos de recurso disponiveis para a conta/regiao atual.`
+        );
+        return;
+      }
+
+      if (this.workspaceView() === 'finops') {
+        await this.loadFinopsOverview();
+        return;
+      }
+
       await this.loadResources();
-    }
 
-    if (response.checkupWarning && response.checkupWarning.length > 0) {
-      this.errorMessage.set(
-        `Contexto atualizado com alerta no check-up: ${response.checkupWarning}`
-      );
+      if (response.checkupWarning && response.checkupWarning.length > 0) {
+        this.errorMessage.set(
+          `Contexto atualizado com alerta no check-up: ${response.checkupWarning}`
+        );
+      }
+    } finally {
+      this.setLoading(false);
     }
   }
 
   private async loadResources(): Promise<void> {
     const typeName = this.selectedResourceType();
+    const region = this.selectedRegion();
 
     if (typeName.length === 0) {
       this.resources.set([]);
-      this.resourceDiscoveryRegions.set([]);
+      this.selectedResource.set(null);
+      this.resourceDetails.set(null);
+      this.resourceStateHistory.set([]);
+      this.resourceStateHistoryScope.set('context');
       return;
     }
 
@@ -1912,58 +2694,138 @@ export class AppComponent implements OnDestroy {
 
     try {
       const query = new URLSearchParams({ typeName });
-      const response = await this.apiRequest<ResourceDiscoveryResponse>(
-        `/api/resources/discovery?${query.toString()}`
-      );
+      const response = await this.apiRequest<ResourceListResponse>(`/api/resources?${query.toString()}`);
 
       this.resources.set(response.resources);
-      this.resourceDiscoveryRegions.set(response.regions);
 
-      const healthyRegions = response.regions.filter((entry) => entry.status === 'ok').length;
-      const failedRegions = response.regions.filter((entry) => entry.status === 'error').length;
+      if (response.resources.length === 0) {
+        this.selectedResource.set(null);
+        this.resourceDetails.set(null);
+        this.resourceStateHistory.set([]);
+        this.resourceStateHistoryScope.set('context');
+      } else {
+        const currentSelection = this.selectedResource();
+        const nextSelectedResource =
+          response.resources.find((resource) => this.isSameResource(resource, currentSelection)) ??
+          response.resources[0];
 
-      this.infoMessage.set(
-        `Descoberta multi-regiao concluida: ${response.totalResources} recursos em ${healthyRegions} regioes${failedRegions > 0 ? ` (${failedRegions} com falha)` : ''}.`
-      );
+        await this.loadResourceDetails(nextSelectedResource, { silent: true });
+      }
+
+      this.infoMessage.set(`Inventario concluido para ${region}: ${response.resources.length} recurso(s) encontrados.`);
     } catch (error) {
-      this.resourceDiscoveryRegions.set([]);
       this.errorMessage.set(error instanceof Error ? error.message : 'Erro ao listar recursos.');
     } finally {
       this.setLoading(false);
     }
   }
 
-  private resetResourcePanelsForContextChange(): void {
-    this.resourceTypes.set([]);
-    this.selectedResourceType.set('');
-    this.createPayloadRows.set([createEmptyResourceFieldRow()]);
-    this.updateDesiredStateRows.set([createEmptyResourceFieldRow()]);
-    this.resources.set([]);
-    this.resourceDiscoveryRegions.set([]);
-    this.resourceDetails.set(null);
-    this.resourceStateHistory.set([]);
-    this.checkupCounts.set({});
-  }
+  private restoreHeaderContextFromUser(user: PublicUser): void {
+    const persistedSelection = readPersistedHeaderSelection();
+    const category = persistedSelection?.category ?? this.selectedCategory();
+    const persistedResourceType = persistedSelection?.resourceType.trim() ?? '';
+    const defaultResourceTypes = getDefaultResourceTypesForCategory(category);
+    const nextResourceTypes = [
+      ...new Set([
+        ...defaultResourceTypes,
+        ...(
+          persistedResourceType.length > 0
+            ? [persistedResourceType]
+            : []
+        )
+      ])
+    ];
+    const selectedAccount =
+      user.accounts.find((entry) => entry.accountId === persistedSelection?.accountId) ??
+      user.accounts[0];
 
-  private setDefaultContextFromUser(user: PublicUser): void {
-    const firstAccount = user.accounts[0];
+    this.selectedCategory.set(category);
+    this.resourceTypes.set(nextResourceTypes);
+    this.selectedResourceType.set(
+      persistedResourceType.length > 0
+        ? persistedResourceType
+        : nextResourceTypes[0] ?? ''
+    );
+    this.applyTemplateDrivenRows(this.selectedResourceType());
 
-    if (!firstAccount) {
+    if (!selectedAccount) {
+      this.selectedAccountId.set('');
+      this.selectedRegion.set('');
       return;
     }
 
-    this.selectedAccountId.set(firstAccount.accountId);
+    const nextRegion = selectedAccount.allowedRegions.includes(persistedSelection?.region ?? '')
+      ? persistedSelection?.region ?? ''
+      : selectedAccount.allowedRegions[0] ?? '';
 
-    const firstRegion = firstAccount.allowedRegions[0] ?? '';
-    this.selectedRegion.set(firstRegion);
+    this.selectedAccountId.set(selectedAccount.accountId);
+    this.selectedRegion.set(nextRegion);
+  }
+
+  private captureContextSelection(): ContextSelectionSnapshot {
+    return {
+      category: this.selectedCategory(),
+      accountId: this.selectedAccountId(),
+      region: this.selectedRegion()
+    };
+  }
+
+  private restoreContextSelection(snapshot: ContextSelectionSnapshot): void {
+    this.selectedCategory.set(snapshot.category);
+    this.selectedAccountId.set(snapshot.accountId);
+    this.selectedRegion.set(snapshot.region);
+  }
+
+  isSelectedResource(resource: ResourceSummary): boolean {
+    return this.isSameResource(resource, this.selectedResource());
+  }
+
+  private isSameResource(
+    left: ResourceSummary | null | undefined,
+    right: ResourceSummary | null | undefined
+  ): boolean {
+    if (!left || !right) {
+      return false;
+    }
+
+    return (
+      left.accountId === right.accountId &&
+      left.region === right.region &&
+      left.typeName === right.typeName &&
+      left.identifier === right.identifier
+    );
+  }
+
+  private async updateContextSelection(
+    applySelection: () => void,
+    fallbackMessage: string
+  ): Promise<void> {
+    const previousSelection = this.captureContextSelection();
+    applySelection();
+
+    try {
+      await this.switchContext();
+    } catch (error) {
+      this.restoreContextSelection(previousSelection);
+      this.errorMessage.set(error instanceof Error ? error.message : fallbackMessage);
+    }
   }
 
   private applyTemplateDrivenRows(resourceType: string): void {
     const template = this.resourceTemplates().find((entry) => entry.typeName === resourceType);
+    const defaultUpdateProfile = getDefaultResourceUpdateProfile(resourceType);
 
     this.createPayloadRows.set(buildTemplateCreateRows(template));
     this.createPayloadText.set(JSON.stringify(buildTemplateCreateSeedState(template), null, 2));
-    this.updateDesiredStateRows.set(buildTemplateUpdateRows(template));
+    this.selectedUpdateProfileId.set(defaultUpdateProfile?.id ?? '');
+    this.updateDesiredStateRows.set(buildFocusedUpdateRows(defaultUpdateProfile));
+    this.updateTagRows.set([createEmptyTagRow()]);
+    this.clearAllUpdateTags.set(false);
+    this.showCreateOptionalTemplateFields.set(false);
+    this.showUpdateOptionalTemplateFields.set(false);
+    this.showCreateCustomFields.set(false);
+    this.showUpdateCustomFields.set(false);
+    this.showUpdatePatchEditor.set(false);
     this.updateIdentifier.set('');
     this.useJsonCreatePayload.set(false);
     this.useJsonUpdateDesiredState.set(false);
@@ -1974,7 +2836,60 @@ export class AppComponent implements OnDestroy {
     );
   }
 
-  trackByIndex = (_index: number): number => _index;
+  readEventValue(event: Event): string {
+    const target = event.target as HTMLInputElement | HTMLTextAreaElement | HTMLSelectElement | null;
+
+    return target?.value ?? '';
+  }
+
+  trackByIndex = (_index: number, row: { index?: number }): number => row.index ?? _index;
+  trackByFieldId = (_index: number, row: { id: string }): string => row.id;
+  trackByToastId = (_index: number, toast: ToastItem): string => toast.id;
+
+  private getStructuredUpdateFieldRow(fieldId: string): TemplateAwareResourceFieldRow | undefined {
+    return this.updateTemplateRows().find((entry) => entry.id === fieldId);
+  }
+
+  private getStructuredUpdateFieldObject(fieldId: string): Record<string, unknown> {
+    const row = this.getStructuredUpdateFieldRow(fieldId);
+    return row ? parseStructuredFieldObject(row.value) : {};
+  }
+
+  private setStructuredUpdateFieldObject(fieldId: string, value: Record<string, unknown>): void {
+    this.updateUpdateDesiredStateFieldRowById(fieldId, {
+      value: stringifyStructuredFieldObject(value)
+    });
+  }
+
+  private getStructuredUpdateFieldEncryptionConfiguration(fieldId: string): Record<string, unknown> {
+    const current = this.getStructuredUpdateFieldObject(fieldId);
+    const rules = current.ServerSideEncryptionConfiguration;
+
+    if (!Array.isArray(rules) || rules.length === 0 || !isPlainObject(rules[0])) {
+      return {};
+    }
+
+    const defaultEncryption = (rules[0] as Record<string, unknown>).ApplyServerSideEncryptionByDefault;
+    return isPlainObject(defaultEncryption) ? defaultEncryption : {};
+  }
+
+  private setStructuredUpdateFieldEncryptionConfiguration(
+    fieldId: string,
+    configuration: Record<string, unknown>
+  ): void {
+    if (!configuration.SSEAlgorithm) {
+      this.setStructuredUpdateFieldObject(fieldId, {});
+      return;
+    }
+
+    this.setStructuredUpdateFieldObject(fieldId, {
+      ServerSideEncryptionConfiguration: [
+        {
+          ApplyServerSideEncryptionByDefault: configuration
+        }
+      ]
+    });
+  }
 
   private saveSession(token: string, user: PublicUser): void {
     this.token.set(token);
@@ -1989,6 +2904,24 @@ export class AppComponent implements OnDestroy {
   private clearMessages(): void {
     this.errorMessage.set('');
     this.infoMessage.set('');
+  }
+
+  dismissToast(toastId: string): void {
+    this.toasts.set(this.toasts().filter((toast) => toast.id !== toastId));
+  }
+
+  private enqueueToast(kind: ToastKind, message: string): void {
+    const nextToast: ToastItem = {
+      id: createToastId(),
+      kind,
+      message
+    };
+
+    this.toasts.update((currentToasts) => [...currentToasts.slice(-3), nextToast]);
+
+    setTimeout(() => {
+      this.dismissToast(nextToast.id);
+    }, 4200);
   }
 
   private async apiRequest<T>(path: string, init?: RequestInit): Promise<T> {

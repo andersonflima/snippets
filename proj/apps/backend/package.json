@@ -4,6 +4,7 @@
   "private": true,
   "type": "module",
   "scripts": {
+    "watch": "tsx watch src/index.ts",
     "dev": "tsx watch src/index.ts",
     "build": "tsc -p tsconfig.json",
     "start": "node dist/index.js",
@@ -11,7 +12,12 @@
   },
   "dependencies": {
     "@aws-sdk/client-cloudcontrol": "^3.908.0",
+    "@aws-sdk/client-ec2": "^3.1015.0",
+    "@aws-sdk/client-efs": "^3.1015.0",
+    "@aws-sdk/client-ecs": "^3.1015.0",
+    "@aws-sdk/client-fsx": "^3.1015.0",
     "@aws-sdk/client-rds": "^3.1015.0",
+    "@aws-sdk/client-s3": "^3.1016.0",
     "@aws-sdk/client-sts": "^3.908.0",
     "@fastify/cors": "^11.0.0",
     "@fastify/jwt": "^10.0.0",

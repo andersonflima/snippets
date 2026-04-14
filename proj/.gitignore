@@ -8,3 +8,4 @@ coverage
 npm-debug.log*
 *.tsbuildinfo
 apps/backend/.localstack-organization-accounts.json
+apps/backend/.localstack-seeded-resources.json

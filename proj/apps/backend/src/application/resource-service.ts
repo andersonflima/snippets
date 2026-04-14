@@ -1,9 +1,13 @@
 import {
   AwsCategory,
+  getResourceUpdateProfile,
   getResourceTemplate,
   getResourceTemplates,
+  FinOpsOverview,
+  FinOpsResourceSummary,
   ResourceAction,
   ResourceStateAction,
+  ResourceSummary,
   ResourceStateRecord,
   ResourceTemplate,
   UpsertResourcePayload,
@@ -35,6 +39,19 @@ type StateHistoryQuery = {
   typeName?: string;
   identifier?: string;
   limit?: number;
+};
+
+type FinOpsOverviewQuery = {
+  staleDays?: number;
+};
+
+type FinOpsObservation = {
+  resource: ResourceSummary;
+  latestState?: ResourceStateRecord;
+  isObsolete: boolean;
+  lastStateAt: number | null;
+  daysWithoutUpdate: number | null;
+  obsolescenceReason: string;
 };
 
 const FALLBACK_IDENTIFIER = '__pending__';
@@ -132,6 +149,63 @@ const asListStateLimit = (value: number | undefined): number => {
   }
 
   return Math.max(1, Math.min(250, Math.floor(value)));
+};
+
+const toFiniteNonZeroInt = (value: number | undefined, fallback: number): number => {
+  if (typeof value !== 'number' || !Number.isFinite(value) || !Number.isInteger(value)) {
+    return fallback;
+  }
+
+  if (value <= 0) {
+    return fallback;
+  }
+
+  return value;
+};
+
+const toSafeErrorMessage = (error: unknown, fallback: string): string => {
+  if (typeof error === 'object' && error !== null && 'message' in error) {
+    const candidate = error as { message?: unknown };
+    if (typeof candidate.message === 'string' && candidate.message.trim().length > 0) {
+      return candidate.message;
+    }
+  }
+
+  return fallback;
+};
+
+const buildResourceStateKey = (typeName: string, identifier: string): string =>
+  `${typeName}|${identifier}`;
+
+const toDaysSinceEpoch = (timestamp: number, now: number): number =>
+  Math.max(0, Math.floor((now - timestamp) / (24 * 60 * 60 * 1000)));
+
+const getFinopsObsolescence = (input: {
+  latestState?: ResourceStateRecord;
+  staleDays: number;
+  now: number;
+}) => {
+  if (!input.latestState) {
+    return {
+      isObsolete: true,
+      lastStateAt: null as number | null,
+      daysWithoutUpdate: null as number | null,
+      obsolescenceReason: 'Nenhum estado de operacao registrado para o recurso.'
+    };
+  }
+
+  const lastStateAt = input.latestState.createdAt;
+  const daysWithoutUpdate = toDaysSinceEpoch(lastStateAt, input.now);
+
+  return {
+    isObsolete: daysWithoutUpdate >= input.staleDays,
+    lastStateAt,
+    daysWithoutUpdate,
+    obsolescenceReason:
+      daysWithoutUpdate >= input.staleDays
+        ? `Ultima atualizacao ha ${daysWithoutUpdate} dias.`
+        : 'Recente'
+  };
 };
 
 const isPresentTemplateValue = (value: unknown): boolean => {
@@ -294,6 +368,62 @@ const assertTemplateRequiredValues = (typeName: string, desiredState: Record<str
     throw createAppError(
       'INVALID_RESOURCE_DATA',
       `Campos obrigatorios ausentes para ${typeName}: ${missingFieldNames}.`,
+      422
+    );
+  }
+};
+
+const assertFocusedUpdateProfile = (
+  typeName: string,
+  updateProfileId: string | undefined,
+  desiredState: Record<string, unknown>,
+  patchDocument?: readonly Record<string, unknown>[]
+): void => {
+  if (!updateProfileId || updateProfileId.trim().length === 0) {
+    throw createAppError(
+      'INVALID_RESOURCE_DATA',
+      `Informe o updateProfileId para atualizar ${typeName}.`,
+      422
+    );
+  }
+
+  if (patchDocument && patchDocument.length > 0) {
+    throw createAppError(
+      'INVALID_RESOURCE_DATA',
+      'PatchDocument nao e permitido em updates focados.',
+      422
+    );
+  }
+
+  const profile = getResourceUpdateProfile(typeName, updateProfileId);
+  if (!profile) {
+    throw createAppError(
+      'INVALID_RESOURCE_DATA',
+      `Perfil de update ${updateProfileId} nao encontrado para ${typeName}.`,
+      422
+    );
+  }
+
+  const allowedFieldKeys = new Set(profile.fieldKeys);
+  const desiredStateKeys = Object.keys(desiredState);
+  const invalidKeys = desiredStateKeys.filter((fieldKey) => !allowedFieldKeys.has(fieldKey));
+
+  if (invalidKeys.length > 0) {
+    throw createAppError(
+      'INVALID_RESOURCE_DATA',
+      `O update ${profile.label} permite apenas: ${profile.fieldKeys.join(', ')}. Recebido: ${invalidKeys.join(', ')}.`,
+      422
+    );
+  }
+
+  const hasAtLeastOneProfileField = profile.fieldKeys.some((fieldKey) =>
+    Object.prototype.hasOwnProperty.call(desiredState, fieldKey)
+  );
+
+  if (!hasAtLeastOneProfileField) {
+    throw createAppError(
+      'INVALID_RESOURCE_DATA',
+      `Informe ao menos um valor para o update ${profile.label}.`,
       422
     );
   }
@@ -486,33 +616,195 @@ export const createResourceService = ({
     });
   };
 
+  const getAllowedResourceTypesForExecution = async (executionContext: {
+    userId: string;
+    accountId: string;
+    category: AwsCategory;
+  }): Promise<readonly string[]> => {
+    const user = await userRepository.findById(executionContext.userId);
+
+    if (!user) {
+      return [];
+    }
+
+    const categoryTypes = getCategoryResourceTypes(executionContext.category);
+
+    if (user.role === 'admin') {
+      return categoryTypes;
+    }
+
+    const accessChecks = await Promise.all(
+      categoryTypes.map(async (typeName) => {
+        const allowed = await permissionRepository.isAllowed({
+          userId: executionContext.userId,
+          accountId: executionContext.accountId,
+          category: executionContext.category,
+          action: 'list',
+          resourceType: typeName
+        });
+
+        return allowed ? typeName : null;
+      })
+    );
+
+    return accessChecks.flatMap((typeName) => (typeName ? [typeName] : []));
+  };
+
+  const normalizeFinOpsResourceSummary = (
+    observation: FinOpsObservation,
+    latestState: ResourceStateRecord | undefined
+  ): FinOpsResourceSummary => ({
+    ...observation.resource,
+    isObsolete: observation.isObsolete,
+    lastStateAt: observation.lastStateAt,
+    daysWithoutUpdate: observation.daysWithoutUpdate,
+    lastStateStatus: latestState?.status ?? null,
+    lastStateOperation: latestState?.operation ?? null,
+    obsolescenceReason: observation.obsolescenceReason
+  });
+
   return {
     listTemplates: async () => getResourceTemplates(),
     getTemplateByType: async (typeName: string) => toTemplateField(getResourceTemplate(typeName)),
 
     listTypes: async (userId: string): Promise<readonly string[]> => {
       const { user, context } = await resolveExecution(userId);
-      const categoryTypes = getCategoryResourceTypes(context.category);
+      return getAllowedResourceTypesForExecution({
+        userId,
+        accountId: context.accountId,
+        category: context.category
+      });
+    },
 
-      if (user.role === 'admin') {
-        return categoryTypes;
+    getFinopsOverview: async (userId: string, query: FinOpsOverviewQuery): Promise<FinOpsOverview> => {
+      const { execution } = await resolveExecution(userId);
+      const context = {
+        accountId: execution.account.accountId,
+        region: execution.region,
+        category: execution.category
+      };
+
+      const staleThresholdDays = toFiniteNonZeroInt(query.staleDays, 30);
+      const now = Date.now();
+      const allowedTypes = await getAllowedResourceTypesForExecution({
+        userId,
+        accountId: context.accountId,
+        category: context.category
+      });
+
+      if (allowedTypes.length === 0) {
+        return {
+          accountId: context.accountId,
+          region: context.region,
+          category: context.category,
+          staleThresholdDays,
+          totalResources: 0,
+          obsoleteResources: 0,
+          resourcesWithoutState: 0,
+          staleRatePercent: 0,
+          resourcesByType: {},
+          obsoleteByType: {},
+          resources: [],
+          warnings: []
+        };
       }
 
-      const accessChecks = await Promise.all(
-        categoryTypes.map(async (typeName) => {
-          const allowed = await permissionRepository.isAllowed({
-            userId,
-            accountId: context.accountId,
-            category: context.category,
-            action: 'list',
-            resourceType: typeName
-          });
+      const latestStates = await resourceStateRepository.listLatestByContext({
+        accountId: context.accountId,
+        region: context.region,
+        category: context.category
+      });
 
-          return allowed ? typeName : null;
+      const latestStateByResource = new Map<string, ResourceStateRecord>(
+        latestStates.map((state) => [buildResourceStateKey(state.typeName, state.identifier), state])
+      );
+
+      const collectByType = await Promise.all(
+        allowedTypes.map(async (typeName) => {
+          try {
+            const resources = await resourceGateway.listResources({
+              execution,
+              typeName
+            });
+
+            return {
+              typeName,
+              resources,
+              warning: undefined as string | undefined
+            };
+          } catch (error) {
+            return {
+              typeName,
+              resources: [] as readonly ResourceSummary[],
+              warning: toSafeErrorMessage(error, `Nao foi possivel listar ${typeName} neste momento.`)
+            };
+          }
         })
       );
 
-      return accessChecks.flatMap((typeName) => (typeName ? [typeName] : []));
+      const warnings = collectByType.flatMap((entry) => (entry.warning ? [entry.warning] : []));
+      const resourcesByType: Record<string, number> = {};
+      const obsoleteByType: Record<string, number> = {};
+      const observations: FinOpsResourceSummary[] = [];
+      let obsoleteResources = 0;
+      let resourcesWithoutState = 0;
+
+      collectByType.forEach(({ typeName, resources }) => {
+        resourcesByType[typeName] = resources.length;
+        obsoleteByType[typeName] = 0;
+
+        resources.forEach((resource) => {
+          const latestState = latestStateByResource.get(buildResourceStateKey(typeName, resource.identifier));
+          const finopsState = getFinopsObsolescence({
+            latestState,
+            staleDays: staleThresholdDays,
+            now
+          });
+
+          const summary = normalizeFinOpsResourceSummary(
+            {
+              resource,
+              latestState,
+              isObsolete: finopsState.isObsolete,
+              lastStateAt: finopsState.lastStateAt,
+              daysWithoutUpdate: finopsState.daysWithoutUpdate,
+              obsolescenceReason: finopsState.obsolescenceReason
+            },
+            latestState
+          );
+
+          observations.push(summary);
+
+          if (finopsState.isObsolete) {
+            obsoleteResources += 1;
+            obsoleteByType[typeName] += 1;
+          }
+
+          if (!latestState) {
+            resourcesWithoutState += 1;
+          }
+        });
+      });
+
+      const staleRatePercent =
+        observations.length === 0
+          ? 0
+          : Number(((obsoleteResources / observations.length) * 100).toFixed(2));
+
+      return {
+        accountId: context.accountId,
+        region: context.region,
+        category: context.category,
+        staleThresholdDays,
+        totalResources: observations.length,
+        obsoleteResources,
+        resourcesWithoutState,
+        staleRatePercent,
+        resourcesByType,
+        obsoleteByType,
+        resources: observations,
+        warnings: [...new Set(warnings)]
+      };
     },
 
     listResources: async (userId: string, typeName?: string) => {
@@ -643,21 +935,20 @@ export const createResourceService = ({
       });
 
       const desiredState = payload.desiredState ?? {};
-      const normalizedDesiredState = buildDesiredStateWithTemplateDefaults(
-        payload.typeName,
-        desiredState,
-        { skipDefaultsWhenEmpty: true }
-      );
+      const normalizedDesiredState = desiredState;
       assertTemplateDesiredStateConforms(payload.typeName, normalizedDesiredState);
+      assertFocusedUpdateProfile(
+        payload.typeName,
+        payload.updateProfileId,
+        normalizedDesiredState,
+        payload.patchDocument
+      );
       const patchDocument = payload.patchDocument;
 
-      if (
-        Object.keys(normalizedDesiredState).length === 0 &&
-        (!patchDocument || patchDocument.length === 0)
-      ) {
+      if (Object.keys(normalizedDesiredState).length === 0) {
         throw createAppError(
           'INVALID_RESOURCE_DATA',
-          'Informe desiredState ou patchDocument para update.',
+          'Informe dados para o update selecionado.',
           422
         );
       }

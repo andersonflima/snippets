@@ -1,3 +1,15 @@
+<section class="toast-stack" *ngIf="toasts().length > 0">
+  <article
+    class="toast"
+    *ngFor="let toast of toasts(); trackBy: trackByToastId"
+    [class.toast--error]="toast.kind === 'error'"
+    [class.toast--info]="toast.kind === 'info'"
+  >
+    <p>{{ toast.message }}</p>
+    <button type="button" class="toast-dismiss" (click)="dismissToast(toast.id)">Fechar</button>
+  </article>
+</section>
+
 <div class="shell" *ngIf="isAuthenticated(); else loginView">
   <aside class="sidebar">
     <div class="brand-block">
@@ -7,27 +19,26 @@
     </div>
 
     <section class="menu-block">
-      <p class="menu-title">Navegacao</p>
-      <div class="view-switch">
+      <p class="menu-title">Visualizacao</p>
+      <nav class="view-switch">
         <button
           class="category-item"
           [class.active]="workspaceView() === 'resources'"
           (click)="switchView('resources')"
         >
-          Gerenciar Recursos
+          Recursos
         </button>
         <button
           class="category-item"
-          *ngIf="isAdmin()"
-          [class.active]="workspaceView() === 'admin'"
-          (click)="switchView('admin')"
+          [class.active]="workspaceView() === 'finops'"
+          (click)="switchView('finops')"
         >
-          Admin
+          FinOps
         </button>
-      </div>
+      </nav>
     </section>
 
-    <section class="menu-block" *ngIf="workspaceView() === 'resources'">
+    <section class="menu-block">
       <p class="menu-title">Categorias AWS</p>
       <nav class="category-list">
         <button
@@ -45,49 +56,29 @@
   </aside>
 
   <main class="workspace">
-    <section class="status-line">
-      <p class="loading" *ngIf="loading()">Processando...</p>
-      <p class="error" *ngIf="errorMessage().length > 0">{{ errorMessage() }}</p>
-      <p class="info" *ngIf="infoMessage().length > 0">{{ infoMessage() }}</p>
-    </section>
-
-    <ng-container *ngIf="workspaceView() === 'resources'; else adminWorkspace">
-      <section class="panel workspace-title">
-        <div class="title-row">
-          <div>
-            <h2>Gerenciamento de Recursos</h2>
-            <p>{{ user()?.name }}</p>
-          </div>
-          <div class="title-meta">
-            <span class="chip">{{ selectedCategoryLabel() }}</span>
-            <span class="chip">{{ resources().length }} recurso(s)</span>
-            <span class="chip">{{ selectedRegion() || 'regiao padrao' }}</span>
-          </div>
-        </div>
-      </section>
-
-      <section class="panel context-module">
-        <h3>Contexto da Descoberta</h3>
-        <header class="toolbar">
-          <label>
-            Conta
-            <select [ngModel]="selectedAccountId()" (ngModelChange)="onAccountChange($event)">
+    <ng-container *ngIf="workspaceView() === 'resources'; else nonResourceWorkspace">
+      <header class="panel context-header">
+        <div class="toolbar">
+          <label class="context-control">
+            <span class="context-control-label">Conta</span>
+            <select aria-label="Conta" [ngModel]="selectedAccountId()" (ngModelChange)="onAccountChange($event)">
               <option *ngFor="let account of availableAccounts()" [value]="account.accountId">
                 {{ account.name }} ({{ account.accountId }})
               </option>
             </select>
           </label>
 
-          <label>
-            Regiao
-            <select [ngModel]="selectedRegion()" (ngModelChange)="onRegionChange($event)">
+          <label class="context-control">
+            <span class="context-control-label">Região</span>
+            <select aria-label="Regiao" [ngModel]="selectedRegion()" (ngModelChange)="onRegionChange($event)">
               <option *ngFor="let region of availableRegions()" [value]="region">{{ region }}</option>
             </select>
           </label>
 
-          <label>
-            Recurso
+          <label class="context-control">
+            <span class="context-control-label">Recurso</span>
             <select
+              aria-label="Recurso"
               [ngModel]="selectedResourceType()"
               (ngModelChange)="onResourceTypeChange($event)"
               [disabled]="resourceTypes().length === 0"
@@ -98,627 +89,516 @@
               <option *ngFor="let typeName of resourceTypes()" [value]="typeName">{{ typeName }}</option>
             </select>
           </label>
+        </div>
+      </header>
 
-          <button (click)="refreshResources()">Atualizar</button>
-        </header>
-
-        <section class="mini-panels">
-          <article class="context-summary">
-            <p>
-              Categoria ativa: <strong>{{ selectedCategoryLabel() }}</strong>
-            </p>
-            <p class="small" *ngIf="resourceTypes().length === 0">
-              Nenhum tipo disponivel para esta categoria no contexto atual (conta/regiao/ACL).
-            </p>
-          </article>
-
-          <article class="discovery-meta" *ngIf="resourceDiscoveryRegions().length > 0">
-            <p>
-              Descoberta automatica por tipo em todas as regioes autorizadas da conta.
-              <strong>{{ discoveryHealthyRegionCount() }}</strong> regioes com sucesso,
-              <strong>{{ discoveryFailureCount() }}</strong> com falha.
-            </p>
-          </article>
-        </section>
-      </section>
-
-      <section class="panel checkup-grid">
-        <article class="checkup-card" *ngFor="let item of checkupCounts() | keyvalue">
-          <h3>{{ item.key }}</h3>
-          <p>{{ item.value }} recursos</p>
-        </article>
-      </section>
-
-      <section class="panel discovery-grid" *ngIf="resourceDiscoveryRegions().length > 0">
-        <article
-          class="discovery-card"
-          *ngFor="let summary of resourceDiscoveryRegions()"
-          [class.error]="summary.status === 'error'"
-        >
-          <h3>{{ summary.region }}</h3>
-          <p>{{ summary.total }} recursos</p>
-          <p *ngIf="summary.status === 'error' && summary.message" class="discovery-error">
-            {{ summary.message }}
-          </p>
+      <section class="checkup-grid">
+        <article class="checkup-card" *ngFor="let card of checkupCards()">
+          <p class="checkup-service">{{ card.serviceLabel }}</p>
+          <div class="checkup-card-body">
+            <div class="checkup-copy">
+              <h3>{{ card.resourceLabel }}</h3>
+              <p class="checkup-type">{{ card.typeName }}</p>
+            </div>
+            <div class="checkup-stat">
+              <strong>{{ card.total }}</strong>
+              <span>recursos</span>
+            </div>
+          </div>
+          <div class="checkup-bar">
+            <span [style.width.%]="card.fillPercentage"></span>
+          </div>
         </article>
       </section>
 
       <section class="resource-panel-grid">
         <section class="panel action-module">
-          <h3>Operacoes de Recurso</h3>
-          <p class="small">
-            Modo guiado por etapa: escolha a ação, ajuste apenas os parâmetros da operação e execute.
-          </p>
-          <nav class="action-tabs" role="tablist" aria-label="Acoes de recurso">
-            <button
-              type="button"
-              class="action-tab"
-              role="tab"
-              aria-selected="{{ activeResourceActionTab() === 'create' }}"
-              [disabled]="isMobileResourceActions() && deleteCandidate() !== null"
-              (click)="setResourceActionTab('create')"
-            >
-              Criar
-            </button>
-            <button
-              type="button"
-              class="action-tab"
-              role="tab"
-              aria-selected="{{ activeResourceActionTab() === 'update' }}"
-              [disabled]="isMobileResourceActions() && deleteCandidate() !== null"
-              (click)="setResourceActionTab('update')"
-            >
-              Atualizar
-            </button>
-            <button
-              type="button"
-              class="action-tab action-tab--delete"
-              role="tab"
-              aria-selected="{{ activeResourceActionTab() === 'delete' }}"
-              (click)="setResourceActionTab('delete')"
-            >
-              Excluir
-            </button>
-          </nav>
+          <header class="action-module-header">
+            <div>
+              <h3>Operacoes de Recurso</h3>
+              <p class="small">
+                Criação abre em modal guiado. Atualização fica disponível diretamente em cada recurso listado.
+              </p>
+            </div>
+            <span class="chip">{{ selectedResourceType() || 'tipo pendente' }}</span>
+          </header>
 
-          <section class="operation-panel-stack">
-            <section class="operation-panel" [class.is-active]="activeResourceActionTab() === 'create'">
-              <article class="form-card">
-                <header class="operation-hero">
-                  <h4>1. Criar recurso</h4>
-                  <p class="small">
-                    Cria um novo recurso do tipo
-                    <strong>{{ selectedResourceType() || 'não selecionado' }}</strong>.
-                  </p>
-                </header>
+          <article class="action-summary-card">
+            <p class="small">
+              <strong>Template atual:</strong> {{ selectedResourceTemplate()?.description || 'Selecione um tipo de recurso para carregar o formulário guiado.' }}
+            </p>
+            <p class="small">
+              <strong>Conta:</strong> {{ selectedAccountId() || 'não selecionada' }} ·
+              <strong>Regiao:</strong> {{ selectedRegion() || 'não selecionada' }}
+            </p>
+          </article>
 
-                <section class="operation-section">
-                  <div class="operation-section-header">
-                    <h5>2. Formato da entrada</h5>
-                    <p class="small">Escolha como preencher os parâmetros.</p>
-                  </div>
-
-                  <div class="mode-switch">
-                    <button
-                      type="button"
-                      class="mode-chip"
-                      [class.is-active]="!useJsonCreatePayload()"
-                      (click)="!useJsonCreatePayload() || toggleCreatePayloadMode()"
-                    >
-                      Formulário (chave/valor)
-                    </button>
-                    <button
-                      type="button"
-                      class="mode-chip"
-                      [class.is-active]="useJsonCreatePayload()"
-                      (click)="useJsonCreatePayload() || toggleCreatePayloadMode()"
-                    >
-                      JSON Livre
-                    </button>
-                  </div>
-                </section>
-
-                <section class="operation-section">
-                  <h5>3. Campos do recurso</h5>
-
-                  <div class="form-row-grid" *ngIf="!useJsonCreatePayload()">
-                    <article
-                      class="form-row-item form-row-item--kv"
-                      *ngFor="let field of createPayloadRows(); let i = index; trackBy: trackByIndex"
-                    >
-                      <label class="field-label">
-                        {{ isTemplateFieldRow(field) ? asTemplateLabel(field) : field.key }}
-                        <span class="field-key" *ngIf="field.key.length > 0">({{ field.key }})</span>
-                        <span class="field-required" *ngIf="field.required">obrigatorio</span>
-                        <p class="small" *ngIf="field.description">{{ field.description }}</p>
-                      </label>
-                      <label>
-                        Nome da propriedade
-                        <input
-                          [disabled]="isTemplateFieldRow(field)"
-                          [readOnly]="isTemplateFieldRow(field)"
-                          [ngModel]="field.key"
-                          (ngModelChange)="updateCreatePayloadFieldRow(i, { key: $event })"
-                        />
-                      </label>
-                      <label>
-                        Tipo
-                        <select
-                          *ngIf="!isTemplateFieldRow(field)"
-                          [ngModel]="field.valueMode"
-                          (ngModelChange)="updateCreatePayloadFieldRow(i, { valueMode: $event })"
-                        >
-                          <option *ngFor="let mode of resourceFieldValueModes" [value]="mode">{{ mode }}</option>
-                        </select>
-                        <input
-                          *ngIf="isTemplateFieldRow(field) && !isTemplateFieldEnum(field)"
-                          [ngModel]="field.valueMode"
-                          disabled
-                        />
-                        <input
-                          *ngIf="isTemplateFieldRow(field) && isTemplateFieldEnum(field)"
-                          [ngModel]="field.valueMode"
-                          disabled
-                        />
-                      </label>
-                      <label>
-                        Valor
-                        <select
-                          *ngIf="isTemplateFieldRow(field) && isTemplateFieldEnum(field)"
-                          [ngModel]="field.value"
-                          (ngModelChange)="updateCreatePayloadFieldRow(i, { value: $event })"
-                        >
-                          <option value="">Selecione uma opcao</option>
-                          <option *ngFor="let option of field.enumValues" [value]="option">{{ option }}</option>
-                        </select>
-                        <input
-                          *ngIf="
-                            field.valueMode === 'text' &&
-                            !(isTemplateFieldRow(field) && isTemplateFieldEnum(field))
-                          "
-                          type="text"
-                          [ngModel]="field.value"
-                          (ngModelChange)="updateCreatePayloadFieldRow(i, { value: $event })"
-                          [placeholder]="field.placeholder"
-                        />
-                        <input
-                          *ngIf="field.valueMode === 'number'"
-                          type="number"
-                          [ngModel]="field.value"
-                          (ngModelChange)="updateCreatePayloadFieldRow(i, { value: $event })"
-                        />
-                        <select
-                          *ngIf="field.valueMode === 'boolean'"
-                          [ngModel]="field.value"
-                          (ngModelChange)="updateCreatePayloadFieldRow(i, { value: $event })"
-                        >
-                          <option value="true">true</option>
-                          <option value="false">false</option>
-                        </select>
-                        <textarea
-                          *ngIf="field.valueMode === 'json'"
-                          class="form-json-input"
-                          rows="4"
-                          [ngModel]="field.value"
-                          (ngModelChange)="updateCreatePayloadFieldRow(i, { value: $event })"
-                        ></textarea>
-                        <input
-                          *ngIf="field.valueMode === 'null'"
-                          type="text"
-                          [ngModel]="field.value"
-                          (ngModelChange)="updateCreatePayloadFieldRow(i, { value: $event })"
-                          readonly
-                        />
-                      </label>
-                      <button
-                        class="ghost"
-                        type="button"
-                        (click)="removeCreatePayloadFieldRow(i)"
-                        *ngIf="!isTemplateFieldRow(field) || !field.required"
-                      >
-                        Remover campo
-                      </button>
-                    </article>
-                  </div>
-
-                  <div *ngIf="useJsonCreatePayload()">
-                    <label>
-                      JSON de DesiredState
-                      <textarea
-                        [ngModel]="createPayloadText()"
-                        (ngModelChange)="createPayloadText.set($event)"
-                        rows="8"
-                      ></textarea>
-                    </label>
-                  </div>
-                </section>
-
-                <section class="operation-actions">
-                  <div class="delete-actions" *ngIf="!useJsonCreatePayload()">
-                    <button type="button" class="ghost" (click)="addCreatePayloadFieldRow()">
-                      + Adicionar campo
-                    </button>
-                  </div>
-                  <button type="button" (click)="createResource()">Criar recurso</button>
-                </section>
-              </article>
-            </section>
-
-            <section class="operation-panel" [class.is-active]="activeResourceActionTab() === 'update'">
-              <article class="form-card">
-                <header class="operation-hero">
-                  <h4>1. Atualizar recurso</h4>
-                  <p class="small">
-                    Informe o identificador e altere DesiredState e/ou patch por operações.
-                  </p>
-                </header>
-
-                <section class="operation-section">
-                  <h5>2. Identificador do recurso</h5>
-                  <label>
-                    identifier
-                    <input
-                      type="text"
-                      placeholder="ID do recurso"
-                      [ngModel]="updateIdentifier()"
-                      (ngModelChange)="updateIdentifier.set($event)"
-                    />
-                  </label>
-                </section>
-
-                <section class="operation-section">
-                  <div class="operation-section-header">
-                    <h5>3. Estado Desejado (DesiredState)</h5>
-                    <p class="small">Use o modo abaixo para alterar atributos diretamente.</p>
-                  </div>
-
-                  <div class="mode-switch">
-                    <button
-                      type="button"
-                      class="mode-chip"
-                      [class.is-active]="!useJsonUpdateDesiredState()"
-                      (click)="!useJsonUpdateDesiredState() || toggleUpdateDesiredStateMode()"
-                    >
-                      Formulário (chave/valor)
-                    </button>
-                    <button
-                      type="button"
-                      class="mode-chip"
-                      [class.is-active]="useJsonUpdateDesiredState()"
-                      (click)="useJsonUpdateDesiredState() || toggleUpdateDesiredStateMode()"
-                    >
-                      JSON Livre
-                    </button>
-                  </div>
-
-                  <div class="form-row-grid" *ngIf="!useJsonUpdateDesiredState()">
-                    <article
-                      class="form-row-item form-row-item--kv"
-                      *ngFor="let field of updateDesiredStateRows(); let i = index; trackBy: trackByIndex"
-                    >
-                      <label class="field-label">
-                        {{ isTemplateFieldRow(field) ? asTemplateLabel(field) : field.key }}
-                        <span class="field-key" *ngIf="field.key.length > 0">({{ field.key }})</span>
-                        <span class="field-required" *ngIf="field.required">obrigatorio</span>
-                        <p class="small" *ngIf="field.description">{{ field.description }}</p>
-                      </label>
-                      <label>
-                        Nome da propriedade
-                        <input
-                          [disabled]="isTemplateFieldRow(field)"
-                          [readOnly]="isTemplateFieldRow(field)"
-                          [ngModel]="field.key"
-                          (ngModelChange)="updateUpdateDesiredStateFieldRow(i, { key: $event })"
-                        />
-                      </label>
-                      <label>
-                        Tipo
-                        <select
-                          *ngIf="!isTemplateFieldRow(field)"
-                          [ngModel]="field.valueMode"
-                          (ngModelChange)="updateUpdateDesiredStateFieldRow(i, { valueMode: $event })"
-                        >
-                          <option *ngFor="let mode of resourceFieldValueModes" [value]="mode">{{ mode }}</option>
-                        </select>
-                        <input
-                          *ngIf="isTemplateFieldRow(field) && !isTemplateFieldEnum(field)"
-                          [ngModel]="field.valueMode"
-                          disabled
-                        />
-                        <input
-                          *ngIf="isTemplateFieldRow(field) && isTemplateFieldEnum(field)"
-                          [ngModel]="field.valueMode"
-                          disabled
-                        />
-                      </label>
-                      <label>
-                        Valor
-                        <select
-                          *ngIf="isTemplateFieldRow(field) && isTemplateFieldEnum(field)"
-                          [ngModel]="field.value"
-                          (ngModelChange)="updateUpdateDesiredStateFieldRow(i, { value: $event })"
-                        >
-                          <option value="">Selecione uma opcao</option>
-                          <option *ngFor="let option of field.enumValues" [value]="option">{{ option }}</option>
-                        </select>
-                        <input
-                          *ngIf="
-                            field.valueMode === 'text' &&
-                            !(isTemplateFieldRow(field) && isTemplateFieldEnum(field))
-                          "
-                          type="text"
-                          [ngModel]="field.value"
-                          (ngModelChange)="updateUpdateDesiredStateFieldRow(i, { value: $event })"
-                          [placeholder]="field.placeholder"
-                        />
-                        <input
-                          *ngIf="field.valueMode === 'number'"
-                          type="number"
-                          [ngModel]="field.value"
-                          (ngModelChange)="updateUpdateDesiredStateFieldRow(i, { value: $event })"
-                        />
-                        <select
-                          *ngIf="field.valueMode === 'boolean'"
-                          [ngModel]="field.value"
-                          (ngModelChange)="updateUpdateDesiredStateFieldRow(i, { value: $event })"
-                        >
-                          <option value="true">true</option>
-                          <option value="false">false</option>
-                        </select>
-                        <textarea
-                          *ngIf="field.valueMode === 'json'"
-                          class="form-json-input"
-                          rows="4"
-                          [ngModel]="field.value"
-                          (ngModelChange)="updateUpdateDesiredStateFieldRow(i, { value: $event })"
-                        ></textarea>
-                        <input
-                          *ngIf="field.valueMode === 'null'"
-                          type="text"
-                          [ngModel]="field.value"
-                          (ngModelChange)="updateUpdateDesiredStateFieldRow(i, { value: $event })"
-                          readonly
-                        />
-                      </label>
-                      <button
-                        type="button"
-                        class="ghost"
-                        (click)="removeUpdateDesiredStateFieldRow(i)"
-                      >
-                        Remover campo
-                      </button>
-                    </article>
-                  </div>
-
-                  <div *ngIf="useJsonUpdateDesiredState()">
-                    <label>
-                      JSON do DesiredState
-                      <textarea
-                        [ngModel]="updateDesiredStateText()"
-                        (ngModelChange)="updateDesiredStateText.set($event)"
-                        rows="5"
-                      ></textarea>
-                    </label>
-                  </div>
-                </section>
-
-                <section class="operation-section">
-                  <div class="operation-section-header">
-                    <h5>4. Patch Document</h5>
-                    <p class="small">
-                      Opcionalmente, envie operações RFC6902 para alterar chaves específicas.
-                    </p>
-                  </div>
-
-                  <div class="mode-switch">
-                    <button
-                      type="button"
-                      class="mode-chip"
-                      [class.is-active]="!useJsonPatchPayload()"
-                      (click)="!useJsonPatchPayload() || toggleUpdatePatchMode()"
-                    >
-                      Formulário de operações
-                    </button>
-                    <button
-                      type="button"
-                      class="mode-chip"
-                      [class.is-active]="useJsonPatchPayload()"
-                      (click)="useJsonPatchPayload() || toggleUpdatePatchMode()"
-                    >
-                      JSON Livre
-                    </button>
-                  </div>
-
-                  <div class="form-row-grid" *ngIf="!useJsonPatchPayload()">
-                    <article class="form-row-item form-row-item--kv" *ngFor="let patch of updatePatchRows(); let i = index; trackBy: trackByIndex">
-                      <label>
-                        Op
-                        <select
-                          [ngModel]="patch.op"
-                          (ngModelChange)="updatePatchRow(i, { op: $event })"
-                        >
-                          <option *ngFor="let patchOp of patchOperationOptions" [value]="patchOp">{{ patchOp }}</option>
-                        </select>
-                      </label>
-                      <label>
-                        Path
-                        <input [ngModel]="patch.path" (ngModelChange)="updatePatchRow(i, { path: $event })" />
-                      </label>
-                      <label>
-                        From
-                        <input
-                          *ngIf="patch.op === 'move' || patch.op === 'copy'"
-                          [ngModel]="patch.from"
-                          (ngModelChange)="updatePatchRow(i, { from: $event })"
-                        />
-                        <input
-                          *ngIf="patch.op !== 'move' && patch.op !== 'copy'"
-                          value=""
-                          readonly
-                          disabled
-                        />
-                      </label>
-                      <label>
-                        Tipo de Valor
-                        <select [ngModel]="patch.valueMode" (ngModelChange)="updatePatchRow(i, { valueMode: $event })">
-                          <option *ngFor="let mode of resourceFieldValueModes" [value]="mode">{{ mode }}</option>
-                        </select>
-                      </label>
-                      <label>
-                        Valor
-                        <input
-                          *ngIf="patch.valueMode === 'text'"
-                          type="text"
-                          [ngModel]="patch.value"
-                          (ngModelChange)="updatePatchRow(i, { value: $event })"
-                        />
-                        <input
-                          *ngIf="patch.valueMode === 'number'"
-                          type="number"
-                          [ngModel]="patch.value"
-                          (ngModelChange)="updatePatchRow(i, { value: $event })"
-                        />
-                        <select
-                          *ngIf="patch.valueMode === 'boolean'"
-                          [ngModel]="patch.value"
-                          (ngModelChange)="updatePatchRow(i, { value: $event })"
-                        >
-                          <option value="true">true</option>
-                          <option value="false">false</option>
-                        </select>
-                        <textarea
-                          *ngIf="patch.valueMode === 'json'"
-                          class="form-json-input"
-                          rows="4"
-                          [ngModel]="patch.value"
-                          (ngModelChange)="updatePatchRow(i, { value: $event })"
-                        ></textarea>
-                        <input
-                          *ngIf="patch.valueMode === 'null'"
-                          type="text"
-                          [ngModel]="patch.value"
-                          (ngModelChange)="updatePatchRow(i, { value: $event })"
-                          readonly
-                        />
-                      </label>
-                      <button type="button" class="ghost" (click)="removeUpdatePatchRow(i)">Remover operacao</button>
-                    </article>
-                  </div>
-
-                  <div *ngIf="useJsonPatchPayload()">
-                    <label>
-                      JSON de Patch
-                      <textarea
-                        [ngModel]="updatePatchText()"
-                        (ngModelChange)="updatePatchText.set($event)"
-                        rows="5"
-                      ></textarea>
-                    </label>
-                  </div>
-                </section>
-
-                <section class="operation-section operation-add-actions">
-                  <div class="delete-actions">
-                    <button
-                      type="button"
-                      class="ghost"
-                      (click)="addUpdateDesiredStateFieldRow()"
-                      *ngIf="!useJsonUpdateDesiredState()"
-                    >
-                      + Adicionar campo
-                    </button>
-                    <button
-                      type="button"
-                      class="ghost"
-                      (click)="addUpdatePatchRow()"
-                      *ngIf="!useJsonPatchPayload()"
-                    >
-                      + Adicionar operação
-                    </button>
-                  </div>
-                </section>
-
-                <section class="operation-actions">
-                  <p class="small">
-                    Recomendação: informe DesiredState ou Patch (ou ambos) antes de executar.
-                  </p>
-                  <button type="button" (click)="updateResource()">Atualizar recurso</button>
-                </section>
-              </article>
-            </section>
-
-            <section class="operation-panel" [class.is-active]="activeResourceActionTab() === 'delete'">
-              <article class="form-card">
-                <header class="operation-hero">
-                  <h4>1. Excluir recurso</h4>
-                  <p class="small">
-                    Exclua com dupla confirmação para evitar exclusões acidentais.
-                  </p>
-                </header>
-
-                <ng-container *ngIf="deleteCandidate() as candidate; else noDeleteCandidate">
-                  <section class="operation-section">
-                    <h5>2. Recurso selecionado</h5>
-                    <p>
-                      <strong>{{ candidate.displayName }}</strong>
-                    </p>
-                    <p class="mono">{{ candidate.identifier }}</p>
-                    <p class="small">
-                      Tipo {{ candidate.typeName }} · Região {{ candidate.region }} · Conta {{ candidate.accountId }}
-                    </p>
-                  </section>
-
-                  <section class="operation-section">
-                    <h5>3. Chave de confirmação</h5>
-                    <label>
-                      Confirmação de segurança
-                      <input
-                        type="text"
-                        placeholder="Digite DELETE"
-                        [ngModel]="deleteConfirmationText()"
-                        (ngModelChange)="deleteConfirmationText.set($event)"
-                      />
-                    </label>
-                  </section>
-
-                  <section class="operation-actions">
-                    <div class="delete-actions">
-                      <button
-                        type="button"
-                        [disabled]="deleteConfirmationText().trim() !== 'DELETE' || deleteIntentId() !== null"
-                        (click)="requestDeleteIntent()"
-                      >
-                        Gerar Intenção
-                      </button>
-                      <button
-                        type="button"
-                        class="danger"
-                        [disabled]="!deleteIntentId()"
-                        (click)="executeDelete()"
-                      >
-                        Excluir Recurso
-                      </button>
-                      <button type="button" class="ghost" (click)="cancelDeleteFlow()">Cancelar</button>
-                    </div>
-
-                    <p class="small" *ngIf="deleteIntentId()">
-                      Intenção ativa. Confirme para concluir com exclusão.
-                    </p>
-                  </section>
-                </ng-container>
-
-                <ng-template #noDeleteCandidate>
-                  <section class="empty-details">
-                    <h4>Nenhum recurso em exclusão</h4>
-                    <p class="small">
-                      Selecione um recurso clicando em “Delete” na lista de inventário para abrir esta etapa.
-                    </p>
-                  </section>
-                </ng-template>
-              </article>
-            </section>
+          <section class="action-launch-grid">
+            <article class="action-launch-card">
+              <p class="eyebrow">Create</p>
+              <h4>Novo recurso</h4>
+              <p class="small">
+                Abre um modal guiado com apenas os campos mínimos e opcionais como tags.
+              </p>
+              <button type="button" (click)="openCreateModal()" [disabled]="selectedResourceType().length === 0">
+                Abrir criação guiada
+              </button>
+            </article>
           </section>
         </section>
+
+        <div class="resource-modal" *ngIf="showCreateModal()">
+          <div class="resource-modal-backdrop" (click)="closeCreateModal()"></div>
+          <article class="resource-modal-card">
+            <header class="resource-modal-header">
+              <div>
+                <p class="eyebrow">Create</p>
+                <h3>Criar {{ selectedResourceType() || 'recurso' }}</h3>
+                <p class="small">
+                  Preencha apenas o mínimo necessário. O restante fica disponível como opcional.
+                </p>
+              </div>
+              <div class="resource-modal-meta">
+                <span class="chip">{{ selectedAccountId() || 'conta' }}</span>
+                <span class="chip">{{ selectedRegion() || 'regiao' }}</span>
+                <button type="button" class="ghost resource-modal-close" (click)="closeCreateModal()">
+                  Fechar
+                </button>
+              </div>
+            </header>
+
+            <section class="resource-modal-body">
+              <section class="modal-feedback" *ngIf="loading()">
+                <p class="loading" *ngIf="loading()">Processando...</p>
+              </section>
+
+              <section class="modal-form-section modal-form-section--resource">
+                <div class="operation-section-header">
+                  <h5>Formato da entrada</h5>
+                  <p class="small">Por padrão use o formulário guiado. JSON fica disponível apenas se necessário.</p>
+                </div>
+                <div class="mode-switch">
+                  <button
+                    type="button"
+                    class="mode-chip"
+                    [class.is-active]="!useJsonCreatePayload()"
+                    (click)="!useJsonCreatePayload() || toggleCreatePayloadMode()"
+                  >
+                    Formulário guiado
+                  </button>
+                  <button
+                    type="button"
+                    class="mode-chip"
+                    [class.is-active]="useJsonCreatePayload()"
+                    (click)="useJsonCreatePayload() || toggleCreatePayloadMode()"
+                  >
+                    JSON Livre
+                  </button>
+                </div>
+              </section>
+
+              <section class="modal-form-section modal-form-section--template" *ngIf="!useJsonCreatePayload()">
+                <div class="operation-section-header">
+                  <h5>Campos do recurso</h5>
+                  <p class="small">Todos os campos mapeados estão visíveis. Preencha apenas o que fizer sentido para este create.</p>
+                </div>
+                <div class="modal-field-grid modal-field-grid--resource">
+                  <article
+                    class="modal-template-field"
+                    [class.modal-template-field--tall]="field.valueMode === 'json'"
+                    *ngFor="let field of createTemplateRows(); trackBy: trackByFieldId"
+                  >
+                    <div class="field-label">
+                      <span class="field-title">{{ field.label || field.key || 'Campo do template' }}</span>
+                      <span class="field-required" *ngIf="field.required">Obrigatorio</span>
+                      <span class="small" *ngIf="field.description">{{ field.description }}</span>
+                    </div>
+                    <label class="modal-field-input">
+                      <span>Valor</span>
+                      <select
+                        *ngIf="(field.enumValues?.length ?? 0) > 0"
+                        [value]="field.value"
+                        (change)="updateCreatePayloadFieldRowById(field.id, { value: readEventValue($event) })"
+                      >
+                        <option value="">Selecione uma opcao</option>
+                        <option *ngFor="let option of field.enumValues" [value]="option">{{ option }}</option>
+                      </select>
+                      <input
+                        *ngIf="
+                          (field.enumValues?.length ?? 0) === 0 &&
+                          field.valueMode !== 'number' &&
+                          field.valueMode !== 'boolean' &&
+                          field.valueMode !== 'json'
+                        "
+                        type="text"
+                        [value]="field.value"
+                        (input)="updateCreatePayloadFieldRowById(field.id, { value: readEventValue($event) })"
+                        [placeholder]="field.placeholder || 'Digite texto'"
+                      />
+                      <input
+                        *ngIf="field.valueMode === 'number'"
+                        type="number"
+                        [value]="field.value"
+                        (input)="updateCreatePayloadFieldRowById(field.id, { value: readEventValue($event) })"
+                        placeholder="0"
+                      />
+                      <select
+                        *ngIf="field.valueMode === 'boolean'"
+                        [value]="field.value"
+                        (change)="updateCreatePayloadFieldRowById(field.id, { value: readEventValue($event) })"
+                      >
+                        <option value="true">true</option>
+                        <option value="false">false</option>
+                      </select>
+                      <textarea
+                        *ngIf="field.valueMode === 'json'"
+                        class="form-json-input"
+                        rows="4"
+                        [value]="field.value"
+                        (input)="updateCreatePayloadFieldRowById(field.id, { value: readEventValue($event) })"
+                        placeholder='Ex: {"Key":"Value"}'
+                      ></textarea>
+                    </label>
+                  </article>
+                </div>
+              </section>
+
+              <section class="modal-form-section modal-form-section--custom" *ngIf="!useJsonCreatePayload()">
+                <div class="operation-section-header">
+                  <h5>Campos customizados</h5>
+                  <p class="small">Use apenas se o recurso exigir algo fora do template mapeado.</p>
+                </div>
+                <div class="mode-switch mode-switch--inline" *ngIf="createCustomRows().length === 0">
+                  <button type="button" class="ghost mode-chip" (click)="startCreateCustomFields()">
+                    + Adicionar campo customizado
+                  </button>
+                </div>
+                <div *ngIf="showCreateCustomFields() && createCustomRows().length > 0">
+                  <div class="form-row-grid form-row-grid--kv">
+                    <div class="form-row-grid-head">
+                      <span>Propriedade</span>
+                      <span>Chave</span>
+                      <span>Tipo</span>
+                      <span>Valor</span>
+                      <span></span>
+                    </div>
+                    <article class="form-row-item form-row-item--kv" *ngFor="let field of createCustomRows(); trackBy: trackByFieldId">
+                      <label class="field-label">
+                        <span class="field-title">{{ field.key.length > 0 ? field.key : 'Propriedade customizada' }}</span>
+                        <span class="field-source">custom</span>
+                      </label>
+                      <label>
+                        <span>Chave customizada</span>
+                        <input
+                          [value]="field.key"
+                          (input)="updateCreatePayloadFieldRowById(field.id, { key: readEventValue($event) })"
+                          placeholder="Nome da chave"
+                        />
+                      </label>
+                      <label>
+                        <span>Tipo do valor</span>
+                        <select
+                          [value]="field.valueMode"
+                          (change)="updateCreatePayloadFieldRowById(field.id, { valueMode: readEventValue($event) })"
+                        >
+                          <option *ngFor="let mode of resourceFieldValueModes" [value]="mode">{{ mode }}</option>
+                        </select>
+                      </label>
+                      <label>
+                        <span>Valor</span>
+                        <input
+                          *ngIf="field.valueMode === 'text'"
+                          type="text"
+                          [value]="field.value"
+                          (input)="updateCreatePayloadFieldRowById(field.id, { value: readEventValue($event) })"
+                          placeholder="Digite texto"
+                        />
+                        <input
+                          *ngIf="field.valueMode === 'number'"
+                          type="number"
+                          [value]="field.value"
+                          (input)="updateCreatePayloadFieldRowById(field.id, { value: readEventValue($event) })"
+                          placeholder="0"
+                        />
+                        <select
+                          *ngIf="field.valueMode === 'boolean'"
+                          [value]="field.value"
+                          (change)="updateCreatePayloadFieldRowById(field.id, { value: readEventValue($event) })"
+                        >
+                          <option value="true">true</option>
+                          <option value="false">false</option>
+                        </select>
+                        <textarea
+                          *ngIf="field.valueMode === 'json'"
+                          class="form-json-input"
+                          rows="4"
+                          [value]="field.value"
+                          (input)="updateCreatePayloadFieldRowById(field.id, { value: readEventValue($event) })"
+                          placeholder='Ex: {"Key":"Value"}'
+                        ></textarea>
+                      </label>
+                      <button type="button" class="ghost row-action" (click)="removeCreatePayloadFieldRowById(field.id)">
+                        Remover
+                      </button>
+                    </article>
+                  </div>
+                  <div class="delete-actions">
+                    <button type="button" class="ghost" (click)="addCreatePayloadFieldRow()">
+                      + Novo campo customizado
+                    </button>
+                  </div>
+                </div>
+              </section>
+
+              <section class="modal-form-section modal-form-section--json" *ngIf="useJsonCreatePayload()">
+                <label>
+                  JSON de DesiredState
+                  <textarea
+                    [value]="createPayloadText()"
+                    (input)="createPayloadText.set(readEventValue($event))"
+                    rows="10"
+                  ></textarea>
+                </label>
+              </section>
+            </section>
+
+            <footer class="resource-modal-footer">
+              <button type="button" class="ghost" (click)="closeCreateModal()" [disabled]="loading()">Cancelar</button>
+              <button type="button" (click)="createResource()" [disabled]="loading()">
+                {{ loading() ? 'Criando...' : 'Criar recurso' }}
+              </button>
+            </footer>
+          </article>
+        </div>
+
+        <div class="resource-modal" *ngIf="showUpdateModal()">
+          <div class="resource-modal-backdrop" (click)="closeUpdateModal()"></div>
+          <article class="resource-modal-card">
+            <header class="resource-modal-header">
+              <div>
+                <p class="eyebrow">Update</p>
+                <h3>Atualizar {{ selectedResourceType() || 'recurso' }}</h3>
+                <p class="small">
+                  O recurso foi escolhido na lista. Ajuste apenas os campos que realmente precisam mudar.
+                </p>
+              </div>
+              <div class="resource-modal-meta">
+                <span class="chip">{{ selectedAccountId() || 'conta' }}</span>
+                <span class="chip">{{ selectedRegion() || 'regiao' }}</span>
+                <button type="button" class="ghost resource-modal-close" (click)="closeUpdateModal()">
+                  Fechar
+                </button>
+              </div>
+            </header>
+
+            <section class="resource-modal-body">
+              <section class="modal-feedback" *ngIf="loading()">
+                <p class="loading" *ngIf="loading()">Processando...</p>
+              </section>
+
+              <section class="modal-form-section modal-form-section--identifier">
+                <label class="modal-field-input">
+                  <span>Identifier do recurso selecionado</span>
+                  <input
+                    type="text"
+                    [value]="updateIdentifier()"
+                    readonly
+                  />
+                </label>
+              </section>
+
+              <section class="modal-form-section modal-form-section--template modal-form-section--update" *ngIf="selectedUpdateProfile() as profile">
+                <div class="operation-section-header">
+                  <h5>Campos do update</h5>
+                  <p class="small">{{ profile.description }}</p>
+                </div>
+                <div
+                  class="modal-field-grid modal-field-grid--update"
+                  [class.modal-field-grid--update-single]="updateTemplateGridMode() === 'single'"
+                  [class.modal-field-grid--update-double]="updateTemplateGridMode() === 'double'"
+                  [class.modal-field-grid--update-triple]="updateTemplateGridMode() === 'triple'"
+                  [class.modal-field-grid--update-quad]="updateTemplateGridMode() === 'quad'"
+                >
+                  <article
+                    class="modal-template-field"
+                    [class.modal-template-field--tall]="
+                      field.valueMode === 'json' && resolveStructuredUpdateFieldKind(field) === null
+                    "
+                    *ngFor="let field of updateTemplateRowsForForm(); trackBy: trackByFieldId"
+                  >
+                    <div class="field-label">
+                      <span class="field-title">{{ field.label || field.key || 'Campo do template' }}</span>
+                      <span class="small" *ngIf="field.description">{{ field.description }}</span>
+                    </div>
+                    <div class="modal-field-input">
+                      <span>Valor</span>
+                      <ng-container [ngSwitch]="resolveStructuredUpdateFieldKind(field)">
+                        <div class="compound-field-grid" *ngSwitchCase="'s3-versioning'">
+                          <label class="modal-field-input">
+                            <span>Status do versionamento</span>
+                            <select
+                              [value]="getStructuredUpdateFieldVersioningStatus(field.id)"
+                              (change)="updateStructuredUpdateFieldVersioningStatus(field.id, readEventValue($event))"
+                            >
+                              <option value="">Nao alterar</option>
+                              <option value="Enabled">Habilitado</option>
+                              <option value="Suspended">Suspenso</option>
+                            </select>
+                          </label>
+                        </div>
+
+                        <div class="compound-field-grid" *ngSwitchCase="'s3-public-access'">
+                          <label class="modal-field-input">
+                            <span>Block public ACLs</span>
+                            <select
+                              [value]="getStructuredUpdateFieldBooleanValue(field.id, 'BlockPublicAcls')"
+                              (change)="updateStructuredUpdateFieldBooleanValue(field.id, 'BlockPublicAcls', readEventValue($event))"
+                            >
+                              <option value="">Nao alterar</option>
+                              <option value="true">Bloquear</option>
+                              <option value="false">Permitir</option>
+                            </select>
+                          </label>
+                          <label class="modal-field-input">
+                            <span>Ignore public ACLs</span>
+                            <select
+                              [value]="getStructuredUpdateFieldBooleanValue(field.id, 'IgnorePublicAcls')"
+                              (change)="updateStructuredUpdateFieldBooleanValue(field.id, 'IgnorePublicAcls', readEventValue($event))"
+                            >
+                              <option value="">Nao alterar</option>
+                              <option value="true">Ignorar</option>
+                              <option value="false">Considerar</option>
+                            </select>
+                          </label>
+                          <label class="modal-field-input">
+                            <span>Block public policy</span>
+                            <select
+                              [value]="getStructuredUpdateFieldBooleanValue(field.id, 'BlockPublicPolicy')"
+                              (change)="updateStructuredUpdateFieldBooleanValue(field.id, 'BlockPublicPolicy', readEventValue($event))"
+                            >
+                              <option value="">Nao alterar</option>
+                              <option value="true">Bloquear</option>
+                              <option value="false">Permitir</option>
+                            </select>
+                          </label>
+                          <label class="modal-field-input">
+                            <span>Restrict public buckets</span>
+                            <select
+                              [value]="getStructuredUpdateFieldBooleanValue(field.id, 'RestrictPublicBuckets')"
+                              (change)="updateStructuredUpdateFieldBooleanValue(field.id, 'RestrictPublicBuckets', readEventValue($event))"
+                            >
+                              <option value="">Nao alterar</option>
+                              <option value="true">Restringir</option>
+                              <option value="false">Nao restringir</option>
+                            </select>
+                          </label>
+                        </div>
+
+                        <div class="compound-field-grid" *ngSwitchCase="'s3-encryption'">
+                          <label class="modal-field-input">
+                            <span>Algoritmo</span>
+                            <select
+                              [value]="getStructuredUpdateFieldEncryptionAlgorithm(field.id)"
+                              (change)="updateStructuredUpdateFieldEncryptionAlgorithm(field.id, readEventValue($event))"
+                            >
+                              <option value="">Nao alterar</option>
+                              <option value="AES256">SSE-S3 (AES256)</option>
+                              <option value="aws:kms">SSE-KMS</option>
+                            </select>
+                          </label>
+                          <label class="modal-field-input">
+                            <span>KMS Key ID</span>
+                            <input
+                              type="text"
+                              [value]="getStructuredUpdateFieldEncryptionKeyId(field.id)"
+                              [disabled]="getStructuredUpdateFieldEncryptionAlgorithm(field.id) !== 'aws:kms'"
+                              (input)="updateStructuredUpdateFieldEncryptionKeyId(field.id, readEventValue($event))"
+                              placeholder="arn:aws:kms:..."
+                            />
+                          </label>
+                        </div>
+
+                        <div class="compound-field-grid" *ngSwitchCase="'dynamodb-throughput'">
+                          <label class="modal-field-input">
+                            <span>Read capacity units</span>
+                            <input
+                              type="number"
+                              [value]="getStructuredUpdateFieldThroughputValue(field.id, 'ReadCapacityUnits')"
+                              (input)="updateStructuredUpdateFieldThroughputValue(field.id, 'ReadCapacityUnits', readEventValue($event))"
+                              placeholder="5"
+                            />
+                          </label>
+                          <label class="modal-field-input">
+                            <span>Write capacity units</span>
+                            <input
+                              type="number"
+                              [value]="getStructuredUpdateFieldThroughputValue(field.id, 'WriteCapacityUnits')"
+                              (input)="updateStructuredUpdateFieldThroughputValue(field.id, 'WriteCapacityUnits', readEventValue($event))"
+                              placeholder="5"
+                            />
+                          </label>
+                        </div>
+
+                        <ng-container *ngSwitchDefault>
+                          <select
+                            *ngIf="(field.enumValues?.length ?? 0) > 0"
+                            [value]="field.value"
+                            (change)="updateUpdateDesiredStateFieldRowById(field.id, { value: readEventValue($event) })"
+                          >
+                            <option value="">Selecione uma opcao</option>
+                            <option *ngFor="let option of field.enumValues" [value]="option">{{ option }}</option>
+                          </select>
+                          <input
+                            *ngIf="
+                              (field.enumValues?.length ?? 0) === 0 &&
+                              field.valueMode !== 'number' &&
+                              field.valueMode !== 'boolean' &&
+                              field.valueMode !== 'json'
+                            "
+                            type="text"
+                            [value]="field.value"
+                            (input)="updateUpdateDesiredStateFieldRowById(field.id, { value: readEventValue($event) })"
+                            [placeholder]="field.placeholder || 'Digite texto'"
+                          />
+                          <input
+                            *ngIf="field.valueMode === 'number'"
+                            type="number"
+                            [value]="field.value"
+                            (input)="updateUpdateDesiredStateFieldRowById(field.id, { value: readEventValue($event) })"
+                            placeholder="0"
+                          />
+                          <select
+                            *ngIf="field.valueMode === 'boolean'"
+                            [value]="field.value"
+                            (change)="updateUpdateDesiredStateFieldRowById(field.id, { value: readEventValue($event) })"
+                          >
+                            <option value="true">true</option>
+                            <option value="false">false</option>
+                          </select>
+                          <textarea
+                            *ngIf="field.valueMode === 'json'"
+                            class="form-json-input"
+                            rows="4"
+                            [value]="field.value"
+                            (input)="updateUpdateDesiredStateFieldRowById(field.id, { value: readEventValue($event) })"
+                            placeholder='Ex: {"Key":"Value"}'
+                          ></textarea>
+                        </ng-container>
+                      </ng-container>
+                    </div>
+                  </article>
+                </div>
+              </section>
+            </section>
+
+            <footer class="resource-modal-footer">
+              <button type="button" class="ghost" (click)="closeUpdateModal()" [disabled]="loading()">Cancelar</button>
+              <button type="button" (click)="updateResource()" [disabled]="loading()">
+                {{ loading() ? 'Atualizando...' : 'Atualizar recurso' }}
+              </button>
+            </footer>
+          </article>
+        </div>
 
         <section class="panel details-shell">
           <h3>Consulta e Inventario</h3>
@@ -742,18 +622,67 @@
                 </tr>
               </thead>
               <tbody>
-                <tr *ngFor="let resource of resources()">
+                <tr
+                  *ngFor="let resource of resources()"
+                  [class.selected]="isSelectedResource(resource)"
+                  (click)="loadResourceDetails(resource)"
+                >
                   <td>{{ resource.displayName }}</td>
                   <td class="mono">{{ resource.identifier }}</td>
                   <td class="mono">{{ resource.typeName }}</td>
                   <td class="mono">{{ resource.region }}</td>
                   <td class="actions">
-                    <button (click)="loadResourceDetails(resource)">Detalhes</button>
-                    <button class="danger" (click)="openDeleteFlow(resource)">Delete</button>
+                    <button (click)="$event.stopPropagation(); loadResourceDetails(resource)">Detalhes</button>
+                    <button class="ghost" (click)="$event.stopPropagation(); openUpdateModal(resource)">Atualizar</button>
+                    <button class="danger" (click)="$event.stopPropagation(); openDeleteFlow(resource)">Delete</button>
                   </td>
                 </tr>
               </tbody>
             </table>
+          </section>
+
+          <section class="panel details" *ngIf="deleteCandidate() as candidate">
+            <h3>Fluxo de Exclusao</h3>
+            <div class="delete-flow">
+              <p class="small">
+                <strong>Recurso selecionado</strong>
+              </p>
+              <p>{{ candidate.displayName }}</p>
+              <p class="mono">{{ candidate.identifier }}</p>
+              <p class="small">
+                Tipo {{ candidate.typeName }} · Região {{ candidate.region }} · Conta {{ candidate.accountId }}
+              </p>
+              <label>
+                {{ deleteConfirmationPrompt() }}
+                <input
+                  type="text"
+                  [placeholder]="deleteConfirmationPlaceholder()"
+                  [ngModel]="deleteConfirmationText()"
+                  (ngModelChange)="deleteConfirmationText.set($event)"
+                />
+              </label>
+              <div class="delete-actions">
+                <button
+                  type="button"
+                  [disabled]="deleteConfirmationText().trim() !== deleteConfirmationToken() || deleteIntentId() !== null"
+                  (click)="requestDeleteIntent()"
+                >
+                  Gerar Intencao
+                </button>
+                <button
+                  type="button"
+                  class="danger"
+                  [disabled]="!deleteIntentId()"
+                  (click)="executeDelete()"
+                >
+                  Excluir Recurso
+                </button>
+                <button type="button" class="ghost" (click)="cancelDeleteFlow()">Cancelar</button>
+              </div>
+              <p class="small" *ngIf="deleteIntentId()">
+                Intenção ativa. Confirme para concluir com exclusão.
+              </p>
+            </div>
           </section>
 
           <section class="panel details" *ngIf="resourceDetails() as details">
@@ -776,6 +705,7 @@
           </section>
           <section class="panel details">
             <h3>Historico de Operacoes (State)</h3>
+            <p class="small">Escopo: {{ resourceStateHistoryScopeLabel() }}</p>
             <p class="small" *ngIf="resourceStateHistory().length === 0">
               Nenhum registro de state para o contexto/filtro atual.
             </p>
@@ -800,6 +730,142 @@
         </section>
       </section>
     </ng-container>
+
+    <ng-template #nonResourceWorkspace>
+      <ng-container *ngIf="workspaceView() === 'finops'; else adminWorkspace">
+        <header class="panel context-header">
+          <div class="toolbar">
+            <label class="context-control">
+              <span class="context-control-label">Conta</span>
+              <select aria-label="Conta" [ngModel]="selectedAccountId()" (ngModelChange)="onAccountChange($event)">
+                <option *ngFor="let account of availableAccounts()" [value]="account.accountId">
+                  {{ account.name }} ({{ account.accountId }})
+                </option>
+              </select>
+            </label>
+
+            <label class="context-control">
+              <span class="context-control-label">Região</span>
+              <select aria-label="Regiao" [ngModel]="selectedRegion()" (ngModelChange)="onRegionChange($event)">
+                <option *ngFor="let region of availableRegions()" [value]="region">{{ region }}</option>
+              </select>
+            </label>
+          </div>
+        </header>
+
+        <section class="checkup-grid">
+          <article class="checkup-card">
+            <p class="checkup-service">Total</p>
+            <div class="checkup-card-body">
+              <div class="checkup-copy">
+                <h3>{{ finopsOverview()?.totalResources ?? 0 }}</h3>
+                <p class="checkup-type">recursos encontrados</p>
+              </div>
+              <div class="checkup-stat">
+                <span class="small">Categoria</span>
+                <strong>{{ selectedCategoryLabel() }}</strong>
+              </div>
+            </div>
+          </article>
+
+          <article class="checkup-card">
+            <p class="checkup-service">Obsoletos</p>
+            <div class="checkup-card-body">
+              <div class="checkup-copy">
+                <h3>{{ finopsOverview()?.obsoleteResources ?? 0 }}</h3>
+                <p class="checkup-type">
+                  sem atualizacao nos últimos {{ finopsOverview()?.staleThresholdDays ?? 0 }} dias
+                </p>
+              </div>
+              <div class="checkup-stat">
+                <span class="small">Taxa</span>
+                <strong>{{ finopsOverview()?.staleRatePercent ?? 0 }}%</strong>
+              </div>
+            </div>
+          </article>
+
+          <article class="checkup-card">
+            <p class="checkup-service">Sem estado</p>
+            <div class="checkup-card-body">
+              <div class="checkup-copy">
+                <h3>{{ finopsOverview()?.resourcesWithoutState ?? 0 }}</h3>
+                <p class="checkup-type">sem registro no state</p>
+              </div>
+              <div class="checkup-stat">
+                <span class="small">Janela</span>
+                <strong>{{ finopsOverview()?.staleThresholdDays ?? 0 }} dias</strong>
+              </div>
+            </div>
+          </article>
+
+          <article class="panel action-module">
+            <p class="checkup-service">Filtro</p>
+            <label class="finops-stale-control">
+              <span class="context-control-label">Dias para considerar obsoleto</span>
+              <input
+                type="number"
+                min="1"
+                [ngModel]="finopsStaleDays()"
+                (ngModelChange)="onFinopsStaleDaysChange($event)"
+              />
+            </label>
+          </article>
+        </section>
+
+        <section class="panel details">
+          <h3>Obsolescência por Tipo</h3>
+          <p class="small" *ngIf="finopsResourceTypeRows().length === 0">Nenhum tipo encontrado para este contexto.</p>
+          <div class="state-grid" *ngIf="finopsResourceTypeRows().length > 0">
+            <article class="state-card" *ngFor="let item of finopsResourceTypeRows()">
+              <p class="small">{{ item.typeName }}</p>
+              <p><strong>{{ item.obsolete }}</strong> / {{ item.total }}</p>
+              <div class="checkup-bar">
+                <span [style.width.%]="item.percent"></span>
+              </div>
+            </article>
+          </div>
+        </section>
+
+        <section class="panel details">
+          <h3>Recursos e Estado de Obsolescência</h3>
+          <p class="small" *ngIf="!(finopsOverview()?.resources || []).length">
+            Nenhum recurso encontrado para este contexto.
+          </p>
+          <table *ngIf="(finopsOverview()?.resources || []).length">
+            <thead>
+              <tr>
+                <th>Tipo</th>
+                <th>Nome</th>
+                <th>Identifier</th>
+                <th>Última atualização</th>
+                <th>Estado</th>
+                <th>Motivo</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr *ngFor="let resource of finopsOverview()?.resources || []">
+                <td class="mono">{{ resource.typeName }}</td>
+                <td>{{ resource.displayName }}</td>
+                <td class="mono">{{ resource.identifier }}</td>
+                <td>
+                  <ng-container *ngIf="resource.lastStateAt">{{ formatStateDate(resource.lastStateAt) }}</ng-container>
+                  <ng-container *ngIf="!resource.lastStateAt">Sem estado</ng-container>
+                </td>
+                <td>{{ resource.isObsolete ? 'Obsoleto' : 'OK' }}</td>
+                <td>{{ resource.obsolescenceReason }}</td>
+              </tr>
+            </tbody>
+          </table>
+        </section>
+
+        <section class="panel details" *ngIf="finopsWarnings().length > 0">
+          <h3>Avisos de descoberta</h3>
+          <ul class="warning-list">
+            <li *ngFor="let warning of finopsWarnings()">{{ warning }}</li>
+          </ul>
+        </section>
+      </ng-container>
+    </ng-template>
 
     <ng-template #adminWorkspace>
       <section class="panel workspace-title">
@@ -1097,12 +1163,15 @@
           Seeds: admin&#64;platform.local, operator&#64;platform.local, viewer&#64;platform.local
         </p>
         <p class="hint">Senha padrão: change-me-please</p>
-        <p class="error" *ngIf="errorMessage().length > 0">{{ errorMessage() }}</p>
+        <p class="loading" *ngIf="loading()">Processando...</p>
       </section>
 
       <div class="login-grid">
-        <section class="panel auth-card">
+        <section class="panel auth-card" *ngIf="authMode() === 'login'; else registerView">
+          <p class="eyebrow">Acesso</p>
           <h2>Entrar</h2>
+          <p class="small">Faça login para acessar a console e gerenciar seus recursos.</p>
+
           <label>
             Email
             <input type="email" [ngModel]="loginEmail()" (ngModelChange)="loginEmail.set($event)" />
@@ -1117,68 +1186,84 @@
             />
           </label>
 
-          <button (click)="onLogin()">Entrar</button>
+          <div class="auth-actions">
+            <button (click)="onLogin()">Entrar</button>
+            <button type="button" class="ghost" (click)="setAuthMode('register')">
+              Criar conta
+            </button>
+          </div>
         </section>
 
-        <section class="panel auth-card">
-          <h2>Cadastrar Novo Usuario</h2>
-          <label>
-            Nome
-            <input [ngModel]="registerName()" (ngModelChange)="registerName.set($event)" />
-          </label>
-          <label>
-            Email
-            <input type="email" [ngModel]="registerEmail()" (ngModelChange)="registerEmail.set($event)" />
-          </label>
-          <label>
-            Senha
-            <input
-              type="password"
-              [ngModel]="registerPassword()"
-              (ngModelChange)="registerPassword.set($event)"
-            />
-          </label>
-          <section class="admin-section">
-            <h4>Contas AWS</h4>
-            <p class="small">Informe pelo menos uma conta para acesso inicial.</p>
-            <div class="form-row-grid">
-              <article class="form-row-item" *ngFor="let account of registerAccountsRows(); let i = index; trackBy: trackByIndex">
-                <label>
-                  ID da Conta
-                  <input
-                    [ngModel]="account.accountId"
-                    (ngModelChange)="updateRegisterAccountRow(i, { accountId: $event })"
-                  />
-                </label>
-                <label>
-                  Nome da Conta
-                  <input
-                    [ngModel]="account.name"
-                    (ngModelChange)="updateRegisterAccountRow(i, { name: $event })"
-                  />
-                </label>
-                <label>
-                  Regiões Permitidas
-                  <select
-                    multiple
-                    size="6"
-                    [ngModel]="account.allowedRegions"
-                    (ngModelChange)="updateRegisterAccountRegions(i, $event)"
-                  >
-                    <option *ngFor="let region of awsRegionOptions" [value]="region">{{ region }}</option>
-                  </select>
-                </label>
-                <button class="ghost" (click)="removeRegisterAccountRow(i)">Remover Conta</button>
-              </article>
-            </div>
-            <p class="small" *ngIf="registerAccountsRows().length === 0">Nenhuma conta informada.</p>
-            <div class="delete-actions">
-              <button class="ghost" (click)="addRegisterAccountRow()">+ Adicionar Conta</button>
-            </div>
-          </section>
+        <ng-template #registerView>
+          <section class="panel auth-card auth-card--register">
+            <p class="eyebrow">Cadastro</p>
+            <h2>Criar Nova Conta</h2>
+            <p class="small">Preencha seus dados e defina as contas AWS do acesso inicial.</p>
 
-          <button (click)="onRegister()">Cadastrar e Entrar</button>
+            <label>
+              Nome
+              <input [ngModel]="registerName()" (ngModelChange)="registerName.set($event)" />
+            </label>
+            <label>
+              Email
+              <input type="email" [ngModel]="registerEmail()" (ngModelChange)="registerEmail.set($event)" />
+            </label>
+            <label>
+              Senha
+              <input
+                type="password"
+                [ngModel]="registerPassword()"
+                (ngModelChange)="registerPassword.set($event)"
+              />
+            </label>
+
+            <section class="admin-section">
+              <h4>Contas AWS</h4>
+              <p class="small">Informe pelo menos uma conta para acesso inicial.</p>
+              <div class="form-row-grid">
+                <article class="form-row-item" *ngFor="let account of registerAccountsRows(); let i = index; trackBy: trackByIndex">
+                  <label>
+                    ID da Conta
+                    <input
+                      [ngModel]="account.accountId"
+                      (ngModelChange)="updateRegisterAccountRow(i, { accountId: $event })"
+                    />
+                  </label>
+                  <label>
+                    Nome da Conta
+                    <input
+                      [ngModel]="account.name"
+                      (ngModelChange)="updateRegisterAccountRow(i, { name: $event })"
+                    />
+                  </label>
+                  <label>
+                    Regiões Permitidas
+                    <select
+                      multiple
+                      size="6"
+                      [ngModel]="account.allowedRegions"
+                      (ngModelChange)="updateRegisterAccountRegions(i, $event)"
+                    >
+                      <option *ngFor="let region of awsRegionOptions" [value]="region">{{ region }}</option>
+                    </select>
+                  </label>
+                  <button class="ghost" (click)="removeRegisterAccountRow(i)">Remover Conta</button>
+                </article>
+              </div>
+              <p class="small" *ngIf="registerAccountsRows().length === 0">Nenhuma conta informada.</p>
+              <div class="delete-actions">
+                <button class="ghost" (click)="addRegisterAccountRow()">+ Adicionar Conta</button>
+              </div>
+            </section>
+
+            <div class="auth-actions">
+              <button (click)="onRegister()">Cadastrar e Entrar</button>
+              <button type="button" class="ghost" (click)="setAuthMode('login')">
+                Voltar para login
+              </button>
+            </div>
           </section>
+        </ng-template>
       </div>
     </section>
   </main>

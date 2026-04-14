@@ -21,7 +21,8 @@ export const createApp = async () => {
   const container = await createContainer();
 
   await app.register(cors, {
-    origin: true
+    origin: true,
+    methods: ['GET', 'HEAD', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS']
   });
 
   await app.register(jwt, {
