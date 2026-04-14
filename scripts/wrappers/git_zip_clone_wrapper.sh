@@ -149,6 +149,11 @@ run_command_with_stderr_capture() {
   local -a command
   local stderr_file
   local command_status
+  local errexit_was_set=0
+
+  if [[ $- == *e* ]]; then
+    errexit_was_set=1
+  fi
 
   command=("$@")
   stderr_file="$(mktemp -t git-zip-command-stderr-XXXXXX)"
@@ -157,7 +162,11 @@ run_command_with_stderr_capture() {
   set +e
   "${command[@]}" 2>"${stderr_file}"
   command_status=$?
-  set -e
+  if (( errexit_was_set == 1 )); then
+    set -e
+  else
+    set +e
+  fi
 
   if [[ -f "${stderr_file}" ]]; then
     GIT_ZIP_WRAPPER_LAST_COMMAND_STDERR="$(cat "${stderr_file}")"

@@ -133,6 +133,11 @@ is_proxy_auth_error_log() {
 run_mix_command_capture() {
   local -a command
   local output_file command_status
+  local errexit_was_set=0
+
+  if [[ $- == *e* ]]; then
+    errexit_was_set=1
+  fi
 
   command=("$@")
   output_file="$(mktemp -t configure-hex-mix-output-XXXXXX)"
@@ -141,7 +146,11 @@ run_mix_command_capture() {
   set +e
   "${command[@]}" >"${output_file}" 2>&1
   command_status=$?
-  set -e
+  if (( errexit_was_set == 1 )); then
+    set -e
+  else
+    set +e
+  fi
 
   if [[ -f "${output_file}" ]]; then
     MIX_HEX_LAST_COMMAND_OUTPUT="$(cat "${output_file}")"

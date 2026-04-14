@@ -40,12 +40,14 @@ resolve_script_path() {
 
 CURL_WRAPPER_ALLOW_ZIP_DOWNLOAD="${CURL_WRAPPER_ALLOW_ZIP_DOWNLOAD:-0}"
 CURL_WRAPPER_AUTO_INSECURE_ON_CERT_ERROR="${CURL_WRAPPER_AUTO_INSECURE_ON_CERT_ERROR:-0}"
+CURL_WRAPPER_RETRY_WITHOUT_PROXY_ON_AUTH_ERROR="${CURL_WRAPPER_RETRY_WITHOUT_PROXY_ON_AUTH_ERROR:-1}"
 CURL_WRAPPER_RELEASE_FALLBACK_REPOS="${CURL_WRAPPER_RELEASE_FALLBACK_REPOS:-elixir-lsp/elixir-ls,johnnymorganz/stylua,luals/lua-language-server,omnisharp/omnisharp-roslyn}"
 CURL_WRAPPER_ALLOW_DIRECT_RELEASE_FALLBACK="${CURL_WRAPPER_ALLOW_DIRECT_RELEASE_FALLBACK:-0}"
 CURL_WRAPPER_ENABLE_MASON_SMART_RELEASES="${CURL_WRAPPER_ENABLE_MASON_SMART_RELEASES:-1}"
 CURL_WRAPPER_ACTIVE_PROXY=""
 CURL_WRAPPER_RESOLVED_REAL_CURL=""
 WRAPPER_DIR="$(cd "$(dirname "$(resolve_script_path "${BASH_SOURCE[0]}")")" && pwd)"
+CURL_WRAPPER_LAST_COMMAND_STDERR=""
 
 is_zip_extension() {
   local value
@@ -1090,6 +1092,44 @@ has_explicit_proxy_arg() {
   return 1
 }
 
+is_proxy_auth_error_log() {
+  local output
+  output="${1:-}"
+  [[ -n "${output}" ]] || return 1
+
+  printf '%s\n' "${output}" | grep -Eiq '(^|[[:space:]])407([[:space:]]|$)|proxy[ -].*authentication|required|proxy authent(i|y)cation|Proxy-Authenticate'
+}
+
+run_command_with_stderr_capture() {
+  local -a command=("$@")
+  local stderr_file
+  local -i exit_code
+  local errexit_was_set=0
+
+  if [[ $- == *e* ]]; then
+    errexit_was_set=1
+  fi
+
+  stderr_file="$(mktemp -t curl-wrapper-stderr-XXXXXX)"
+  CURL_WRAPPER_LAST_COMMAND_STDERR=""
+  set +e
+  "${command[@]}" 2>"${stderr_file}"
+  exit_code=$?
+  if (( errexit_was_set == 1 )); then
+    set -e
+  else
+    set +e
+  fi
+
+  if [[ -s "${stderr_file}" ]]; then
+    CURL_WRAPPER_LAST_COMMAND_STDERR="$(cat "${stderr_file}")"
+    cat "${stderr_file}" >&2
+  fi
+
+  rm -f "${stderr_file}"
+  return "${exit_code}"
+}
+
 source "${WRAPPER_DIR}/lib/mason_release_engine.sh"
 
 main() {
@@ -1106,6 +1146,7 @@ main() {
   local -a normalized_args=()
   local -a real_curl_env=()
   local -a real_curl_cmd=("${real_curl}")
+  local retried_without_proxy=0
   local proxy_from_env
   proxy_from_env=""
 
@@ -1175,14 +1216,48 @@ main() {
   fi
 
   local curl_exit
+  local -a real_curl_cmd_no_proxy=()
+  local -a no_proxy_env_cmd=()
+  local -a no_proxy_fallback_cmd=()
+
   set +e
   if (( proxy_from_env == 1 )); then
-    env "${real_curl_env[@]}" "${real_curl_cmd[@]}" "$@"
+    run_command_with_stderr_capture env "${real_curl_env[@]}" "${real_curl_cmd[@]}" "$@"
   else
-    "${real_curl_cmd[@]}" "$@"
+    run_command_with_stderr_capture "${real_curl_cmd[@]}" "$@"
   fi
   curl_exit=$?
   set -e
+
+  if [[ "${curl_exit}" -ne 0 ]] && \
+    is_truthy "${CURL_WRAPPER_RETRY_WITHOUT_PROXY_ON_AUTH_ERROR}" && \
+    [[ "${proxy_from_env}" == "1" ]] && \
+    ! has_explicit_proxy_arg "$@"; then
+    if is_proxy_auth_error_log "${CURL_WRAPPER_LAST_COMMAND_STDERR}"; then
+      log "curl falhou com erro de autenticação de proxy (407). Tentando novamente sem proxy"
+    else
+      log "curl falhou com proxy ativo. Tentando novamente sem proxy"
+    fi
+    real_curl_cmd_no_proxy=("${real_curl}")
+    real_curl_cmd_no_proxy+=("$@")
+    retried_without_proxy=1
+    no_proxy_env_cmd=(
+      env
+      -u HTTPS_PROXY
+      -u https_proxy
+      -u HTTP_PROXY
+      -u http_proxy
+      -u ALL_PROXY
+      -u all_proxy
+    )
+    no_proxy_env_cmd+=("${real_curl_cmd_no_proxy[@]}")
+
+    set +e
+    run_command_with_stderr_capture "${no_proxy_env_cmd[@]}"
+    curl_exit=$?
+    set -e
+  fi
+
   if [[ "${curl_exit}" -eq 0 ]]; then
     exit 0
   fi
@@ -1205,6 +1280,14 @@ main() {
 
   if [[ "${CURL_FALLBACK_CAN_HANDLE}" != "1" ]]; then
     exit "${curl_exit}"
+  fi
+
+  if [[ "${CURL_FALLBACK_PROXY}" == "${resolved_proxy}" ]] && \
+    is_truthy "${CURL_WRAPPER_RETRY_WITHOUT_PROXY_ON_AUTH_ERROR}" && \
+    ! has_explicit_proxy_arg "$@" && \
+    ([[ "${retried_without_proxy}" == "1" ]] || is_proxy_auth_error_log "${CURL_WRAPPER_LAST_COMMAND_STDERR}"); then
+    log "removendo proxy do fallback python local após falha do curl com proxy"
+    CURL_FALLBACK_PROXY=""
   fi
 
   if [[ -n "${CURL_FALLBACK_PROXY}" ]]; then
