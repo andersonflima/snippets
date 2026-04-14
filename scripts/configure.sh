@@ -1,6 +1,82 @@
 #!/bin/sh
 set -eu
 
+VERBOSE=1
+if [ "${RESTRICTED_DEV_CONFIGURE_VERBOSE:-}" = "0" ]; then
+  VERBOSE=0
+fi
+STEP=0
+START_TS="$(date +%s 2>/dev/null || printf '%s' 0)"
+
+configure_log() {
+  configure_ts="$(date +%H:%M:%S 2>/dev/null || printf '%s' "??:??:??")"
+  printf '[configure] %s %s\n' "${configure_ts}" "$*" >&2
+}
+
+configure_debug() {
+  if [ "${VERBOSE}" = "1" ]; then
+    configure_log "$*"
+  fi
+  return 0
+}
+
+configure_fail() {
+  configure_log "ERRO: $*"
+}
+
+run_step() {
+  description="$1"
+  shift
+  STEP=$((STEP + 1))
+  configure_log "PASSO ${STEP}: ${description}"
+  configure_debug "comando: $*"
+  set +e
+  "$@"
+  script_rc="$?"
+  set -e
+  if [ "${script_rc}" -ne 0 ]; then
+    configure_fail "PASSO ${STEP} falhou (código ${script_rc}): ${description}"
+    exit "${script_rc}"
+  fi
+  configure_debug "PASSO ${STEP} concluído com sucesso"
+}
+
+format_args() {
+  arg_index=1
+  for arg in "$@"; do
+    value="$(printf '%s' "${arg}" | sed 's/[\\"]/\\\\&/g' 2>/dev/null || printf '%s' "${arg}")"
+    if [ "${arg_index}" -eq 1 ]; then
+      printf '"%s"' "${value}"
+      arg_index=0
+    else
+      printf ' "%s"' "${value}"
+    fi
+  done
+}
+
+run_script_with_bash_preference() {
+  script_path="$1"
+  shift
+
+  configure_debug "local de execução: ${script_path}"
+  if [ "${VERBOSE}" = "1" ]; then
+    if command -v bash >/dev/null 2>&1; then
+      configure_debug "executor: bash $(command -v bash)"
+      configure_debug "argumentos: $(format_args "$@")"
+    else
+      configure_debug "executor: sh (bash ausente)"
+      configure_debug "argumentos: $(format_args "$@")"
+    fi
+  fi
+
+  if command -v bash >/dev/null 2>&1; then
+    bash "${script_path}" "$@"
+    return $?
+  fi
+
+  sh "${script_path}" "$@"
+}
+
 resolve_script_path() {
   current_path="$1"
 
@@ -81,18 +157,6 @@ resolve_default_shell_rc() {
 
 DEFAULT_SHELL_RC="$(resolve_default_shell_rc)"
 
-run_script_with_bash_preference() {
-  script_path="$1"
-  shift
-
-  if command -v bash >/dev/null 2>&1; then
-    bash "${script_path}" "$@"
-    return $?
-  fi
-
-  sh "${script_path}" "$@"
-}
-
 sanitize_current_wrapper_env() {
   old_path="${PATH-}"
   new_path=""
@@ -146,10 +210,13 @@ sanitize_current_wrapper_env() {
     PATH="/usr/bin:/bin:/usr/sbin:/sbin"
   fi
   export PATH
+  configure_debug "PATH normalizado após limpeza de wrappers legados"
+  configure_debug "PATH atual (resumo): $(printf '%s\n' "${PATH}" | awk -F: '{ for (i=1; i<=NF; i++) printf "%s ", $i; print "" }' | sed 's/[[:space:]]*$//')"
 }
 
 remove_legacy_brew_wrapper_installation() {
   [ -d "${LEGACY_BREW_WRAPPER_ROOT}" ] || return 0
+  configure_log "Removendo estrutura de wrapper brew legado: ${LEGACY_BREW_WRAPPER_ROOT}"
   rm -rf "${LEGACY_BREW_WRAPPER_ROOT}"
 }
 
@@ -166,11 +233,14 @@ should_apply_shell_rc_by_default() {
 }
 
 is_help_request() {
-  case "${1:-}" in
-    -h|--help)
-      return 0
-      ;;
-  esac
+  while [ "$#" -gt 0 ]; do
+    case "$1" in
+      -h|--help)
+        return 0
+        ;;
+    esac
+    shift
+  done
   return 1
 }
 
@@ -197,34 +267,78 @@ resolve_shell_rc_target() {
 }
 
 run_full_reset_before_setup() {
+  configure_log "Iniciando etapa de limpeza completa antes do setup"
   shell_rc_target="$(resolve_shell_rc_target "$@")"
+  configure_debug "shell rc alvo resolvido: ${shell_rc_target}"
 
   sanitize_current_wrapper_env
   remove_legacy_brew_wrapper_installation
-  run_script_with_bash_preference "${RESET_SCRIPT}" --shell-rc "${shell_rc_target}"
+  run_step "reset inicial (sem aplicar estado externo) com target shell rc ${shell_rc_target}" \
+    run_script_with_bash_preference "${RESET_SCRIPT}" --shell-rc "${shell_rc_target}"
   sanitize_current_wrapper_env
   remove_legacy_brew_wrapper_installation
 }
 
+[ -f "${SETUP_SCRIPT}" ] || {
+  configure_fail "script interno ausente: ${SETUP_SCRIPT}"
+  printf '[configure] script resolvido: %s\n' "${SCRIPT_PATH}" >&2
+  exit 1
+}
+[ -f "${RESET_SCRIPT}" ] || {
+  configure_fail "script interno ausente: ${RESET_SCRIPT}"
+  printf '[configure] script resolvido: %s\n' "${SCRIPT_PATH}" >&2
+  exit 1
+}
+
+configure_log "Início do configure.sh"
+configure_debug "shell alvo default: ${DEFAULT_SHELL_RC}"
+configure_debug "script path: ${SCRIPT_PATH}"
+configure_debug "script dir: ${SCRIPT_DIR}"
+configure_debug "setup interno: ${SETUP_SCRIPT}"
+configure_debug "reset interno: ${RESET_SCRIPT}"
+if [ "${VERBOSE}" = "1" ]; then
+  configure_debug "modo detalhado: ligado"
+else
+  configure_debug "modo detalhado: desligado"
+fi
+
 if is_help_request "$@"; then
+  configure_log "Help solicitado; delegando para setup_restricted_dev_env.sh"
   run_script_with_bash_preference "${SETUP_SCRIPT}" "$@"
   exit $?
 fi
 
 if [ "${1:-}" != "" ] && [ "${1#-}" = "$1" ]; then
-  printf '[configure] parâmetro posicional não é mais suportado: %s\n' "$1" >&2
+  configure_fail "parâmetro posicional não é mais suportado: $1"
   exit 1
 fi
 
 if should_apply_shell_rc_by_default "$@"; then
+  configure_debug "adicionando padrão --apply-shell-rc e --shell-rc"
   set -- --apply-shell-rc --shell-rc "${DEFAULT_SHELL_RC}" "$@"
 fi
 
-run_full_reset_before_setup "$@"
-run_script_with_bash_preference "${SETUP_SCRIPT}" "$@"
+run_step "reset completo de ambiente anterior" run_full_reset_before_setup "$@"
+run_step "executando setup principal" run_script_with_bash_preference "${SETUP_SCRIPT}" "$@"
 
 if [ -f "${WRAPPER_ENV_FILE}" ]; then
+  configure_log "Aplicando env-file atual na shell ativa para efeito imediato"
   . "${WRAPPER_ENV_FILE}"
   rehash 2>/dev/null || true
   hash -r 2>/dev/null || true
+  if [ "${VERBOSE}" = "1" ]; then
+    configure_debug "wrappers carregados no ambiente corrente"
+    configure_debug "PATH atual (resumo): $(printf '%s\n' "${PATH}" | awk -F: '{ for (i=1; i<=NF; i++) printf "%s ", $i; print "" }' | sed 's/[[:space:]]*$//')"
+    configure_debug "CURL_WRAPPER_REAL_CURL=${CURL_WRAPPER_REAL_CURL:-não definido}"
+    configure_debug "GIT_ZIP_WRAPPER_REAL_GIT=${GIT_ZIP_WRAPPER_REAL_GIT:-não definido}"
+    configure_debug "WGET_WRAPPER_REAL_WGET=${WGET_WRAPPER_REAL_WGET:-não definido}"
+  fi
 fi
+
+configure_log "configure.sh finalizado"
+configure_log "Resumo de execução:"
+configure_log " - passos executados: ${STEP}"
+configure_log " - arquivo gerado: ${WRAPPER_ENV_FILE}"
+configure_log " - shell rc gerenciado: ${DEFAULT_SHELL_RC}"
+END_TS="$(date +%s 2>/dev/null || printf '%s' 0)"
+configure_log " - duração: $((END_TS - START_TS))s"
