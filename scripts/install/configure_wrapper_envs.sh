@@ -329,6 +329,9 @@ render_local_exports() {
   printf 'export GIT_ZIP_WRAPPER_CLONE_ORDER=%s\n' "$(shell_quote "local-first")"
   printf 'export GIT_ZIP_WRAPPER_FORCE_LOCAL_DOWNLOADS=%s\n' "$(shell_quote "1")"
   printf 'export GIT_ZIP_WRAPPER_LFS_MODE=%s\n' "$(shell_quote "${GIT_LFS_MODE}")"
+  printf 'export CURL_WRAPPER_RETRY_WITHOUT_PROXY_ON_AUTH_ERROR=%s\n' "$(shell_quote "1")"
+  printf 'export GIT_ZIP_WRAPPER_RETRY_WITHOUT_PROXY_ON_AUTH_ERROR=%s\n' "$(shell_quote "1")"
+  printf 'export WGET_WRAPPER_RETRY_WITHOUT_PROXY_ON_AUTH_ERROR=%s\n' "$(shell_quote "1")"
 
   if [[ -n "${PROXY_URL}" ]]; then
     cat <<EOF2

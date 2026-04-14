@@ -25,6 +25,8 @@ ALLOW_ZIP_FALLBACK="${GIT_ZIP_WRAPPER_ALLOW_ZIP_FALLBACK:-0}"
 GIT_ZIP_WRAPPER_CURL_INSECURE="${GIT_ZIP_WRAPPER_CURL_INSECURE:-0}"
 GIT_ZIP_WRAPPER_CURL_CACERT="${GIT_ZIP_WRAPPER_CURL_CACERT:-}"
 GIT_ZIP_WRAPPER_ACTIVE_PROXY=""
+GIT_ZIP_WRAPPER_RETRY_WITHOUT_PROXY_ON_AUTH_ERROR="${GIT_ZIP_WRAPPER_RETRY_WITHOUT_PROXY_ON_AUTH_ERROR:-1}"
+GIT_ZIP_WRAPPER_LAST_COMMAND_STDERR=""
 WRAPPER_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 GIT_ZIP_WRAPPER_FORCE_LOCAL_DOWNLOADS="1"
 GIT_ZIP_WRAPPER_CLONE_ORDER="${GIT_ZIP_WRAPPER_CLONE_ORDER:-local-first}"
@@ -120,6 +122,49 @@ is_truthy() {
       ;;
   esac
   return 1
+}
+
+is_proxy_auth_error_log() {
+  local output
+  output="${1:-}"
+  printf '%s\n' "${output}" | grep -Eiq '(^|[[:space:]])407([[:space:]]|$)|proxy[ -]authentication|required|proxy authent(i|y)cation|Proxy-Authenticate|proxy error|Proxy Error'
+}
+
+has_explicit_proxy_arg() {
+  local arg
+  for arg in "$@"; do
+    case "${arg}" in
+      -x|--proxy|--proxy=*)
+        return 0
+        ;;
+      -x*)
+        return 0
+        ;;
+    esac
+  done
+  return 1
+}
+
+run_command_with_stderr_capture() {
+  local -a command
+  local stderr_file
+  local command_status
+
+  command=("$@")
+  stderr_file="$(mktemp -t git-zip-command-stderr-XXXXXX)"
+  GIT_ZIP_WRAPPER_LAST_COMMAND_STDERR=""
+
+  set +e
+  "${command[@]}" 2>"${stderr_file}"
+  command_status=$?
+  set -e
+
+  if [[ -f "${stderr_file}" ]]; then
+    GIT_ZIP_WRAPPER_LAST_COMMAND_STDERR="$(cat "${stderr_file}")"
+    rm -f "${stderr_file}"
+  fi
+
+  return "${command_status}"
 }
 
 normalize_archive_format() {
@@ -234,21 +279,58 @@ run_download_curl_command() {
   local download_curl="$1"
   shift
   local -a curl_env=()
+  local -a base_command
+  local -a non_proxy_env=()
+  local item
+  local command_status
 
-  if [[ -n "${GIT_ZIP_WRAPPER_ACTIVE_PROXY}" ]]; then
-    curl_env+=("CURL_FALLBACK_PROXY=${GIT_ZIP_WRAPPER_ACTIVE_PROXY}")
-  fi
+  base_command=("${download_curl}" "$@")
 
   if is_truthy "${GIT_ZIP_WRAPPER_CURL_INSECURE}"; then
     curl_env+=("CURL_FALLBACK_INSECURE=1")
   fi
 
+  if [[ -n "${GIT_ZIP_WRAPPER_ACTIVE_PROXY}" ]]; then
+    curl_env+=("CURL_FALLBACK_PROXY=${GIT_ZIP_WRAPPER_ACTIVE_PROXY}")
+  fi
+
+  for item in "${curl_env[@]}"; do
+    [[ "${item}" == CURL_FALLBACK_PROXY=* ]] && continue
+    non_proxy_env+=("${item}")
+  done
+
   if (( ${#curl_env[@]} > 0 )); then
-    env "${curl_env[@]}" "${download_curl}" "$@"
+    if run_command_with_stderr_capture env "${curl_env[@]}" "${base_command[@]}"; then
+      return 0
+    fi
+  else
+    if run_command_with_stderr_capture "${base_command[@]}"; then
+      return 0
+    fi
+  fi
+
+  command_status=$?
+  if is_truthy "${GIT_ZIP_WRAPPER_RETRY_WITHOUT_PROXY_ON_AUTH_ERROR}" && \
+    [[ -n "${GIT_ZIP_WRAPPER_ACTIVE_PROXY}" ]] && \
+    ! has_explicit_proxy_arg "${base_command[@]}" && \
+    is_proxy_auth_error_log "${GIT_ZIP_WRAPPER_LAST_COMMAND_STDERR}"; then
+    log "curl falhou com erro de autenticação de proxy (407). Tentando novamente sem proxy"
+    if (( ${#non_proxy_env[@]} > 0 )); then
+      if run_command_with_stderr_capture env "${non_proxy_env[@]}" "${base_command[@]}"; then
+        return 0
+      fi
+      return $?
+    fi
+    if run_command_with_stderr_capture "${base_command[@]}"; then
+      return 0
+    fi
     return $?
   fi
 
-  "${download_curl}" "$@"
+  if [[ -n "${GIT_ZIP_WRAPPER_LAST_COMMAND_STDERR}" ]]; then
+    printf '%s\n' "${GIT_ZIP_WRAPPER_LAST_COMMAND_STDERR}" >&2
+  fi
+  return "${command_status}"
 }
 
 extract_default_branch_from_github_repo_json() {
@@ -1643,6 +1725,12 @@ git_lfs_error_looks_like_signed_url_failure() {
   grep -Eq 'SignatureDoesNotMatch|AuthorizationQueryParametersError|RequestTimeTooSkewed|Request has expired' "${log_file}"
 }
 
+git_lfs_error_looks_like_proxy_auth_error() {
+  local log_file
+  log_file="$1"
+  grep -Eiq '(^|[[:space:]])407([[:space:]]|$)|proxy-Authenticate|proxy error|authentication required|Proxy-Authenticate' "${log_file}"
+}
+
 run_git_lfs_pull_with_optional_no_proxy_retry() {
   local destination initial_log retry_log
   destination="$1"
@@ -1655,8 +1743,9 @@ run_git_lfs_pull_with_optional_no_proxy_retry() {
 
   if is_truthy "${GIT_ZIP_WRAPPER_LFS_RETRY_NO_PROXY}" &&
     [[ -n "${GIT_ZIP_WRAPPER_ACTIVE_PROXY}" ]] &&
-    git_lfs_error_looks_like_signed_url_failure "${initial_log}"; then
-    log "git lfs pull falhou com URL assinada; tentando novamente sem proxy"
+    (git_lfs_error_looks_like_signed_url_failure "${initial_log}" || \
+     git_lfs_error_looks_like_proxy_auth_error "${initial_log}"); then
+    log "git lfs pull falhou com erro de acesso remoto/proxy; tentando novamente sem proxy"
     retry_log="$(mktemp -t git-zip-lfs-pull-noproxy-XXXXXX)"
     if env -u HTTPS_PROXY -u https_proxy -u HTTP_PROXY -u http_proxy -u ALL_PROXY -u all_proxy \
       "${real_git}" \

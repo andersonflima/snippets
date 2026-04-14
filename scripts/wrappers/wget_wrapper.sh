@@ -40,6 +40,48 @@ resolve_script_path() {
 
 WRAPPER_DIR="$(cd "$(dirname "$(resolve_script_path "${BASH_SOURCE[0]}")")" && pwd)"
 WGET_WRAPPER_PROXY="${WGET_WRAPPER_PROXY:-${HTTPS_PROXY:-${https_proxy:-${ALL_PROXY:-${all_proxy:-${HTTP_PROXY:-${http_proxy:-}}}}}}}"
+WGET_WRAPPER_RETRY_WITHOUT_PROXY_ON_AUTH_ERROR="${WGET_WRAPPER_RETRY_WITHOUT_PROXY_ON_AUTH_ERROR:-1}"
+WGET_WRAPPER_LAST_COMMAND_STDERR=""
+
+is_proxy_auth_error_log() {
+  local output
+  output="${1:-}"
+  printf '%s\n' "${output}" | grep -Eiq '(^|[[:space:]])407([[:space:]]|$)|proxy[ -]authentication|required|proxy authent(i|y)cation|Proxy-Authenticate|proxy error|Proxy Error'
+}
+
+has_explicit_proxy_arg() {
+  local arg
+  for arg in "$@"; do
+    case "${arg}" in
+      --proxy|--proxy=*|--proxy-user|--proxy-user=*|--proxy-password|--proxy-password=*|--http-proxy|--http-proxy=*|--https-proxy|--https-proxy=*)
+        return 0
+        ;;
+    esac
+  done
+  return 1
+}
+
+run_command_with_stderr_capture() {
+  local -a command
+  local stderr_file
+  local command_status
+
+  command=("$@")
+  stderr_file="$(mktemp -t wget-wrapper-stderr-XXXXXX)"
+  WGET_WRAPPER_LAST_COMMAND_STDERR=""
+
+  set +e
+  "${command[@]}" 2>"${stderr_file}"
+  command_status=$?
+  set -e
+
+  if [[ -f "${stderr_file}" ]]; then
+    WGET_WRAPPER_LAST_COMMAND_STDERR="$(cat "${stderr_file}")"
+    rm -f "${stderr_file}"
+  fi
+
+  return "${command_status}"
+}
 
 canonicalize_binary_path() {
   local path dir base
@@ -370,23 +412,45 @@ parse_args() {
 
 run_local_wget() {
   local real_wget local_exit_code
+  local -a proxy_env=()
   real_wget="$1"
   shift
+  proxy_env=(
+    "HTTPS_PROXY=${WGET_WRAPPER_PROXY}"
+    "HTTP_PROXY=${WGET_WRAPPER_PROXY}"
+    "ALL_PROXY=${WGET_WRAPPER_PROXY}"
+    "https_proxy=${WGET_WRAPPER_PROXY}"
+    "http_proxy=${WGET_WRAPPER_PROXY}"
+    "all_proxy=${WGET_WRAPPER_PROXY}"
+  )
 
-  set +e
   if [[ -n "${WGET_WRAPPER_PROXY}" ]]; then
-    HTTPS_PROXY="${WGET_WRAPPER_PROXY}" \
-    HTTP_PROXY="${WGET_WRAPPER_PROXY}" \
-    ALL_PROXY="${WGET_WRAPPER_PROXY}" \
-    https_proxy="${WGET_WRAPPER_PROXY}" \
-    http_proxy="${WGET_WRAPPER_PROXY}" \
-    all_proxy="${WGET_WRAPPER_PROXY}" \
-    "${real_wget}" "$@"
-  else
-    "${real_wget}" "$@"
+    if run_command_with_stderr_capture env "${proxy_env[@]}" "${real_wget}" "$@"; then
+      return 0
+    fi
+    local_exit_code=$?
+    if is_truthy "${WGET_WRAPPER_RETRY_WITHOUT_PROXY_ON_AUTH_ERROR}" && \
+      ! has_explicit_proxy_arg "$@" && \
+      is_proxy_auth_error_log "${WGET_WRAPPER_LAST_COMMAND_STDERR}"; then
+      log "wget falhou com erro de autenticação de proxy (407). Tentando novamente sem proxy"
+      if run_command_with_stderr_capture "${real_wget}" "$@"; then
+        return 0
+      fi
+      local_exit_code=$?
+    fi
+    if [[ -n "${WGET_WRAPPER_LAST_COMMAND_STDERR}" ]]; then
+      printf '%s\n' "${WGET_WRAPPER_LAST_COMMAND_STDERR}" >&2
+    fi
+    return "${local_exit_code}"
+  fi
+
+  if run_command_with_stderr_capture "${real_wget}" "$@"; then
+    return 0
   fi
   local_exit_code=$?
-  set -e
+  if [[ -n "${WGET_WRAPPER_LAST_COMMAND_STDERR}" ]]; then
+    printf '%s\n' "${WGET_WRAPPER_LAST_COMMAND_STDERR}" >&2
+  fi
   return "${local_exit_code}"
 }
 
@@ -415,21 +479,14 @@ main() {
   [[ -n "${real_wget}" ]] || die "wget real não encontrado para execução local"
 
   if [[ "${WGET_CAN_HANDLE}" == "1" ]]; then
-    run_local_wget "${real_wget}" "$@"
-    exit $?
+    if ! run_local_wget "${real_wget}" "$@"; then
+      exit $?
+    fi
+    exit 0
   fi
 
-  if [[ -n "${WGET_WRAPPER_PROXY}" ]]; then
-    HTTPS_PROXY="${WGET_WRAPPER_PROXY}" \
-    HTTP_PROXY="${WGET_WRAPPER_PROXY}" \
-    ALL_PROXY="${WGET_WRAPPER_PROXY}" \
-    https_proxy="${WGET_WRAPPER_PROXY}" \
-    http_proxy="${WGET_WRAPPER_PROXY}" \
-    all_proxy="${WGET_WRAPPER_PROXY}" \
-    exec "${real_wget}" "$@"
-  fi
-
-  exec "${real_wget}" "$@"
+  run_local_wget "${real_wget}" "$@"
+  exit $?
 }
 
 main "$@"

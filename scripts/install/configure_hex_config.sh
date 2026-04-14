@@ -47,6 +47,8 @@ API_URL_VALUE=""
 MIRROR_URL_VALUE=""
 TEST_PACKAGE="phx_new"
 RUN_TEST="1"
+MIX_HEX_RETRY_WITHOUT_PROXY_ON_AUTH_ERROR="${MIX_HEX_RETRY_WITHOUT_PROXY_ON_AUTH_ERROR:-1}"
+MIX_HEX_LAST_COMMAND_OUTPUT=""
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
@@ -98,6 +100,93 @@ done
 
 command -v mix >/dev/null 2>&1 || die "mix não encontrado no PATH"
 
+is_truthy() {
+  local value
+  value="$(printf '%s' "${1:-}" | tr '[:upper:]' '[:lower:]')"
+  case "${value}" in
+    1|true|yes|on)
+      return 0
+      ;;
+  esac
+  return 1
+}
+
+has_explicit_proxy_arg() {
+  local arg
+  for arg in "$@"; do
+    case "${arg}" in
+      --proxy|--proxy=*|--http-proxy|--http-proxy=*|--https-proxy|--https-proxy=*|--proxy-user|--proxy-user=*|--proxy-password|--proxy-password=*)
+        return 0
+        ;;
+    esac
+  done
+  return 1
+}
+
+is_proxy_auth_error_log() {
+  local output
+  output="${1:-}"
+  [[ -n "${output}" ]] || return 1
+  printf '%s\n' "${output}" | grep -Eiq '(^|[[:space:]])407([[:space:]]|$)|proxy[ -]authentication|required|proxy authent(i|y)cation|Proxy-Authenticate|proxy error|Proxy Error'
+}
+
+run_mix_command_capture() {
+  local -a command
+  local output_file command_status
+
+  command=("$@")
+  output_file="$(mktemp -t configure-hex-mix-output-XXXXXX)"
+  MIX_HEX_LAST_COMMAND_OUTPUT=""
+
+  set +e
+  "${command[@]}" >"${output_file}" 2>&1
+  command_status=$?
+  set -e
+
+  if [[ -f "${output_file}" ]]; then
+    MIX_HEX_LAST_COMMAND_OUTPUT="$(cat "${output_file}")"
+    if [[ -n "${MIX_HEX_LAST_COMMAND_OUTPUT}" ]]; then
+      if [[ "${command_status}" -eq 0 ]]; then
+        printf '%s\n' "${MIX_HEX_LAST_COMMAND_OUTPUT}"
+      else
+        printf '%s\n' "${MIX_HEX_LAST_COMMAND_OUTPUT}" >&2
+      fi
+    fi
+    rm -f "${output_file}"
+  fi
+
+  return "${command_status}"
+}
+
+run_mix_proxy_command() {
+  local label="$1"
+  local -a mix_command=()
+  local -a no_proxy_command=()
+  local -a command=()
+  shift
+
+  mix_command+=(mix "$@")
+  command=("${mix_command[@]}")
+
+  log "${label}"
+  if run_mix_command_capture "${command[@]}"; then
+    return 0
+  fi
+
+  if is_truthy "${MIX_HEX_RETRY_WITHOUT_PROXY_ON_AUTH_ERROR}" && \
+    [[ -n "${PROXY_URL}" ]] && \
+    ! has_explicit_proxy_arg "${mix_command[@]}" && \
+    is_proxy_auth_error_log "${MIX_HEX_LAST_COMMAND_OUTPUT}"; then
+    log "mix/hex falhou com erro de autenticação de proxy (407). Tentando novamente sem proxy"
+    no_proxy_command=(env -u HTTPS_PROXY -u https_proxy -u HTTP_PROXY -u http_proxy -u ALL_PROXY -u all_proxy "${mix_command[@]}")
+    if run_mix_command_capture "${no_proxy_command[@]}"; then
+      return 0
+    fi
+  fi
+
+  return 1
+}
+
 apply_mix_runtime_env() {
   export HEX_HTTP_CONCURRENCY="${HTTP_CONCURRENCY_VALUE}"
   export HEX_HTTP_TIMEOUT="${HTTP_TIMEOUT_VALUE}"
@@ -133,30 +222,33 @@ apply_mix_runtime_env() {
 ensure_hex_installed() {
   apply_mix_runtime_env
 
-  if mix local.hex --force --if-missing; then
+  if run_mix_proxy_command "executando: mix local.hex --force --if-missing" local.hex --force --if-missing; then
     return 0
   fi
 
-  mix archive.install github hexpm/hex branch latest --force
+  run_mix_proxy_command "executando: mix archive.install github hexpm/hex branch latest --force" archive.install github hexpm/hex branch latest --force
 }
 
 run_mix_hex_config() {
   local key value
   key="$1"
   value="$2"
-  log "hex.config ${key}"
-  mix hex.config "${key}" "${value}"
+  run_mix_proxy_command "configurando hex.config ${key}=${value}" hex.config "${key}" "${value}"
 }
 
 run_mix_hex_info_test() {
   printf 'Teste:\n'
-  if mix hex.info "${TEST_PACKAGE}"; then
+  if run_mix_proxy_command "validando conectividade com mix hex.info ${TEST_PACKAGE}" hex.info "${TEST_PACKAGE}"; then
     return 0
   fi
 
   log "teste de conectividade com hex.info falhou; tentando fallback inseguro temporário para validação"
-  if HEX_UNSAFE_HTTPS=1 HEX_UNSAFE_REGISTRY=1 HEX_NO_VERIFY_REPO_ORIGIN=1 \
-      mix hex.info "${TEST_PACKAGE}"; then
+  if run_mix_command_capture env \
+    -u HTTPS_PROXY -u https_proxy -u HTTP_PROXY -u http_proxy -u ALL_PROXY -u all_proxy \
+    HEX_UNSAFE_HTTPS=1 \
+    HEX_UNSAFE_REGISTRY=1 \
+    HEX_NO_VERIFY_REPO_ORIGIN=1 \
+    mix hex.info "${TEST_PACKAGE}"; then
     log "aviso: validação funcionou apenas com TLS inseguro (unsafe)."
     log "considere definir --unsafe-https para manter comportamento consistente"
     return 0
@@ -199,7 +291,7 @@ Configuração do Hex aplicada.
 
 Verificação atual:
 EOF2
-mix hex.config
+run_mix_proxy_command "consultando mix hex.config" hex.config
 
 if [[ "${RUN_TEST}" == "1" ]]; then
   run_mix_hex_info_test
