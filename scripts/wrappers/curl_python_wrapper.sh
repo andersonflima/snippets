@@ -157,7 +157,74 @@ resolve_proxy_config() {
   [[ -n "${proxy}" ]] || proxy="${all_proxy:-}"
   [[ -n "${proxy}" ]] || proxy="${HTTP_PROXY:-}"
   [[ -n "${proxy}" ]] || proxy="${http_proxy:-}"
+  proxy="$(normalize_proxy_url_credentials "${proxy}")"
   CURL_WRAPPER_ACTIVE_PROXY="${proxy}"
+}
+
+normalize_proxy_url_credentials() {
+  local proxy normalized_proxy
+  proxy="${1:-}"
+  [[ -n "${proxy}" ]] || {
+    printf '%s\n' ""
+    return 0
+  }
+
+  command -v python3 >/dev/null 2>&1 || {
+    printf '%s\n' "${proxy}"
+    return 0
+  }
+
+  normalized_proxy="$(
+    python3 - "${proxy}" <<'PY'
+import sys
+from urllib.parse import quote, urlsplit, urlunsplit
+
+raw = sys.argv[1]
+
+try:
+    parts = urlsplit(raw)
+except Exception:
+    print(raw)
+    raise SystemExit(0)
+
+if not parts.scheme or not parts.netloc:
+    print(raw)
+    raise SystemExit(0)
+
+hostname = parts.hostname
+if not hostname:
+    print(raw)
+    raise SystemExit(0)
+
+username = parts.username
+password = parts.password
+port = parts.port
+
+host_repr = hostname
+if ":" in host_repr and not host_repr.startswith("["):
+    host_repr = f"[{host_repr}]"
+if port is not None:
+    host_repr = f"{host_repr}:{port}"
+
+if username is None:
+    netloc = host_repr
+else:
+    user_enc = quote(username, safe="")
+    if password is None:
+        netloc = f"{user_enc}@{host_repr}"
+    else:
+        pass_enc = quote(password, safe="")
+        netloc = f"{user_enc}:{pass_enc}@{host_repr}"
+
+print(urlunsplit((parts.scheme, netloc, parts.path, parts.query, parts.fragment)))
+PY
+  )"
+
+  [[ -n "${normalized_proxy}" ]] || normalized_proxy="${proxy}"
+  if [[ "${normalized_proxy}" != "${proxy}" ]]; then
+    log "proxy normalizado para credenciais seguras em URL"
+  fi
+  printf '%s\n' "${normalized_proxy}"
 }
 
 assert_non_zip_download_request() {
@@ -1260,6 +1327,10 @@ main() {
 
   if [[ "${curl_exit}" -eq 0 ]]; then
     exit 0
+  fi
+
+  if [[ "${curl_exit}" -eq 22 ]] && [[ -n "${CURL_FALLBACK_URL:-}" ]]; then
+    log "curl retornou HTTP 4xx/5xx (exit 22) para URL: ${CURL_FALLBACK_URL}"
   fi
 
   if is_truthy "${CURL_WRAPPER_STRICT:-0}"; then
