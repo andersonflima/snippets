@@ -1,13 +1,26 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
 echo "$1"
 echo "$2"
 echo "$3"
 
 # Determina o KMS key ID por alias direto ou resgata via Secrets Manager para manter o vínculo da chave.
+if [[ $# -lt 1 || -z "${1}" ]]; then
+  echo "Uso: sh kms.sh <kms_identifier> <region> <instance_name>" >&2
+  exit 1
+fi
+
 kms_identifier="$1"
-if [[ "$kms_identifier" == alias/* ]]; then
-  resultado=$(aws kms describe-key --key-id "$kms_identifier" --query 'KeyMetadata.KeyId' --output text)
+if [[ "${kms_identifier}" == alias/* ]] || [[ "${kms_identifier}" == arn:aws:kms:*:alias/* ]]; then
+  resultado=$(aws kms describe-key --key-id "${kms_identifier}" --query 'KeyMetadata.KeyId' --output text)
 else
   resultado=$(aws secretsmanager list-secrets --filters Key=name,Values="${kms_identifier}-aws" --query 'SecretList[0].KmsKeyId' --output text)
+fi
+
+if [[ -z "${resultado}" || "${resultado}" == "None" ]]; then
+  echo "Não foi possível resolver KeyId para '${kms_identifier}'" >&2
+  exit 1
 fi
 
 account_id=$(aws sts get-caller-identity --query Account --output text)
@@ -60,4 +73,3 @@ policy_raw=$(
   }
 EOF
 )
-
