@@ -127,6 +127,11 @@ Opções:
   --auto-insecure-on-cert-error
                                Ativa retry inseguro no curl wrapper.
   --mason-seed-dir <dir>       Diretório seed para artefatos do Mason.
+  --mason-packages <lista>     Lista de pacotes Mason (vírgula/espaco).
+  --bootstrap-lazy-timeout <s> Timeout para instalação de pacotes Mason.
+  --skip-lazy-bootstrap         Não executa Lazy! sync.
+  --skip-mason-bootstrap        Não executa instalação via Mason.
+  --bootstrap-strict            Falha se o bootstrap retornar erro.
   --configure-hex              Também aplica mix hex.config no host local.
   --hex-unsafe-https           Define unsafe_https/registry/origin no Hex.
   --hex-no-test                Não executa mix hex.info ao final da config do Hex.
@@ -156,6 +161,11 @@ PROXY_URL="${HTTPS_PROXY:-${https_proxy:-${ALL_PROXY:-${all_proxy:-${HTTP_PROXY:
 CA_CERT_PATH="${GIT_ZIP_WRAPPER_CURL_CACERT:-${HEX_CACERTS_PATH:-${SSL_CERT_FILE:-${REQUESTS_CA_BUNDLE:-${AWS_CA_BUNDLE:-}}}}}"
 AUTO_INSECURE_ON_CERT_ERROR="${CURL_WRAPPER_AUTO_INSECURE_ON_CERT_ERROR:-0}"
 MASON_SEED_DIR="${CURL_WRAPPER_MASON_SEED_DIR:-}"
+MASON_BOOTSTRAP_PACKAGES="${MASON_BOOTSTRAP_PACKAGES:-}"
+BOOTSTRAP_LAZY_TIMEOUT_SECONDS="600"
+BOOTSTRAP_SKIP_LAZY="0"
+BOOTSTRAP_SKIP_MASON="0"
+BOOTSTRAP_STRICT="0"
 CONFIGURE_HEX="0"
 HEX_UNSAFE_HTTPS="${HEX_UNSAFE_HTTPS:-0}"
 HEX_RUN_TEST="1"
@@ -210,6 +220,26 @@ while [[ $# -gt 0 ]]; do
     --mason-seed-dir)
       MASON_SEED_DIR="${2:-}"
       shift 2
+      ;;
+    --mason-packages)
+      MASON_BOOTSTRAP_PACKAGES="${2:-}"
+      shift 2
+      ;;
+    --bootstrap-lazy-timeout)
+      BOOTSTRAP_LAZY_TIMEOUT_SECONDS="${2:-}"
+      shift 2
+      ;;
+    --skip-lazy-bootstrap)
+      BOOTSTRAP_SKIP_LAZY="1"
+      shift
+      ;;
+    --skip-mason-bootstrap)
+      BOOTSTRAP_SKIP_MASON="1"
+      shift
+      ;;
+    --bootstrap-strict)
+      BOOTSTRAP_STRICT="1"
+      shift
       ;;
     --configure-hex)
       CONFIGURE_HEX="1"
@@ -570,6 +600,45 @@ validate_restricted_dev_env_result() {
   validate_shell_rc_persistence
 }
 
+run_bootstrap_lazyvim() {
+  if [[ "${BOOTSTRAP_SKIP_LAZY}" == "1" && "${BOOTSTRAP_SKIP_MASON}" == "1" ]]; then
+    return 0
+  fi
+
+  if ! command -v nvim >/dev/null 2>&1; then
+    if [[ "${BOOTSTRAP_STRICT}" == "1" ]]; then
+      die "nvim não encontrado no PATH para bootstrap automático do LazyVim/Mason"
+    fi
+    log "nvim não encontrado no PATH, pulando bootstrap automático"
+    return 0
+  fi
+
+  set +u
+  # shellcheck disable=SC1090
+  . "${WRAPPER_ENV_FILE}"
+  set -u
+
+  local -a bootstrap_args=()
+  bootstrap_args=(--env-file "${WRAPPER_ENV_FILE}")
+
+  if [[ -n "${MASON_BOOTSTRAP_PACKAGES}" ]]; then
+    bootstrap_args+=(--mason-packages "${MASON_BOOTSTRAP_PACKAGES}")
+  fi
+  if [[ "${BOOTSTRAP_SKIP_LAZY}" == "1" ]]; then
+    bootstrap_args+=(--skip-lazy)
+  fi
+  if [[ "${BOOTSTRAP_SKIP_MASON}" == "1" ]]; then
+    bootstrap_args+=(--skip-mason)
+  fi
+  if [[ "${BOOTSTRAP_STRICT}" == "1" ]]; then
+    bootstrap_args+=(--bootstrap-strict)
+  fi
+  bootstrap_args+=(--bootstrap-timeout "${BOOTSTRAP_LAZY_TIMEOUT_SECONDS}")
+
+  run_step "executando bootstrap automático do LazyVim/Mason" \
+    bash "${ROOT_DIR}/install/bootstrap_lazyvim_mason.sh" "${bootstrap_args[@]}"
+}
+
 WRAPPER_ENV_ARGS=(
   --real-curl "${REAL_CURL_BIN}"
   --real-git "${REAL_GIT_BIN}"
@@ -625,6 +694,7 @@ run_step "sincronizando persistência do ambiente restrito" sync_shell_rc_state
 run_step "sincronizando setup do ElixirLS (sh/fish)" sync_elixir_ls_setup_state
 run_step "persistindo estado do ambiente restrito" restricted_dev_env_write_state
 run_step "validando artefatos persistidos do bootstrap" validate_restricted_dev_env_result
+run_bootstrap_lazyvim
 
 cat <<EOF2
 Bootstrap concluído.

@@ -3,9 +3,9 @@
 ## Fluxo público
 
 - `scripts/configure.sh`
-  Configura tudo: instala wrappers locais, gera envs, atualiza shell rc, integra setup do ElixirLS e salva estado.
+  Configura tudo: instala wrappers locais, gera envs, atualiza shell rc, integra setup do ElixirLS, salva estado e ainda executa bootstrap automático do LazyVim/Mason no `nvim --headless`.
 - `scripts/reset.sh`
-  Remove wrappers/envs, limpa o bloco gerenciado do shell rc, apaga cache local do wrapper, limpa artefatos locais do `elixir-ls` no Mason e restaura a configuração persistida do Hex.
+  Remove wrappers/envs, limpa o bloco gerenciado do shell rc, apaga cache local do wrapper, limpa estado completo do Mason (ou apenas `elixir-ls`), e restaura configuração persistida do Hex.
 
 ## Fluxo recomendado
 
@@ -15,13 +15,22 @@ Configuração completa:
 sh scripts/configure.sh
 ```
 
+Bootstrap automático padrão (Lazy/Mason):
+
+```bash
+sh scripts/configure.sh \
+  --proxy "http://proxy.corp:3128" \
+  --ca-cert "/etc/ssl/certs/corp-ca.pem" \
+  --mason-packages "lua-language-server,pyright,elixir-ls"
+```
+
 Com proxy ou CA corporativa:
 
 ```bash
 sh scripts/configure.sh \
   --proxy "http://proxy.corp:3128" \
   --ca-cert "/etc/ssl/certs/corp-ca.pem"
-```
+``` 
 
 Remoção completa:
 

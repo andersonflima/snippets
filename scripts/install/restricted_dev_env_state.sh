@@ -95,6 +95,18 @@ restricted_dev_env_cleanup_legacy_shell_rc_lines() {
       next
     }
 
+    $0 ~ /^[[:space:]]*(export|unset)[[:space:]]*(CURL_WRAPPER_|WGET_WRAPPER_|GIT_ZIP_WRAPPER_|BREW_WRAPPER_|HTTPS_PROXY|HTTP_PROXY|ALL_PROXY|NO_PROXY|SSL_CERT_FILE|REQUESTS_CA_BUNDLE|CURL|WGET|GIT|BREW)=/ {
+      next
+    }
+
+    $0 ~ /^[[:space:]]*unset[[:space:]]*(CURL_WRAPPER_|WGET_WRAPPER_|GIT_ZIP_WRAPPER_|BREW_WRAPPER_|HTTPS_PROXY|HTTP_PROXY|ALL_PROXY|NO_PROXY|SSL_CERT_FILE|REQUESTS_CA_BUNDLE|CURL|WGET|GIT|BREW)([[:space:]]|$)/ {
+      next
+    }
+
+    $0 ~ /^[[:space:]]*export[[:space:]]+PATH=.*((\.local\/share\/curl-python-wrapper)|(\.local\/share\/git-zip-wrapper)|(\.local\/share\/mix-[^[:space:]]*-wrapper\/bin)|(\.local\/share\/nvim-[^[:space:]]*-wrapper\/bin)|(\.local\/bin))/ {
+      next
+    }
+
     $0 ~ /# wrapper do mix via [A-Za-z0-9_-]+/ {
       next
     }

@@ -72,7 +72,7 @@ OUTPUT_PATH="${SEED_DIR%/}/${SLUG}/${TAG}/${ASSET}"
 mkdir -p "$(dirname "${OUTPUT_PATH}")"
 
 CURL_WRAPPER_ENABLE_MASON_SMART_RELEASES=1 \
-CURL_WRAPPER_RELEASE_FALLBACK_REPOS="${CURL_WRAPPER_RELEASE_FALLBACK_REPOS:-elixir-lsp/elixir-ls,luals/lua-language-server,omnisharp/omnisharp-roslyn}" \
+CURL_WRAPPER_RELEASE_FALLBACK_REPOS="${CURL_WRAPPER_RELEASE_FALLBACK_REPOS:-elixir-lsp/elixir-ls,johnnymorganz/stylua,luals/lua-language-server,omnisharp/omnisharp-roslyn}" \
 CURL_WRAPPER_ALLOW_DIRECT_RELEASE_FALLBACK="${CURL_WRAPPER_ALLOW_DIRECT_RELEASE_FALLBACK:-1}" \
 CURL_WRAPPER_MASON_SOURCE_BUILD_REPOS="${CURL_WRAPPER_MASON_SOURCE_BUILD_REPOS:-omnisharp/omnisharp-roslyn}" \
 CURL_WRAPPER_MASON_BUILDERS="${CURL_WRAPPER_MASON_BUILDERS:-elixir-lsp/elixir-ls=elixir_ls_release,omnisharp/omnisharp-roslyn=omnisharp_source_publish}" \

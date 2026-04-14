@@ -30,8 +30,27 @@ Opções:
   --keep-env-files             Não remove env-files em ~/.config.
   --keep-install-dirs          Não remove wrappers instalados em ~/.local/share.
   --keep-wrapper-cache         Não remove cache/seed do wrapper em ~/.cache.
+  --keep-mason-state           Não remove estado completo do Mason em ~/.local/share/nvim/mason.
   --keep-mason-elixir-ls       Não remove artefatos do elixir-ls sob ~/.local/share/nvim/mason.
   --keep-hex-config            Não restaura/remove a config persistida do Hex.
+  --proxy <url>                Informativo: opção de setup, sem efeito no reset.
+  --ca-cert <arquivo>          Informativo: opção de setup, sem efeito no reset.
+  --mason-seed-dir <dir>       Informativo: opção de setup, sem efeito no reset.
+  --mason-packages <lista>     Informativo: opção de setup, sem efeito no reset.
+  --bootstrap-lazy-timeout <s> Informativo: opção de setup, sem efeito no reset.
+  --skip-lazy-bootstrap         Informativo: opção de setup, sem efeito no reset.
+  --skip-mason-bootstrap        Informativo: opção de setup, sem efeito no reset.
+  --bootstrap-strict            Informativo: opção de setup, sem efeito no reset.
+  --auto-insecure-on-cert-error Informativo: opção de setup, sem efeito no reset.
+  --real-curl <path>           Informativo: opção de setup, sem efeito no reset.
+  --real-wget <path>           Informativo: opção de setup, sem efeito no reset.
+  --real-git <path>            Informativo: opção de setup, sem efeito no reset.
+  --real-mix <path>            Informativo: opção de setup, sem efeito no reset.
+  --real-brew <path>           Informativo: opção de setup, sem efeito no reset.
+  --configure-hex               Informativo: opção de setup, sem efeito no reset.
+  --hex-unsafe-https            Informativo: opção de setup, sem efeito no reset.
+  --hex-no-test                 Informativo: opção de setup, sem efeito no reset.
+  --no-shell-rc                 Informativo: opção de setup, sem efeito no reset.
   -h, --help                   Mostra esta ajuda.
 
 Ambiente:
@@ -108,6 +127,7 @@ RESET_SHELL_RC="1"
 RESET_ENV_FILES="1"
 RESET_INSTALL_DIRS="1"
 RESET_WRAPPER_CACHE="1"
+RESET_MASON_STATE="1"
 RESET_MASON_ELIXIR_LS="1"
 RESET_HEX_CONFIG="1"
 
@@ -116,6 +136,102 @@ while [[ $# -gt 0 ]]; do
     --shell-rc)
       SHELL_RC_PATH="${2:-}"
       shift 2
+      ;;
+    --proxy)
+      shift 2
+      ;;
+    --proxy=*)
+      shift
+      ;;
+    --ca-cert)
+      shift 2
+      ;;
+    --ca-cert=*)
+      shift
+      ;;
+    --mason-seed-dir)
+      shift 2
+      ;;
+    --mason-seed-dir=*)
+      shift
+      ;;
+    --mason-packages)
+      shift 2
+      ;;
+    --mason-packages=*)
+      shift
+      ;;
+    --bootstrap-lazy-timeout)
+      shift 2
+      ;;
+    --bootstrap-lazy-timeout=*)
+      shift
+      ;;
+    --skip-lazy-bootstrap)
+      shift
+      ;;
+    --skip-mason-bootstrap)
+      shift
+      ;;
+    --bootstrap-strict)
+      shift
+      ;;
+    --auto-insecure-on-cert-error)
+      shift
+      ;;
+    --auto-insecure-on-cert-error=*)
+      shift
+      ;;
+    --real-curl)
+      shift 2
+      ;;
+    --real-curl=*)
+      shift
+      ;;
+    --real-wget)
+      shift 2
+      ;;
+    --real-wget=*)
+      shift
+      ;;
+    --real-git)
+      shift 2
+      ;;
+    --real-git=*)
+      shift
+      ;;
+    --real-mix)
+      shift 2
+      ;;
+    --real-mix=*)
+      shift
+      ;;
+    --real-brew)
+      shift 2
+      ;;
+    --real-brew=*)
+      shift
+      ;;
+    --configure-hex)
+      shift
+      ;;
+    --configure-hex=*)
+      shift
+      ;;
+    --hex-unsafe-https)
+      shift
+      ;;
+    --hex-unsafe-https=*)
+      shift
+      ;;
+    --hex-no-test)
+      shift
+      ;;
+    --hex-no-test=*)
+      shift
+      ;;
+    --no-shell-rc)
+      shift
       ;;
     --keep-shell-rc)
       RESET_SHELL_RC="0"
@@ -131,6 +247,10 @@ while [[ $# -gt 0 ]]; do
       ;;
     --keep-wrapper-cache)
       RESET_WRAPPER_CACHE="0"
+      shift
+      ;;
+    --keep-mason-state)
+      RESET_MASON_STATE="0"
       shift
       ;;
     --keep-mason-elixir-ls)
@@ -256,6 +376,10 @@ if [[ "${RESET_SHELL_RC}" == "1" ]]; then
   SHELL_RC_TARGETS=()
   append_shell_rc_target "${RESTRICTED_DEV_ENV_MANAGED_SHELL_RC}"
   append_shell_rc_target "${SHELL_RC_PATH}"
+  append_shell_rc_target "${HOME}/.zshrc"
+  append_shell_rc_target "${HOME}/.bashrc"
+  append_shell_rc_target "${HOME}/.profile"
+  append_shell_rc_target "${HOME}/.config/fish/config.fish"
 
   for shell_rc_target in "${SHELL_RC_TARGETS[@]}"; do
     restricted_dev_env_remove_shell_rc_block "${shell_rc_target}"
@@ -284,6 +408,16 @@ fi
 if [[ "${RESET_WRAPPER_CACHE}" == "1" ]]; then
   remove_dir_if_exists "${HOME}/.cache/curl-python-wrapper"
   remove_dir_if_exists "${HOME}/.cache/mason-seeds"
+  remove_dir_if_exists "${HOME}/.cache/nvim/mason"
+fi
+
+if [[ "${RESET_MASON_STATE}" == "1" ]]; then
+  remove_dir_if_exists "${HOME}/.local/share/nvim/mason"
+  remove_dir_if_exists "${HOME}/.local/state/nvim/mason"
+  remove_dir_if_exists "${HOME}/.cache/nvim/mason"
+  remove_dir_if_exists "${HOME}/.local/share/nvim/mason-tools"
+  remove_dir_if_exists "${HOME}/.local/share/nvim/site/pack/mason"
+  remove_glob_matches "${HOME}/.local/share/mason-*"
 fi
 
 if [[ "${RESET_MASON_ELIXIR_LS}" == "1" ]]; then
