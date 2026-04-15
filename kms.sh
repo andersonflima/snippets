@@ -1,75 +1,197 @@
 #!/usr/bin/env bash
-set -euo pipefail
 
-echo "$1"
-echo "$2"
-echo "$3"
+# -----------------------------
+# SAFE SHELL CONFIG (portable)
+# -----------------------------
+set -eu
+if (set -o pipefail) 2>/dev/null; then
+  set -o pipefail
+fi
 
-# Determina o KMS key ID por alias direto ou resgata via Secrets Manager para manter o vínculo da chave.
-if [[ $# -lt 1 || -z "${1}" ]]; then
-  echo "Uso: sh kms.sh <kms_identifier> <region> <instance_name>" >&2
+if [ -z "${BASH_VERSION:-}" ]; then
+  if command -v bash >/dev/null 2>&1; then
+    exec bash "$0" "$@"
+  fi
+fi
+
+echo "[kms.sh] shell=$SHELL bash_version=${BASH_VERSION:-not_bash}" >&2
+
+# -----------------------------
+# HELPERS
+# -----------------------------
+log() { echo "[kms.sh] $*" >&2; }
+fail() {
+  log "ERROR: $*"
   exit 1
+}
+
+is_empty() {
+  [ -z "${1:-}" ] || [ "$1" = "None" ]
+}
+
+# -----------------------------
+# INPUT
+# -----------------------------
+if [ "$#" -lt 2 ]; then
+  fail "Uso: kms.sh <cluster_identifier> <region> [policy_name]"
 fi
 
-kms_identifier="$1"
-if [[ "${kms_identifier}" == alias/* ]] || [[ "${kms_identifier}" == arn:aws:kms:*:alias/* ]]; then
-  resultado=$(aws kms describe-key --key-id "${kms_identifier}" --query 'KeyMetadata.KeyId' --output text)
-else
-  resultado=$(aws secretsmanager list-secrets --filters Key=name,Values="${kms_identifier}-aws" --query 'SecretList[0].KmsKeyId' --output text)
+cluster_id="$1"
+aws_region="$2"
+policy_name="${3:-$cluster_id}"
+
+export AWS_REGION="${AWS_REGION:-$aws_region}"
+
+log "cluster_id=$cluster_id"
+log "region=$AWS_REGION"
+
+# -----------------------------
+# RESOLVERS
+# -----------------------------
+resolve_kms_from_alias() {
+  aws kms list-aliases \
+    --query "Aliases[?contains(AliasName, \`${cluster_id}\`)].TargetKeyId | [0]" \
+    --output text 2>/dev/null || echo ""
+}
+
+resolve_kms_from_rds_instance() {
+  aws rds describe-db-instances \
+    --db-instance-identifier "$cluster_id" \
+    --query 'DBInstances[0].KmsKeyId' \
+    --output text 2>/dev/null || echo ""
+}
+
+resolve_kms_from_rds_cluster() {
+  aws rds describe-db-clusters \
+    --db-cluster-identifier "$cluster_id" \
+    --query 'DBClusters[0].KmsKeyId' \
+    --output text 2>/dev/null || echo ""
+}
+
+resolve_kms_from_elasticache_rg() {
+  aws elasticache describe-replication-groups \
+    --replication-group-id "$cluster_id" \
+    --query 'ReplicationGroups[0].KmsKeyId' \
+    --output text 2>/dev/null || echo ""
+}
+
+resolve_kms_from_elasticache_cluster() {
+  aws elasticache describe-cache-clusters \
+    --cache-cluster-id "$cluster_id" \
+    --query 'CacheClusters[0].KmsKeyId' \
+    --output text 2>/dev/null || echo ""
+}
+
+resolve_kms_from_secret() {
+  aws secretsmanager list-secrets \
+    --filters Key=name,Values="${cluster_id}-aws" \
+    --query 'SecretList[0].KmsKeyId' \
+    --output text 2>/dev/null || echo ""
+}
+
+# -----------------------------
+# RESOLUTION FLOW
+# -----------------------------
+kms_key_id=""
+
+log "Step 1: RDS instance"
+kms_key_id=$(resolve_kms_from_rds_instance)
+
+if is_empty "$kms_key_id"; then
+  log "Step 2: RDS cluster"
+  kms_key_id=$(resolve_kms_from_rds_cluster)
 fi
 
-if [[ -z "${resultado}" || "${resultado}" == "None" ]]; then
-  echo "Não foi possível resolver KeyId para '${kms_identifier}'" >&2
-  exit 1
+if is_empty "$kms_key_id"; then
+  log "Step 3: ElastiCache replication group"
+  kms_key_id=$(resolve_kms_from_elasticache_rg)
 fi
 
+if is_empty "$kms_key_id"; then
+  log "Step 4: ElastiCache cluster"
+  kms_key_id=$(resolve_kms_from_elasticache_cluster)
+fi
+
+if is_empty "$kms_key_id"; then
+  log "Step 5: alias (fallback)"
+  kms_key_id=$(resolve_kms_from_alias)
+fi
+
+if is_empty "$kms_key_id"; then
+  log "Step 6: Secrets Manager"
+  kms_key_id=$(resolve_kms_from_secret)
+fi
+
+if is_empty "$kms_key_id"; then
+  fail "Não foi possível resolver KMS para cluster '${cluster_id}'"
+fi
+
+log "KMS resolvido: $kms_key_id"
+
+# -----------------------------
+# POLICY BUILD
+# -----------------------------
 account_id=$(aws sts get-caller-identity --query Account --output text)
-aws_region="${AWS_REGION:-${AWS_DEFAULT_REGION:-$2}}"
-instance_name="${3:-rds-instance}"
-policy_id="Rds-Kms-${instance_name//[^A-Za-z0-9_-]/-}"
 
-policy_raw=$(
-  cat <<-EOF
-  {
-    "Version": "2012-10-17",
-    "Id": "${policy_id}",
-    "Statement": [
-      {
-        "Sid": "Allows admin of the key",
-        "Effect": "Allow",
-        "Principal": {
-          "AWS": [
-            "arn:aws:iam::${account_id}:root"
-          ]
-        },
-        "Action": "kms:*",
-        "Resource": "*"
+policy_id="Resource-Kms-${policy_name//[^A-Za-z0-9_-]/-}"
+
+policy=$(
+  cat <<EOF
+{
+  "Version": "2012-10-17",
+  "Id": "${policy_id}",
+  "Statement": [
+    {
+      "Sid": "AllowRoot",
+      "Effect": "Allow",
+      "Principal": {
+        "AWS": "arn:aws:iam::${account_id}:root"
       },
-      {
-        "Sid": "Allow RDS to use key for ${instance_name}",
-        "Effect": "Allow",
-        "Principal": {
-          "Service": "rds.amazonaws.com"
-        },
-        "Action": [
-          "kms:DescribeKey",
-          "kms:CreateGrant",
-          "kms:Decrypt",
-          "kms:Encrypt",
-          "kms:ReEncrypt*",
-          "kms:GenerateDataKey*"
-        ],
-        "Resource": "*",
-        "Condition": {
-          "StringLike": {
-            "aws:SourceArn": [
-              "arn:aws:rds:${aws_region}:${account_id}:db:${instance_name}",
-              "arn:aws:rds:${aws_region}:${account_id}:cluster:${instance_name}"
-            ]
-          }
+      "Action": "kms:*",
+      "Resource": "*"
+    },
+    {
+      "Sid": "AllowServiceUsage",
+      "Effect": "Allow",
+      "Principal": {
+        "Service": [
+          "rds.amazonaws.com",
+          "elasticache.amazonaws.com"
+        ]
+      },
+      "Action": [
+        "kms:DescribeKey",
+        "kms:CreateGrant",
+        "kms:Decrypt",
+        "kms:Encrypt",
+        "kms:ReEncrypt*",
+        "kms:GenerateDataKey*"
+      ],
+      "Resource": "*",
+      "Condition": {
+        "StringLike": {
+          "aws:SourceArn": [
+            "arn:aws:rds:${AWS_REGION}:${account_id}:db:${cluster_id}",
+            "arn:aws:rds:${AWS_REGION}:${account_id}:cluster:${cluster_id}",
+            "arn:aws:elasticache:${AWS_REGION}:${account_id}:cluster:${cluster_id}",
+            "arn:aws:elasticache:${AWS_REGION}:${account_id}:replicationgroup:${cluster_id}"
+          ]
         }
       }
-    ]
-  }
+    }
+  ]
+}
 EOF
 )
+
+# -----------------------------
+# APPLY POLICY
+# -----------------------------
+log "Aplicando policy no KMS..."
+
+aws kms put-key-policy \
+  --key-id "$kms_key_id" \
+  --policy-name default \
+  --policy "$policy"
+
+log "Policy aplicada com sucesso"
