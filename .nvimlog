@@ -1,0 +1,4 @@
+WRN 2026-03-27T09:13:45.275 ?.42327    server_start:199: Failed to start server: operation not permitted: /var/folders/2v/04_0vw351693p0b_6z5y9v040000gn/T/nvim.andersonespindola/1MVHDi/nvim.42327.0
+WRN 2026-03-27T09:14:05.972 ?.43090    server_start:199: Failed to start server: operation not permitted: /var/folders/2v/04_0vw351693p0b_6z5y9v040000gn/T/nvim.andersonespindola/wATkzE/nvim.43090.0
+WRN 2026-03-27T09:24:55.244 ?.48060    server_start:199: Failed to start server: operation not permitted: /var/folders/2v/04_0vw351693p0b_6z5y9v040000gn/T/nvim.andersonespindola/2SIJd0/nvim.48060.0
+WRN 2026-03-31T18:00:00.686 ?.13345    server_start:199: Failed to start server: operation not permitted: /var/folders/2v/04_0vw351693p0b_6z5y9v040000gn/T/nvim.andersonespindola/fWLIus/nvim.13345.0

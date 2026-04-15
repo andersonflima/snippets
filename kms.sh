@@ -1,13 +1,14 @@
 #!/usr/bin/env bash
 
 # -----------------------------
-# SAFE SHELL CONFIG (portable)
+# SAFE SHELL CONFIG
 # -----------------------------
 set -eu
 if (set -o pipefail) 2>/dev/null; then
   set -o pipefail
 fi
 
+# fallback para bash
 if [ -z "${BASH_VERSION:-}" ]; then
   if command -v bash >/dev/null 2>&1; then
     exec bash "$0" "$@"
@@ -25,8 +26,14 @@ fail() {
   exit 1
 }
 
+normalize() {
+  echo "${1:-}" | tr -d '\r\n\t '
+}
+
 is_empty() {
-  [ -z "${1:-}" ] || [ "$1" = "None" ]
+  local v
+  v=$(normalize "${1:-}")
+  [ -z "$v" ] || [ "$v" = "None" ] || [ "$v" = "null" ]
 }
 
 # -----------------------------
@@ -46,47 +53,45 @@ log "cluster_id=$cluster_id"
 log "region=$AWS_REGION"
 
 # -----------------------------
-# RESOLVERS
+# VALIDAR AWS
 # -----------------------------
-resolve_kms_from_alias() {
-  aws kms list-aliases \
-    --query "Aliases[?contains(AliasName, \`${cluster_id}\`)].TargetKeyId | [0]" \
-    --output text 2>/dev/null || echo ""
-}
+aws sts get-caller-identity >/dev/null || fail "AWS credentials inválidas"
 
-resolve_kms_from_rds_instance() {
+# -----------------------------
+# RESOLVERS (com jq)
+# -----------------------------
+resolve_rds_instance() {
   aws rds describe-db-instances \
     --db-instance-identifier "$cluster_id" \
-    --query 'DBInstances[0].KmsKeyId' \
-    --output text 2>/dev/null || echo ""
+    --output json 2>/dev/null | jq -r '.DBInstances[0].KmsKeyId // empty'
 }
 
-resolve_kms_from_rds_cluster() {
+resolve_rds_cluster() {
   aws rds describe-db-clusters \
     --db-cluster-identifier "$cluster_id" \
-    --query 'DBClusters[0].KmsKeyId' \
-    --output text 2>/dev/null || echo ""
+    --output json 2>/dev/null | jq -r '.DBClusters[0].KmsKeyId // empty'
 }
 
-resolve_kms_from_elasticache_rg() {
+resolve_elasticache_rg() {
   aws elasticache describe-replication-groups \
     --replication-group-id "$cluster_id" \
-    --query 'ReplicationGroups[0].KmsKeyId' \
-    --output text 2>/dev/null || echo ""
+    --output json 2>/dev/null | jq -r '.ReplicationGroups[0].KmsKeyId // empty'
 }
 
-resolve_kms_from_elasticache_cluster() {
+resolve_elasticache_cluster() {
   aws elasticache describe-cache-clusters \
     --cache-cluster-id "$cluster_id" \
-    --query 'CacheClusters[0].KmsKeyId' \
-    --output text 2>/dev/null || echo ""
+    --output json 2>/dev/null | jq -r '.CacheClusters[0].KmsKeyId // empty'
 }
 
-resolve_kms_from_secret() {
+resolve_alias() {
+  aws kms list-aliases \
+    --output json 2>/dev/null | jq -r ".Aliases[] | select(.AliasName | contains(\"$cluster_id\")) | .TargetKeyId" | head -n1
+}
+
+resolve_secret() {
   aws secretsmanager list-secrets \
-    --filters Key=name,Values="${cluster_id}-aws" \
-    --query 'SecretList[0].KmsKeyId' \
-    --output text 2>/dev/null || echo ""
+    --output json 2>/dev/null | jq -r ".SecretList[] | select(.Name | contains(\"$cluster_id\")) | .KmsKeyId" | head -n1
 }
 
 # -----------------------------
@@ -94,37 +99,27 @@ resolve_kms_from_secret() {
 # -----------------------------
 kms_key_id=""
 
-log "Step 1: RDS instance"
-kms_key_id=$(resolve_kms_from_rds_instance)
+try_resolve() {
+  local name="$1"
+  local value
+  value=$(normalize "$($name || true)")
+  log "$name => '$value'"
 
-if is_empty "$kms_key_id"; then
-  log "Step 2: RDS cluster"
-  kms_key_id=$(resolve_kms_from_rds_cluster)
-fi
+  if ! is_empty "$value"; then
+    kms_key_id="$value"
+    return 0
+  fi
 
-if is_empty "$kms_key_id"; then
-  log "Step 3: ElastiCache replication group"
-  kms_key_id=$(resolve_kms_from_elasticache_rg)
-fi
+  return 1
+}
 
-if is_empty "$kms_key_id"; then
-  log "Step 4: ElastiCache cluster"
-  kms_key_id=$(resolve_kms_from_elasticache_cluster)
-fi
-
-if is_empty "$kms_key_id"; then
-  log "Step 5: alias (fallback)"
-  kms_key_id=$(resolve_kms_from_alias)
-fi
-
-if is_empty "$kms_key_id"; then
-  log "Step 6: Secrets Manager"
-  kms_key_id=$(resolve_kms_from_secret)
-fi
-
-if is_empty "$kms_key_id"; then
-  fail "Não foi possível resolver KMS para cluster '${cluster_id}'"
-fi
+try_resolve resolve_rds_instance ||
+  try_resolve resolve_rds_cluster ||
+  try_resolve resolve_elasticache_rg ||
+  try_resolve resolve_elasticache_cluster ||
+  try_resolve resolve_alias ||
+  try_resolve resolve_secret ||
+  fail "Não foi possível resolver KMS para '${cluster_id}'"
 
 log "KMS resolvido: $kms_key_id"
 
@@ -187,7 +182,7 @@ EOF
 # -----------------------------
 # APPLY POLICY
 # -----------------------------
-log "Aplicando policy no KMS..."
+log "Aplicando policy..."
 
 aws kms put-key-policy \
   --key-id "$kms_key_id" \
