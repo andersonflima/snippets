@@ -148,6 +148,16 @@ is_restricted_release_asset_url() {
   is_restricted_release_repo_slug "${slug}"
 }
 
+is_mason_registry_archive_url() {
+  local url
+  url="${1%%\?*}"
+  url="$(printf '%s' "${url}" | tr '[:upper:]' '[:lower:]')"
+
+  [[ "${url}" =~ ^https://github\.com/mason-org/mason-registry/archive/.+\.zip$ ]] && return 0
+  [[ "${url}" =~ ^https://codeload\.github\.com/mason-org/mason-registry/zip/.+$ ]] && return 0
+  return 1
+}
+
 resolve_proxy_config() {
   local proxy
   proxy="${CURL_WRAPPER_PROXY:-}"
@@ -279,12 +289,12 @@ assert_non_zip_download_request() {
 
   if (( ${#positional[@]} > 0 )); then
     url_path="${positional[${#positional[@]} - 1]}"
-    if is_zip_extension "${url_path}" && ! is_restricted_release_asset_url "${url_path}"; then
+    if is_zip_extension "${url_path}" && ! is_restricted_release_asset_url "${url_path}" && ! is_mason_registry_archive_url "${url_path}"; then
       die "download bloqueado para URL .zip: ${url_path}. Defina CURL_WRAPPER_ALLOW_ZIP_DOWNLOAD=1 para permitir"
     fi
   fi
 
-  if [[ -n "${output_path:-}" ]] && is_zip_extension "${output_path}" && ! is_restricted_release_asset_url "${url_path:-}"; then
+  if [[ -n "${output_path:-}" ]] && is_zip_extension "${output_path}" && ! is_restricted_release_asset_url "${url_path:-}" && ! is_mason_registry_archive_url "${url_path:-}"; then
     die "download bloqueado para saída .zip: ${output_path}. Defina CURL_WRAPPER_ALLOW_ZIP_DOWNLOAD=1 para permitir"
   fi
 }
