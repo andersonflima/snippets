@@ -1044,6 +1044,20 @@ canonicalize_archive_ref() {
   printf '%s\n' "${ref}"
 }
 
+is_downloadable_archive_ref() {
+  local ref
+  ref="${1:-}"
+  [[ -n "${ref}" ]] || return 1
+
+  case "${ref}" in
+    *'*'*|*'?'*|*'['*|*']'*)
+      return 1
+      ;;
+  esac
+
+  return 0
+}
+
 extract_requested_fetch_ref() {
   local arg positional_ref positional_count skip_next
   positional_ref=""
@@ -1229,6 +1243,9 @@ fallback_fetch_repo_with_archive() {
   [[ -n "${worktree_dir}" && -n "${origin_url}" ]] || return 1
 
   target_ref="$(extract_requested_fetch_ref || true)"
+  if ! is_downloadable_archive_ref "${target_ref}"; then
+    target_ref=""
+  fi
   if [[ -z "${target_ref}" ]]; then
     current_branch="$(resolve_current_local_branch "${real_git}" "${worktree_dir}" || true)"
     if [[ -n "${current_branch}" ]]; then
@@ -1237,7 +1254,9 @@ fallback_fetch_repo_with_archive() {
       target_ref="$(resolve_remote_origin_head_branch "${real_git}" "${worktree_dir}" || true)"
     fi
   fi
-  [[ -n "${target_ref}" ]] || return 1
+  if ! is_downloadable_archive_ref "${target_ref}"; then
+    target_ref="HEAD"
+  fi
   normalized_branch_ref="$(normalize_archive_branch_name "${target_ref}" || true)"
 
   archive_info="$(build_archive_snapshot_repository "${real_git}" "${origin_url}" "${target_ref}" || true)"
