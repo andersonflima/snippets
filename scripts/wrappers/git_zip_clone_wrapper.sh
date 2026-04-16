@@ -1974,6 +1974,9 @@ main() {
         if [[ -n "${fetch_git_dir}" ]] && replace_mix_install_repo_with_archive "${real_git}" "${fetch_git_dir}"; then
           return 0
         fi
+        if run_git_command_with_optional_no_proxy_retry "${real_git}" "$@"; then
+          return 0
+        fi
         die "falha ao atualizar refs via archive para ${fetch_origin_url:-origin}; fetch remoto via git está desabilitado para repositórios GitHub"
       fi
       set +e
@@ -2009,6 +2012,9 @@ main() {
           fi
         fi
         if fallback_checkout_repo_with_archive "${real_git}"; then
+          return 0
+        fi
+        if run_git_command_with_optional_no_proxy_retry "${real_git}" "$@"; then
           return 0
         fi
         die "falha ao fazer checkout via archive para ${checkout_origin_url:-origin}; checkout remoto via git está desabilitado para repositórios GitHub"

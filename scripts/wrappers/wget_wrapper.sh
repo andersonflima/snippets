@@ -156,6 +156,44 @@ EOF2
   return 1
 }
 
+resolve_real_curl() {
+  local self_path candidate
+  self_path="$(cd "$(dirname "$0")" && pwd)/$(basename "$0")"
+
+  for candidate in "${CURL_WRAPPER_REAL_CURL:-}" "${CURL:-}"; do
+    [[ -n "${candidate}" ]] || continue
+    if [[ "${candidate}" == */* ]]; then
+      [[ -x "${candidate}" ]] || continue
+      if binary_paths_match "${candidate}" "${self_path}"; then
+        continue
+      fi
+      printf '%s\n' "${candidate}"
+      return 0
+    fi
+
+    candidate="$(command -v "${candidate}" 2>/dev/null || true)"
+    [[ -n "${candidate}" && -x "${candidate}" ]] || continue
+    if binary_paths_match "${candidate}" "${self_path}"; then
+      continue
+    fi
+    printf '%s\n' "${candidate}"
+    return 0
+  done
+
+  while IFS= read -r candidate; do
+    [[ -n "${candidate}" && -x "${candidate}" ]] || continue
+    if binary_paths_match "${candidate}" "${self_path}"; then
+      continue
+    fi
+    printf '%s\n' "${candidate}"
+    return 0
+  done <<EOF2
+$(which -a curl 2>/dev/null || true)
+EOF2
+
+  return 1
+}
+
 usage() {
   cat <<'USAGE'
 Uso:
@@ -282,6 +320,46 @@ download_with_curl_wrapper() {
   fi
 
   "${curl_cmd[@]}"
+}
+
+download_with_real_curl() {
+  local real_curl header
+  local -a curl_cmd
+  real_curl="$(resolve_real_curl)" || return 1
+
+  curl_cmd=(
+    "${real_curl}"
+    -fL
+    --connect-timeout "${WGET_CONNECT_TIMEOUT}"
+    --max-time "${WGET_MAX_TIME}"
+    --retry "${WGET_TRIES}"
+    --retry-delay "1"
+    --retry-all-errors
+  )
+
+  if [[ "${WGET_OUTPUT}" != "-" ]]; then
+    mkdir -p "$(dirname "${WGET_OUTPUT}")"
+    curl_cmd+=(-o "${WGET_OUTPUT}")
+  fi
+
+  if [[ -n "${WGET_USER_AGENT}" ]]; then
+    curl_cmd+=(-A "${WGET_USER_AGENT}")
+  fi
+
+  if [[ -n "${WGET_WRAPPER_PROXY}" ]]; then
+    curl_cmd+=(--proxy "${WGET_WRAPPER_PROXY}")
+  fi
+
+  if [[ "${WGET_INSECURE}" == "1" ]]; then
+    curl_cmd+=(-k)
+  fi
+
+  for header in "${WGET_HEADERS[@]+"${WGET_HEADERS[@]}"}"; do
+    curl_cmd+=(-H "${header}")
+  done
+
+  curl_cmd+=("${WGET_URL}")
+  run_command_with_stderr_capture "${curl_cmd[@]}"
 }
 
 parse_args() {
@@ -482,10 +560,14 @@ main() {
     if download_with_curl_wrapper; then
       exit 0
     fi
-    log "curl wrapper falhou; seguindo fluxo padrão do wget"
+    log "curl wrapper falhou; tentando curl real"
+    if download_with_real_curl; then
+      exit 0
+    fi
+    log "curl real falhou; seguindo fluxo padrão do wget"
   fi
 
-  [[ -n "${real_wget}" ]] || die "wget real não encontrado para execução local"
+  [[ -n "${real_wget}" ]] || die "wget real não encontrado e fallback curl também falhou"
 
   if [[ "${WGET_CAN_HANDLE}" == "1" ]]; then
     if ! run_local_wget "${real_wget}" "$@"; then
