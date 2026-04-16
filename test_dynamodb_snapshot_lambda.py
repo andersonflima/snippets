@@ -570,6 +570,34 @@ class SnapshotAutomaticPlanIntegrityTests(unittest.TestCase):
             "2026-03-10T00:00:00Z",
         )
 
+    def test_automatic_plan_forces_full_when_force_full_is_enabled(self) -> None:
+        class FakeDescribeClient:
+            def describe_export(self, **kwargs: Any) -> dict[str, Any]:
+                raise AssertionError("describe_export não deveria ser chamado com force_full=True")
+
+        checkpoint_state = {
+            "table_name": "orders",
+            "table_arn": TABLE_ARN,
+            "last_to": "2026-03-10T00:00:00Z",
+            "last_mode": "INCREMENTAL",
+            "last_export_arn": f"{TABLE_ARN}/export/016",
+            "incremental_seq": 5,
+            "pending_exports": [],
+        }
+        plan = snapshot_lambda._resolve_automatic_export_plan(
+            checkpoint_record_exists=True,
+            checkpoint_state=checkpoint_state,
+            ddb_client=FakeDescribeClient(),
+            table_name="orders",
+            table_arn=TABLE_ARN,
+            force_full=True,
+        )
+
+        self.assertEqual(plan["mode"], "FULL")
+        self.assertEqual(plan["reason"], "full_only_forced")
+        self.assertEqual(plan["checkpoint_state"], checkpoint_state)
+        self.assertEqual(plan["last_to"], datetime(2026, 3, 10, tzinfo=timezone.utc))
+
     def test_process_table_dry_run_respects_pending_exports_before_planned_mode(self) -> None:
         target = snapshot_lambda.TableTarget(
             raw_ref=TABLE_ARN,

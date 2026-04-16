@@ -410,6 +410,64 @@ class SnapshotAutomaticModeTests(unittest.TestCase):
 
         self.assertEqual(config["max_incremental_exports_per_cycle"], 8)
 
+    def test_build_snapshot_config_defaults_full_only_to_false(self) -> None:
+        with patch.dict(
+            "os.environ",
+            {
+                "SNAPSHOT_BUCKET": "snapshot-bucket",
+                "TARGET_TABLES": "orders",
+                "CHECKPOINT_DYNAMODB_TABLE_ARN": "arn:aws:dynamodb:us-east-1:111111111111:table/checkpoints",
+            },
+            clear=True,
+        ):
+            config = snapshot_lambda.build_snapshot_config({})
+
+        self.assertFalse(config["full_only"])
+
+    def test_build_snapshot_config_reads_full_only_from_env(self) -> None:
+        with patch.dict(
+            "os.environ",
+            {
+                "SNAPSHOT_BUCKET": "snapshot-bucket",
+                "TARGET_TABLES": "orders",
+                "CHECKPOINT_DYNAMODB_TABLE_ARN": "arn:aws:dynamodb:us-east-1:111111111111:table/checkpoints",
+                "FULL_ONLY": "true",
+            },
+            clear=True,
+        ):
+            config = snapshot_lambda.build_snapshot_config({})
+
+        self.assertTrue(config["full_only"])
+
+    def test_build_snapshot_config_reads_full_only_from_payload_when_env_is_absent(self) -> None:
+        with patch.dict(
+            "os.environ",
+            {
+                "SNAPSHOT_BUCKET": "snapshot-bucket",
+                "TARGET_TABLES": "orders",
+                "CHECKPOINT_DYNAMODB_TABLE_ARN": "arn:aws:dynamodb:us-east-1:111111111111:table/checkpoints",
+            },
+            clear=True,
+        ):
+            config = snapshot_lambda.build_snapshot_config({"full_only": True})
+
+        self.assertTrue(config["full_only"])
+
+    def test_build_snapshot_config_prefers_full_only_env_over_payload(self) -> None:
+        with patch.dict(
+            "os.environ",
+            {
+                "SNAPSHOT_BUCKET": "snapshot-bucket",
+                "TARGET_TABLES": "orders",
+                "CHECKPOINT_DYNAMODB_TABLE_ARN": "arn:aws:dynamodb:us-east-1:111111111111:table/checkpoints",
+                "FULL_ONLY": "false",
+            },
+            clear=True,
+        ):
+            config = snapshot_lambda.build_snapshot_config({"full_only": True})
+
+        self.assertFalse(config["full_only"])
+
     def test_build_snapshot_config_rejects_invalid_incremental_cycle_limit(self) -> None:
         with patch.dict(
             "os.environ",

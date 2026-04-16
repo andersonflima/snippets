@@ -35,6 +35,7 @@ Observações:
 | `S3_PREFIX` | `dynamodb-snapshots` | Prefixo base dos exports e do lookup legado de baseline |
 | `IGNORE_TARGETS` ou `IGNORE_TABLES` | vazio | Lista CSV inline com ARNs/nomes para ignorar |
 | `DRY_RUN` | `false` | Faz preflight e gera plano sem exportar |
+| `FULL_ONLY` | `false` | Força execução somente `FULL` (desativa seleção automática de `INCREMENTAL`) |
 | `WAIT_FOR_COMPLETION` | `false` | Aguarda `DescribeExport` até concluir |
 | `MAX_WORKERS` | `4` | Paralelismo por tabela |
 | `S3_BUCKET_OWNER` | vazio | Account ID AWS de 12 dígitos do bucket de export. Necessário quando o bucket S3 é cross-account |
@@ -61,6 +62,7 @@ Observações:
 - O checkpoint de cada tabela é persistido imediatamente após a Lambda decidir o resultado daquela tabela (`FULL`, `INCREMENTAL` ou `PENDING`) e é tentado novamente no fechamento da execução. Isso reduz o risco de repetir `FULL` por perda de estado entre o término do export e o save final do checkpoint.
 - A Lambda também registra `TableCreatedAt` no checkpoint para detectar recriação de tabela; se o timestamp atual divergir do checkpoint, o estado antigo é invalidado e o bootstrap `FULL_EXPORT` é reexecutado.
 - A escolha entre `FULL_EXPORT` e `INCREMENTAL_EXPORT` agora é automática por tabela. Não é mais necessário enviar `mode` no evento nem configurar `SNAPSHOT_MODE`.
+- Quando `FULL_ONLY=true` (env) ou `full_only=true` (payload sem env sobrescrevendo), a Lambda força `FULL` para todas as tabelas alvo.
 - O `ClientToken` do export é gerado com um salt único por execução da Lambda para evitar deduplicação idempotente indesejada entre execuções diferentes no mesmo dia.
 
 ### Fallback por `Scan`
@@ -100,6 +102,7 @@ Observações:
   "max_workers": 4,
   "wait_for_completion": false,
   "dry_run": false,
+  "full_only": false,
   "scan_fallback_enabled": true,
   "scan_updated_attr": "_updated_at",
   "scan_updated_attr_type": "string",
@@ -147,12 +150,13 @@ Sem receber `mode`, a Lambda decide automaticamente assim:
 1. reconcilia exports pendentes via `DescribeExport`;
 2. se ainda houver export pendente, não dispara novo export para a tabela;
 3. no `dry_run`, se houver export pendente, o retorno é `PENDING` com `source='pending_export_tracking'`.
-4. se não existir checkpoint válido com `last_to`, executa `FULL`;
-5. após existir um `FULL`, passa a executar incrementais automaticamente;
-6. a contagem incremental vai até o limite configurado em `MAX_INCREMENTAL_EXPORTS_PER_CYCLE` (padrão `6`); ao atingir esse limite, a próxima execução volta para `FULL` e zera a contagem;
-7. quando a contagem incremental já saiu de `0`, a Lambda valida o `ItemCount` do export incremental anterior;
-8. se o export anterior teve `ItemCount > 0`, a contagem avança para o próximo incremental;
-9. se o export anterior não exportou itens, a contagem não avança e o próximo export reutiliza o mesmo índice incremental.
+4. se `FULL_ONLY=true`, executa `FULL` para todas as tabelas;
+5. se não existir checkpoint válido com `last_to`, executa `FULL`;
+6. após existir um `FULL`, passa a executar incrementais automaticamente;
+7. a contagem incremental vai até o limite configurado em `MAX_INCREMENTAL_EXPORTS_PER_CYCLE` (padrão `6`); ao atingir esse limite, a próxima execução volta para `FULL` e zera a contagem;
+8. quando a contagem incremental já saiu de `0`, a Lambda valida o `ItemCount` do export incremental anterior;
+9. se o export anterior teve `ItemCount > 0`, a contagem avança para o próximo incremental;
+10. se o export anterior não exportou itens, a contagem não avança e o próximo export reutiliza o mesmo índice incremental.
 
 Garantias operacionais do checkpoint:
 

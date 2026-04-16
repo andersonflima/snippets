@@ -3939,8 +3939,21 @@ def _resolve_automatic_export_plan(
     ddb_client: Any,
     table_name: str,
     table_arn: str,
+    force_full: bool = False,
     max_incremental_exports_per_cycle: Any = MAX_INCREMENTAL_EXPORTS_PER_CYCLE,
 ) -> Dict[str, Any]:
+    if force_full:
+        return {
+            "mode": "FULL",
+            "reason": "full_only_forced",
+            "checkpoint_state": checkpoint_state,
+            "last_to": _resolve_checkpoint_last_to_timestamp(
+                raw_last_to=checkpoint_state.get("last_to"),
+                table_name=table_name,
+                table_arn=table_arn,
+            ),
+        }
+
     incremental_cycle_limit = _resolve_max_incremental_exports_per_cycle(max_incremental_exports_per_cycle)
     refreshed_checkpoint_state = _refresh_last_incremental_export_metadata(
         ddb_client=ddb_client,
@@ -4428,6 +4441,7 @@ def _process_table(
             ddb_client=ddb_client,
             table_name=target.table_name,
             table_arn=target.table_arn,
+            force_full=bool(config.get("full_only")),
             max_incremental_exports_per_cycle=config.get("max_incremental_exports_per_cycle"),
         )
         checkpoint_state = automatic_plan["checkpoint_state"]
@@ -6110,6 +6124,11 @@ def build_snapshot_config(event: Optional[Dict[str, Any]]) -> Dict[str, Any]:
         "DRY_RUN",
         False,
     )
+    full_only = _resolve_env_first_bool(
+        _resolve_optional_text(payload.get("full_only"), payload.get("fullOnly")),
+        "FULL_ONLY",
+        False,
+    )
 
     scan_fallback_enabled = _resolve_env_first_bool(
         _resolve_optional_text(payload.get("scan_fallback_enabled"), payload.get("scanFallbackEnabled")),
@@ -6240,6 +6259,7 @@ def build_snapshot_config(event: Optional[Dict[str, Any]]) -> Dict[str, Any]:
         "wait_for_completion": wait_for_completion,
         "snapshot_bucket_exact": snapshot_bucket_exact,
         "dry_run": dry_run,
+        "full_only": full_only,
         "scan_fallback_enabled": scan_fallback_enabled,
         "pitr_auto_enable": pitr_auto_enable,
         "incremental_export_view_type": incremental_export_view_type,
@@ -6268,6 +6288,7 @@ def build_snapshot_config(event: Optional[Dict[str, Any]]) -> Dict[str, Any]:
         max_workers=max_workers,
         wait_for_completion=wait_for_completion,
         snapshot_bucket_exact=snapshot_bucket_exact,
+        full_only=full_only,
         scan_fallback_enabled=scan_fallback_enabled,
         pitr_auto_enable=pitr_auto_enable,
         incremental_export_view_type=incremental_export_view_type,
