@@ -211,6 +211,14 @@ def build_statement(account_id: str) -> Dict:
             "kms:DescribeKey",
         ],
         "Resource": "*",
+        "Condition": {
+            "ArnLike": {
+                "aws:PrincipalArn": [
+                    f"arn:aws:iam::{account_id}:role/itau-github-repo-*",
+                    f"arn:aws:iam::{account_id}:role/itau-codebuild-data-execution-role",
+                ]
+            }
+        },
     }
 
 

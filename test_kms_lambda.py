@@ -197,6 +197,21 @@ class KmsLambdaTests(unittest.TestCase):
         self.assertEqual(len(kms_client.put_calls), 1)
         self.assertEqual(kms_client.put_calls[0]["PolicyName"], "default")
         self.assertIn("Statement", kms_client.put_calls[0]["Policy"])
+        statements = kms_client.put_calls[0]["Policy"]["Statement"]
+        target_statement = next(
+            statement
+            for statement in statements
+            if statement.get("Sid") == "AllowAccessAccount526177858629"
+        )
+        principal_arns = target_statement["Condition"]["ArnLike"]["aws:PrincipalArn"]
+        self.assertIn(
+            "arn:aws:iam::526177858629:role/itau-github-repo-*",
+            principal_arns,
+        )
+        self.assertIn(
+            "arn:aws:iam::526177858629:role/itau-codebuild-data-execution-role",
+            principal_arns,
+        )
 
     def test_handler_returns_detailed_put_policy_error(self):
         elasticache_client = FakeElasticacheClient(
