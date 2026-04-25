@@ -282,3 +282,7 @@ def handler(event, context):
             "policy_updated": True,
         },
     }
+
+
+def lambda_handler(event, context):
+    return handler(event, context)
