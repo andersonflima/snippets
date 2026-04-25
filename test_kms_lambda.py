@@ -59,6 +59,7 @@ class FakeKmsClient:
         self.policy = policy or {"Version": "2012-10-17", "Statement": []}
         self.put_error = put_error
         self.put_calls = []
+        self.get_calls = []
 
     def describe_key(self, KeyId):
         response = self.describe_key_map.get(KeyId)
@@ -76,6 +77,7 @@ class FakeKmsClient:
 
     def get_key_policy(self, KeyId, PolicyName):
         _ = (KeyId, PolicyName)
+        self.get_calls.append({"KeyId": KeyId, "PolicyName": PolicyName})
         return {"Policy": json.dumps(self.policy)}
 
     def put_key_policy(self, KeyId, PolicyName, Policy):
@@ -196,14 +198,19 @@ class KmsLambdaTests(unittest.TestCase):
         self.assertEqual(response["body"]["kms_key_id"], "kms-cluster")
         self.assertEqual(len(kms_client.put_calls), 1)
         self.assertEqual(kms_client.put_calls[0]["PolicyName"], "default")
-        self.assertIn("Statement", kms_client.put_calls[0]["Policy"])
-        statements = kms_client.put_calls[0]["Policy"]["Statement"]
-        target_statement = next(
+        policy_document = kms_client.put_calls[0]["Policy"]
+        self.assertEqual(policy_document["Version"], "2012-10-17")
+        self.assertTrue(policy_document["Id"].startswith("Rds-Kms-"))
+        self.assertEqual(len(policy_document["Statement"]), 2)
+        self.assertEqual(kms_client.get_calls, [])
+
+        statements = policy_document["Statement"]
+        admin_by_role_statement = next(
             statement
             for statement in statements
-            if statement.get("Sid") == "AllowAccessAccount526177858629"
+            if statement.get("Sid") == "Allows admin of the key"
         )
-        principal_arns = target_statement["Condition"]["ArnLike"]["aws:PrincipalArn"]
+        principal_arns = admin_by_role_statement["Condition"]["ArnLike"]["aws:PrincipalArn"]
         self.assertIn(
             "arn:aws:iam::526177858629:role/itau-github-repo-*",
             principal_arns,
@@ -212,6 +219,16 @@ class KmsLambdaTests(unittest.TestCase):
             "arn:aws:iam::526177858629:role/itau-codebuild-data-execution-role",
             principal_arns,
         )
+        logs_statement = next(
+            statement
+            for statement in statements
+            if statement.get("Sid") == "Allow use of key in another account"
+        )
+        self.assertEqual(
+            logs_statement["Principal"]["Service"],
+            "logs.sa-east-1.amazonaws.com",
+        )
+        self.assertIn("kms:GetKeyPolicy", logs_statement["Action"])
 
     def test_handler_returns_detailed_put_policy_error(self):
         elasticache_client = FakeElasticacheClient(

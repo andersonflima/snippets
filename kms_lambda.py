@@ -1,6 +1,6 @@
 import boto3
 import json
-from typing import Optional, Dict, Any, Iterable
+from typing import Optional, Dict, Any, Iterable, List
 
 # ---------- PURE HELPERS ----------
 
@@ -168,68 +168,74 @@ def resolve_kms_key(
 # ---------- KMS POLICY ----------
 
 
-def get_kms_policy(kms_client, key_id: str, policy_name: str) -> Dict:
-    response = kms_client.get_key_policy(KeyId=key_id, PolicyName=policy_name)
-    return json.loads(response["Policy"])
-
-
 def put_kms_policy(kms_client, key_id: str, policy_name: str, policy: Dict):
     kms_client.put_key_policy(
         KeyId=key_id, PolicyName=policy_name, Policy=json.dumps(policy)
     )
 
 
-def upsert_statement(policy: Dict, statement: Dict) -> Dict:
-    statements = policy.get("Statement", [])
-
-    # evita duplicação por Sid
-    existing = next(
-        (s for s in statements if s.get("Sid") == statement.get("Sid")), None
-    )
-
-    if existing:
-        statements = [
-            statement if s.get("Sid") == statement.get("Sid") else s for s in statements
-        ]
-    else:
-        statements.append(statement)
-
-    policy["Statement"] = statements
-    return policy
+def build_allowed_role_arns(account_id: str) -> List[str]:
+    return [
+        f"arn:aws:iam::{account_id}:role/itau-github-repo-*",
+        f"arn:aws:iam::{account_id}:role/itau-codebuild-data-execution-role",
+    ]
 
 
-def build_statement(account_id: str) -> Dict:
+def build_policy_document(account_id: str, policy_id_hint: str, region: str) -> Dict:
+    instance_name = normalize(policy_id_hint) or "default"
+    root_arn = f"arn:aws:iam::{account_id}:root"
+    _ = region
     return {
-        "Sid": f"AllowAccessAccount{account_id}",
-        "Effect": "Allow",
-        "Principal": {"AWS": f"arn:aws:iam::{account_id}:root"},
-        "Action": [
-            "kms:Encrypt",
-            "kms:Decrypt",
-            "kms:ReEncrypt*",
-            "kms:GenerateDataKey*",
-            "kms:DescribeKey",
+        "Version": "2012-10-17",
+        "Id": f"Rds-Kms-{instance_name}",
+        "Statement": [
+            {
+                "Sid": "Allows admin of the key",
+                "Effect": "Allow",
+                "Principal": {"AWS": root_arn},
+                "Action": "kms:*",
+                "Resource": "*",
+                "Condition": {
+                    "ArnLike": {
+                        "aws:PrincipalArn": build_allowed_role_arns(account_id)
+                    }
+                },
+            },
+            {
+                "Sid": "Allow use of key in another account",
+                "Effect": "Allow",
+                "Principal": {
+                    "Service": "logs.sa-east-1.amazonaws.com",
+                    "AWS": root_arn,
+                },
+                "Action": [
+                    "kms:Encrypt",
+                    "kms:Decrypt",
+                    "kms:ReEncrypt*",
+                    "kms:GenerateDataKey*",
+                    "kms:DescribeKey",
+                    "kms:GetKeyPolicy",
+                ],
+                "Resource": "*",
+            },
         ],
-        "Resource": "*",
-        "Condition": {
-            "ArnLike": {
-                "aws:PrincipalArn": [
-                    f"arn:aws:iam::{account_id}:role/itau-github-repo-*",
-                    f"arn:aws:iam::{account_id}:role/itau-codebuild-data-execution-role",
-                ]
-            }
-        },
     }
 
 
-def update_kms_policy(kms_client, key_id: str, policy_name: str, account_id: str):
-    policy = get_kms_policy(kms_client, key_id, policy_name)
-
-    statement = build_statement(account_id)
-
-    updated_policy = upsert_statement(policy, statement)
-
-    put_kms_policy(kms_client, key_id, policy_name, updated_policy)
+def update_kms_policy(
+    kms_client,
+    key_id: str,
+    policy_name: str,
+    account_id: str,
+    policy_id_hint: str,
+    region: str,
+):
+    new_policy_document = build_policy_document(
+        account_id=account_id,
+        policy_id_hint=policy_id_hint,
+        region=region,
+    )
+    put_kms_policy(kms_client, key_id, policy_name, new_policy_document)
 
 
 # ---------- HANDLER ----------
@@ -275,7 +281,14 @@ def handler(event, context):
         }
 
     try:
-        update_kms_policy(kms_client, kms_key, policy_name, account_id)
+        update_kms_policy(
+            kms_client=kms_client,
+            key_id=kms_key,
+            policy_name=policy_name,
+            account_id=account_id,
+            policy_id_hint=cluster_id or kms_alias or kms_key,
+            region=region,
+        )
     except Exception as error:
         return {
             "statusCode": 500,
