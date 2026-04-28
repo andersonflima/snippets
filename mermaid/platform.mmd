@@ -10,7 +10,6 @@ flowchart LR
     LegendEventA((" ")) eLegendEvent@== Event ==> LegendEventB((" "))
     LegendScalingA((" ")) eLegendScaling@== KEDA Scaling Signal ==> LegendScalingB((" "))
     LegendProcessingA((" ")) eLegendProcessing@== Processing ==> LegendProcessingB((" "))
-    LegendAuthA((" ")) eLegendAuth@== Authentication ==> LegendAuthB((" "))
     LegendStsA((" ")) eLegendSts@-. STS .-> LegendStsB((" "))
     LegendLogsA((" ")) eLegendLogs@== Logs ==> LegendLogsB((" "))
     LegendMonitoringA((" ")) eLegendMonitoring@== Monitoring ==> LegendMonitoringB((" "))
@@ -22,11 +21,6 @@ flowchart LR
     ControlPlane["Control Plane"]
     OtherAPIs["External APIs"]
     Schedulers["Schedulers / Jobs"]
-  end
-
-  subgraph AzureAD["Azure AD"]
-    direction TB
-    AccountClaims["Account Claims"]
   end
 
   subgraph Platform["Platform"]
@@ -131,7 +125,6 @@ flowchart LR
   Schedulers eSchedulersIngress@== Scheduled Event ==> EventIngress
 
   EventIngress eIngressAuth@== Event Identity ==> AuthData
-  AuthData eAuthDataClaims@== Authentication / Claims ==> AccountClaims
   AuthData eAuthValidation@== Authorized Event ==> ValidationData
 
   ValidationData eValidationNats@== Publish Event ==> NatsStream
@@ -203,7 +196,6 @@ flowchart LR
   classDef event stroke:#00C853,color:#00C853
   classDef scaling stroke:#FF6D00,color:#FF6D00
   classDef processing stroke:#00B8D4,color:#00B8D4
-  classDef authentication stroke:#FFD600,color:#FFD600
   classDef sts stroke:#AA00FF,color:#AA00FF
   classDef logs stroke:#2962FF,color:#2962FF
   classDef monitoring stroke:#F4511E,color:#F4511E
@@ -220,7 +212,6 @@ flowchart LR
   classDef legendEvent color:#00C853,stroke:#00C853
   classDef legendScaling color:#FF6D00,stroke:#FF6D00
   classDef legendProcessing color:#00B8D4,stroke:#00B8D4
-  classDef legendAuth color:#FFD600,stroke:#FFD600
   classDef legendSts color:#AA00FF,stroke:#AA00FF
   classDef legendLogs color:#2962FF,stroke:#2962FF
   classDef legendMonitoring color:#F4511E,stroke:#F4511E
@@ -234,11 +225,10 @@ flowchart LR
   class NatsWorkers,SqsWorkers,KafkaWorkers,LambdaEventWorker worker
   class CreateData,ReadData,UpdateData,DeleteData,ReplicationData operation
   class RegistryDynamoDB,OperationalDatabase,TargetDataServices dataStore
-  class AccountClaims,AuthData identity
+  class AuthData identity
   class LegendEventA,LegendEventB legendEvent
   class LegendScalingA,LegendScalingB legendScaling
   class LegendProcessingA,LegendProcessingB legendProcessing
-  class LegendAuthA,LegendAuthB legendAuth
   class LegendStsA,LegendStsB legendSts
   class LegendLogsA,LegendLogsB legendLogs
   class LegendMonitoringA,LegendMonitoringB legendMonitoring
@@ -247,7 +237,6 @@ flowchart LR
   class eControlPlaneIngress,eOtherApisIngress,eSchedulersIngress,eIngressAuth,eAuthValidation,eValidationNats,eValidationSqs,eValidationKafka,eNatsWorkers,eSqsWorkers,eKafkaWorkers,eLegendEvent event
   class eNatsKeda,eSqsKeda,eKafkaKeda,eKedaNatsWorkers,eKedaSqsWorkers,eKedaKafkaWorkers,eLegendScaling scaling
   class eUserFrontend,eFrontendStatus,eCloudFrontApiGateway,eApiGatewayAlb,eAlbRegistry,eNatsCreate,eNatsRead,eSqsUpdate,eSqsDelete,eKafkaReplication,eKafkaLambdaWorker,eCreateTargetDataServices,eReadTargetDataServices,eUpdateTargetDataServices,eDeleteTargetDataServices,eReplicationTargetDataServices,eLambdaWorkerTargetLambda,eLegendProcessing processing
-  class eAuthDataClaims,eLegendAuth authentication
   class eDataRoleSts,ePlatformAIRoleSts,eCreateAssumeRole,eReadAssumeRole,eUpdateAssumeRole,eDeleteAssumeRole,eReplicationAssumeRole,eLambdaWorkerAssumeRole,eLegendSts sts
   class eAuthDataLogs,eValidationLogs,eNatsWorkersLogs,eSqsWorkersLogs,eKafkaWorkersLogs,eCreateLogs,eReadLogs,eUpdateLogs,eDeleteLogs,eReplicationLogs,eWatcherDataLogs,eLogsDataRegistry,eReplicationRegistry,eLambdaWorkerLogs,eWatcherAILogs,eLogsAIDatabase,eLegendLogs logs
   class eCreateWatcher,eReadWatcher,eUpdateWatcher,eDeleteWatcher,eReplicationWatcher,eWatcherTargetDataServices,eLambdaWorkerWatcher,eWatcherTargetLambda,eLegendMonitoring monitoring
@@ -262,7 +251,6 @@ flowchart LR
   eOtherApisIngress@{ animation: fast }
   eSchedulersIngress@{ animation: fast }
   eIngressAuth@{ animation: fast }
-  eAuthDataClaims@{ animation: fast }
   eAuthValidation@{ animation: fast }
   eValidationNats@{ animation: fast }
   eValidationSqs@{ animation: fast }
@@ -323,7 +311,6 @@ flowchart LR
   eLegendEvent@{ animation: fast }
   eLegendScaling@{ animation: fast }
   eLegendProcessing@{ animation: fast }
-  eLegendAuth@{ animation: fast }
   eLegendSts@{ animation: fast }
   eLegendLogs@{ animation: fast }
   eLegendMonitoring@{ animation: fast }
