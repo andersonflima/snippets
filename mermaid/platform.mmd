@@ -1,0 +1,274 @@
+---
+config:
+  theme: neo
+  layout: elk
+  look: classic
+---
+flowchart LR
+  subgraph Legend["Legend"]
+    direction TB
+    LegendExecutionA((" ")) eLegendExecution@== Execution ==> LegendExecutionB((" "))
+    LegendAuthA((" ")) eLegendAuth@== Authentication ==> LegendAuthB((" "))
+    LegendStsA((" ")) eLegendSts@-. STS .-> LegendStsB((" "))
+    LegendLogsA((" ")) eLegendLogs@== Logs ==> LegendLogsB((" "))
+    LegendMonitoringA((" ")) eLegendMonitoring@== Monitoring ==> LegendMonitoringB((" "))
+    LegendExternalA((" ")) eLegendExternal@== External Integration ==> LegendExternalB((" "))
+  end
+
+  subgraph Externals["External Sources"]
+    direction TB
+    ControlPlane["Control Plane"]
+    OtherAPIs["External APIs"]
+  end
+
+  subgraph AzureAD["Azure AD"]
+    direction TB
+    AccountClaims["Account Claims"]
+  end
+
+  subgraph Platform["Platform"]
+    direction LR
+    User@{ icon: "fa:user", pos: "b", h: 80 }
+    Frontend@{ icon: "fa:file-code", label: "Platform Frontend", pos: "b", h: 100 }
+
+    subgraph AWSCloud["AWS Cloud"]
+      direction LR
+
+      subgraph DataDevOpsAccount["AWS DataDevOps Account (+ Tools)"]
+        direction LR
+        CloudFrontData["CloudFront"]
+        ApiGatewayData["API Gateway"]
+        DataAccountRole["Cross-Account IAM Role"]
+
+        subgraph VpcData["VPC A"]
+          direction LR
+          AlbData("Application Load Balancer")
+          RegistryDynamoDB[("Operational DynamoDB")]
+
+          subgraph EksData["EKS Cluster"]
+            direction LR
+            AuthData["Auth"]
+            ValidationData["Validation"]
+
+            subgraph DataOperations["Data Operation Services"]
+              direction TB
+              CreateData["Create"]
+              ReadData["Read"]
+              UpdateData["Update"]
+              DeleteData["Delete"]
+              ReplicationData["Replication"]
+            end
+
+            WatcherData["Watcher"]
+            LogsData["Logs"]
+          end
+        end
+      end
+
+      subgraph PlatformAIAccount["AWS Platform AIaaS Account"]
+        direction LR
+        CloudFrontAI["CloudFront"]
+        ApiGatewayAI["API Gateway"]
+        PlatformAIAccountRole["Cross-Account IAM Role"]
+
+        subgraph VpcAI["VPC C"]
+          direction LR
+          AlbAI("Application Load Balancer")
+          OperationalDatabase[("Operational Database")]
+
+          subgraph EksAI["EKS Cluster"]
+            direction LR
+            AuthAI["Auth"]
+            LambdaApi["Lambda API"]
+            WatcherAI["Watcher"]
+            LogsAI["Logs"]
+          end
+        end
+      end
+
+      subgraph TargetAccount["Target Account"]
+        direction TB
+        StsService{"STS"}
+
+        subgraph TargetVpc["VPC B"]
+          direction TB
+          TargetDataServices["Managed Data Services<br/>RDS | DynamoDB | DocumentDB<br/>Redis | Keyspaces"]
+          TargetLambda{"Lambda"}
+        end
+      end
+    end
+  end
+
+  User eUserFrontend@== Interaction ==> Frontend
+  Frontend eFrontendCloudFrontData@== Request ==> CloudFrontData
+  Frontend eFrontendCloudFrontAI@== Request ==> CloudFrontAI
+
+  CloudFrontData eCloudFrontDataApiGateway@== Request ==> ApiGatewayData
+  ApiGatewayData eApiGatewayDataAlb@== Request ==> AlbData
+  AlbData eAlbDataAuth@== Request ==> AuthData
+
+  CloudFrontAI eCloudFrontAIApiGateway@== Request ==> ApiGatewayAI
+  ApiGatewayAI eApiGatewayAIAlb@== Request ==> AlbAI
+  AlbAI eAlbAIAuth@== Request ==> AuthAI
+
+  AuthData eAuthDataClaims@== Authentication / Claims ==> AccountClaims
+  AuthAI eAuthAIClaims@== Authentication / Claims ==> AccountClaims
+  AuthData eAuthDataValidation@== Authenticated Claims / Payload Request ==> ValidationData
+  AuthData eAuthDataWatcher@== Request ==> WatcherData
+  AuthAI eAuthAILambdaApi@== Payload Request ==> LambdaApi
+  AuthAI eAuthAIWatcher@== Request ==> WatcherAI
+
+  ValidationData eValidationCreate@== Payload Request ==> CreateData
+  ValidationData eValidationRead@== Payload Request ==> ReadData
+  ValidationData eValidationUpdate@== Payload Request ==> UpdateData
+  ValidationData eValidationDelete@== Payload Request ==> DeleteData
+  ValidationData eValidationReplication@== Payload Request ==> ReplicationData
+
+  CreateData eCreateTargetDataServices@== Execute Action ==> TargetDataServices
+  ReadData eReadTargetDataServices@== Execute Action ==> TargetDataServices
+  UpdateData eUpdateTargetDataServices@== Execute Action ==> TargetDataServices
+  DeleteData eDeleteTargetDataServices@== Execute Action ==> TargetDataServices
+  ReplicationData eReplicationTargetDataServices@== Execute Action ==> TargetDataServices
+  LambdaApi eLambdaApiTargetLambda@== Execute Action ==> TargetLambda
+
+  AuthData eAuthDataLogs@== Log Interaction ==> LogsData
+  ValidationData eValidationLogs@== Log Interaction ==> LogsData
+  CreateData eCreateLogs@== Log Interaction ==> LogsData
+  ReadData eReadLogs@== Log Interaction ==> LogsData
+  UpdateData eUpdateLogs@== Log Interaction ==> LogsData
+  DeleteData eDeleteLogs@== Log Interaction ==> LogsData
+  ReplicationData eReplicationLogs@== Log Interaction ==> LogsData
+  WatcherData eWatcherDataLogs@== Log Interaction ==> LogsData
+  LogsData eLogsDataRegistry@== Log Interaction ==> RegistryDynamoDB
+  ReplicationData eReplicationRegistry@== Load Registry ==> RegistryDynamoDB
+
+  AuthAI eAuthAILogs@== Log Interaction ==> LogsAI
+  LambdaApi eLambdaApiLogs@== Log Interaction ==> LogsAI
+  WatcherAI eWatcherAILogs@== Log Interaction ==> LogsAI
+  LogsAI eLogsAIDatabase@== Log Interaction ==> OperationalDatabase
+
+  CreateData eCreateWatcher@== Monitor Execution ==> WatcherData
+  ReadData eReadWatcher@== Monitor Execution ==> WatcherData
+  UpdateData eUpdateWatcher@== Monitor Execution ==> WatcherData
+  DeleteData eDeleteWatcher@== Monitor Execution ==> WatcherData
+  ReplicationData eReplicationWatcher@== Monitor Execution ==> WatcherData
+  WatcherData eWatcherTargetDataServices@== Monitoring ==> TargetDataServices
+  LambdaApi eLambdaApiWatcher@== Monitor Execution ==> WatcherAI
+  WatcherAI eWatcherTargetLambda@== Monitoring ==> TargetLambda
+
+  DataAccountRole eDataRoleSts@-. STS .-> StsService
+  PlatformAIAccountRole ePlatformAIRoleSts@-. STS .-> StsService
+  CreateData eCreateAssumeRole@-. "STS:AssumeRole (cross-account)" .-> DataAccountRole
+  ReadData eReadAssumeRole@-. "STS:AssumeRole (cross-account)" .-> DataAccountRole
+  UpdateData eUpdateAssumeRole@-. "STS:AssumeRole (cross-account)" .-> DataAccountRole
+  DeleteData eDeleteAssumeRole@-. "STS:AssumeRole (cross-account)" .-> DataAccountRole
+  ReplicationData eReplicationAssumeRole@-. "STS:AssumeRole (cross-account)" .-> DataAccountRole
+  LambdaApi eLambdaApiAssumeRole@-. "STS:AssumeRole (cross-account)" .-> PlatformAIAccountRole
+
+  ControlPlane eControlPlaneAuth@== External Integration ==> AuthData
+  OtherAPIs eOtherApisAuth@== External Integration ==> AuthData
+
+  classDef execution stroke:#00C853,color:#00C853
+  classDef authentication stroke:#FFD600,color:#FFD600
+  classDef sts stroke:#AA00FF,color:#AA00FF
+  classDef logs stroke:#2962FF,color:#2962FF
+  classDef monitoring stroke:#FF6D00,color:#FF6D00
+  classDef external stroke:#4BF0FC,color:#4BF0FC
+  classDef awsAccount stroke:#E1BEE7
+  classDef vpc stroke:#BBDEFB
+  classDef eks stroke:#C8E6C9
+  classDef operation fill:#F6FFF8,stroke:#00C853,color:#1B5E20
+  classDef dataStore fill:#F7FAFF,stroke:#2962FF,color:#0D47A1
+  classDef identity fill:#FFFDE7,stroke:#FFD600,color:#5D4600
+  classDef legendExecution color:#00C853,stroke:#00C853
+  classDef legendAuth color:#FFD600,stroke:#FFD600
+  classDef legendSts color:#AA00FF,stroke:#AA00FF
+  classDef legendLogs color:#2962FF,stroke:#2962FF
+  classDef legendMonitoring color:#FF6D00,stroke:#FF6D00
+  classDef legendExternal color:#4BF0FC,stroke:#4BF0FC
+
+  class DataDevOpsAccount,PlatformAIAccount,TargetAccount awsAccount
+  class VpcData,VpcAI,TargetVpc vpc
+  class EksData,EksAI,DataOperations eks
+  class CreateData,ReadData,UpdateData,DeleteData,ReplicationData,LambdaApi operation
+  class RegistryDynamoDB,OperationalDatabase,TargetDataServices dataStore
+  class AccountClaims,AuthData,AuthAI identity
+  class LegendExecutionA,LegendExecutionB legendExecution
+  class LegendAuthA,LegendAuthB legendAuth
+  class LegendStsA,LegendStsB legendSts
+  class LegendLogsA,LegendLogsB legendLogs
+  class LegendMonitoringA,LegendMonitoringB legendMonitoring
+  class LegendExternalA,LegendExternalB legendExternal
+
+  class eUserFrontend,eFrontendCloudFrontData,eFrontendCloudFrontAI,eCloudFrontDataApiGateway,eApiGatewayDataAlb,eAlbDataAuth,eCloudFrontAIApiGateway,eApiGatewayAIAlb,eAlbAIAuth,eAuthDataValidation,eAuthDataWatcher,eAuthAILambdaApi,eAuthAIWatcher execution
+  class eValidationCreate,eValidationRead,eValidationUpdate,eValidationDelete,eValidationReplication,eCreateTargetDataServices,eReadTargetDataServices,eUpdateTargetDataServices,eDeleteTargetDataServices,eReplicationTargetDataServices,eLambdaApiTargetLambda,eLegendExecution execution
+  class eAuthDataClaims,eAuthAIClaims,eLegendAuth authentication
+  class eDataRoleSts,ePlatformAIRoleSts,eCreateAssumeRole,eReadAssumeRole,eUpdateAssumeRole,eDeleteAssumeRole,eReplicationAssumeRole,eLambdaApiAssumeRole,eLegendSts sts
+  class eAuthDataLogs,eValidationLogs,eCreateLogs,eReadLogs,eUpdateLogs,eDeleteLogs,eReplicationLogs,eWatcherDataLogs,eLogsDataRegistry,eReplicationRegistry,eAuthAILogs,eLambdaApiLogs,eWatcherAILogs,eLogsAIDatabase,eLegendLogs logs
+  class eCreateWatcher,eReadWatcher,eUpdateWatcher,eDeleteWatcher,eReplicationWatcher,eWatcherTargetDataServices,eLambdaApiWatcher,eWatcherTargetLambda,eLegendMonitoring monitoring
+  class eControlPlaneAuth,eOtherApisAuth,eLegendExternal external
+
+  eUserFrontend@{ animation: fast }
+  eFrontendCloudFrontData@{ animation: fast }
+  eFrontendCloudFrontAI@{ animation: fast }
+  eCloudFrontDataApiGateway@{ animation: fast }
+  eApiGatewayDataAlb@{ animation: fast }
+  eAlbDataAuth@{ animation: fast }
+  eCloudFrontAIApiGateway@{ animation: fast }
+  eApiGatewayAIAlb@{ animation: fast }
+  eAlbAIAuth@{ animation: fast }
+  eAuthDataClaims@{ animation: fast }
+  eAuthAIClaims@{ animation: fast }
+  eAuthDataValidation@{ animation: fast }
+  eAuthDataWatcher@{ animation: fast }
+  eAuthAILambdaApi@{ animation: fast }
+  eAuthAIWatcher@{ animation: fast }
+  eValidationCreate@{ animation: fast }
+  eValidationRead@{ animation: fast }
+  eValidationUpdate@{ animation: fast }
+  eValidationDelete@{ animation: fast }
+  eValidationReplication@{ animation: fast }
+  eCreateTargetDataServices@{ animation: fast }
+  eReadTargetDataServices@{ animation: fast }
+  eUpdateTargetDataServices@{ animation: fast }
+  eDeleteTargetDataServices@{ animation: fast }
+  eReplicationTargetDataServices@{ animation: fast }
+  eLambdaApiTargetLambda@{ animation: fast }
+  eAuthDataLogs@{ animation: fast }
+  eValidationLogs@{ animation: fast }
+  eCreateLogs@{ animation: fast }
+  eReadLogs@{ animation: fast }
+  eUpdateLogs@{ animation: fast }
+  eDeleteLogs@{ animation: fast }
+  eReplicationLogs@{ animation: fast }
+  eWatcherDataLogs@{ animation: fast }
+  eLogsDataRegistry@{ animation: fast }
+  eReplicationRegistry@{ animation: fast }
+  eAuthAILogs@{ animation: fast }
+  eLambdaApiLogs@{ animation: fast }
+  eWatcherAILogs@{ animation: fast }
+  eLogsAIDatabase@{ animation: fast }
+  eCreateWatcher@{ animation: fast }
+  eReadWatcher@{ animation: fast }
+  eUpdateWatcher@{ animation: fast }
+  eDeleteWatcher@{ animation: fast }
+  eReplicationWatcher@{ animation: fast }
+  eWatcherTargetDataServices@{ animation: fast }
+  eLambdaApiWatcher@{ animation: fast }
+  eWatcherTargetLambda@{ animation: fast }
+  eDataRoleSts@{ animation: fast }
+  ePlatformAIRoleSts@{ animation: fast }
+  eCreateAssumeRole@{ animation: fast }
+  eReadAssumeRole@{ animation: fast }
+  eUpdateAssumeRole@{ animation: fast }
+  eDeleteAssumeRole@{ animation: fast }
+  eReplicationAssumeRole@{ animation: fast }
+  eLambdaApiAssumeRole@{ animation: fast }
+  eControlPlaneAuth@{ animation: fast }
+  eOtherApisAuth@{ animation: fast }
+  eLegendExecution@{ animation: fast }
+  eLegendAuth@{ animation: fast }
+  eLegendSts@{ animation: fast }
+  eLegendLogs@{ animation: fast }
+  eLegendMonitoring@{ animation: fast }
+  eLegendExternal@{ animation: fast }
