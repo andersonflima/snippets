@@ -25,21 +25,16 @@ flowchart LR
 
   subgraph Platform["Platform"]
     direction LR
-    User@{ icon: "fa:user", pos: "b", h: 80 }
-    Frontend@{ icon: "fa:file-code", label: "Platform Frontend", pos: "b", h: 100 }
 
     subgraph AWSCloud["AWS Cloud"]
       direction LR
 
       subgraph DataDevOpsAccount["AWS DataDevOps Account (+ Tools)"]
         direction LR
-        CloudFrontStatus["CloudFront"]
-        ApiGatewayStatus["API Gateway"]
         DataAccountRole["Cross-Account IAM Role"]
 
         subgraph VpcData["VPC A"]
           direction LR
-          AlbStatus("Application Load Balancer")
           EventIngress["Event Ingress"]
           RegistryDynamoDB[("Operational DynamoDB")]
 
@@ -84,23 +79,6 @@ flowchart LR
         end
       end
 
-      subgraph PlatformAIAccount["AWS Platform AIaaS Account"]
-        direction LR
-        PlatformAIAccountRole["Cross-Account IAM Role"]
-
-        subgraph VpcAI["VPC C"]
-          direction LR
-          OperationalDatabase[("Operational Database")]
-
-          subgraph EksAI["EKS Cluster"]
-            direction LR
-            LambdaEventWorker["Lambda Event Worker"]
-            WatcherAI["Watcher"]
-            LogsAI["Logs"]
-          end
-        end
-      end
-
       subgraph TargetAccount["Target Account"]
         direction TB
         StsService{"STS"}
@@ -108,17 +86,10 @@ flowchart LR
         subgraph TargetVpc["VPC B"]
           direction TB
           TargetDataServices["Managed Data Services<br/>RDS | DynamoDB | DocumentDB<br/>Redis | Keyspaces"]
-          TargetLambda{"Lambda"}
         end
       end
     end
   end
-
-  User eUserFrontend@== Interaction ==> Frontend
-  Frontend eFrontendStatus@== Read Status ==> CloudFrontStatus
-  CloudFrontStatus eCloudFrontApiGateway@== Read Status ==> ApiGatewayStatus
-  ApiGatewayStatus eApiGatewayAlb@== Read Status ==> AlbStatus
-  AlbStatus eAlbRegistry@== Read Status ==> RegistryDynamoDB
 
   ControlPlane eControlPlaneIngress@== Signed Event ==> EventIngress
   OtherAPIs eOtherApisIngress@== Signed Event ==> EventIngress
@@ -148,14 +119,12 @@ flowchart LR
   SqsWorkers eSqsUpdate@== Process Command ==> UpdateData
   SqsWorkers eSqsDelete@== Process Command ==> DeleteData
   KafkaWorkers eKafkaReplication@== Process Stream ==> ReplicationData
-  KafkaWorkers eKafkaLambdaWorker@== Process Lambda Event ==> LambdaEventWorker
 
   CreateData eCreateTargetDataServices@== Execute Action ==> TargetDataServices
   ReadData eReadTargetDataServices@== Execute Action ==> TargetDataServices
   UpdateData eUpdateTargetDataServices@== Execute Action ==> TargetDataServices
   DeleteData eDeleteTargetDataServices@== Execute Action ==> TargetDataServices
   ReplicationData eReplicationTargetDataServices@== Execute Action ==> TargetDataServices
-  LambdaEventWorker eLambdaWorkerTargetLambda@== Execute Action ==> TargetLambda
 
   AuthData eAuthDataLogs@== Log Event ==> LogsData
   ValidationData eValidationLogs@== Log Event ==> LogsData
@@ -171,27 +140,19 @@ flowchart LR
   LogsData eLogsDataRegistry@== Persist Audit ==> RegistryDynamoDB
   ReplicationData eReplicationRegistry@== Load Registry ==> RegistryDynamoDB
 
-  LambdaEventWorker eLambdaWorkerLogs@== Log Event ==> LogsAI
-  WatcherAI eWatcherAILogs@== Log Event ==> LogsAI
-  LogsAI eLogsAIDatabase@== Persist Audit ==> OperationalDatabase
-
   CreateData eCreateWatcher@== Monitor Execution ==> WatcherData
   ReadData eReadWatcher@== Monitor Execution ==> WatcherData
   UpdateData eUpdateWatcher@== Monitor Execution ==> WatcherData
   DeleteData eDeleteWatcher@== Monitor Execution ==> WatcherData
   ReplicationData eReplicationWatcher@== Monitor Execution ==> WatcherData
   WatcherData eWatcherTargetDataServices@== Monitoring ==> TargetDataServices
-  LambdaEventWorker eLambdaWorkerWatcher@== Monitor Execution ==> WatcherAI
-  WatcherAI eWatcherTargetLambda@== Monitoring ==> TargetLambda
 
   DataAccountRole eDataRoleSts@-. STS .-> StsService
-  PlatformAIAccountRole ePlatformAIRoleSts@-. STS .-> StsService
   CreateData eCreateAssumeRole@-. "STS:AssumeRole (cross-account)" .-> DataAccountRole
   ReadData eReadAssumeRole@-. "STS:AssumeRole (cross-account)" .-> DataAccountRole
   UpdateData eUpdateAssumeRole@-. "STS:AssumeRole (cross-account)" .-> DataAccountRole
   DeleteData eDeleteAssumeRole@-. "STS:AssumeRole (cross-account)" .-> DataAccountRole
   ReplicationData eReplicationAssumeRole@-. "STS:AssumeRole (cross-account)" .-> DataAccountRole
-  LambdaEventWorker eLambdaWorkerAssumeRole@-. "STS:AssumeRole (cross-account)" .-> PlatformAIAccountRole
 
   classDef event stroke:#00C853,color:#00C853
   classDef scaling stroke:#FF6D00,color:#FF6D00
@@ -217,14 +178,14 @@ flowchart LR
   classDef legendMonitoring color:#F4511E,stroke:#F4511E
   classDef legendExternal color:#4BF0FC,stroke:#4BF0FC
 
-  class DataDevOpsAccount,PlatformAIAccount,TargetAccount awsAccount
-  class VpcData,VpcAI,TargetVpc vpc
-  class EksData,EksAI,Brokers,KedaScalers,EventConsumers,DataOperations eks
+  class DataDevOpsAccount,TargetAccount awsAccount
+  class VpcData,TargetVpc vpc
+  class EksData,Brokers,KedaScalers,EventConsumers,DataOperations eks
   class NatsStream,SqsQueue,KafkaTopic broker
   class KedaNats,KedaSqs,KedaKafka scaler
-  class NatsWorkers,SqsWorkers,KafkaWorkers,LambdaEventWorker worker
+  class NatsWorkers,SqsWorkers,KafkaWorkers worker
   class CreateData,ReadData,UpdateData,DeleteData,ReplicationData operation
-  class RegistryDynamoDB,OperationalDatabase,TargetDataServices dataStore
+  class RegistryDynamoDB,TargetDataServices dataStore
   class AuthData identity
   class LegendEventA,LegendEventB legendEvent
   class LegendScalingA,LegendScalingB legendScaling
@@ -236,17 +197,12 @@ flowchart LR
 
   class eControlPlaneIngress,eOtherApisIngress,eSchedulersIngress,eIngressAuth,eAuthValidation,eValidationNats,eValidationSqs,eValidationKafka,eNatsWorkers,eSqsWorkers,eKafkaWorkers,eLegendEvent event
   class eNatsKeda,eSqsKeda,eKafkaKeda,eKedaNatsWorkers,eKedaSqsWorkers,eKedaKafkaWorkers,eLegendScaling scaling
-  class eUserFrontend,eFrontendStatus,eCloudFrontApiGateway,eApiGatewayAlb,eAlbRegistry,eNatsCreate,eNatsRead,eSqsUpdate,eSqsDelete,eKafkaReplication,eKafkaLambdaWorker,eCreateTargetDataServices,eReadTargetDataServices,eUpdateTargetDataServices,eDeleteTargetDataServices,eReplicationTargetDataServices,eLambdaWorkerTargetLambda,eLegendProcessing processing
-  class eDataRoleSts,ePlatformAIRoleSts,eCreateAssumeRole,eReadAssumeRole,eUpdateAssumeRole,eDeleteAssumeRole,eReplicationAssumeRole,eLambdaWorkerAssumeRole,eLegendSts sts
-  class eAuthDataLogs,eValidationLogs,eNatsWorkersLogs,eSqsWorkersLogs,eKafkaWorkersLogs,eCreateLogs,eReadLogs,eUpdateLogs,eDeleteLogs,eReplicationLogs,eWatcherDataLogs,eLogsDataRegistry,eReplicationRegistry,eLambdaWorkerLogs,eWatcherAILogs,eLogsAIDatabase,eLegendLogs logs
-  class eCreateWatcher,eReadWatcher,eUpdateWatcher,eDeleteWatcher,eReplicationWatcher,eWatcherTargetDataServices,eLambdaWorkerWatcher,eWatcherTargetLambda,eLegendMonitoring monitoring
+  class eNatsCreate,eNatsRead,eSqsUpdate,eSqsDelete,eKafkaReplication,eCreateTargetDataServices,eReadTargetDataServices,eUpdateTargetDataServices,eDeleteTargetDataServices,eReplicationTargetDataServices,eLegendProcessing processing
+  class eDataRoleSts,eCreateAssumeRole,eReadAssumeRole,eUpdateAssumeRole,eDeleteAssumeRole,eReplicationAssumeRole,eLegendSts sts
+  class eAuthDataLogs,eValidationLogs,eNatsWorkersLogs,eSqsWorkersLogs,eKafkaWorkersLogs,eCreateLogs,eReadLogs,eUpdateLogs,eDeleteLogs,eReplicationLogs,eWatcherDataLogs,eLogsDataRegistry,eReplicationRegistry,eLegendLogs logs
+  class eCreateWatcher,eReadWatcher,eUpdateWatcher,eDeleteWatcher,eReplicationWatcher,eWatcherTargetDataServices,eLegendMonitoring monitoring
   class eLegendExternal external
 
-  eUserFrontend@{ animation: fast }
-  eFrontendStatus@{ animation: fast }
-  eCloudFrontApiGateway@{ animation: fast }
-  eApiGatewayAlb@{ animation: fast }
-  eAlbRegistry@{ animation: fast }
   eControlPlaneIngress@{ animation: fast }
   eOtherApisIngress@{ animation: fast }
   eSchedulersIngress@{ animation: fast }
@@ -269,13 +225,11 @@ flowchart LR
   eSqsUpdate@{ animation: fast }
   eSqsDelete@{ animation: fast }
   eKafkaReplication@{ animation: fast }
-  eKafkaLambdaWorker@{ animation: fast }
   eCreateTargetDataServices@{ animation: fast }
   eReadTargetDataServices@{ animation: fast }
   eUpdateTargetDataServices@{ animation: fast }
   eDeleteTargetDataServices@{ animation: fast }
   eReplicationTargetDataServices@{ animation: fast }
-  eLambdaWorkerTargetLambda@{ animation: fast }
   eAuthDataLogs@{ animation: fast }
   eValidationLogs@{ animation: fast }
   eNatsWorkersLogs@{ animation: fast }
@@ -289,25 +243,18 @@ flowchart LR
   eWatcherDataLogs@{ animation: fast }
   eLogsDataRegistry@{ animation: fast }
   eReplicationRegistry@{ animation: fast }
-  eLambdaWorkerLogs@{ animation: fast }
-  eWatcherAILogs@{ animation: fast }
-  eLogsAIDatabase@{ animation: fast }
   eCreateWatcher@{ animation: fast }
   eReadWatcher@{ animation: fast }
   eUpdateWatcher@{ animation: fast }
   eDeleteWatcher@{ animation: fast }
   eReplicationWatcher@{ animation: fast }
   eWatcherTargetDataServices@{ animation: fast }
-  eLambdaWorkerWatcher@{ animation: fast }
-  eWatcherTargetLambda@{ animation: fast }
   eDataRoleSts@{ animation: fast }
-  ePlatformAIRoleSts@{ animation: fast }
   eCreateAssumeRole@{ animation: fast }
   eReadAssumeRole@{ animation: fast }
   eUpdateAssumeRole@{ animation: fast }
   eDeleteAssumeRole@{ animation: fast }
   eReplicationAssumeRole@{ animation: fast }
-  eLambdaWorkerAssumeRole@{ animation: fast }
   eLegendEvent@{ animation: fast }
   eLegendScaling@{ animation: fast }
   eLegendProcessing@{ animation: fast }
