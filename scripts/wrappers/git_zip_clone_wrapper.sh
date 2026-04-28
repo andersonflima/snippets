@@ -29,12 +29,13 @@ GIT_ZIP_WRAPPER_RETRY_WITHOUT_PROXY_ON_AUTH_ERROR="${GIT_ZIP_WRAPPER_RETRY_WITHO
 GIT_ZIP_WRAPPER_LAST_COMMAND_STDERR=""
 WRAPPER_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 GIT_ZIP_WRAPPER_FORCE_LOCAL_DOWNLOADS="1"
-GIT_ZIP_WRAPPER_CLONE_ORDER="${GIT_ZIP_WRAPPER_CLONE_ORDER:-local-first}"
+GIT_ZIP_WRAPPER_CLONE_ORDER="${GIT_ZIP_WRAPPER_CLONE_ORDER:-git-first}"
 GIT_ZIP_WRAPPER_LFS_AUTORUN="${GIT_ZIP_WRAPPER_LFS_AUTORUN:-1}"
 GIT_ZIP_WRAPPER_LFS_FORCE="${GIT_ZIP_WRAPPER_LFS_FORCE:-0}"
 GIT_ZIP_WRAPPER_LFS_STRICT="${GIT_ZIP_WRAPPER_LFS_STRICT:-0}"
 GIT_ZIP_WRAPPER_LFS_RETRY_NO_PROXY="${GIT_ZIP_WRAPPER_LFS_RETRY_NO_PROXY:-1}"
 GIT_ZIP_WRAPPER_LFS_MODE="local"
+GIT_ZIP_WRAPPER_STRICT="${GIT_ZIP_WRAPPER_STRICT:-0}"
 GIT_GLOBAL_ARGS=()
 GIT_SUBCOMMAND=""
 GIT_SUBCOMMAND_ARGS=()
@@ -301,12 +302,13 @@ normalize_clone_order() {
   requested="$(printf '%s' "${1:-}" | tr '[:upper:]' '[:lower:]')"
 
   case "${requested}" in
-    ""|local-first)
-      printf '%s\n' "local-first"
+    ""|local-first|git-first)
+      [[ -n "${requested}" ]] || requested="git-first"
+      printf '%s\n' "${requested}"
       ;;
     *)
-      log "valor inválido em GIT_ZIP_WRAPPER_CLONE_ORDER=${requested}; forçando local-first"
-      printf '%s\n' "local-first"
+      log "valor inválido em GIT_ZIP_WRAPPER_CLONE_ORDER=${requested}; forçando git-first"
+      printf '%s\n' "git-first"
       ;;
   esac
 }
@@ -1952,6 +1954,15 @@ first_clone_branch_value() {
   printf '%s\n' "${branch_value}"
 }
 
+clone_with_real_git() {
+  local real_git
+  real_git="$1"
+  shift
+
+  log "tentando git clone real"
+  run_git_command_with_optional_no_proxy_retry "${real_git}" "$@"
+}
+
 main() {
   local real_git
   real_git="$(resolve_real_git)"
@@ -2092,6 +2103,16 @@ main() {
     branch="$(resolve_github_default_branch "${slug}" 2>/dev/null || true)"
   fi
 
+  if [[ "${GIT_ZIP_WRAPPER_CLONE_ORDER}" == "git-first" ]]; then
+    if clone_with_real_git "${real_git}" "$@"; then
+      return 0
+    fi
+
+    if is_truthy "${GIT_ZIP_WRAPPER_STRICT}"; then
+      die "falha no git clone real para ${repo_url}; fallback por archive desabilitado pela política atual"
+    fi
+  fi
+
   if resolve_download_curl >/dev/null 2>&1; then
     case "${ARCHIVE_FORMAT}" in
       tar.gz)
@@ -2123,8 +2144,14 @@ main() {
       log "clone(${ARCHIVE_FORMAT}) concluído: ${repo_url} -> ${destination} (source: ${source_url})"
       return 0
     fi
+    if ! is_truthy "${GIT_ZIP_WRAPPER_STRICT}" && clone_with_real_git "${real_git}" "$@"; then
+      return 0
+    fi
     die "falha ao baixar arquivo para ${repo_url} (branch/tag: ${branch:-HEAD}); clone remoto via git está desabilitado para repositórios GitHub"
   else
+    if ! is_truthy "${GIT_ZIP_WRAPPER_STRICT}" && clone_with_real_git "${real_git}" "$@"; then
+      return 0
+    fi
     die "curl não encontrado para clone local por arquivo: ${repo_url}"
   fi
 }

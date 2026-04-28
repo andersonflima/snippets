@@ -140,6 +140,8 @@ export GIT_ZIP_WRAPPER_REAL_GIT="${REAL_GIT_BIN}"
 export PATH="${INSTALL_DIR}:\$PATH"
 # opcional: forçar modo estrito (sem fallback para git clone normal)
 # export GIT_ZIP_WRAPPER_STRICT=1
+# padrão: evita codeload no caminho feliz do LazyVim e usa archive como fallback
+export GIT_ZIP_WRAPPER_CLONE_ORDER=git-first
 # padrão do wrapper usa .tar.gz
 export GIT_ZIP_WRAPPER_ARCHIVE_FORMAT=tar.gz
 # proxy do ambiente (preferência: GIT_ZIP_WRAPPER_PROXY > HTTPS_PROXY > ALL_PROXY > HTTP_PROXY)
@@ -157,6 +159,8 @@ vim.env.GIT_ZIP_WRAPPER_REAL_GIT = "${REAL_GIT_BIN}"
 vim.env.PATH = "${INSTALL_DIR}:" .. vim.env.PATH
 -- opcional: sem fallback para git clone normal
 -- vim.env.GIT_ZIP_WRAPPER_STRICT = "1"
+-- padrão: evita codeload no caminho feliz do LazyVim e usa archive como fallback
+vim.env.GIT_ZIP_WRAPPER_CLONE_ORDER = "git-first"
 -- padrão do wrapper usa .tar.gz
 vim.env.GIT_ZIP_WRAPPER_ARCHIVE_FORMAT = "tar.gz"
 -- proxy do ambiente
