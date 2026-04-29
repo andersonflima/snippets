@@ -235,7 +235,7 @@ vim.env.CURL_WRAPPER_MASON_BUILDERS = "elixir-lsp/elixir-ls=elixir_ls_release,om
 - elixir-lsp/elixir-ls=elixir_ls_release
 - omnisharp/omnisharp-roslyn=omnisharp_source_publish
 - quando o pacote só publica .zip, o wrapper também tenta o endpoint de assets da API do GitHub
-- se a estratégia inteligente falhar, o wrapper ainda tenta `gh release`
+- se a estratégia inteligente falhar, o wrapper ainda tenta gh release
 - para sobrescrever a lista:
 - export CURL_WRAPPER_RELEASE_FALLBACK_REPOS="elixir-lsp/elixir-ls,johnnymorganz/stylua,luals/lua-language-server,omnisharp/omnisharp-roslyn"
 - para sobrescrever o registro de builders:

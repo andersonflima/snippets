@@ -187,10 +187,10 @@ install_wrapper_binaries() {
   [[ -n "${REAL_GIT_BIN}" ]] && git_install_args+=(--real-git "${REAL_GIT_BIN}")
 
   log "reinstalando wrapper de curl/wget"
-  sh "${SCRIPT_DIR}/install_curl_python_wrapper.sh" "${curl_install_args[@]}"
+  sh "${SCRIPT_DIR}/install_curl_python_wrapper.sh" "${curl_install_args[@]+"${curl_install_args[@]}"}"
 
   log "reinstalando wrapper de git"
-  sh "${SCRIPT_DIR}/install_git_zip_wrapper.sh" "${git_install_args[@]}"
+  sh "${SCRIPT_DIR}/install_git_zip_wrapper.sh" "${git_install_args[@]+"${git_install_args[@]}"}"
 
   remove_legacy_brew_wrapper_installation
 }
@@ -226,7 +226,7 @@ configure_wrapper_env_file() {
 
   log "regenerando env dos wrappers em ${ENV_FILE}"
   GIT_ZIP_WRAPPER_LFS_MODE="${GIT_LFS_MODE}" \
-    sh "${SCRIPT_DIR}/configure_wrapper_envs.sh" "${configure_args[@]}"
+    sh "${SCRIPT_DIR}/configure_wrapper_envs.sh" "${configure_args[@]+"${configure_args[@]}"}"
 }
 
 install_wrapper_binaries

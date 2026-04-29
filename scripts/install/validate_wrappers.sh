@@ -257,16 +257,16 @@ validate_curl_wrapper_homebrew_contract() {
 
 validate_local_policy() {
   local clone_order force_local_downloads lfs_mode
-  clone_order="${GIT_ZIP_WRAPPER_CLONE_ORDER:-local-first}"
+  clone_order="${GIT_ZIP_WRAPPER_CLONE_ORDER:-git-first}"
   force_local_downloads="${GIT_ZIP_WRAPPER_FORCE_LOCAL_DOWNLOADS:-1}"
   lfs_mode="${GIT_ZIP_WRAPPER_LFS_MODE:-local}"
 
   case "${clone_order}" in
-    local-first)
-      ok "GIT_ZIP_WRAPPER_CLONE_ORDER=local-first"
+    git-first)
+      ok "GIT_ZIP_WRAPPER_CLONE_ORDER=git-first"
       ;;
     *)
-      fail "GIT_ZIP_WRAPPER_CLONE_ORDER=${clone_order} (esperado: local-first)"
+      fail "GIT_ZIP_WRAPPER_CLONE_ORDER=${clone_order} (esperado: git-first)"
       ;;
   esac
 

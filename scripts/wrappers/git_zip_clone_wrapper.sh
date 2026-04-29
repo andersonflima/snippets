@@ -809,8 +809,8 @@ download_github_archive() {
     case "${ref_type}" in
       commit)
         try_download_candidate_urls "${archive_path}" \
-          "https://codeload.github.com/${slug}/zip/${normalized_ref}" \
-          "https://github.com/${slug}/archive/${normalized_ref}.zip" && return 0
+          "https://github.com/${slug}/archive/${normalized_ref}.zip" \
+          "https://codeload.github.com/${slug}/zip/${normalized_ref}" && return 0
         ;;
       tag)
         try_download_candidate_urls "${archive_path}" \
@@ -820,11 +820,11 @@ download_github_archive() {
         ;;
       branch)
         try_download_candidate_urls "${archive_path}" \
-          "https://codeload.github.com/${slug}/zip/${normalized_ref}" \
           "https://github.com/${slug}/archive/refs/heads/${normalized_ref}.zip" \
           "https://codeload.github.com/${slug}/zip/refs/heads/${normalized_ref}" \
           "https://github.com/${slug}/archive/refs/tags/${normalized_ref}.zip" \
-          "https://codeload.github.com/${slug}/zip/refs/tags/${normalized_ref}" && return 0
+          "https://codeload.github.com/${slug}/zip/refs/tags/${normalized_ref}" \
+          "https://codeload.github.com/${slug}/zip/${normalized_ref}" && return 0
         ;;
       *)
         try_download_candidate_urls "${archive_path}" \
@@ -836,8 +836,8 @@ download_github_archive() {
     case "${ref_type}" in
       commit)
         try_download_candidate_urls "${archive_path}" \
-          "https://codeload.github.com/${slug}/tar.gz/${normalized_ref}" \
-          "https://github.com/${slug}/archive/${normalized_ref}.tar.gz" && return 0
+          "https://github.com/${slug}/archive/${normalized_ref}.tar.gz" \
+          "https://codeload.github.com/${slug}/tar.gz/${normalized_ref}" && return 0
         ;;
       tag)
         try_download_candidate_urls "${archive_path}" \
@@ -847,11 +847,11 @@ download_github_archive() {
         ;;
       branch)
         try_download_candidate_urls "${archive_path}" \
-          "https://codeload.github.com/${slug}/tar.gz/${normalized_ref}" \
           "https://github.com/${slug}/archive/refs/heads/${normalized_ref}.tar.gz" \
           "https://codeload.github.com/${slug}/tar.gz/refs/heads/${normalized_ref}" \
           "https://github.com/${slug}/archive/refs/tags/${normalized_ref}.tar.gz" \
-          "https://codeload.github.com/${slug}/tar.gz/refs/tags/${normalized_ref}" && return 0
+          "https://codeload.github.com/${slug}/tar.gz/refs/tags/${normalized_ref}" \
+          "https://codeload.github.com/${slug}/tar.gz/${normalized_ref}" && return 0
         ;;
       *)
         try_download_candidate_urls "${archive_path}" \
@@ -868,8 +868,8 @@ download_github_archive() {
       case "${ref_type}" in
         commit)
           try_download_candidate_urls "${archive_path}" \
-            "https://codeload.github.com/${slug}/zip/${normalized_ref}" \
-            "https://github.com/${slug}/archive/${normalized_ref}.zip" && return 0
+            "https://github.com/${slug}/archive/${normalized_ref}.zip" \
+            "https://codeload.github.com/${slug}/zip/${normalized_ref}" && return 0
           ;;
         tag)
           try_download_candidate_urls "${archive_path}" \
@@ -879,11 +879,11 @@ download_github_archive() {
           ;;
         branch)
           try_download_candidate_urls "${archive_path}" \
-            "https://codeload.github.com/${slug}/zip/${normalized_ref}" \
             "https://github.com/${slug}/archive/refs/heads/${normalized_ref}.zip" \
             "https://codeload.github.com/${slug}/zip/refs/heads/${normalized_ref}" \
             "https://github.com/${slug}/archive/refs/tags/${normalized_ref}.zip" \
-            "https://codeload.github.com/${slug}/zip/refs/tags/${normalized_ref}" && return 0
+            "https://codeload.github.com/${slug}/zip/refs/tags/${normalized_ref}" \
+            "https://codeload.github.com/${slug}/zip/${normalized_ref}" && return 0
           ;;
         *)
           try_download_candidate_urls "${archive_path}" \
