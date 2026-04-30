@@ -84,6 +84,26 @@ case "\${url}" in
     tar -czf "\${output}" -C "${ARCHIVE_PARENT}" lazy.nvim-main
     exit 0
     ;;
+  https://github.com/folke/lazy.nvim/archive/refs/heads/main.zip)
+    python3 - "\${output}" "${ARCHIVE_PARENT}" <<'PY'
+import os
+import sys
+import zipfile
+
+output_path, source_parent = sys.argv[1:3]
+source_root = os.path.join(source_parent, "lazy.nvim-main")
+
+with zipfile.ZipFile(output_path, "w", zipfile.ZIP_DEFLATED) as archive:
+    for root, dirs, files in os.walk(source_root):
+        dirs.sort()
+        files.sort()
+        for name in files:
+            full_path = os.path.join(root, name)
+            rel_path = os.path.relpath(full_path, source_parent)
+            archive.write(full_path, rel_path)
+PY
+    exit 0
+    ;;
   https://codeload.github.com/folke/lazy.nvim/tar.gz/main)
     exit 22
     ;;
@@ -110,10 +130,101 @@ GIT_ZIP_WRAPPER_REAL_GIT="${ARCHIVE_FAKE_GIT}" \
 CURL="${ARCHIVE_FAKE_CURL}" \
 GIT_ZIP_WRAPPER_STRICT=0 \
 GIT_ZIP_WRAPPER_CLONE_ORDER=local-first \
-GIT_ZIP_WRAPPER_ARCHIVE_FORMAT=tar.gz \
+GIT_ZIP_WRAPPER_ARCHIVE_FORMAT=zip \
+GIT_ZIP_WRAPPER_ALLOW_REMOTE_GIT_FALLBACK=0 \
   "${REPO_ROOT}/scripts/wrappers/git_zip_clone_wrapper.sh" \
     clone --branch main https://github.com/folke/lazy.nvim "${ARCHIVE_DESTINATION}"
 
 test -d "${ARCHIVE_DESTINATION}/.git"
 test -f "${ARCHIVE_DESTINATION}/README.md"
-test "$(sed -n '1p' "${ARCHIVE_CURL_LOG}")" = "https://github.com/folke/lazy.nvim/archive/refs/heads/main.tar.gz"
+test "$(sed -n '1p' "${ARCHIVE_CURL_LOG}")" = "https://github.com/folke/lazy.nvim/archive/refs/heads/main.zip"
+
+ARCHIVE_GIT_FIRST_DESTINATION="${TMP_DIR}/lazy-archive-git-first.nvim"
+
+GIT_ZIP_WRAPPER_REAL_GIT="${ARCHIVE_FAKE_GIT}" \
+CURL="${ARCHIVE_FAKE_CURL}" \
+GIT_ZIP_WRAPPER_STRICT=0 \
+GIT_ZIP_WRAPPER_CLONE_ORDER=git-first \
+GIT_ZIP_WRAPPER_ARCHIVE_FORMAT=zip \
+GIT_ZIP_WRAPPER_ALLOW_REMOTE_GIT_FALLBACK=0 \
+  "${REPO_ROOT}/scripts/wrappers/git_zip_clone_wrapper.sh" \
+    clone --branch main https://github.com/folke/lazy.nvim "${ARCHIVE_GIT_FIRST_DESTINATION}"
+
+test -d "${ARCHIVE_GIT_FIRST_DESTINATION}/.git"
+test -f "${ARCHIVE_GIT_FIRST_DESTINATION}/README.md"
+test "$(sed -n '2p' "${ARCHIVE_CURL_LOG}")" = "https://github.com/folke/lazy.nvim/archive/refs/heads/main.zip"
+
+PERMANENT_404_DESTINATION="${TMP_DIR}/lazy-permanent-404.nvim"
+PERMANENT_404_CURL_LOG="${TMP_DIR}/permanent-404-curl-urls"
+PERMANENT_404_FAKE_CURL="${TMP_DIR}/permanent-404-curl"
+PERMANENT_404_FAKE_GIT="${TMP_DIR}/permanent-404-git"
+
+cat > "${PERMANENT_404_FAKE_CURL}" <<EOF2
+#!/usr/bin/env bash
+set -euo pipefail
+
+url=""
+
+while [[ \$# -gt 0 ]]; do
+  case "\$1" in
+    http://*|https://*)
+      url="\$1"
+      shift
+      ;;
+    *)
+      shift
+      ;;
+  esac
+done
+
+printf '%s\n' "\${url}" >> "${PERMANENT_404_CURL_LOG}"
+printf '%s\n' 'curl: (22) The requested URL returned error: 404' >&2
+exit 22
+EOF2
+
+cat > "${PERMANENT_404_FAKE_GIT}" <<'EOF2'
+#!/usr/bin/env bash
+set -euo pipefail
+
+if [[ "${1:-}" == "clone" ]]; then
+  destination="${@: -1}"
+  mkdir -p "${destination}/.git"
+  exit 0
+fi
+
+exit 1
+EOF2
+
+chmod +x "${PERMANENT_404_FAKE_CURL}" "${PERMANENT_404_FAKE_GIT}"
+
+set +e
+GIT_ZIP_WRAPPER_REAL_GIT="${PERMANENT_404_FAKE_GIT}" \
+CURL="${PERMANENT_404_FAKE_CURL}" \
+GIT_ZIP_WRAPPER_STRICT=0 \
+GIT_ZIP_WRAPPER_CLONE_ORDER=local-first \
+GIT_ZIP_WRAPPER_ARCHIVE_FORMAT=zip \
+GIT_ZIP_WRAPPER_ALLOW_REMOTE_GIT_FALLBACK=0 \
+GIT_ZIP_WRAPPER_TRY_DIRECT_CODELOAD=0 \
+  "${REPO_ROOT}/scripts/wrappers/git_zip_clone_wrapper.sh" \
+    clone --branch missing-ref https://github.com/folke/lazy.nvim "${PERMANENT_404_DESTINATION}"
+permanent_404_status=$?
+set -e
+
+test "${permanent_404_status}" -ne 0
+test ! -d "${PERMANENT_404_DESTINATION}/.git"
+test "$(wc -l < "${PERMANENT_404_CURL_LOG}" | tr -d ' ')" = "2"
+! grep -q 'https://codeload.github.com/' "${PERMANENT_404_CURL_LOG}"
+
+PERMANENT_404_FALLBACK_DESTINATION="${TMP_DIR}/lazy-permanent-404-fallback.nvim"
+
+GIT_ZIP_WRAPPER_REAL_GIT="${PERMANENT_404_FAKE_GIT}" \
+CURL="${PERMANENT_404_FAKE_CURL}" \
+GIT_ZIP_WRAPPER_STRICT=0 \
+GIT_ZIP_WRAPPER_CLONE_ORDER=local-first \
+GIT_ZIP_WRAPPER_ARCHIVE_FORMAT=zip \
+GIT_ZIP_WRAPPER_ALLOW_REMOTE_GIT_FALLBACK=1 \
+GIT_ZIP_WRAPPER_TRY_DIRECT_CODELOAD=0 \
+  "${REPO_ROOT}/scripts/wrappers/git_zip_clone_wrapper.sh" \
+    clone --branch missing-ref https://github.com/folke/lazy.nvim "${PERMANENT_404_FALLBACK_DESTINATION}"
+
+test -d "${PERMANENT_404_FALLBACK_DESTINATION}/.git"
