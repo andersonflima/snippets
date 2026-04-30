@@ -567,7 +567,7 @@ parse_curl_arguments_for_python_fallback() {
         CURL_FALLBACK_MAX_TIME="${arg#--max-time=}"
         index=$((index + 1))
         ;;
-      -f|-s|-S|-4|--http1.1|--retry|--retry-delay|--retry-all-errors|--tlsv1.2)
+      -f|-s|-S|-4|--fail|--silent|--show-error|--http1.1|--retry|--retry-delay|--retry-all-errors|--tlsv1.2)
         if [[ "${arg}" == "--retry" || "${arg}" == "--retry-delay" ]]; then
           (( index + 1 < ${#args[@]} )) || return 1
           index=$((index + 2))
@@ -638,6 +638,110 @@ is_github_release_asset_url() {
   local url
   url="${1%%\?*}"
   [[ "${url}" =~ ^https://github\.com/[^/]+/[^/]+/releases/download/[^/]+/.+ ]]
+}
+
+parse_github_archive_tarball_url() {
+  local url ref
+  url="${1%%\?*}"
+
+  if [[ "${url}" =~ ^https://github\.com/([^/]+)/([^/]+)/archive/(.+)\.tar\.gz$ ]]; then
+    GITHUB_ARCHIVE_OWNER="${BASH_REMATCH[1]}"
+    GITHUB_ARCHIVE_REPO="${BASH_REMATCH[2]}"
+    GITHUB_ARCHIVE_REF="${BASH_REMATCH[3]}"
+    return 0
+  fi
+
+  if [[ "${url}" =~ ^https://codeload\.github\.com/([^/]+)/([^/]+)/tar\.gz/(.+)$ ]]; then
+    GITHUB_ARCHIVE_OWNER="${BASH_REMATCH[1]}"
+    GITHUB_ARCHIVE_REPO="${BASH_REMATCH[2]}"
+    ref="${BASH_REMATCH[3]}"
+    GITHUB_ARCHIVE_REF="${ref}"
+    return 0
+  fi
+
+  return 1
+}
+
+repack_zip_as_tar_gz() {
+  local zip_path output_path
+  zip_path="$1"
+  output_path="$2"
+
+  command -v python3 >/dev/null 2>&1 || return 1
+  mkdir -p "$(dirname "${output_path}")"
+
+  python3 - "${zip_path}" "${output_path}" <<'PY'
+import os
+import stat
+import sys
+import tarfile
+import time
+import zipfile
+
+zip_path, output_path = sys.argv[1:3]
+
+with zipfile.ZipFile(zip_path, "r") as source, tarfile.open(output_path, "w:gz") as target:
+    for entry in source.infolist():
+        name = entry.filename
+        if not name:
+            continue
+
+        info = tarfile.TarInfo(name)
+        info.mtime = time.mktime(entry.date_time + (0, 0, -1))
+        mode = (entry.external_attr >> 16) & 0o777
+        if mode == 0:
+            mode = 0o755 if entry.is_dir() else 0o644
+        info.mode = mode
+
+        if entry.is_dir() or name.endswith("/"):
+            info.type = tarfile.DIRTYPE
+            info.size = 0
+            target.addfile(info)
+            continue
+
+        data = source.read(entry)
+        info.size = len(data)
+        info.type = tarfile.REGTYPE
+        if mode & stat.S_IXUSR:
+            info.mode = mode
+        import io
+        target.addfile(info, io.BytesIO(data))
+PY
+}
+
+download_github_archive_tarball_via_zip() {
+  local url output_path tmp_dir zip_path owner repo ref
+  local -a candidate_urls=()
+
+  url="${CURL_FALLBACK_URL:-}"
+  output_path="${CURL_FALLBACK_OUTPUT:-}"
+  [[ -n "${url}" && -n "${output_path}" ]] || return 1
+  parse_github_archive_tarball_url "${url}" || return 1
+
+  owner="${GITHUB_ARCHIVE_OWNER}"
+  repo="${GITHUB_ARCHIVE_REPO}"
+  ref="${GITHUB_ARCHIVE_REF}"
+  [[ -n "${owner}" && -n "${repo}" && -n "${ref}" ]] || return 1
+
+  tmp_dir="$(mktemp -d -t curl-wrapper-github-archive-XXXXXX)"
+  zip_path="${tmp_dir}/archive.zip"
+  candidate_urls=(
+    "https://github.com/${owner}/${repo}/archive/${ref}.zip"
+    "https://codeload.github.com/${owner}/${repo}/zip/${ref}"
+  )
+
+  for url in "${candidate_urls[@]}"; do
+    rm -f "${zip_path}" 2>/dev/null || true
+    if download_url_with_real_curl "${url}" "${zip_path}" "1" && is_valid_zip_file "${zip_path}"; then
+      if repack_zip_as_tar_gz "${zip_path}" "${output_path}"; then
+        rm -rf "${tmp_dir}"
+        return 0
+      fi
+    fi
+  done
+
+  rm -rf "${tmp_dir}"
+  return 1
 }
 
 should_skip_direct_release_download() {
@@ -1361,6 +1465,11 @@ main() {
 
   if [[ "${CURL_FALLBACK_CAN_HANDLE}" != "1" ]]; then
     exit "${curl_exit}"
+  fi
+
+  if download_github_archive_tarball_via_zip; then
+    log "fallback GitHub archive zip->tar.gz concluído com sucesso para ${CURL_FALLBACK_URL}"
+    exit 0
   fi
 
   if [[ "${CURL_FALLBACK_PROXY}" == "${resolved_proxy}" ]] && \
