@@ -825,7 +825,8 @@ download_github_archive() {
     case "${ref_type}" in
       commit)
         try_download_candidate_urls "${archive_path}" \
-          "https://github.com/${slug}/archive/${normalized_ref}.zip" && return 0
+          "https://github.com/${slug}/archive/${normalized_ref}.zip" \
+          "https://codeload.github.com/${slug}/zip/${normalized_ref}" && return 0
         ;;
       tag)
         try_download_candidate_urls "${archive_path}" $(github_archive_candidate_urls "${slug}" "${normalized_ref}" "tag" "zip") && return 0
@@ -844,7 +845,8 @@ download_github_archive() {
     case "${ref_type}" in
       commit)
         try_download_candidate_urls "${archive_path}" \
-          "https://github.com/${slug}/archive/${normalized_ref}.tar.gz" && return 0
+          "https://github.com/${slug}/archive/${normalized_ref}.tar.gz" \
+          "https://codeload.github.com/${slug}/tar.gz/${normalized_ref}" && return 0
         ;;
       tag)
         try_download_candidate_urls "${archive_path}" $(github_archive_candidate_urls "${slug}" "${normalized_ref}" "tag" "tar.gz") && return 0
@@ -864,7 +866,8 @@ download_github_archive() {
       case "${ref_type}" in
         commit)
           try_download_candidate_urls "${archive_path}" \
-            "https://github.com/${slug}/archive/${normalized_ref}.zip" && return 0
+            "https://github.com/${slug}/archive/${normalized_ref}.zip" \
+            "https://codeload.github.com/${slug}/zip/${normalized_ref}" && return 0
           ;;
         tag)
           try_download_candidate_urls "${archive_path}" $(github_archive_candidate_urls "${slug}" "${normalized_ref}" "tag" "zip") && return 0
@@ -911,9 +914,12 @@ github_archive_candidate_urls() {
   esac
 
   printf '%s\n' "https://github.com/${slug}/archive/${prefixed_ref}.${extension}"
+  printf '%s\n' "https://codeload.github.com/${slug}/${extension}/${ref}"
+  printf '%s\n' "https://codeload.github.com/${slug}/${extension}/${prefixed_ref}"
   case "${ref}" in
     */*)
       printf '%s\n' "https://github.com/${slug}/archive/${alternate_prefixed_ref}.${extension}"
+      printf '%s\n' "https://codeload.github.com/${slug}/${extension}/${alternate_prefixed_ref}"
       ;;
   esac
 }

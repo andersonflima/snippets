@@ -263,6 +263,101 @@ test "$(git -C "${ARCHIVE_BRANCH_WITH_SLASH_DESTINATION}" branch --show-current)
 test "$(sed -n '5p' "${ARCHIVE_CURL_LOG}")" = "https://github.com/folke/lazy.nvim/archive/feature/foo.zip"
 test "$(sed -n '6p' "${ARCHIVE_CURL_LOG}")" = "https://github.com/folke/lazy.nvim/archive/refs/heads/feature/foo.zip"
 
+FETCH_ARCHIVE_PARENT="${TMP_DIR}/fetch-archive-source"
+FETCH_ARCHIVE_TOP="${FETCH_ARCHIVE_PARENT}/lazy.nvim-main"
+FETCH_REPO="${TMP_DIR}/lazy-fetch-repo"
+FETCH_CURL_LOG="${TMP_DIR}/fetch-curl-urls"
+FETCH_FAKE_CURL="${TMP_DIR}/fetch-curl"
+
+mkdir -p "${FETCH_ARCHIVE_TOP}" "${FETCH_REPO}"
+printf '%s\n' 'archive fetch content' > "${FETCH_ARCHIVE_TOP}/README.md"
+
+cat > "${FETCH_FAKE_CURL}" <<EOF2
+#!/usr/bin/env bash
+set -euo pipefail
+
+url=""
+output=""
+
+while [[ \$# -gt 0 ]]; do
+  case "\$1" in
+    -o|--output)
+      output="\${2:-}"
+      shift 2
+      ;;
+    --output=*)
+      output="\${1#--output=}"
+      shift
+      ;;
+    http://*|https://*)
+      url="\$1"
+      shift
+      ;;
+    *)
+      shift
+      ;;
+  esac
+done
+
+printf '%s\n' "\${url}" >> "${FETCH_CURL_LOG}"
+
+case "\${url}" in
+  https://github.com/folke/lazy.nvim/archive/main.zip|https://github.com/folke/lazy.nvim/archive/refs/heads/main.zip)
+    printf '%s\n' 'curl: (22) The requested URL returned error: 404' >&2
+    exit 22
+    ;;
+  https://codeload.github.com/folke/lazy.nvim/zip/main)
+    python3 - "\${output}" "${FETCH_ARCHIVE_PARENT}" <<'PY'
+import os
+import sys
+import zipfile
+
+output_path, source_parent = sys.argv[1:3]
+source_root = os.path.join(source_parent, "lazy.nvim-main")
+
+with zipfile.ZipFile(output_path, "w", zipfile.ZIP_DEFLATED) as archive:
+    for root, dirs, files in os.walk(source_root):
+        dirs.sort()
+        files.sort()
+        for name in files:
+            full_path = os.path.join(root, name)
+            rel_path = os.path.relpath(full_path, source_parent)
+            archive.write(full_path, rel_path)
+PY
+    exit 0
+    ;;
+  *)
+    exit 22
+    ;;
+esac
+EOF2
+
+chmod +x "${FETCH_FAKE_CURL}"
+
+"${REAL_GIT}" init --quiet "${FETCH_REPO}"
+"${REAL_GIT}" -C "${FETCH_REPO}" config user.name test
+"${REAL_GIT}" -C "${FETCH_REPO}" config user.email test@example.com
+printf '%s\n' 'local content' > "${FETCH_REPO}/README.md"
+"${REAL_GIT}" -C "${FETCH_REPO}" add README.md
+"${REAL_GIT}" -C "${FETCH_REPO}" commit --quiet -m 'initial'
+"${REAL_GIT}" -C "${FETCH_REPO}" branch -M main
+"${REAL_GIT}" -C "${FETCH_REPO}" remote add origin https://github.com/folke/lazy.nvim
+"${REAL_GIT}" -C "${FETCH_REPO}" update-ref refs/remotes/origin/main HEAD
+"${REAL_GIT}" -C "${FETCH_REPO}" symbolic-ref refs/remotes/origin/HEAD refs/remotes/origin/main
+
+GIT_ZIP_WRAPPER_REAL_GIT="${REAL_GIT}" \
+CURL="${FETCH_FAKE_CURL}" \
+GIT_ZIP_WRAPPER_STRICT=0 \
+GIT_ZIP_WRAPPER_ARCHIVE_FORMAT=zip \
+GIT_ZIP_WRAPPER_ALLOW_REMOTE_GIT_FALLBACK=0 \
+  "${REPO_ROOT}/scripts/wrappers/git_zip_clone_wrapper.sh" \
+    -C "${FETCH_REPO}" fetch --force --tags origin
+
+test "$(sed -n '1p' "${FETCH_CURL_LOG}")" = "https://github.com/folke/lazy.nvim/archive/main.zip"
+test "$(sed -n '2p' "${FETCH_CURL_LOG}")" = "https://github.com/folke/lazy.nvim/archive/refs/heads/main.zip"
+test "$(sed -n '3p' "${FETCH_CURL_LOG}")" = "https://codeload.github.com/folke/lazy.nvim/zip/main"
+test "$("${REAL_GIT}" -C "${FETCH_REPO}" show refs/remotes/origin/main:README.md)" = "archive fetch content"
+
 PERMANENT_404_DESTINATION="${TMP_DIR}/lazy-permanent-404.nvim"
 PERMANENT_404_CURL_LOG="${TMP_DIR}/permanent-404-curl-urls"
 PERMANENT_404_FAKE_CURL="${TMP_DIR}/permanent-404-curl"
@@ -320,8 +415,8 @@ set -e
 
 test "${permanent_404_status}" -ne 0
 test ! -d "${PERMANENT_404_DESTINATION}/.git"
-test "$(wc -l < "${PERMANENT_404_CURL_LOG}" | tr -d ' ')" = "2"
-! grep -q 'https://codeload.github.com/' "${PERMANENT_404_CURL_LOG}"
+test "$(wc -l < "${PERMANENT_404_CURL_LOG}" | tr -d ' ')" = "4"
+grep -q 'https://codeload.github.com/folke/lazy.nvim/zip/missing-ref' "${PERMANENT_404_CURL_LOG}"
 
 PERMANENT_404_FALLBACK_DESTINATION="${TMP_DIR}/lazy-permanent-404-fallback.nvim"
 
