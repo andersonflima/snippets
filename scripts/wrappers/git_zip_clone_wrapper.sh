@@ -38,6 +38,7 @@ GIT_ZIP_WRAPPER_LFS_MODE="local"
 GIT_ZIP_WRAPPER_STRICT="${GIT_ZIP_WRAPPER_STRICT:-0}"
 GIT_ZIP_WRAPPER_ALLOW_REMOTE_GIT_FALLBACK="${GIT_ZIP_WRAPPER_ALLOW_REMOTE_GIT_FALLBACK:-0}"
 GIT_ZIP_WRAPPER_LAST_DOWNLOAD_ERROR_KIND=""
+GIT_ZIP_WRAPPER_USE_JS_ENGINE="${GIT_ZIP_WRAPPER_USE_JS_ENGINE:-1}"
 GIT_GLOBAL_ARGS=()
 GIT_SUBCOMMAND=""
 GIT_SUBCOMMAND_ARGS=()
@@ -2022,6 +2023,21 @@ clone_with_real_git() {
   run_git_command_with_optional_no_proxy_retry "${real_git}" "$@"
 }
 
+resolve_js_wrapper_cli() {
+  local candidate
+  candidate="${GIT_ZIP_WRAPPER_JS_ENGINE:-${WRAPPER_DIR}/js/restricted_wrapper_cli.js}"
+  command -v node >/dev/null 2>&1 || return 1
+  [[ -f "${candidate}" ]] || return 1
+  printf '%s\n' "${candidate}"
+}
+
+clone_with_js_wrapper() {
+  local js_wrapper
+  is_truthy "${GIT_ZIP_WRAPPER_USE_JS_ENGINE}" || return 1
+  js_wrapper="$(resolve_js_wrapper_cli)" || return 1
+  node "${js_wrapper}" git "$@"
+}
+
 remote_git_fallback_enabled() {
   is_truthy "${GIT_ZIP_WRAPPER_ALLOW_REMOTE_GIT_FALLBACK}"
 }
@@ -2171,6 +2187,13 @@ main() {
     clone)
       if [[ ${#GIT_GLOBAL_ARGS[@]} -gt 0 ]] && ! clone_global_args_are_archive_safe; then
         exec "${real_git}" "$@"
+      fi
+      if is_truthy "${GIT_ZIP_WRAPPER_USE_JS_ENGINE}" && resolve_js_wrapper_cli >/dev/null 2>&1; then
+        log "tentando motor JS para git clone"
+        if clone_with_js_wrapper "$@"; then
+          return 0
+        fi
+        log "motor JS falhou ou não suportou a chamada; seguindo fluxo shell atual"
       fi
       ;;
     *)

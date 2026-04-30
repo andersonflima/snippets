@@ -72,3 +72,41 @@ env -u HTTPS_PROXY -u https_proxy -u HTTP_PROXY -u http_proxy -u ALL_PROXY -u al
     -fsSL "${URL}" -o "${TMP_DIR}/curl-wrapper-js.txt"
 
 test "$(cat "${TMP_DIR}/curl-wrapper-js.txt")" = "download via js"
+
+ARCHIVE_ROOT="${HTTP_ROOT}/folke/lazy.nvim/archive/refs/heads/feature"
+mkdir -p "${ARCHIVE_ROOT}"
+python3 - "${ARCHIVE_ROOT}/foo.zip" <<'PY'
+import sys
+import zipfile
+
+output_path = sys.argv[1]
+with zipfile.ZipFile(output_path, "w", zipfile.ZIP_DEFLATED) as archive:
+    archive.writestr("lazy.nvim-feature-foo/", "")
+    archive.writestr("lazy.nvim-feature-foo/README.md", "lazy via js zip\n")
+PY
+
+GIT_DESTINATION="${TMP_DIR}/lazy-js.nvim"
+REAL_GIT="$(command -v git)"
+
+env -u HTTPS_PROXY -u https_proxy -u HTTP_PROXY -u http_proxy -u ALL_PROXY -u all_proxy \
+  RESTRICTED_GIT_ARCHIVE_BASE_URL="http://127.0.0.1:${PORT}" \
+  GIT_ZIP_WRAPPER_REAL_GIT="${REAL_GIT}" \
+  node "${REPO_ROOT}/scripts/wrappers/js/restricted_wrapper_cli.js" \
+    git clone --branch feature/foo https://github.com/folke/lazy.nvim "${GIT_DESTINATION}"
+
+test -f "${GIT_DESTINATION}/README.md"
+test "$(cat "${GIT_DESTINATION}/README.md")" = "lazy via js zip"
+test -d "${GIT_DESTINATION}/.git"
+test "$(git -C "${GIT_DESTINATION}" branch --show-current)" = "feature/foo"
+
+GIT_WRAPPER_DESTINATION="${TMP_DIR}/lazy-wrapper-js.nvim"
+
+env -u HTTPS_PROXY -u https_proxy -u HTTP_PROXY -u http_proxy -u ALL_PROXY -u all_proxy \
+  RESTRICTED_GIT_ARCHIVE_BASE_URL="http://127.0.0.1:${PORT}" \
+  GIT_ZIP_WRAPPER_REAL_GIT="${REAL_GIT}" \
+  GIT_ZIP_WRAPPER_USE_JS_ENGINE=1 \
+  "${REPO_ROOT}/scripts/wrappers/git_zip_clone_wrapper.sh" \
+    clone --branch feature/foo https://github.com/folke/lazy.nvim "${GIT_WRAPPER_DESTINATION}"
+
+test -f "${GIT_WRAPPER_DESTINATION}/README.md"
+test "$(git -C "${GIT_WRAPPER_DESTINATION}" branch --show-current)" = "feature/foo"

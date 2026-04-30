@@ -5,6 +5,7 @@ SCRIPT_DIR="$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)"
 REPO_ROOT="$(cd "${SCRIPT_DIR}/../.." && pwd)"
 TMP_DIR="$(mktemp -d)"
 trap 'rm -rf "${TMP_DIR}"' EXIT
+export GIT_ZIP_WRAPPER_USE_JS_ENGINE=0
 
 FAKE_CURL="${TMP_DIR}/curl"
 FAKE_GIT="${TMP_DIR}/git"

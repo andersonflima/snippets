@@ -6,7 +6,7 @@ Esta pasta contém os wrappers reais usados para adaptar downloads e clones em a
 
 - `curl_python_wrapper.sh`: wrapper de `curl` com fallback para Python, `gh release` e estratégias inteligentes para Mason.
 - `wget_wrapper.sh`: wrapper de `wget` que delega assets `.zip` de release do GitHub para o wrapper de `curl` quando o fluxo do Mason precisa disso.
-- `git_zip_clone_wrapper.sh`: wrapper de `git` que tenta archive local para clones GitHub, cai para `git` real quando necessário e tem fallback local para cache do `Mix.install`.
+- `git_zip_clone_wrapper.sh`: wrapper de `git` que delega `git clone` GitHub para o motor Node por archive `.zip`, cai para o fluxo shell local quando necessário e mantém fallback local para cache do `Mix.install`.
 
 ## Instalação
 
@@ -112,6 +112,7 @@ vim.env.CURL_WRAPPER_RELEASE_CACHE_DIR = vim.fn.expand("~/.cache/curl-python-wra
 vim.env.CURL_WRAPPER_MASON_BUILDERS = "elixir-lsp/elixir-ls=elixir_ls_release,omnisharp/omnisharp-roslyn=omnisharp_source_publish"
 vim.env.CURL_WRAPPER_MASON_SOURCE_BUILD_REPOS = "omnisharp/omnisharp-roslyn"
 vim.env.GIT_ZIP_WRAPPER_ARCHIVE_FORMAT = "zip"
+vim.env.GIT_ZIP_WRAPPER_USE_JS_ENGINE = "1"
 vim.env.GIT_ZIP_WRAPPER_CLONE_ORDER = "local-first"
 vim.env.GIT_ZIP_WRAPPER_ALLOW_REMOTE_GIT_FALLBACK = "0"
 vim.env.GIT_ZIP_WRAPPER_ALLOW_ZIP_FALLBACK = "1"
@@ -143,6 +144,7 @@ vim.env.GIT_ZIP_WRAPPER_STRICT = "0"
 - `GIT_ZIP_WRAPPER_REAL_GIT`: caminho do `git` real.
 - `GIT_ZIP_WRAPPER_PROXY`: proxy explícito para os downloads do wrapper.
 - `GIT_ZIP_WRAPPER_ARCHIVE_FORMAT`: formato preferido do archive. Valores válidos: `tar.gz`, `tgz`, `tar`, `zip`. Padrão: `zip`.
+- `GIT_ZIP_WRAPPER_USE_JS_ENGINE`: usa o motor Node para transformar `git clone` GitHub em download/extracao de `.zip` antes de cair no fluxo shell. Padrão: `1`.
 - `GIT_ZIP_WRAPPER_ALLOW_ZIP_FALLBACK`: libera fallback ou uso primário de `.zip`.
 - `GIT_ZIP_WRAPPER_CLONE_ORDER`: política do clone do wrapper. Valores suportados: `git-first`, `local-first`. Padrão: `local-first`.
 - `GIT_ZIP_WRAPPER_ALLOW_REMOTE_GIT_FALLBACK`: permite usar `git clone/fetch/checkout` remoto real se o archive falhar. Padrão: `0`.
@@ -155,6 +157,7 @@ vim.env.GIT_ZIP_WRAPPER_STRICT = "0"
 Comportamento adicional para LazyVim:
 
 - em `local-first`, o wrapper usa archive do GitHub antes de qualquer Git remoto
+- com `GIT_ZIP_WRAPPER_USE_JS_ENGINE=1`, `git clone` GitHub baixa `.zip`, remove o diretório raiz do archive, escreve no destino solicitado por LazyVim/Mason e inicializa metadados Git locais sem acessar o remoto Git
 - por padrão, se o archive falhar, o wrapper não tenta `git clone` real para repositórios GitHub
 - para liberar Git remoto real como último fallback, defina `GIT_ZIP_WRAPPER_ALLOW_REMOTE_GIT_FALLBACK=1`
 - em `git-first`, o wrapper ainda pode tentar `git clone` normal antes do archive, então esse modo não é adequado para ambientes onde Git remoto externo é bloqueado
