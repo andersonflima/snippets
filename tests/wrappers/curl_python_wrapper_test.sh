@@ -85,6 +85,23 @@ with zipfile.ZipFile(output_path, "w", zipfile.ZIP_DEFLATED) as archive:
 PY
     exit 0
     ;;
+  https://github.com/mason-org/mason-registry/archive/dev.zip)
+    printf '%s\n' 'curl: (22) The requested URL returned error: 403' >&2
+    exit 22
+    ;;
+  https://github.com/mason-org/mason-registry/archive/refs/heads/dev.zip)
+    python3 - "\${output}" <<'PY'
+import sys
+import zipfile
+
+output_path = sys.argv[1]
+
+with zipfile.ZipFile(output_path, "w", zipfile.ZIP_DEFLATED) as archive:
+    archive.writestr("mason-registry-dev/", "")
+    archive.writestr("mason-registry-dev/registry.json", "{}\n")
+PY
+    exit 0
+    ;;
   https://github.com/example/project/archive/feature/foo.zip)
     printf '%s\n' 'curl: (22) The requested URL returned error: 404' >&2
     exit 22
@@ -175,6 +192,29 @@ with zipfile.ZipFile(output_path) as archive:
 PY
 test "$(sed -n '5p' "${CURL_LOG}")" = "https://github.com/mason-org/mason-registry/archive/main.zip"
 
+OUTPUT_REGISTRY_PLAIN_REF_ZIP="${TMP_DIR}/mason-registry-plain-ref.zip"
+
+CURL_WRAPPER_REAL_CURL="${FAKE_CURL}" \
+  "${REPO_ROOT}/scripts/wrappers/curl_python_wrapper.sh" \
+    --silent \
+    --fail \
+    --show-error \
+    -L \
+    https://github.com/mason-org/mason-registry/archive/dev.zip \
+    --output "${OUTPUT_REGISTRY_PLAIN_REF_ZIP}"
+
+python3 - "${OUTPUT_REGISTRY_PLAIN_REF_ZIP}" <<'PY'
+import sys
+import zipfile
+
+output_path = sys.argv[1]
+
+with zipfile.ZipFile(output_path) as archive:
+    assert "mason-registry-dev/registry.json" in archive.namelist()
+PY
+test "$(sed -n '6p' "${CURL_LOG}")" = "https://github.com/mason-org/mason-registry/archive/dev.zip"
+test "$(sed -n '7p' "${CURL_LOG}")" = "https://github.com/mason-org/mason-registry/archive/refs/heads/dev.zip"
+
 OUTPUT_BRANCH_WITH_SLASH_ZIP="${TMP_DIR}/branch-with-slash.zip"
 
 CURL_WRAPPER_ALLOW_ZIP_DOWNLOAD=1 \
@@ -196,8 +236,8 @@ output_path = sys.argv[1]
 with zipfile.ZipFile(output_path) as archive:
     assert "project-feature-foo/README.md" in archive.namelist()
 PY
-test "$(sed -n '6p' "${CURL_LOG}")" = "https://github.com/example/project/archive/feature/foo.zip"
-test "$(sed -n '7p' "${CURL_LOG}")" = "https://github.com/example/project/archive/refs/heads/feature/foo.zip"
+test "$(sed -n '8p' "${CURL_LOG}")" = "https://github.com/example/project/archive/feature/foo.zip"
+test "$(sed -n '9p' "${CURL_LOG}")" = "https://github.com/example/project/archive/refs/heads/feature/foo.zip"
 
 API_ROOT="${TMP_DIR}/api-root"
 API_PORT_FILE="${TMP_DIR}/api-port"

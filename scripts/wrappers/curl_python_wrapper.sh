@@ -811,12 +811,8 @@ archive_ref_candidate_urls() {
       ;;
     *)
       printf '%s\n' "https://github.com/${owner}/${repo}/archive/${normalized_ref}.zip"
-      case "${normalized_ref}" in
-        */*)
-          printf '%s\n' "https://github.com/${owner}/${repo}/archive/refs/heads/${normalized_ref}.zip"
-          printf '%s\n' "https://github.com/${owner}/${repo}/archive/refs/tags/${normalized_ref}.zip"
-          ;;
-      esac
+      printf '%s\n' "https://github.com/${owner}/${repo}/archive/refs/heads/${normalized_ref}.zip"
+      printf '%s\n' "https://github.com/${owner}/${repo}/archive/refs/tags/${normalized_ref}.zip"
       ;;
   esac
 }
@@ -836,6 +832,9 @@ download_github_archive_zip_via_alternates() {
 
   while IFS= read -r candidate; do
     [[ -n "${candidate}" ]] || continue
+    if [[ -n "${CURL_FALLBACK_URL:-}" && "${candidate}" == "${CURL_FALLBACK_URL}" ]]; then
+      continue
+    fi
     rm -f "${output_path}" 2>/dev/null || true
     if download_url_with_real_curl "${candidate}" "${output_path}" "1" && is_valid_zip_file "${output_path}"; then
       return 0

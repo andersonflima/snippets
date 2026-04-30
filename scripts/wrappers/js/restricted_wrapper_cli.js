@@ -27,6 +27,8 @@ const fail = (message, code = 1) => {
 
 const unique = (items) => [...new Set(items.filter(Boolean))];
 
+const escapeRegExp = (value) => value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+
 const run = (command, commandArgs, options = {}) => {
   const result = spawnSync(command, commandArgs, {
     stdio: options.stdio || "pipe",
@@ -228,11 +230,9 @@ function resolveProxy(command, request) {
   return commandProxy || process.env.HTTPS_PROXY || process.env.https_proxy || process.env.ALL_PROXY || process.env.all_proxy || process.env.HTTP_PROXY || process.env.http_proxy || "";
 }
 
-function archiveCandidates(rawUrl) {
-  const cleanUrl = rawUrl.split("?")[0].split("#")[0];
-  const codeload = cleanUrl.match(/^https:\/\/codeload\.github\.com\/([^/]+)\/([^/]+)\/zip\/(.+)$/);
-  if (!codeload) return [];
-  const [, owner, repo, ref] = codeload;
+function archiveRefCandidateUrls(owner, repo, ref) {
+  const githubBaseUrl = (process.env.RESTRICTED_GITHUB_BASE_URL || "https://github.com").replace(/\/$/, "");
+  const codeloadBaseUrl = (process.env.RESTRICTED_CODELOAD_BASE_URL || "https://codeload.github.com").replace(/\/$/, "");
   const urls = [];
   const add = (candidate) => {
     if (!urls.includes(candidate)) urls.push(candidate);
@@ -240,20 +240,49 @@ function archiveCandidates(rawUrl) {
 
   if (ref.startsWith("refs/heads/")) {
     const shortRef = ref.slice("refs/heads/".length);
-    add(`https://github.com/${owner}/${repo}/archive/${shortRef}.zip`);
-    add(`https://github.com/${owner}/${repo}/archive/refs/heads/${shortRef}.zip`);
+    add(`${githubBaseUrl}/${owner}/${repo}/archive/${shortRef}.zip`);
+    add(`${githubBaseUrl}/${owner}/${repo}/archive/refs/heads/${shortRef}.zip`);
+    add(`${codeloadBaseUrl}/${owner}/${repo}/zip/refs/heads/${shortRef}`);
   } else if (ref.startsWith("refs/tags/")) {
     const shortRef = ref.slice("refs/tags/".length);
-    add(`https://github.com/${owner}/${repo}/archive/${shortRef}.zip`);
-    add(`https://github.com/${owner}/${repo}/archive/refs/tags/${shortRef}.zip`);
+    add(`${githubBaseUrl}/${owner}/${repo}/archive/${shortRef}.zip`);
+    add(`${githubBaseUrl}/${owner}/${repo}/archive/refs/tags/${shortRef}.zip`);
+    add(`${codeloadBaseUrl}/${owner}/${repo}/zip/refs/tags/${shortRef}`);
+  } else if (ref === "HEAD") {
+    add(`${githubBaseUrl}/${owner}/${repo}/archive/main.zip`);
+    add(`${githubBaseUrl}/${owner}/${repo}/archive/refs/heads/main.zip`);
+    add(`${codeloadBaseUrl}/${owner}/${repo}/zip/refs/heads/main`);
+    add(`${githubBaseUrl}/${owner}/${repo}/archive/master.zip`);
+    add(`${githubBaseUrl}/${owner}/${repo}/archive/refs/heads/master.zip`);
+    add(`${codeloadBaseUrl}/${owner}/${repo}/zip/refs/heads/master`);
+    add(`${githubBaseUrl}/${owner}/${repo}/archive/HEAD.zip`);
   } else {
-    add(`https://github.com/${owner}/${repo}/archive/${ref}.zip`);
-    if (ref.includes("/")) {
-      add(`https://github.com/${owner}/${repo}/archive/refs/heads/${ref}.zip`);
-      add(`https://github.com/${owner}/${repo}/archive/refs/tags/${ref}.zip`);
-    }
+    add(`${githubBaseUrl}/${owner}/${repo}/archive/${ref}.zip`);
+    add(`${githubBaseUrl}/${owner}/${repo}/archive/refs/heads/${ref}.zip`);
+    add(`${codeloadBaseUrl}/${owner}/${repo}/zip/refs/heads/${ref}`);
+    add(`${githubBaseUrl}/${owner}/${repo}/archive/refs/tags/${ref}.zip`);
+    add(`${codeloadBaseUrl}/${owner}/${repo}/zip/refs/tags/${ref}`);
   }
+
   return urls;
+}
+
+function archiveCandidates(rawUrl) {
+  const cleanUrl = rawUrl.split("?")[0].split("#")[0];
+  const githubBaseUrl = (process.env.RESTRICTED_GITHUB_BASE_URL || "https://github.com").replace(/\/$/, "");
+  const codeloadBaseUrl = (process.env.RESTRICTED_CODELOAD_BASE_URL || "https://codeload.github.com").replace(/\/$/, "");
+  const githubArchive = cleanUrl.match(new RegExp(`^${escapeRegExp(githubBaseUrl)}\\/([^/]+)\\/([^/]+)\\/archive\\/(.+)\\.zip$`));
+  if (githubArchive) {
+    const [, owner, repo, ref] = githubArchive;
+    return archiveRefCandidateUrls(owner, repo, ref);
+  }
+
+  const codeload = cleanUrl.match(new RegExp(`^${escapeRegExp(codeloadBaseUrl)}\\/([^/]+)\\/([^/]+)\\/zip\\/(.+)$`));
+  if (codeload) {
+    const [, owner, repo, ref] = codeload;
+    return archiveRefCandidateUrls(owner, repo, ref);
+  }
+  return [];
 }
 
 function normalizeCloneUrlForHttpTransport(repoUrl) {
@@ -411,7 +440,7 @@ function createTempDir(prefix) {
 
 async function downloadWithCandidates(command, request) {
   const proxy = resolveProxy(command, request);
-  const candidates = [request.url, ...archiveCandidates(request.url)];
+  const candidates = unique([request.url, ...archiveCandidates(request.url)]);
   let lastError = null;
 
   for (const candidate of candidates) {

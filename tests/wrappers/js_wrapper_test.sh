@@ -73,6 +73,33 @@ env -u HTTPS_PROXY -u https_proxy -u HTTP_PROXY -u http_proxy -u ALL_PROXY -u al
 
 test "$(cat "${TMP_DIR}/curl-wrapper-js.txt")" = "download via js"
 
+MASON_REGISTRY_ARCHIVE_ROOT="${HTTP_ROOT}/mason-org/mason-registry/archive/refs/heads"
+mkdir -p "${MASON_REGISTRY_ARCHIVE_ROOT}"
+python3 - "${MASON_REGISTRY_ARCHIVE_ROOT}/main.zip" <<'PY'
+import sys
+import zipfile
+
+output_path = sys.argv[1]
+with zipfile.ZipFile(output_path, "w", zipfile.ZIP_DEFLATED) as archive:
+    archive.writestr("mason-registry-main/", "")
+    archive.writestr("mason-registry-main/registry.json", "{}\n")
+PY
+
+env -u HTTPS_PROXY -u https_proxy -u HTTP_PROXY -u http_proxy -u ALL_PROXY -u all_proxy \
+  RESTRICTED_GITHUB_BASE_URL="http://127.0.0.1:${PORT}" \
+  node "${REPO_ROOT}/scripts/wrappers/js/restricted_wrapper_cli.js" \
+    curl -fsSL "http://127.0.0.1:${PORT}/mason-org/mason-registry/archive/main.zip" \
+    -o "${TMP_DIR}/mason-registry-js.zip"
+
+python3 - "${TMP_DIR}/mason-registry-js.zip" <<'PY'
+import sys
+import zipfile
+
+output_path = sys.argv[1]
+with zipfile.ZipFile(output_path) as archive:
+    assert "mason-registry-main/registry.json" in archive.namelist()
+PY
+
 ARCHIVE_ROOT="${HTTP_ROOT}/folke/lazy.nvim/archive/refs/heads/feature"
 mkdir -p "${ARCHIVE_ROOT}"
 python3 - "${ARCHIVE_ROOT}/foo.zip" <<'PY'
