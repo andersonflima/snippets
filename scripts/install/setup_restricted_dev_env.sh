@@ -10,157 +10,24 @@
 
 set -euo pipefail
 
+SCRIPT_DIR="$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)"
+COMMON_HELPER="${SCRIPT_DIR}/lib/common.sh"
+
+# shellcheck disable=SC1090
+. "${COMMON_HELPER}"
+
+RESTRICTED_SCRIPT_NAME="setup-restricted-dev-env"
+
 log() {
-  printf '[setup-restricted-dev-env] %s\n' "$*" >&2
+  restricted_log "$@"
 }
 
 die() {
-  log "erro: $*"
-  exit 1
-}
-
-is_wrapper_binary_path() {
-  local binary_name candidate_path wrapper_path
-  binary_name="$1"
-  candidate_path="$2"
-
-  case "${binary_name}" in
-    curl)
-      wrapper_path="${HOME}/.local/share/curl-python-wrapper/bin/curl"
-      [[ "${candidate_path}" == "${HOME}/.local/bin/curl" ]] && return 0
-      ;;
-    wget)
-      wrapper_path="${HOME}/.local/share/curl-python-wrapper/bin/wget"
-      [[ "${candidate_path}" == "${HOME}/.local/bin/wget" ]] && return 0
-      ;;
-    git)
-      wrapper_path="${HOME}/.local/share/git-zip-wrapper/bin/git"
-      [[ "${candidate_path}" == "${HOME}/.local/bin/git" ]] && return 0
-      ;;
-    mix)
-      case "${candidate_path}" in
-        "${HOME}"/.local/share/mix-*-wrapper/bin/mix)
-          return 0
-          ;;
-      esac
-      return 1
-      ;;
-    brew)
-      wrapper_path="${HOME}/.local/share/homebrew-install-wrapper/bin/brew"
-      ;;
-    *)
-      return 1
-      ;;
-  esac
-
-  [[ "${candidate_path}" == "${wrapper_path}" ]]
-}
-
-candidate_paths_for_binary() {
-  local binary_name
-  binary_name="$1"
-
-  case "${binary_name}" in
-    curl)
-      printf '/usr/bin/curl\n'
-      printf '/usr/local/bin/curl\n'
-      printf '/opt/homebrew/bin/curl\n'
-      printf '/bin/curl\n'
-      printf '/sbin/curl\n'
-      ;;
-    wget)
-      printf '/usr/bin/wget\n'
-      printf '/usr/local/bin/wget\n'
-      printf '/opt/homebrew/bin/wget\n'
-      printf '/bin/wget\n'
-      printf '/sbin/wget\n'
-      ;;
-    git)
-      printf '/usr/bin/git\n'
-      printf '/usr/local/bin/git\n'
-      printf '/opt/homebrew/bin/git\n'
-      printf '/bin/git\n'
-      printf '/usr/libexec/git-core/git\n'
-      ;;
-    mix)
-      printf '/usr/bin/mix\n'
-      printf '/usr/local/bin/mix\n'
-      printf '/opt/homebrew/bin/mix\n'
-      printf '/bin/mix\n'
-      ;;
-    *)
-      ;;
-  esac
-}
-
-resolve_real_binary() {
-  local binary_name candidate
-  binary_name="$1"
-  local seen=""
-
-  while IFS= read -r candidate; do
-    [[ -n "${candidate}" ]] || continue
-    if is_wrapper_binary_path "${binary_name}" "${candidate}"; then
-      continue
-    fi
-    [[ "${seen}" == *$'\n'"${candidate}"$'\n'* ]] && continue
-    seen+="${candidate}"$'\n'
-    printf '%s\n' "${candidate}"
-    return 0
-  done <<EOF2
-$(which -a "${binary_name}" 2>/dev/null || true)
-EOF2
-
-  while IFS= read -r candidate; do
-    [[ -n "${candidate}" ]] || continue
-    [[ "${seen}" == *$'\n'"${candidate}"$'\n'* ]] && continue
-    seen+="${candidate}"$'\n'
-    [[ -x "${candidate}" ]] || continue
-    if is_wrapper_binary_path "${binary_name}" "${candidate}"; then
-      continue
-    fi
-    printf '%s\n' "${candidate}"
-    return 0
-  done <<EOF3
-$(candidate_paths_for_binary "${binary_name}")
-EOF3
-
-  return 1
-}
-
-resolve_target_shell_name() {
-  local target_shell
-  target_shell="${RESTRICTED_DEV_ENV_TARGET_SHELL:-zsh}"
-  target_shell="${target_shell##*/}"
-
-  case "${target_shell}" in
-    zsh|bash|fish|sh)
-      printf '%s\n' "${target_shell}"
-      ;;
-    *)
-      printf '%s\n' "zsh"
-      ;;
-  esac
+  restricted_die "$@"
 }
 
 detect_default_shell_rc() {
-  local shell_name
-  shell_name="$(resolve_target_shell_name)"
-
-  case "${shell_name}" in
-    fish)
-      printf '%s\n' "${HOME}/.config/fish/config.fish"
-      ;;
-    zsh)
-      printf '%s\n' "${HOME}/.zshrc"
-      ;;
-    bash)
-      printf '%s\n' "${HOME}/.bashrc"
-      ;;
-    *)
-      printf '%s\n' "${HOME}/.profile"
-      ;;
-  esac
+  restricted_default_shell_rc
 }
 
 usage() {
@@ -198,7 +65,6 @@ Ambiente:
 USAGE
 }
 
-SCRIPT_DIR="$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)"
 ROOT_DIR="$(cd "${SCRIPT_DIR}/.." && pwd)"
 STATE_HELPER="${SCRIPT_DIR}/restricted_dev_env_state.sh"
 
@@ -330,32 +196,32 @@ RESTRICTED_DEV_ENV_HEX_BACKUP_PATH="${RESTRICTED_DEV_ENV_HEX_BACKUP_PATH:-${REST
 RESTRICTED_DEV_ENV_HEX_CONFIG_EXISTED_BEFORE="${RESTRICTED_DEV_ENV_HEX_CONFIG_EXISTED_BEFORE:-0}"
 
 if [[ -z "${REAL_CURL_BIN}" ]]; then
-  REAL_CURL_BIN="$(resolve_real_binary curl || true)"
+  REAL_CURL_BIN="$(restricted_resolve_real_binary curl || true)"
 fi
 if [[ -z "${REAL_WGET_BIN}" ]]; then
-  REAL_WGET_BIN="$(resolve_real_binary wget || true)"
+  REAL_WGET_BIN="$(restricted_resolve_real_binary wget || true)"
 fi
 if [[ -z "${REAL_GIT_BIN}" ]]; then
-  REAL_GIT_BIN="$(resolve_real_binary git || true)"
+  REAL_GIT_BIN="$(restricted_resolve_real_binary git || true)"
 fi
 if [[ "${CONFIGURE_HEX}" == "1" ]] && [[ -z "${REAL_MIX_BIN}" ]]; then
-  REAL_MIX_BIN="$(resolve_real_binary mix || true)"
+  REAL_MIX_BIN="$(restricted_resolve_real_binary mix || true)"
 fi
 
 [[ -n "${REAL_CURL_BIN}" ]] || die "não foi possível localizar curl no PATH"
 [[ -n "${REAL_GIT_BIN}" ]] || die "não foi possível localizar git no PATH"
 [[ -x "${REAL_CURL_BIN}" ]] || die "curl inválido/não executável: ${REAL_CURL_BIN}"
 [[ -x "${REAL_GIT_BIN}" ]] || die "git inválido/não executável: ${REAL_GIT_BIN}"
-is_wrapper_binary_path curl "${REAL_CURL_BIN}" && die "curl real não pode apontar para o wrapper instalado: ${REAL_CURL_BIN}"
-is_wrapper_binary_path git "${REAL_GIT_BIN}" && die "git real não pode apontar para o wrapper instalado: ${REAL_GIT_BIN}"
+restricted_is_wrapper_binary_path curl "${REAL_CURL_BIN}" && die "curl real não pode apontar para o wrapper instalado: ${REAL_CURL_BIN}"
+restricted_is_wrapper_binary_path git "${REAL_GIT_BIN}" && die "git real não pode apontar para o wrapper instalado: ${REAL_GIT_BIN}"
 if [[ -n "${REAL_WGET_BIN}" ]]; then
   [[ -x "${REAL_WGET_BIN}" ]] || die "wget inválido/não executável: ${REAL_WGET_BIN}"
-  is_wrapper_binary_path wget "${REAL_WGET_BIN}" && die "wget real não pode apontar para o wrapper instalado: ${REAL_WGET_BIN}"
+  restricted_is_wrapper_binary_path wget "${REAL_WGET_BIN}" && die "wget real não pode apontar para o wrapper instalado: ${REAL_WGET_BIN}"
 fi
 if [[ "${CONFIGURE_HEX}" == "1" ]]; then
   [[ -n "${REAL_MIX_BIN}" ]] || die "não foi possível localizar mix no PATH para configurar o Hex"
   [[ -x "${REAL_MIX_BIN}" ]] || die "mix inválido/não executável: ${REAL_MIX_BIN}"
-  is_wrapper_binary_path mix "${REAL_MIX_BIN}" && die "mix real não pode apontar para o wrapper instalado: ${REAL_MIX_BIN}"
+  restricted_is_wrapper_binary_path mix "${REAL_MIX_BIN}" && die "mix real não pode apontar para o wrapper instalado: ${REAL_MIX_BIN}"
 fi
 if [[ -n "${CA_CERT_PATH}" ]]; then
   [[ -f "${CA_CERT_PATH}" ]] || die "CA customizada não encontrada: ${CA_CERT_PATH}"
@@ -377,16 +243,7 @@ run_step() {
 }
 
 run_bash_script() {
-  local script_path
-  script_path="$1"
-  shift
-
-  if command -v bash >/dev/null 2>&1; then
-    bash "${script_path}" "$@"
-    return $?
-  fi
-
-  "${script_path}" "$@"
+  restricted_run_bash_script "$@"
 }
 
 install_curl_wrapper() {
@@ -407,18 +264,6 @@ install_git_wrapper() {
   run_bash_script "${ROOT_DIR}/install/install_git_zip_wrapper.sh" \
     --real-git "${REAL_GIT_BIN}" \
     >/dev/null
-}
-
-remove_legacy_brew_wrapper_installation() {
-  local brew_wrapper_root
-  brew_wrapper_root="${HOME}/.local/share/homebrew-install-wrapper"
-
-  if [[ ! -d "${brew_wrapper_root}" ]]; then
-    return 0
-  fi
-
-  rm -rf "${brew_wrapper_root}"
-  log "wrapper legado do brew removido: ${brew_wrapper_root}"
 }
 
 write_wrapper_shim() {
@@ -731,7 +576,7 @@ WRAPPER_ENV_ARGS+=(--no-shell-rc)
 run_step "instalando wrapper do curl" install_curl_wrapper
 run_step "instalando wrapper do git" install_git_wrapper
 run_step "sincronizando shims em ~/.local/bin" ensure_wrapper_shims
-run_step "removendo wrapper legado do brew" remove_legacy_brew_wrapper_installation
+run_step "removendo wrapper legado do brew" restricted_remove_legacy_brew_wrapper_installation
 run_step "configurando ambiente compartilhado dos wrappers em modo local-only" \
   run_bash_script "${ROOT_DIR}/install/configure_wrapper_envs.sh" "${WRAPPER_ENV_ARGS[@]}"
 run_step "gerando env fish compartilhado para wrappers" write_fish_env_file

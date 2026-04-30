@@ -10,13 +10,20 @@
 
 set -euo pipefail
 
+SCRIPT_DIR="$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)"
+COMMON_HELPER="${SCRIPT_DIR}/lib/common.sh"
+
+# shellcheck disable=SC1090
+. "${COMMON_HELPER}"
+
+RESTRICTED_SCRIPT_NAME="reset-restricted-dev-env"
+
 log() {
-  printf '[reset-restricted-dev-env] %s\n' "$*" >&2
+  restricted_log "$@"
 }
 
 die() {
-  log "erro: $*"
-  exit 1
+  restricted_die "$@"
 }
 
 usage() {
@@ -59,24 +66,9 @@ Ambiente:
 USAGE
 }
 
-resolve_target_shell_name() {
-  local target_shell
-  target_shell="${RESTRICTED_DEV_ENV_TARGET_SHELL:-zsh}"
-  target_shell="${target_shell##*/}"
-
-  case "${target_shell}" in
-    zsh|bash|fish|sh)
-      printf '%s\n' "${target_shell}"
-      ;;
-    *)
-      printf '%s\n' "zsh"
-      ;;
-  esac
-}
-
 resolve_target_shell_executable() {
   local shell_name
-  shell_name="$(resolve_target_shell_name)"
+  shell_name="$(restricted_target_shell_name)"
 
   case "${shell_name}" in
     zsh)
@@ -95,26 +87,9 @@ resolve_target_shell_executable() {
 }
 
 detect_default_shell_rc() {
-  local shell_name
-  shell_name="$(resolve_target_shell_name)"
-
-  case "${shell_name}" in
-    fish)
-      printf '%s\n' "${HOME}/.config/fish/config.fish"
-      ;;
-    zsh)
-      printf '%s\n' "${HOME}/.zshrc"
-      ;;
-    bash)
-      printf '%s\n' "${HOME}/.bashrc"
-      ;;
-    *)
-      printf '%s\n' "${HOME}/.profile"
-      ;;
-  esac
+  restricted_default_shell_rc
 }
 
-SCRIPT_DIR="$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)"
 STATE_HELPER="${SCRIPT_DIR}/restricted_dev_env_state.sh"
 
 # shellcheck disable=SC1090

@@ -1632,12 +1632,6 @@ def resolve_elasticache_target_parameter_group(
     if not target_family:
         return ""
 
-    if (
-        not is_default_parameter_group(source_parameter_group_name)
-        and normalize_version(source_family).lower() == normalize_version(target_family).lower()
-    ):
-        return source_parameter_group_name
-
     if is_default_parameter_group(source_parameter_group_name):
         return f"default.{target_family}"
 
@@ -2423,6 +2417,56 @@ def wait_for_rds_resource_status(
         time.sleep(max(0.0, poll_interval_ms / 1000.0))
 
 
+def rds_engine_version_matches_target(current_version: Any, target_version: Any) -> bool:
+    normalized_current_version = normalize_version(current_version)
+    normalized_target_version = normalize_version(target_version)
+    if not normalized_target_version:
+        return True
+    if normalized_current_version == normalized_target_version:
+        return True
+    return normalized_current_version.startswith(f"{normalized_target_version}.")
+
+
+def wait_for_rds_resource_upgrade_completion(
+    *,
+    describe_resource: Callable[[], Dict[str, Any]],
+    get_status: Callable[[Dict[str, Any]], Any],
+    get_engine_version: Callable[[Dict[str, Any]], Any],
+    resource_label: str,
+    target_version: str,
+    timeout_ms: int = RDS_STATUS_TIMEOUT_MS,
+    poll_interval_ms: int = RDS_STATUS_POLL_INTERVAL_MS,
+) -> Dict[str, Any]:
+    deadline = time.time() + max(0.0, timeout_ms / 1000.0)
+
+    while True:
+        resource = describe_resource()
+        current_status = normalize_rds_status(get_status(resource))
+        current_version = normalize_version(get_engine_version(resource))
+
+        if current_status == "available" and rds_engine_version_matches_target(
+            current_version,
+            target_version,
+        ):
+            return resource
+
+        if is_rds_terminal_blocked_status(current_status):
+            raise ValueError(
+                f"{resource_label} entrou em estado nao suportado para upgrade: "
+                f"{current_status or 'desconhecido'}."
+            )
+
+        if time.time() >= deadline:
+            raise TimeoutError(
+                f"Timeout aguardando upgrade de {resource_label} concluir. "
+                f"Status atual: {current_status or 'desconhecido'}. "
+                f"Versao atual: {current_version or 'desconhecida'}. "
+                f"Versao alvo: {normalize_version(target_version) or 'desconhecida'}."
+            )
+
+        time.sleep(max(0.0, poll_interval_ms / 1000.0))
+
+
 def ensure_rds_resource_ready_for_upgrade(
     *,
     describe_resource: Callable[[], Dict[str, Any]],
@@ -2513,17 +2557,20 @@ def maybe_stop_rds_resource_after_update(
     readiness: Dict[str, Any],
     describe_resource: Callable[[], Dict[str, Any]],
     get_status: Callable[[Dict[str, Any]], Any],
+    get_engine_version: Callable[[Dict[str, Any]], Any],
     stop_resource: Callable[[], Any],
     resource_label: str,
+    target_version: str,
 ) -> Dict[str, str]:
     if not readiness.get("auto_started"):
         return {"finalStatus": "", "message": ""}
 
-    wait_for_rds_resource_status(
+    wait_for_rds_resource_upgrade_completion(
         describe_resource=describe_resource,
         get_status=get_status,
+        get_engine_version=get_engine_version,
         resource_label=resource_label,
-        target_status="available",
+        target_version=target_version,
     )
     stop_resource()
     stopped_resource = wait_for_rds_resource_status(
@@ -2535,7 +2582,8 @@ def maybe_stop_rds_resource_after_update(
     return {
         "finalStatus": normalize_rds_status(get_status(stopped_resource)),
         "message": (
-            f"{resource_label} foi desligado novamente apos concluir o upgrade."
+            f"{resource_label} foi monitorado ate concluir o upgrade "
+            "e desligado novamente."
         ),
     }
 
@@ -2741,10 +2789,12 @@ def submit_rds_instance_update(
         readiness=readiness,
         describe_resource=lambda: describe_rds_db_instance(client, db_instance_identifier),
         get_status=lambda db_instance: db_instance.get("DBInstanceStatus"),
+        get_engine_version=lambda db_instance: db_instance.get("EngineVersion"),
         stop_resource=lambda: send_aws_call(
             lambda: client.stop_db_instance(DBInstanceIdentifier=db_instance_identifier)
         ),
         resource_label=f"DB instance {db_instance_identifier}",
+        target_version=target_version,
     )
     option_group_message = (
         f"OptionGroup migrada para {resolved_target_option_group_name}"
@@ -2799,10 +2849,6 @@ def submit_rds_cluster_update(
             "RDS DB cluster nao suporta troca de engine in-place "
             f"({normalized_current_engine} -> {normalized_target_engine})."
         )
-    initial_cluster_snapshot = describe_rds_db_cluster(client, db_cluster_identifier)
-    cluster_engine_mode = normalize_version(
-        initial_cluster_snapshot.get("EngineMode")
-    ).lower()
     readiness = ensure_rds_resource_ready_for_upgrade(
         describe_resource=lambda: describe_rds_db_cluster(client, db_cluster_identifier),
         get_status=lambda db_cluster: db_cluster.get("Status"),
@@ -2853,10 +2899,7 @@ def submit_rds_cluster_update(
         modify_input["DBClusterParameterGroupName"] = (
             resolved_target_cluster_parameter_group_name
         )
-    if (
-        resolved_target_instance_parameter_group_name
-        and cluster_engine_mode in ("", "provisioned")
-    ):
+    if resolved_target_instance_parameter_group_name:
         modify_input["DBInstanceParameterGroupName"] = (
             resolved_target_instance_parameter_group_name
         )
@@ -2866,10 +2909,12 @@ def submit_rds_cluster_update(
         readiness=readiness,
         describe_resource=lambda: describe_rds_db_cluster(client, db_cluster_identifier),
         get_status=lambda db_cluster: db_cluster.get("Status"),
+        get_engine_version=lambda db_cluster: db_cluster.get("EngineVersion"),
         stop_resource=lambda: send_aws_call(
             lambda: client.stop_db_cluster(DBClusterIdentifier=db_cluster_identifier)
         ),
         resource_label=f"DB cluster {db_cluster_identifier}",
+        target_version=target_version,
     )
     return {
         "status": (
@@ -2976,14 +3021,6 @@ def resolve_rds_target_parameter_group(
 
     if is_default_parameter_group(source_parameter_group_name):
         return f"default.{target_family}"
-
-    source_family = resolve_rds_source_db_parameter_group_family(
-        client=client,
-        source_parameter_group_name=source_parameter_group_name,
-        adapter_options=adapter_options,
-    )
-    if normalize_version(source_family).lower() == normalize_version(target_family).lower():
-        return source_parameter_group_name
 
     return ensure_custom_rds_target_parameter_group_for_migration(
         client=client,
@@ -3138,14 +3175,6 @@ def resolve_rds_target_cluster_parameter_group(
     if is_default_parameter_group(source_parameter_group_name):
         return f"default.{target_family}"
 
-    source_family = resolve_rds_source_db_cluster_parameter_group_family(
-        client=client,
-        source_parameter_group_name=source_parameter_group_name,
-        adapter_options=adapter_options,
-    )
-    if normalize_version(source_family).lower() == normalize_version(target_family).lower():
-        return source_parameter_group_name
-
     return ensure_custom_rds_target_cluster_parameter_group_for_migration(
         client=client,
         source_parameter_group_name=source_parameter_group_name,
@@ -3171,21 +3200,23 @@ def resolve_rds_target_cluster_instance_parameter_group(
     if not requires_parameter_group_migration:
         return ""
 
-    source_parameter_group_names = sorted(
-        set(
-            split_parameter_group_names(
-                resource.get("instanceParameterGroups")
-                or resource.get("instanceParameterGroupName")
-            )
-        )
+    source_parameter_group_names = split_parameter_group_names(
+        resource.get("instanceParameterGroups") or resource.get("instanceParameterGroupName")
     )
     if not source_parameter_group_names:
         return ""
 
+    if len(source_parameter_group_names) > 1:
+        raise ValueError(
+            "Cluster Aurora usa multiplos DB parameter groups de instancia; "
+            "informe --instance-parameter-group-name explicitamente."
+        )
+
+    source_parameter_group_name = source_parameter_group_names[0]
     normalized_target_engine = normalize_engine(target_engine or resource.get("engine"))
     normalized_target_version = normalize_version(target_version)
     if not normalized_target_engine or not normalized_target_version:
-        return source_parameter_group_names[0]
+        return source_parameter_group_name
 
     target_family = resolve_rds_parameter_group_family_for_engine_version(
         client=client,
@@ -3196,34 +3227,8 @@ def resolve_rds_target_cluster_instance_parameter_group(
     if not target_family:
         return ""
 
-    source_parameter_group_name = next(
-        (
-            source_parameter_group_candidate
-            for source_parameter_group_candidate in source_parameter_group_names
-            if normalize_version(
-                resolve_rds_source_db_parameter_group_family(
-                    client=client,
-                    source_parameter_group_name=source_parameter_group_candidate,
-                    adapter_options=adapter_options,
-                )
-            ).lower()
-            == normalize_version(target_family).lower()
-        ),
-        source_parameter_group_names[0],
-    )
-
     if is_default_parameter_group(source_parameter_group_name):
         return f"default.{target_family}"
-
-    source_parameter_group_family = resolve_rds_source_db_parameter_group_family(
-        client=client,
-        source_parameter_group_name=source_parameter_group_name,
-        adapter_options=adapter_options,
-    )
-    if normalize_version(source_parameter_group_family).lower() == normalize_version(
-        target_family
-    ).lower():
-        return source_parameter_group_name
 
     return ensure_custom_rds_target_parameter_group_for_migration(
         client=client,
@@ -3245,86 +3250,9 @@ def ensure_rds_runtime_state(adapter_options: Dict[str, Any]) -> Dict[str, Any]:
         runtime_state.setdefault("major_by_engine_version", {})
         runtime_state.setdefault("db_custom_group_by_key", {})
         runtime_state.setdefault("cluster_custom_group_by_key", {})
-        runtime_state.setdefault("db_family_by_parameter_group", {})
-        runtime_state.setdefault("cluster_family_by_parameter_group", {})
         runtime_state.setdefault("option_custom_group_by_key", {})
         runtime_state.setdefault("option_quota_reservations_by_account_region", {})
         return runtime_state
-
-
-def resolve_rds_source_db_parameter_group_family(
-    *,
-    client: Any,
-    source_parameter_group_name: str,
-    adapter_options: Dict[str, Any],
-) -> str:
-    runtime_state = ensure_rds_runtime_state(adapter_options)
-    family_by_parameter_group: Dict[str, str] = runtime_state["db_family_by_parameter_group"]
-    key = normalize_version(source_parameter_group_name).lower()
-    with RUNTIME_STATE_LOCK:
-        cached = family_by_parameter_group.get(key)
-    if cached:
-        return cached
-
-    response = send_aws_call(
-        lambda: client.describe_db_parameter_groups(
-            DBParameterGroupName=source_parameter_group_name,
-            MaxRecords=100,
-        )
-    )
-    parameter_groups = response.get("DBParameterGroups", [])
-    selected = next(
-        (
-            parameter_group
-            for parameter_group in parameter_groups
-            if normalize_version(parameter_group.get("DBParameterGroupName")).lower() == key
-        ),
-        parameter_groups[0] if parameter_groups else {},
-    )
-    family = normalize_version(selected.get("DBParameterGroupFamily"))
-    with RUNTIME_STATE_LOCK:
-        family_by_parameter_group[key] = family
-    return family
-
-
-def resolve_rds_source_db_cluster_parameter_group_family(
-    *,
-    client: Any,
-    source_parameter_group_name: str,
-    adapter_options: Dict[str, Any],
-) -> str:
-    runtime_state = ensure_rds_runtime_state(adapter_options)
-    family_by_parameter_group: Dict[str, str] = runtime_state[
-        "cluster_family_by_parameter_group"
-    ]
-    key = normalize_version(source_parameter_group_name).lower()
-    with RUNTIME_STATE_LOCK:
-        cached = family_by_parameter_group.get(key)
-    if cached:
-        return cached
-
-    response = send_aws_call(
-        lambda: client.describe_db_cluster_parameter_groups(
-            DBClusterParameterGroupName=source_parameter_group_name,
-            MaxRecords=100,
-        )
-    )
-    parameter_groups = response.get("DBClusterParameterGroups", [])
-    selected = next(
-        (
-            parameter_group
-            for parameter_group in parameter_groups
-            if normalize_version(
-                parameter_group.get("DBClusterParameterGroupName")
-            ).lower()
-            == key
-        ),
-        parameter_groups[0] if parameter_groups else {},
-    )
-    family = normalize_version(selected.get("DBParameterGroupFamily"))
-    with RUNTIME_STATE_LOCK:
-        family_by_parameter_group[key] = family
-    return family
 
 
 def resolve_rds_parameter_group_family_for_engine_version(

@@ -104,6 +104,30 @@ with zipfile.ZipFile(output_path, "w", zipfile.ZIP_DEFLATED) as archive:
 PY
     exit 0
     ;;
+  https://github.com/folke/lazy.nvim/archive/feature/foo.zip)
+    printf '%s\n' 'curl: (22) The requested URL returned error: 404' >&2
+    exit 22
+    ;;
+  https://github.com/folke/lazy.nvim/archive/refs/heads/feature/foo.zip)
+    python3 - "\${output}" "${ARCHIVE_PARENT}" <<'PY'
+import os
+import sys
+import zipfile
+
+output_path, source_parent = sys.argv[1:3]
+source_root = os.path.join(source_parent, "lazy.nvim-main")
+
+with zipfile.ZipFile(output_path, "w", zipfile.ZIP_DEFLATED) as archive:
+    for root, dirs, files in os.walk(source_root):
+        dirs.sort()
+        files.sort()
+        for name in files:
+            full_path = os.path.join(root, name)
+            rel_path = os.path.relpath(full_path, source_parent)
+            archive.write(full_path, rel_path)
+PY
+    exit 0
+    ;;
   https://github.com/folke/lazy.nvim/archive/HEAD.zip)
     python3 - "\${output}" "${ARCHIVE_PARENT}" <<'PY'
 import os
@@ -221,6 +245,23 @@ test -f "${ARCHIVE_DEFAULT_BRANCH_DESTINATION}/README.md"
 test "$(git -C "${ARCHIVE_DEFAULT_BRANCH_DESTINATION}" branch --show-current)" = "main"
 test "$(sed -n '4p' "${ARCHIVE_CURL_LOG}")" = "https://github.com/folke/lazy.nvim/archive/main.zip"
 
+ARCHIVE_BRANCH_WITH_SLASH_DESTINATION="${TMP_DIR}/lazy-archive-branch-with-slash.nvim"
+
+GIT_ZIP_WRAPPER_REAL_GIT="${ARCHIVE_FAKE_GIT}" \
+CURL="${ARCHIVE_FAKE_CURL}" \
+GIT_ZIP_WRAPPER_STRICT=0 \
+GIT_ZIP_WRAPPER_CLONE_ORDER=local-first \
+GIT_ZIP_WRAPPER_ARCHIVE_FORMAT=zip \
+GIT_ZIP_WRAPPER_ALLOW_REMOTE_GIT_FALLBACK=0 \
+  "${REPO_ROOT}/scripts/wrappers/git_zip_clone_wrapper.sh" \
+    clone --branch feature/foo https://github.com/folke/lazy.nvim "${ARCHIVE_BRANCH_WITH_SLASH_DESTINATION}"
+
+test -d "${ARCHIVE_BRANCH_WITH_SLASH_DESTINATION}/.git"
+test -f "${ARCHIVE_BRANCH_WITH_SLASH_DESTINATION}/README.md"
+test "$(git -C "${ARCHIVE_BRANCH_WITH_SLASH_DESTINATION}" branch --show-current)" = "feature/foo"
+test "$(sed -n '5p' "${ARCHIVE_CURL_LOG}")" = "https://github.com/folke/lazy.nvim/archive/feature/foo.zip"
+test "$(sed -n '6p' "${ARCHIVE_CURL_LOG}")" = "https://github.com/folke/lazy.nvim/archive/refs/heads/feature/foo.zip"
+
 PERMANENT_404_DESTINATION="${TMP_DIR}/lazy-permanent-404.nvim"
 PERMANENT_404_CURL_LOG="${TMP_DIR}/permanent-404-curl-urls"
 PERMANENT_404_FAKE_CURL="${TMP_DIR}/permanent-404-curl"
@@ -278,7 +319,7 @@ set -e
 
 test "${permanent_404_status}" -ne 0
 test ! -d "${PERMANENT_404_DESTINATION}/.git"
-test "$(wc -l < "${PERMANENT_404_CURL_LOG}" | tr -d ' ')" = "1"
+test "$(wc -l < "${PERMANENT_404_CURL_LOG}" | tr -d ' ')" = "2"
 ! grep -q 'https://codeload.github.com/' "${PERMANENT_404_CURL_LOG}"
 
 PERMANENT_404_FALLBACK_DESTINATION="${TMP_DIR}/lazy-permanent-404-fallback.nvim"

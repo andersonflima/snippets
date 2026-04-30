@@ -42,6 +42,7 @@ WRAPPER_DIR="$(cd "$(dirname "$(resolve_script_path "${BASH_SOURCE[0]}")")" && p
 WGET_WRAPPER_PROXY="${WGET_WRAPPER_PROXY:-${HTTPS_PROXY:-${https_proxy:-${ALL_PROXY:-${all_proxy:-${HTTP_PROXY:-${http_proxy:-}}}}}}}"
 WGET_WRAPPER_RETRY_WITHOUT_PROXY_ON_AUTH_ERROR="${WGET_WRAPPER_RETRY_WITHOUT_PROXY_ON_AUTH_ERROR:-1}"
 WGET_WRAPPER_LAST_COMMAND_STDERR=""
+WGET_WRAPPER_USE_JS_ENGINE="${WGET_WRAPPER_USE_JS_ENGINE:-1}"
 
 is_proxy_auth_error_log() {
   local output
@@ -251,6 +252,22 @@ resolve_curl_wrapper() {
   candidate="${WGET_WRAPPER_CURL_BIN:-${WRAPPER_DIR}/curl}"
   [[ -x "${candidate}" ]] || return 1
   printf '%s\n' "${candidate}"
+}
+
+resolve_js_wrapper_cli() {
+  local candidate
+  candidate="${WGET_WRAPPER_JS_ENGINE:-${WRAPPER_DIR}/js/restricted_wrapper_cli.js}"
+  command -v node >/dev/null 2>&1 || return 1
+  [[ -f "${candidate}" ]] || return 1
+  printf '%s\n' "${candidate}"
+}
+
+download_with_js_wrapper() {
+  local js_wrapper
+  is_truthy "${WGET_WRAPPER_USE_JS_ENGINE}" || return 1
+  [[ "${WGET_CAN_HANDLE}" == "1" ]] || return 1
+  js_wrapper="$(resolve_js_wrapper_cli)" || return 1
+  node "${js_wrapper}" wget "$@"
 }
 
 should_delegate_to_curl_wrapper() {
@@ -554,6 +571,14 @@ main() {
   fi
 
   parse_args "$@" || die "argumentos wget não suportados para wrapper local"
+
+  if is_truthy "${WGET_WRAPPER_USE_JS_ENGINE}" && resolve_js_wrapper_cli >/dev/null 2>&1; then
+    log "tentando motor JS para wget: ${WGET_URL}"
+    if download_with_js_wrapper "$@"; then
+      exit 0
+    fi
+    log "motor JS falhou ou não suportou a chamada; seguindo fluxo shell atual"
+  fi
 
   if should_delegate_to_curl_wrapper; then
     log "delegando download via curl wrapper: ${WGET_URL}"

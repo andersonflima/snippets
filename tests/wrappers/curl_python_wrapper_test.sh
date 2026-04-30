@@ -5,6 +5,7 @@ SCRIPT_DIR="$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)"
 REPO_ROOT="$(cd "${SCRIPT_DIR}/../.." && pwd)"
 TMP_DIR="$(mktemp -d)"
 SERVER_PIDS=()
+export CURL_WRAPPER_USE_JS_ENGINE=0
 
 cleanup() {
   local pid
@@ -84,6 +85,23 @@ with zipfile.ZipFile(output_path, "w", zipfile.ZIP_DEFLATED) as archive:
 PY
     exit 0
     ;;
+  https://github.com/example/project/archive/feature/foo.zip)
+    printf '%s\n' 'curl: (22) The requested URL returned error: 404' >&2
+    exit 22
+    ;;
+  https://github.com/example/project/archive/refs/heads/feature/foo.zip)
+    python3 - "\${output}" <<'PY'
+import sys
+import zipfile
+
+output_path = sys.argv[1]
+
+with zipfile.ZipFile(output_path, "w", zipfile.ZIP_DEFLATED) as archive:
+    archive.writestr("project-feature-foo/", "")
+    archive.writestr("project-feature-foo/README.md", "feature archive\n")
+PY
+    exit 0
+    ;;
   http://127.0.0.1:*/repos/mason-org/mason-registry/releases/latest)
     printf '%s\n' 'curl: (22) The requested URL returned error: 403' >&2
     exit 22
@@ -156,6 +174,30 @@ with zipfile.ZipFile(output_path) as archive:
     assert "mason-registry-main/registry.json" in archive.namelist()
 PY
 test "$(sed -n '5p' "${CURL_LOG}")" = "https://github.com/mason-org/mason-registry/archive/main.zip"
+
+OUTPUT_BRANCH_WITH_SLASH_ZIP="${TMP_DIR}/branch-with-slash.zip"
+
+CURL_WRAPPER_ALLOW_ZIP_DOWNLOAD=1 \
+CURL_WRAPPER_REAL_CURL="${FAKE_CURL}" \
+  "${REPO_ROOT}/scripts/wrappers/curl_python_wrapper.sh" \
+    --silent \
+    --fail \
+    --show-error \
+    -L \
+    https://codeload.github.com/example/project/zip/feature/foo \
+    --output "${OUTPUT_BRANCH_WITH_SLASH_ZIP}"
+
+python3 - "${OUTPUT_BRANCH_WITH_SLASH_ZIP}" <<'PY'
+import sys
+import zipfile
+
+output_path = sys.argv[1]
+
+with zipfile.ZipFile(output_path) as archive:
+    assert "project-feature-foo/README.md" in archive.namelist()
+PY
+test "$(sed -n '6p' "${CURL_LOG}")" = "https://github.com/example/project/archive/feature/foo.zip"
+test "$(sed -n '7p' "${CURL_LOG}")" = "https://github.com/example/project/archive/refs/heads/feature/foo.zip"
 
 API_ROOT="${TMP_DIR}/api-root"
 API_PORT_FILE="${TMP_DIR}/api-port"

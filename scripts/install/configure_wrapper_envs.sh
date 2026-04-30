@@ -10,109 +10,20 @@
 
 set -euo pipefail
 
+SCRIPT_DIR="$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)"
+COMMON_HELPER="${SCRIPT_DIR}/lib/common.sh"
+
+# shellcheck disable=SC1090
+. "${COMMON_HELPER}"
+
+RESTRICTED_SCRIPT_NAME="configure-wrapper-envs"
+
 log() {
-  printf '[configure-wrapper-envs] %s\n' "$*" >&2
+  restricted_log "$@"
 }
 
 die() {
-  log "erro: $*"
-  exit 1
-}
-
-is_wrapper_binary_path() {
-  local binary_name candidate_path wrapper_path
-  binary_name="$1"
-  candidate_path="$2"
-
-  case "${binary_name}" in
-    curl)
-      wrapper_path="${CURL_INSTALL_DIR}/curl"
-      [[ "${candidate_path}" == "${WRAPPER_SHIM_DIR}/curl" ]] && return 0
-      ;;
-    wget)
-      wrapper_path="${CURL_INSTALL_DIR}/wget"
-      [[ "${candidate_path}" == "${WRAPPER_SHIM_DIR}/wget" ]] && return 0
-      ;;
-    git)
-      wrapper_path="${GIT_INSTALL_DIR}/git"
-      [[ "${candidate_path}" == "${WRAPPER_SHIM_DIR}/git" ]] && return 0
-      ;;
-    brew)
-      wrapper_path="${BREW_INSTALL_DIR}/brew"
-      ;;
-    *)
-      return 1
-      ;;
-  esac
-
-  [[ "${candidate_path}" == "${wrapper_path}" ]]
-}
-
-resolve_real_binary() {
-  local binary_name candidate
-  binary_name="$1"
-  local seen=""
-
-  while IFS= read -r candidate; do
-    [[ -n "${candidate}" ]] || continue
-    if is_wrapper_binary_path "${binary_name}" "${candidate}"; then
-      continue
-    fi
-    [[ "${seen}" == *$'\n'"${candidate}"$'\n'* ]] && continue
-    seen+="${candidate}"$'\n'
-    printf '%s\n' "${candidate}"
-    return 0
-  done <<EOF2
-$(which -a "${binary_name}" 2>/dev/null || true)
-EOF2
-
-  while IFS= read -r candidate; do
-    [[ -n "${candidate}" ]] || continue
-    [[ "${seen}" == *$'\n'"${candidate}"$'\n'* ]] && continue
-    seen+="${candidate}"$'\n'
-    [[ -x "${candidate}" ]] || continue
-    if is_wrapper_binary_path "${binary_name}" "${candidate}"; then
-      continue
-    fi
-    printf '%s\n' "${candidate}"
-    return 0
-  done <<EOF3
-$(candidate_paths_for_binary "${binary_name}")
-EOF3
-
-  return 1
-}
-
-candidate_paths_for_binary() {
-  local binary_name
-  binary_name="$1"
-
-  case "${binary_name}" in
-    curl)
-      printf '/usr/bin/curl\n'
-      printf '/usr/local/bin/curl\n'
-      printf '/opt/homebrew/bin/curl\n'
-      printf '/bin/curl\n'
-      printf '/sbin/curl\n'
-      ;;
-    wget)
-      printf '/usr/bin/wget\n'
-      printf '/usr/local/bin/wget\n'
-      printf '/opt/homebrew/bin/wget\n'
-      printf '/bin/wget\n'
-      printf '/sbin/wget\n'
-      ;;
-    git)
-      printf '/usr/bin/git\n'
-      printf '/usr/local/bin/git\n'
-      printf '/opt/homebrew/bin/git\n'
-      printf '/bin/git\n'
-      printf '/usr/libexec/git-core/git\n'
-      ;;
-    *)
-      :
-      ;;
-  esac
+  restricted_die "$@"
 }
 
 usage() {
@@ -235,25 +146,37 @@ done
 [[ -n "${BREW_INSTALL_DIR}" ]] || die "--brew-install-dir não pode ser vazio"
 
 if [[ -z "${REAL_CURL_BIN}" ]]; then
-  REAL_CURL_BIN="$(resolve_real_binary curl || true)"
+  RESTRICTED_CURL_INSTALL_DIR="${CURL_INSTALL_DIR}"
+  RESTRICTED_GIT_INSTALL_DIR="${GIT_INSTALL_DIR}"
+  RESTRICTED_WRAPPER_SHIM_DIR="${WRAPPER_SHIM_DIR}"
+  REAL_CURL_BIN="$(restricted_resolve_real_binary curl || true)"
 fi
 if [[ -z "${REAL_WGET_BIN}" ]]; then
-  REAL_WGET_BIN="$(resolve_real_binary wget || true)"
+  RESTRICTED_CURL_INSTALL_DIR="${CURL_INSTALL_DIR}"
+  RESTRICTED_GIT_INSTALL_DIR="${GIT_INSTALL_DIR}"
+  RESTRICTED_WRAPPER_SHIM_DIR="${WRAPPER_SHIM_DIR}"
+  REAL_WGET_BIN="$(restricted_resolve_real_binary wget || true)"
 fi
 if [[ -z "${REAL_GIT_BIN}" ]]; then
-  REAL_GIT_BIN="$(resolve_real_binary git || true)"
+  RESTRICTED_CURL_INSTALL_DIR="${CURL_INSTALL_DIR}"
+  RESTRICTED_GIT_INSTALL_DIR="${GIT_INSTALL_DIR}"
+  RESTRICTED_WRAPPER_SHIM_DIR="${WRAPPER_SHIM_DIR}"
+  REAL_GIT_BIN="$(restricted_resolve_real_binary git || true)"
 fi
 
 [[ -n "${REAL_CURL_BIN}" ]] || die "não foi possível localizar curl no PATH"
 [[ -x "${REAL_CURL_BIN}" ]] || die "curl inválido/não executável: ${REAL_CURL_BIN}"
 [[ -n "${REAL_GIT_BIN}" ]] || die "não foi possível localizar git no PATH"
 [[ -x "${REAL_GIT_BIN}" ]] || die "git inválido/não executável: ${REAL_GIT_BIN}"
-is_wrapper_binary_path curl "${REAL_CURL_BIN}" && die "curl real não pode apontar para o wrapper instalado: ${REAL_CURL_BIN}"
-is_wrapper_binary_path git "${REAL_GIT_BIN}" && die "git real não pode apontar para o wrapper instalado: ${REAL_GIT_BIN}"
+RESTRICTED_CURL_INSTALL_DIR="${CURL_INSTALL_DIR}"
+RESTRICTED_GIT_INSTALL_DIR="${GIT_INSTALL_DIR}"
+RESTRICTED_WRAPPER_SHIM_DIR="${WRAPPER_SHIM_DIR}"
+restricted_is_wrapper_binary_path curl "${REAL_CURL_BIN}" && die "curl real não pode apontar para o wrapper instalado: ${REAL_CURL_BIN}"
+restricted_is_wrapper_binary_path git "${REAL_GIT_BIN}" && die "git real não pode apontar para o wrapper instalado: ${REAL_GIT_BIN}"
 if [[ -n "${REAL_WGET_BIN}" && ! -x "${REAL_WGET_BIN}" ]]; then
   die "wget inválido/não executável: ${REAL_WGET_BIN}"
 fi
-if [[ -n "${REAL_WGET_BIN}" ]] && is_wrapper_binary_path wget "${REAL_WGET_BIN}"; then
+if [[ -n "${REAL_WGET_BIN}" ]] && restricted_is_wrapper_binary_path wget "${REAL_WGET_BIN}"; then
   die "wget real não pode apontar para o wrapper instalado: ${REAL_WGET_BIN}"
 fi
 if [[ -n "${CA_CERT_PATH}" && ! -f "${CA_CERT_PATH}" ]]; then
@@ -276,39 +199,8 @@ case "$(printf '%s' "${GIT_LFS_MODE}" | tr '[:upper:]' '[:lower:]')" in
     ;;
 esac
 
-resolve_target_shell_name() {
-  local target_shell
-  target_shell="${RESTRICTED_DEV_ENV_TARGET_SHELL:-zsh}"
-  target_shell="${target_shell##*/}"
-
-  case "${target_shell}" in
-    zsh|bash|fish|sh)
-      printf '%s\n' "${target_shell}"
-      ;;
-    *)
-      printf '%s\n' "zsh"
-      ;;
-  esac
-}
-
 detect_shell_rc() {
-  local shell_name
-  shell_name="$(resolve_target_shell_name)"
-
-  case "${shell_name}" in
-    fish)
-      printf '%s\n' "${HOME}/.config/fish/config.fish"
-      ;;
-    zsh)
-      printf '%s\n' "${HOME}/.zshrc"
-      ;;
-    bash)
-      printf '%s\n' "${HOME}/.bashrc"
-      ;;
-    *)
-      printf '%s\n' "${HOME}/.profile"
-      ;;
-  esac
+  restricted_default_shell_rc
 }
 
 shell_quote() {

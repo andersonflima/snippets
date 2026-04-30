@@ -1,135 +1,45 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+SCRIPT_DIR="$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)"
+COMMON_HELPER="${SCRIPT_DIR}/lib/common.sh"
+
+# shellcheck disable=SC1090
+. "${COMMON_HELPER}"
+
+RESTRICTED_SCRIPT_NAME="install-curl-python-wrapper"
+
 log() {
-  printf '[install-curl-python-wrapper] %s\n' "$*" >&2
+  restricted_log "$@"
 }
 
 die() {
-  log "erro: $*"
-  exit 1
-}
-
-is_wrapper_binary_path() {
-  local candidate_path
-  candidate_path="$1"
-  [[ "${candidate_path}" == "${INSTALL_DIR}/curl" ]] && return 0
-  [[ "${candidate_path}" == "${INSTALL_DIR}/wget" ]] && return 0
-  [[ "${candidate_path}" == "${HOME}/.local/bin/curl" ]] && return 0
-  [[ "${candidate_path}" == "${HOME}/.local/bin/wget" ]] && return 0
-}
-
-candidate_paths_for_binary() {
-  local binary_name
-  binary_name="$1"
-
-  case "${binary_name}" in
-    curl)
-      printf '/usr/bin/curl\n'
-      printf '/usr/local/bin/curl\n'
-      printf '/opt/homebrew/bin/curl\n'
-      printf '/bin/curl\n'
-      printf '/sbin/curl\n'
-      ;;
-    wget)
-      printf '/usr/bin/wget\n'
-      printf '/usr/local/bin/wget\n'
-      printf '/opt/homebrew/bin/wget\n'
-      printf '/bin/wget\n'
-      printf '/sbin/wget\n'
-      ;;
-    *)
-      :
-      ;;
-  esac
-}
-
-resolve_real_curl() {
-  local candidate seen=""
-
-  while IFS= read -r candidate; do
-    [[ -n "${candidate}" ]] || continue
-    if is_wrapper_binary_path "${candidate}"; then
-      continue
-    fi
-    [[ "${seen}" == *$'\n'"${candidate}"$'\n'* ]] && continue
-    seen+="${candidate}"$'\n'
-    printf '%s\n' "${candidate}"
-    return 0
-  done <<EOF2
-$(which -a curl 2>/dev/null || true)
-EOF2
-
-  while IFS= read -r candidate; do
-    [[ -n "${candidate}" ]] || continue
-    [[ "${seen}" == *$'\n'"${candidate}"$'\n'* ]] && continue
-    seen+="${candidate}"$'\n'
-    [[ -x "${candidate}" ]] || continue
-    if is_wrapper_binary_path "${candidate}"; then
-      continue
-    fi
-    printf '%s\n' "${candidate}"
-    return 0
-  done <<EOF3
-$(candidate_paths_for_binary curl)
-EOF3
-
-  return 1
-}
-
-resolve_real_wget() {
-  local candidate seen=""
-
-  while IFS= read -r candidate; do
-    [[ -n "${candidate}" ]] || continue
-    if is_wrapper_binary_path "${candidate}"; then
-      continue
-    fi
-    [[ "${seen}" == *$'\n'"${candidate}"$'\n'* ]] && continue
-    seen+="${candidate}"$'\n'
-    printf '%s\n' "${candidate}"
-    return 0
-  done <<EOF2
-$(which -a wget 2>/dev/null || true)
-EOF2
-
-  while IFS= read -r candidate; do
-    [[ -n "${candidate}" ]] || continue
-    [[ "${seen}" == *$'\n'"${candidate}"$'\n'* ]] && continue
-    seen+="${candidate}"$'\n'
-    [[ -x "${candidate}" ]] || continue
-    if is_wrapper_binary_path "${candidate}"; then
-      continue
-    fi
-    printf '%s\n' "${candidate}"
-    return 0
-  done <<EOF3
-$(candidate_paths_for_binary wget)
-EOF3
-
-  return 1
+  restricted_die "$@"
 }
 
 usage() {
   cat <<'USAGE'
 Uso:
-  scripts/install/install_curl_python_wrapper.sh [--install-dir <dir>] [--wrapper-source <file>] [--wget-wrapper-source <file>] [--lib-source-dir <dir>] [--real-curl <path>] [--real-wget <path>]
+  scripts/install/install_curl_python_wrapper.sh [--install-dir <dir>] [--wrapper-source <file>] [--wget-wrapper-source <file>] [--lib-source-dir <dir>] [--js-source-dir <dir>] [--real-curl <path>] [--real-wget <path>]
 
 Padrões:
   --install-dir: $HOME/.local/share/curl-python-wrapper/bin
   --wrapper-source: scripts/wrappers/curl_python_wrapper.sh
   --wget-wrapper-source: scripts/wrappers/wget_wrapper.sh
   --lib-source-dir: scripts/wrappers/lib
+  --js-source-dir: scripts/wrappers/js
   --real-curl: primeiro curl encontrado no PATH
   --real-wget: primeiro wget encontrado no PATH, se existir
 USAGE
 }
 
 INSTALL_DIR="${HOME}/.local/share/curl-python-wrapper/bin"
-WRAPPER_SOURCE="$(cd "$(dirname "$0")/.." && pwd)/wrappers/curl_python_wrapper.sh"
-WGET_WRAPPER_SOURCE="$(cd "$(dirname "$0")/.." && pwd)/wrappers/wget_wrapper.sh"
-LIB_SOURCE_DIR="$(cd "$(dirname "$0")/.." && pwd)/wrappers/lib"
+WRAPPER_SOURCE="$(cd "${SCRIPT_DIR}/.." && pwd)/wrappers/curl_python_wrapper.sh"
+WGET_WRAPPER_SOURCE="$(cd "${SCRIPT_DIR}/.." && pwd)/wrappers/wget_wrapper.sh"
+LIB_SOURCE_DIR="$(cd "${SCRIPT_DIR}/.." && pwd)/wrappers/lib"
 LIB_SOURCE_DIR_EXPLICIT="0"
+JS_SOURCE_DIR="$(cd "${SCRIPT_DIR}/.." && pwd)/wrappers/js"
+JS_SOURCE_DIR_EXPLICIT="0"
 REAL_CURL_BIN="${CURL_WRAPPER_REAL_CURL:-}"
 REAL_WGET_BIN="${WGET_WRAPPER_REAL_WGET:-}"
 
@@ -150,6 +60,11 @@ while [[ $# -gt 0 ]]; do
     --lib-source-dir)
       LIB_SOURCE_DIR="${2:-}"
       LIB_SOURCE_DIR_EXPLICIT="1"
+      shift 2
+      ;;
+    --js-source-dir)
+      JS_SOURCE_DIR="${2:-}"
+      JS_SOURCE_DIR_EXPLICIT="1"
       shift 2
       ;;
     --real-curl)
@@ -177,22 +92,31 @@ done
 if [[ "${LIB_SOURCE_DIR_EXPLICIT}" != "1" ]]; then
   LIB_SOURCE_DIR="$(cd "$(dirname "${WRAPPER_SOURCE}")" && pwd)/lib"
 fi
+if [[ "${JS_SOURCE_DIR_EXPLICIT}" != "1" ]]; then
+  JS_SOURCE_DIR="$(cd "$(dirname "${WRAPPER_SOURCE}")" && pwd)/js"
+fi
 if [[ -n "${LIB_SOURCE_DIR}" && ! -d "${LIB_SOURCE_DIR}" ]]; then
   die "diretório de libs não encontrado: ${LIB_SOURCE_DIR}"
 fi
+if [[ -n "${JS_SOURCE_DIR}" && ! -d "${JS_SOURCE_DIR}" ]]; then
+  die "diretório de JS não encontrado: ${JS_SOURCE_DIR}"
+fi
 
 if [[ -z "${REAL_CURL_BIN}" ]]; then
-  REAL_CURL_BIN="$(resolve_real_curl || true)"
+  RESTRICTED_CURL_INSTALL_DIR="${INSTALL_DIR}"
+  REAL_CURL_BIN="$(restricted_resolve_real_binary curl || true)"
 fi
 if [[ -z "${REAL_WGET_BIN}" ]]; then
-  REAL_WGET_BIN="$(resolve_real_wget || true)"
+  RESTRICTED_CURL_INSTALL_DIR="${INSTALL_DIR}"
+  REAL_WGET_BIN="$(restricted_resolve_real_binary wget || true)"
 fi
 [[ -n "${REAL_CURL_BIN}" ]] || die "não foi possível localizar curl no PATH"
 [[ -x "${REAL_CURL_BIN}" ]] || die "curl inválido/não executável: ${REAL_CURL_BIN}"
-is_wrapper_binary_path "${REAL_CURL_BIN}" && die "curl real não pode apontar para o wrapper instalado: ${REAL_CURL_BIN}"
+RESTRICTED_CURL_INSTALL_DIR="${INSTALL_DIR}"
+restricted_is_wrapper_binary_path curl "${REAL_CURL_BIN}" && die "curl real não pode apontar para o wrapper instalado: ${REAL_CURL_BIN}"
 if [[ -n "${REAL_WGET_BIN}" ]]; then
   [[ -x "${REAL_WGET_BIN}" ]] || die "wget inválido/não executável: ${REAL_WGET_BIN}"
-  is_wrapper_binary_path "${REAL_WGET_BIN}" && die "wget real não pode apontar para o wrapper instalado: ${REAL_WGET_BIN}"
+  restricted_is_wrapper_binary_path wget "${REAL_WGET_BIN}" && die "wget real não pode apontar para o wrapper instalado: ${REAL_WGET_BIN}"
 fi
 
 mkdir -p "${INSTALL_DIR}"
@@ -202,6 +126,11 @@ chmod 0755 "${INSTALL_DIR}/curl" "${INSTALL_DIR}/wget"
 if [[ -n "${LIB_SOURCE_DIR}" ]]; then
   mkdir -p "${INSTALL_DIR}/lib"
   cp -R "${LIB_SOURCE_DIR}/." "${INSTALL_DIR}/lib/"
+fi
+if [[ -n "${JS_SOURCE_DIR}" ]]; then
+  mkdir -p "${INSTALL_DIR}/js"
+  cp -R "${JS_SOURCE_DIR}/." "${INSTALL_DIR}/js/"
+  chmod 0755 "${INSTALL_DIR}/js/restricted_wrapper_cli.js" 2>/dev/null || true
 fi
 
 cat <<EOF2

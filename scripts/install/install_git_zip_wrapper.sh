@@ -10,71 +10,20 @@
 
 set -euo pipefail
 
+SCRIPT_DIR="$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)"
+COMMON_HELPER="${SCRIPT_DIR}/lib/common.sh"
+
+# shellcheck disable=SC1090
+. "${COMMON_HELPER}"
+
+RESTRICTED_SCRIPT_NAME="install-git-zip-wrapper"
+
 log() {
-  printf '[install-git-zip-wrapper] %s\n' "$*" >&2
+  restricted_log "$@"
 }
 
 die() {
-  log "erro: $*"
-  exit 1
-}
-
-is_wrapper_binary_path() {
-  local candidate_path
-  candidate_path="$1"
-  [[ "${candidate_path}" == "${INSTALL_DIR}/git" ]] && return 0
-  [[ "${candidate_path}" == "${HOME}/.local/bin/git" ]] && return 0
-}
-
-candidate_paths_for_binary() {
-  local binary_name
-  binary_name="$1"
-
-  case "${binary_name}" in
-    git)
-      printf '/usr/bin/git\n'
-      printf '/usr/local/bin/git\n'
-      printf '/opt/homebrew/bin/git\n'
-      printf '/bin/git\n'
-      printf '/usr/libexec/git-core/git\n'
-      ;;
-    *)
-      :
-      ;;
-  esac
-}
-
-resolve_real_git() {
-  local candidate seen=""
-
-  while IFS= read -r candidate; do
-    [[ -n "${candidate}" ]] || continue
-    if is_wrapper_binary_path "${candidate}"; then
-      continue
-    fi
-    [[ "${seen}" == *$'\n'"${candidate}"$'\n'* ]] && continue
-    seen+="${candidate}"$'\n'
-    printf '%s\n' "${candidate}"
-    return 0
-  done <<EOF2
-$(which -a git 2>/dev/null || true)
-EOF2
-
-  while IFS= read -r candidate; do
-    [[ -n "${candidate}" ]] || continue
-    [[ "${seen}" == *$'\n'"${candidate}"$'\n'* ]] && continue
-    seen+="${candidate}"$'\n'
-    [[ -x "${candidate}" ]] || continue
-    if is_wrapper_binary_path "${candidate}"; then
-      continue
-    fi
-    printf '%s\n' "${candidate}"
-    return 0
-  done <<EOF3
-$(candidate_paths_for_binary git)
-EOF3
-
-  return 1
+  restricted_die "$@"
 }
 
 usage() {
@@ -90,7 +39,7 @@ USAGE
 }
 
 INSTALL_DIR="${HOME}/.local/share/git-zip-wrapper/bin"
-WRAPPER_SOURCE="$(cd "$(dirname "$0")/.." && pwd)/wrappers/git_zip_clone_wrapper.sh"
+WRAPPER_SOURCE="$(cd "${SCRIPT_DIR}/.." && pwd)/wrappers/git_zip_clone_wrapper.sh"
 REAL_GIT_BIN="${GIT_ZIP_WRAPPER_REAL_GIT:-}"
 
 while [[ $# -gt 0 ]]; do
@@ -122,11 +71,13 @@ done
 [[ -f "${WRAPPER_SOURCE}" ]] || die "wrapper não encontrado: ${WRAPPER_SOURCE}"
 
 if [[ -z "${REAL_GIT_BIN}" ]]; then
-  REAL_GIT_BIN="$(resolve_real_git || true)"
+  RESTRICTED_GIT_INSTALL_DIR="${INSTALL_DIR}"
+  REAL_GIT_BIN="$(restricted_resolve_real_binary git || true)"
 fi
 [[ -n "${REAL_GIT_BIN}" ]] || die "não foi possível localizar git no PATH"
 [[ -x "${REAL_GIT_BIN}" ]] || die "git inválido/não executável: ${REAL_GIT_BIN}"
-is_wrapper_binary_path "${REAL_GIT_BIN}" && die "git real não pode apontar para o wrapper instalado: ${REAL_GIT_BIN}"
+RESTRICTED_GIT_INSTALL_DIR="${INSTALL_DIR}"
+restricted_is_wrapper_binary_path git "${REAL_GIT_BIN}" && die "git real não pode apontar para o wrapper instalado: ${REAL_GIT_BIN}"
 
 mkdir -p "${INSTALL_DIR}"
 cp "${WRAPPER_SOURCE}" "${INSTALL_DIR}/git"

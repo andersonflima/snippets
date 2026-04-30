@@ -827,12 +827,10 @@ download_github_archive() {
           "https://github.com/${slug}/archive/${normalized_ref}.zip" && return 0
         ;;
       tag)
-        try_download_candidate_urls "${archive_path}" \
-          "https://github.com/${slug}/archive/${normalized_ref}.zip" && return 0
+        try_download_candidate_urls "${archive_path}" $(github_archive_candidate_urls "${slug}" "${normalized_ref}" "tag" "zip") && return 0
         ;;
       branch)
-        try_download_candidate_urls "${archive_path}" \
-          "https://github.com/${slug}/archive/${normalized_ref}.zip" && return 0
+        try_download_candidate_urls "${archive_path}" $(github_archive_candidate_urls "${slug}" "${normalized_ref}" "branch" "zip") && return 0
         ;;
       *)
         try_download_candidate_urls "${archive_path}" \
@@ -848,12 +846,10 @@ download_github_archive() {
           "https://github.com/${slug}/archive/${normalized_ref}.tar.gz" && return 0
         ;;
       tag)
-        try_download_candidate_urls "${archive_path}" \
-          "https://github.com/${slug}/archive/${normalized_ref}.tar.gz" && return 0
+        try_download_candidate_urls "${archive_path}" $(github_archive_candidate_urls "${slug}" "${normalized_ref}" "tag" "tar.gz") && return 0
         ;;
       branch)
-        try_download_candidate_urls "${archive_path}" \
-          "https://github.com/${slug}/archive/${normalized_ref}.tar.gz" && return 0
+        try_download_candidate_urls "${archive_path}" $(github_archive_candidate_urls "${slug}" "${normalized_ref}" "branch" "tar.gz") && return 0
         ;;
       *)
         try_download_candidate_urls "${archive_path}" \
@@ -870,12 +866,10 @@ download_github_archive() {
             "https://github.com/${slug}/archive/${normalized_ref}.zip" && return 0
           ;;
         tag)
-          try_download_candidate_urls "${archive_path}" \
-            "https://github.com/${slug}/archive/${normalized_ref}.zip" && return 0
+          try_download_candidate_urls "${archive_path}" $(github_archive_candidate_urls "${slug}" "${normalized_ref}" "tag" "zip") && return 0
           ;;
         branch)
-          try_download_candidate_urls "${archive_path}" \
-            "https://github.com/${slug}/archive/${normalized_ref}.zip" && return 0
+          try_download_candidate_urls "${archive_path}" $(github_archive_candidate_urls "${slug}" "${normalized_ref}" "branch" "zip") && return 0
           ;;
         *)
           try_download_candidate_urls "${archive_path}" \
@@ -888,6 +882,39 @@ download_github_archive() {
   fi
 
   return 1
+}
+
+github_archive_candidate_urls() {
+  local slug ref ref_type extension prefixed_ref alternate_prefixed_ref
+  slug="$1"
+  ref="$2"
+  ref_type="$3"
+  extension="$4"
+
+  [[ -n "${slug}" && -n "${ref}" && -n "${extension}" ]] || return 1
+
+  printf '%s\n' "https://github.com/${slug}/archive/${ref}.${extension}"
+
+  case "${ref_type}" in
+    branch)
+      prefixed_ref="refs/heads/${ref}"
+      alternate_prefixed_ref="refs/tags/${ref}"
+      ;;
+    tag)
+      prefixed_ref="refs/tags/${ref}"
+      alternate_prefixed_ref="refs/heads/${ref}"
+      ;;
+    *)
+      return 0
+      ;;
+  esac
+
+  printf '%s\n' "https://github.com/${slug}/archive/${prefixed_ref}.${extension}"
+  case "${ref}" in
+    */*)
+      printf '%s\n' "https://github.com/${slug}/archive/${alternate_prefixed_ref}.${extension}"
+      ;;
+  esac
 }
 
 try_download_candidate_urls() {

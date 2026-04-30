@@ -10,13 +10,20 @@
 
 set -euo pipefail
 
+SCRIPT_DIR="$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)"
+COMMON_HELPER="${SCRIPT_DIR}/lib/common.sh"
+
+# shellcheck disable=SC1090
+. "${COMMON_HELPER}"
+
+RESTRICTED_SCRIPT_NAME="reinstall-wrappers"
+
 log() {
-  printf '[reinstall-wrappers] %s\n' "$*" >&2
+  restricted_log "$@"
 }
 
 die() {
-  log "erro: $*"
-  exit 1
+  restricted_die "$@"
 }
 
 usage() {
@@ -50,7 +57,6 @@ Comportamento:
 USAGE
 }
 
-SCRIPT_DIR="$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)"
 ROOT_DIR="$(cd "${SCRIPT_DIR}/.." && pwd)"
 
 ENV_FILE="${HOME}/.config/wrapper-envs.sh"
@@ -166,18 +172,6 @@ case "${GIT_LFS_MODE:-local}" in
     ;;
 esac
 
-remove_legacy_brew_wrapper_installation() {
-  local brew_wrapper_root
-  brew_wrapper_root="${HOME}/.local/share/homebrew-install-wrapper"
-
-  if [[ ! -d "${brew_wrapper_root}" ]]; then
-    return 0
-  fi
-
-  rm -rf "${brew_wrapper_root}"
-  log "wrapper legado do brew removido: ${brew_wrapper_root}"
-}
-
 install_wrapper_binaries() {
   local -a curl_install_args=()
   local -a git_install_args=()
@@ -192,7 +186,7 @@ install_wrapper_binaries() {
   log "reinstalando wrapper de git"
   sh "${SCRIPT_DIR}/install_git_zip_wrapper.sh" "${git_install_args[@]+"${git_install_args[@]}"}"
 
-  remove_legacy_brew_wrapper_installation
+  restricted_remove_legacy_brew_wrapper_installation
 }
 
 configure_wrapper_env_file() {

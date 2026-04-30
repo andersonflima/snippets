@@ -48,6 +48,7 @@ CURL_WRAPPER_ACTIVE_PROXY=""
 CURL_WRAPPER_RESOLVED_REAL_CURL=""
 WRAPPER_DIR="$(cd "$(dirname "$(resolve_script_path "${BASH_SOURCE[0]}")")" && pwd)"
 CURL_WRAPPER_LAST_COMMAND_STDERR=""
+CURL_WRAPPER_USE_JS_ENGINE="${CURL_WRAPPER_USE_JS_ENGINE:-1}"
 
 is_zip_extension() {
   local value
@@ -786,7 +787,7 @@ download_github_archive_tarball_via_zip() {
 }
 
 archive_ref_candidate_urls() {
-  local owner repo ref normalized_ref
+  local owner repo ref normalized_ref short_ref
   owner="$1"
   repo="$2"
   ref="$3"
@@ -794,10 +795,14 @@ archive_ref_candidate_urls() {
 
   case "${normalized_ref}" in
     refs/heads/*)
-      printf '%s\n' "https://github.com/${owner}/${repo}/archive/${normalized_ref#refs/heads/}.zip"
+      short_ref="${normalized_ref#refs/heads/}"
+      printf '%s\n' "https://github.com/${owner}/${repo}/archive/${short_ref}.zip"
+      printf '%s\n' "https://github.com/${owner}/${repo}/archive/refs/heads/${short_ref}.zip"
       ;;
     refs/tags/*)
-      printf '%s\n' "https://github.com/${owner}/${repo}/archive/${normalized_ref#refs/tags/}.zip"
+      short_ref="${normalized_ref#refs/tags/}"
+      printf '%s\n' "https://github.com/${owner}/${repo}/archive/${short_ref}.zip"
+      printf '%s\n' "https://github.com/${owner}/${repo}/archive/refs/tags/${short_ref}.zip"
       ;;
     HEAD|"")
       printf '%s\n' "https://github.com/${owner}/${repo}/archive/main.zip"
@@ -806,6 +811,12 @@ archive_ref_candidate_urls() {
       ;;
     *)
       printf '%s\n' "https://github.com/${owner}/${repo}/archive/${normalized_ref}.zip"
+      case "${normalized_ref}" in
+        */*)
+          printf '%s\n' "https://github.com/${owner}/${repo}/archive/refs/heads/${normalized_ref}.zip"
+          printf '%s\n' "https://github.com/${owner}/${repo}/archive/refs/tags/${normalized_ref}.zip"
+          ;;
+      esac
       ;;
   esac
 }
@@ -1062,6 +1073,21 @@ download_url_with_real_curl() {
   fi
 
   "${curl_cmd[@]}"
+}
+
+resolve_js_wrapper_cli() {
+  local candidate
+  candidate="${CURL_WRAPPER_JS_ENGINE:-${WRAPPER_DIR}/js/restricted_wrapper_cli.js}"
+  command -v node >/dev/null 2>&1 || return 1
+  [[ -f "${candidate}" ]] || return 1
+  printf '%s\n' "${candidate}"
+}
+
+download_with_js_wrapper() {
+  local js_wrapper
+  is_truthy "${CURL_WRAPPER_USE_JS_ENGINE}" || return 1
+  js_wrapper="$(resolve_js_wrapper_cli)" || return 1
+  node "${js_wrapper}" curl "$@"
 }
 
 download_release_asset_by_name() {
@@ -1481,6 +1507,16 @@ main() {
     fi
 
     die "download direto de release bloqueado para ${CURL_FALLBACK_URL}. Garanta gh autenticado ou ajuste CURL_WRAPPER_RELEASE_FALLBACK_REPOS/CURL_WRAPPER_ALLOW_DIRECT_RELEASE_FALLBACK."
+  fi
+
+  if (( can_fallback == 1 )) && [[ -n "${CURL_FALLBACK_URL:-}" ]] &&
+    is_truthy "${CURL_WRAPPER_USE_JS_ENGINE}" &&
+    resolve_js_wrapper_cli >/dev/null 2>&1; then
+    log "tentando motor JS para ${CURL_FALLBACK_URL}"
+    if download_with_js_wrapper "$@"; then
+      exit 0
+    fi
+    log "motor JS falhou ou não suportou a chamada; seguindo fluxo shell atual"
   fi
 
   if should_prefer_github_archive_zip_alternates "${CURL_FALLBACK_URL:-}"; then
