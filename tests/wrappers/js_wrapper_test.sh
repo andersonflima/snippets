@@ -58,6 +58,14 @@ env -u HTTPS_PROXY -u https_proxy -u HTTP_PROXY -u http_proxy -u ALL_PROXY -u al
 
 test "$(cat "${TMP_DIR}/wget-js.txt")" = "download via js"
 
+WGET_STDOUT="$(
+  env -u HTTPS_PROXY -u https_proxy -u HTTP_PROXY -u http_proxy -u ALL_PROXY -u all_proxy \
+    node "${REPO_ROOT}/scripts/wrappers/js/restricted_wrapper_cli.js" \
+      wget -nv -o /dev/null -O - --timeout=30 --method=GET "${URL}"
+)"
+
+test "${WGET_STDOUT}" = "download via js"
+
 FAKE_CURL="${TMP_DIR}/curl"
 cat > "${FAKE_CURL}" <<'EOF2'
 #!/usr/bin/env bash
@@ -72,6 +80,15 @@ env -u HTTPS_PROXY -u https_proxy -u HTTP_PROXY -u http_proxy -u ALL_PROXY -u al
     -fsSL "${URL}" -o "${TMP_DIR}/curl-wrapper-js.txt"
 
 test "$(cat "${TMP_DIR}/curl-wrapper-js.txt")" = "download via js"
+
+WRAPPER_WGET_STDOUT="$(
+  env -u HTTPS_PROXY -u https_proxy -u HTTP_PROXY -u http_proxy -u ALL_PROXY -u all_proxy \
+    WGET_WRAPPER_USE_JS_ENGINE=1 \
+    "${REPO_ROOT}/scripts/wrappers/wget_wrapper.sh" \
+      -nv -o /dev/null -O - --timeout=30 --method=GET "${URL}"
+)"
+
+test "${WRAPPER_WGET_STDOUT}" = "download via js"
 
 MASON_REGISTRY_ARCHIVE_ROOT="${HTTP_ROOT}/mason-org/mason-registry/archive/refs/heads"
 mkdir -p "${MASON_REGISTRY_ARCHIVE_ROOT}"

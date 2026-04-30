@@ -467,6 +467,21 @@ parse_args() {
         WGET_TRIES="${1#--tries=}"
         shift
         ;;
+      --method)
+        [[ $# -ge 2 ]] || return 1
+        if [[ "$(printf '%s' "$2" | tr '[:lower:]' '[:upper:]')" != "GET" ]]; then
+          WGET_CAN_HANDLE="0"
+          return 0
+        fi
+        shift 2
+        ;;
+      --method=*)
+        if [[ "$(printf '%s' "${1#--method=}" | tr '[:lower:]' '[:upper:]')" != "GET" ]]; then
+          WGET_CAN_HANDLE="0"
+          return 0
+        fi
+        shift
+        ;;
       --retry-connrefused|--no-verbose|-q|--quiet|-nv)
         shift
         ;;

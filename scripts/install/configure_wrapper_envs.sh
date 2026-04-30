@@ -309,7 +309,7 @@ unset BREW_WRAPPER_NO_AUTO_UPDATE
 unset BREW
 
 export CURL_WRAPPER_ENABLE_MASON_SMART_RELEASES="1"
-export CURL_WRAPPER_RELEASE_FALLBACK_REPOS="elixir-lsp/elixir-ls,johnnymorganz/stylua,luals/lua-language-server,omnisharp/omnisharp-roslyn"
+export CURL_WRAPPER_RELEASE_FALLBACK_REPOS="mason-org/mason-registry,elixir-lsp/elixir-ls,johnnymorganz/stylua,luals/lua-language-server,omnisharp/omnisharp-roslyn"
 export CURL_WRAPPER_ALLOW_DIRECT_RELEASE_FALLBACK="1"
 export CURL_WRAPPER_RELEASE_CACHE_DIR=$(shell_quote "${HOME}/.cache/curl-python-wrapper/releases")
 export CURL_WRAPPER_MASON_SOURCE_BUILD_REPOS="omnisharp/omnisharp-roslyn"

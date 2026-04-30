@@ -162,6 +162,9 @@ const parseWget = (rawArgs) => {
 
     if (arg === "-O" || arg === "--output-document") request.output = next();
     else if (arg.startsWith("--output-document=")) request.output = arg.slice("--output-document=".length);
+    else if (arg === "-o" || arg === "--output-file") next();
+    else if (arg.startsWith("-o") && arg.length > 2) {}
+    else if (arg.startsWith("--output-file=")) {}
     else if (arg === "-P" || arg === "--directory-prefix") {
       request.outputDir = next();
       request.createDirs = true;
@@ -179,6 +182,14 @@ const parseWget = (rawArgs) => {
     else if (arg.startsWith("-T") && arg.length > 2) request.maxTimeMs = secondsToMs(arg.slice(2), 300_000);
     else if (arg === "--tries") next();
     else if (arg.startsWith("--tries=")) {}
+    else if (arg === "--method") {
+      const method = next().toUpperCase();
+      if (method !== "GET") fail(`método wget não suportado pelo motor JS: ${method}`, 2);
+    }
+    else if (arg.startsWith("--method=")) {
+      const method = arg.slice("--method=".length).toUpperCase();
+      if (method !== "GET") fail(`método wget não suportado pelo motor JS: ${method}`, 2);
+    }
     else if (arg === "--no-check-certificate") request.insecure = true;
     else if (["--retry-connrefused", "--no-verbose", "-q", "--quiet", "-nv"].includes(arg)) {}
     else if (arg === "--") {
@@ -676,7 +687,7 @@ function download(url, request, proxy) {
         reject(error);
         return;
       }
-      if (request.output) {
+      if (request.output && request.output !== "-") {
         const outputDir = path.dirname(request.output);
         if (outputDir && outputDir !== ".") fs.mkdirSync(outputDir, { recursive: true });
         fs.writeFileSync(request.output, response.body);

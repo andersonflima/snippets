@@ -123,6 +123,28 @@ PY
     printf '%s\n' 'curl: (22) The requested URL returned error: 403' >&2
     exit 22
     ;;
+  https://api.github.com/repos/mason-org/mason-registry/releases/tags/2026-04-30-stable-registry)
+    cat > "\${output}" <<'JSON'
+{"assets":[{"id":91001,"name":"registry.json.zip"},{"id":91002,"name":"checksums.txt"}]}
+JSON
+    exit 0
+    ;;
+  https://api.github.com/repos/mason-org/mason-registry/releases/assets/91001)
+    python3 - "\${output}" <<'PY'
+import sys
+import zipfile
+
+output_path = sys.argv[1]
+
+with zipfile.ZipFile(output_path, "w", zipfile.ZIP_DEFLATED) as archive:
+    archive.writestr("registry.json", "[]\n")
+PY
+    exit 0
+    ;;
+  https://api.github.com/repos/mason-org/mason-registry/releases/assets/91002)
+    printf '%s\n' 'sha256  registry.json.zip' > "\${output}"
+    exit 0
+    ;;
   *)
     printf 'unexpected url: %s\n' "\${url}" >&2
     exit 22
@@ -131,6 +153,8 @@ esac
 EOF2
 
 chmod +x "${FAKE_CURL}"
+printf '%s\n' '#!/usr/bin/env bash' 'exit 1' > "${TMP_DIR}/gh"
+chmod +x "${TMP_DIR}/gh"
 
 CURL_WRAPPER_REAL_CURL="${FAKE_CURL}" \
   "${REPO_ROOT}/scripts/wrappers/curl_python_wrapper.sh" \
@@ -238,6 +262,42 @@ with zipfile.ZipFile(output_path) as archive:
 PY
 test "$(sed -n '8p' "${CURL_LOG}")" = "https://github.com/example/project/archive/feature/foo.zip"
 test "$(sed -n '9p' "${CURL_LOG}")" = "https://github.com/example/project/archive/refs/heads/feature/foo.zip"
+
+OUTPUT_MASON_REGISTRY_RELEASE_ZIP="${TMP_DIR}/registry.json.zip"
+
+PATH="${TMP_DIR}:${PATH}" \
+CURL_WRAPPER_REAL_CURL="${FAKE_CURL}" \
+  "${REPO_ROOT}/scripts/wrappers/curl_python_wrapper.sh" \
+    --silent \
+    --fail \
+    --show-error \
+    -L \
+    https://github.com/mason-org/mason-registry/releases/download/2026-04-30-stable-registry/registry.json.zip \
+    --output "${OUTPUT_MASON_REGISTRY_RELEASE_ZIP}"
+
+python3 - "${OUTPUT_MASON_REGISTRY_RELEASE_ZIP}" <<'PY'
+import sys
+import zipfile
+
+output_path = sys.argv[1]
+
+with zipfile.ZipFile(output_path) as archive:
+    assert archive.read("registry.json") == b"[]\n"
+PY
+
+OUTPUT_MASON_REGISTRY_CHECKSUMS="${TMP_DIR}/checksums.txt"
+
+PATH="${TMP_DIR}:${PATH}" \
+CURL_WRAPPER_REAL_CURL="${FAKE_CURL}" \
+  "${REPO_ROOT}/scripts/wrappers/curl_python_wrapper.sh" \
+    --silent \
+    --fail \
+    --show-error \
+    -L \
+    https://github.com/mason-org/mason-registry/releases/download/2026-04-30-stable-registry/checksums.txt \
+    --output "${OUTPUT_MASON_REGISTRY_CHECKSUMS}"
+
+test "$(cat "${OUTPUT_MASON_REGISTRY_CHECKSUMS}")" = "sha256  registry.json.zip"
 
 API_ROOT="${TMP_DIR}/api-root"
 API_PORT_FILE="${TMP_DIR}/api-port"

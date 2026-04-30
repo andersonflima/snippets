@@ -41,7 +41,7 @@ resolve_script_path() {
 CURL_WRAPPER_ALLOW_ZIP_DOWNLOAD="${CURL_WRAPPER_ALLOW_ZIP_DOWNLOAD:-0}"
 CURL_WRAPPER_AUTO_INSECURE_ON_CERT_ERROR="${CURL_WRAPPER_AUTO_INSECURE_ON_CERT_ERROR:-0}"
 CURL_WRAPPER_RETRY_WITHOUT_PROXY_ON_AUTH_ERROR="${CURL_WRAPPER_RETRY_WITHOUT_PROXY_ON_AUTH_ERROR:-1}"
-CURL_WRAPPER_RELEASE_FALLBACK_REPOS="${CURL_WRAPPER_RELEASE_FALLBACK_REPOS:-elixir-lsp/elixir-ls,johnnymorganz/stylua,luals/lua-language-server,omnisharp/omnisharp-roslyn}"
+CURL_WRAPPER_RELEASE_FALLBACK_REPOS="${CURL_WRAPPER_RELEASE_FALLBACK_REPOS:-mason-org/mason-registry,elixir-lsp/elixir-ls,johnnymorganz/stylua,luals/lua-language-server,omnisharp/omnisharp-roslyn}"
 CURL_WRAPPER_ALLOW_DIRECT_RELEASE_FALLBACK="${CURL_WRAPPER_ALLOW_DIRECT_RELEASE_FALLBACK:-0}"
 CURL_WRAPPER_ENABLE_MASON_SMART_RELEASES="${CURL_WRAPPER_ENABLE_MASON_SMART_RELEASES:-1}"
 CURL_WRAPPER_ACTIVE_PROXY=""
@@ -147,6 +147,12 @@ is_restricted_release_asset_url() {
   slug="$(github_release_asset_slug "${1:-}" 2>/dev/null || true)"
   [[ -n "${slug}" ]] || return 1
   is_restricted_release_repo_slug "${slug}"
+}
+
+is_mason_registry_release_asset_url() {
+  local url
+  url="${1%%\?*}"
+  [[ "${url}" =~ ^https://github\.com/mason-org/mason-registry/releases/download/[^/]+/(registry\.json\.zip|checksums\.txt)$ ]]
 }
 
 is_mason_registry_archive_url() {
@@ -1488,6 +1494,14 @@ main() {
   if should_skip_direct_release_download "${CURL_FALLBACK_URL:-}"; then
     log "release corporativamente restrita detectada; pulando curl direto para ${CURL_FALLBACK_URL}"
 
+    if is_mason_registry_release_asset_url "${CURL_FALLBACK_URL:-}"; then
+      if download_with_gh_release; then
+        log "fallback release do Mason registry concluído com sucesso."
+        exit 0
+      fi
+      die "download do asset do Mason registry falhou para ${CURL_FALLBACK_URL}"
+    fi
+
     if handle_smart_release_asset; then
       exit 0
     fi
@@ -1632,6 +1646,14 @@ main() {
   fi
 
   if is_github_release_asset_url "${CURL_FALLBACK_URL}"; then
+    if is_mason_registry_release_asset_url "${CURL_FALLBACK_URL}"; then
+      log "curl falhou com exit=${curl_exit}; tentando fallback release do Mason registry para ${CURL_FALLBACK_URL}"
+      if download_with_gh_release; then
+        log "fallback release do Mason registry concluído com sucesso."
+        exit 0
+      fi
+    fi
+
     if is_truthy "${CURL_WRAPPER_ENABLE_MASON_SMART_RELEASES}"; then
       log "curl falhou com exit=${curl_exit}; tentando engine dinâmica de release para ${CURL_FALLBACK_URL}"
       if handle_smart_release_asset; then
