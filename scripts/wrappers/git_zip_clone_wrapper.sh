@@ -20,7 +20,7 @@ die() {
 }
 
 GIT_ZIP_WRAPPER_TMP_DIR=""
-ARCHIVE_FORMAT="${GIT_ZIP_WRAPPER_ARCHIVE_FORMAT:-tar.gz}"
+ARCHIVE_FORMAT="${GIT_ZIP_WRAPPER_ARCHIVE_FORMAT:-zip}"
 ALLOW_ZIP_FALLBACK="${GIT_ZIP_WRAPPER_ALLOW_ZIP_FALLBACK:-0}"
 GIT_ZIP_WRAPPER_CURL_INSECURE="${GIT_ZIP_WRAPPER_CURL_INSECURE:-0}"
 GIT_ZIP_WRAPPER_CURL_CACERT="${GIT_ZIP_WRAPPER_CURL_CACERT:-}"
@@ -29,13 +29,16 @@ GIT_ZIP_WRAPPER_RETRY_WITHOUT_PROXY_ON_AUTH_ERROR="${GIT_ZIP_WRAPPER_RETRY_WITHO
 GIT_ZIP_WRAPPER_LAST_COMMAND_STDERR=""
 WRAPPER_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 GIT_ZIP_WRAPPER_FORCE_LOCAL_DOWNLOADS="1"
-GIT_ZIP_WRAPPER_CLONE_ORDER="${GIT_ZIP_WRAPPER_CLONE_ORDER:-git-first}"
+GIT_ZIP_WRAPPER_CLONE_ORDER="${GIT_ZIP_WRAPPER_CLONE_ORDER:-local-first}"
 GIT_ZIP_WRAPPER_LFS_AUTORUN="${GIT_ZIP_WRAPPER_LFS_AUTORUN:-1}"
 GIT_ZIP_WRAPPER_LFS_FORCE="${GIT_ZIP_WRAPPER_LFS_FORCE:-0}"
 GIT_ZIP_WRAPPER_LFS_STRICT="${GIT_ZIP_WRAPPER_LFS_STRICT:-0}"
 GIT_ZIP_WRAPPER_LFS_RETRY_NO_PROXY="${GIT_ZIP_WRAPPER_LFS_RETRY_NO_PROXY:-1}"
 GIT_ZIP_WRAPPER_LFS_MODE="local"
 GIT_ZIP_WRAPPER_STRICT="${GIT_ZIP_WRAPPER_STRICT:-0}"
+GIT_ZIP_WRAPPER_TRY_DIRECT_CODELOAD="${GIT_ZIP_WRAPPER_TRY_DIRECT_CODELOAD:-0}"
+GIT_ZIP_WRAPPER_ALLOW_REMOTE_GIT_FALLBACK="${GIT_ZIP_WRAPPER_ALLOW_REMOTE_GIT_FALLBACK:-0}"
+GIT_ZIP_WRAPPER_LAST_DOWNLOAD_ERROR_KIND=""
 GIT_GLOBAL_ARGS=()
 GIT_SUBCOMMAND=""
 GIT_SUBCOMMAND_ARGS=()
@@ -137,6 +140,12 @@ is_proxy_or_transport_block_error_log() {
   printf '%s\n' "${output}" | grep -Eiq '(^|[[:space:]])407([[:space:]]|$)|(^|[[:space:]])403([[:space:]]|$)|proxy[ -]authentication|required|proxy authent(i|y)cation|Proxy-Authenticate|proxy error|Proxy Error|expected flush after ref listing|The requested URL returned error: 403'
 }
 
+is_permanent_download_error_log() {
+  local output
+  output="${1:-}"
+  printf '%s\n' "${output}" | grep -Eiq 'The requested URL returned error: (404|410)|(^|[[:space:]])HTTP[^[:space:]]*[[:space:]]+(404|410)([[:space:]]|$)|(^|[[:space:]])(404|410)([[:space:]]|$)'
+}
+
 has_explicit_proxy_arg() {
   local arg
   for arg in "$@"; do
@@ -236,8 +245,9 @@ run_git_command_with_optional_no_proxy_retry() {
 
   if run_command_with_stderr_capture "${command[@]}"; then
     return 0
+  else
+    command_status=$?
   fi
-  command_status=$?
 
   if is_truthy "${GIT_ZIP_WRAPPER_RETRY_WITHOUT_PROXY_ON_AUTH_ERROR}" && \
     [[ -n "${GIT_ZIP_WRAPPER_ACTIVE_PROXY}" ]] && \
@@ -254,8 +264,9 @@ run_git_command_with_optional_no_proxy_retry() {
 
     if run_command_with_stderr_capture "${no_proxy_command[@]}"; then
       return 0
+    else
+      command_status=$?
     fi
-    command_status=$?
   fi
 
   if [[ -n "${GIT_ZIP_WRAPPER_LAST_COMMAND_STDERR}" ]]; then
@@ -274,7 +285,7 @@ normalize_archive_format() {
       echo "${requested}"
       ;;
     "")
-      echo "tar.gz"
+      echo "zip"
       ;;
     *)
       die "formato de arquivo inválido: ${requested}. Valores válidos: tar.gz, tgz, tar, zip"
@@ -303,12 +314,12 @@ normalize_clone_order() {
 
   case "${requested}" in
     ""|local-first|git-first)
-      [[ -n "${requested}" ]] || requested="git-first"
+      [[ -n "${requested}" ]] || requested="local-first"
       printf '%s\n' "${requested}"
       ;;
     *)
-      log "valor inválido em GIT_ZIP_WRAPPER_CLONE_ORDER=${requested}; forçando git-first"
-      printf '%s\n' "git-first"
+      log "valor inválido em GIT_ZIP_WRAPPER_CLONE_ORDER=${requested}; forçando local-first"
+      printf '%s\n' "local-first"
       ;;
   esac
 }
@@ -400,14 +411,17 @@ run_download_curl_command() {
   if (( ${#curl_env[@]} > 0 )); then
     if run_command_with_stderr_capture env "${curl_env[@]}" "${base_command[@]}"; then
       return 0
+    else
+      command_status=$?
     fi
   else
     if run_command_with_stderr_capture "${base_command[@]}"; then
       return 0
+    else
+      command_status=$?
     fi
   fi
 
-  command_status=$?
   if is_truthy "${GIT_ZIP_WRAPPER_RETRY_WITHOUT_PROXY_ON_AUTH_ERROR}" && \
     [[ -n "${GIT_ZIP_WRAPPER_ACTIVE_PROXY}" ]] && \
     ! has_explicit_proxy_arg "${base_command[@]}" && \
@@ -416,13 +430,15 @@ run_download_curl_command() {
     if (( ${#non_proxy_env[@]} > 0 )); then
       if run_command_with_stderr_capture env "${non_proxy_env[@]}" "${base_command[@]}"; then
         return 0
+      else
+        return $?
       fi
-      return $?
     fi
     if run_command_with_stderr_capture "${base_command[@]}"; then
       return 0
+    else
+      return $?
     fi
-    return $?
   fi
 
   if [[ -n "${GIT_ZIP_WRAPPER_LAST_COMMAND_STDERR}" ]]; then
@@ -907,6 +923,10 @@ try_download_candidate_urls() {
   shift
 
   for url in "$@"; do
+    if [[ "${url}" == https://codeload.github.com/* ]] && ! is_truthy "${GIT_ZIP_WRAPPER_TRY_DIRECT_CODELOAD}"; then
+      continue
+    fi
+
     if download_url_with_retries "${url}" "${archive_path}"; then
       printf '%s\n' "${url}"
       return 0
@@ -919,7 +939,7 @@ assert_supported_archive_format() {
   local archive_path="$1"
   case "${archive_path}" in
     *.zip)
-      if is_truthy "${ALLOW_ZIP_FALLBACK}"; then
+      if [[ "${ARCHIVE_FORMAT}" == "zip" ]] || is_truthy "${ALLOW_ZIP_FALLBACK}"; then
         return 0
       fi
       die "formato .zip não permitido para este wrapper (GIT_ZIP_WRAPPER_ALLOW_ZIP_FALLBACK=1 para habilitar)"
@@ -929,6 +949,29 @@ assert_supported_archive_format() {
       ;;
     *)
       die "formato de arquivo não suportado: ${archive_path}"
+      ;;
+  esac
+}
+
+archive_path_for_temp_dir() {
+  local temp_dir
+  temp_dir="$1"
+
+  case "${ARCHIVE_FORMAT}" in
+    tar.gz)
+      printf '%s\n' "${temp_dir}/repo.tar.gz"
+      ;;
+    tgz)
+      printf '%s\n' "${temp_dir}/repo.tgz"
+      ;;
+    tar)
+      printf '%s\n' "${temp_dir}/repo.tar"
+      ;;
+    zip)
+      printf '%s\n' "${temp_dir}/repo.zip"
+      ;;
+    *)
+      printf '%s\n' "${temp_dir}/repo.zip"
       ;;
   esac
 }
@@ -952,6 +995,10 @@ download_url_with_retries() {
     for attempt in 1 2 3; do
       if run_curl_download "${mode_name}" "${url}" "${archive_path}" "${user_agent}"; then
         return 0
+      fi
+      if [[ "${GIT_ZIP_WRAPPER_LAST_DOWNLOAD_ERROR_KIND}" == "permanent" ]]; then
+        log "download retornou erro permanente; pulando novas tentativas para: ${url}"
+        return 1
       fi
       log "download falhou (tentativa ${attempt}/3, modo ${mode_label}): ${url}"
       sleep 2
@@ -1205,7 +1252,8 @@ build_archive_snapshot_repository() {
   [[ -n "${slug}" ]] || return 1
 
   temp_dir="$(mktemp -d -t git-zip-archive-repo-XXXXXX)"
-  archive_path="${temp_dir}/repo.tar.gz"
+  archive_path="$(archive_path_for_temp_dir "${temp_dir}")"
+  assert_supported_archive_format "${archive_path}"
   source_url="$(download_github_archive "${slug}" "${target_ref}" "${archive_path}" || true)"
   if [[ -z "${source_url}" ]]; then
     rm -rf "${temp_dir}"
@@ -1360,7 +1408,8 @@ replace_mix_install_repo_with_archive() {
 
   ref="$(extract_requested_fetch_ref || true)"
   temp_dir="$(mktemp -d -t git-zip-fetch-archive-XXXXXX)"
-  archive_path="${temp_dir}/repo.tar.gz"
+  archive_path="$(archive_path_for_temp_dir "${temp_dir}")"
+  assert_supported_archive_format "${archive_path}"
 
   source_url="$(download_github_archive "${slug}" "${ref}" "${archive_path}" || true)"
   if [[ -z "${source_url}" ]]; then
@@ -1370,7 +1419,7 @@ replace_mix_install_repo_with_archive() {
 
   extracted_repo_dir="${temp_dir}/repo"
   mkdir -p "${extracted_repo_dir}"
-  tar -xzf "${archive_path}" -C "${extracted_repo_dir}" --strip-components=1
+  extract_archive_to_destination "${archive_path}" "${extracted_repo_dir}"
   rm -rf "${worktree_dir}"
   mkdir -p "${worktree_dir}"
   cp -a "${extracted_repo_dir}/." "${worktree_dir}/"
@@ -1391,11 +1440,13 @@ curl_mode_label() {
 run_curl_download() {
   local mode_name url archive_path user_agent download_curl
   local -a curl_env=()
+  local command_status
   mode_name="$1"
   url="$2"
   archive_path="$3"
   user_agent="$4"
   download_curl="$(resolve_download_curl)"
+  GIT_ZIP_WRAPPER_LAST_DOWNLOAD_ERROR_KIND=""
 
   set -- "${download_curl}" -fsSL \
     --connect-timeout 20 \
@@ -1456,7 +1507,19 @@ run_curl_download() {
       ;;
   esac
 
-  env "${curl_env[@]}" "$@"
+  if run_command_with_stderr_capture env "${curl_env[@]}" "$@"; then
+    return 0
+  else
+    command_status=$?
+  fi
+
+  if is_permanent_download_error_log "${GIT_ZIP_WRAPPER_LAST_COMMAND_STDERR}"; then
+    GIT_ZIP_WRAPPER_LAST_DOWNLOAD_ERROR_KIND="permanent"
+  fi
+  if [[ -n "${GIT_ZIP_WRAPPER_LAST_COMMAND_STDERR}" ]]; then
+    printf '%s\n' "${GIT_ZIP_WRAPPER_LAST_COMMAND_STDERR}" >&2
+  fi
+  return "${command_status}"
 }
 
 validate_clone_destination() {
@@ -1963,6 +2026,10 @@ clone_with_real_git() {
   run_git_command_with_optional_no_proxy_retry "${real_git}" "$@"
 }
 
+remote_git_fallback_enabled() {
+  is_truthy "${GIT_ZIP_WRAPPER_ALLOW_REMOTE_GIT_FALLBACK}"
+}
+
 main() {
   local real_git
   real_git="$(resolve_real_git)"
@@ -2004,7 +2071,7 @@ main() {
         if [[ -n "${fetch_git_dir}" ]] && replace_mix_install_repo_with_archive "${real_git}" "${fetch_git_dir}"; then
           return 0
         fi
-        if run_git_command_with_optional_no_proxy_retry "${real_git}" "$@"; then
+        if remote_git_fallback_enabled && run_git_command_with_optional_no_proxy_retry "${real_git}" "$@"; then
           return 0
         fi
         die "falha ao atualizar refs via archive para ${fetch_origin_url:-origin}; fetch remoto via git está desabilitado para repositórios GitHub"
@@ -2044,7 +2111,7 @@ main() {
         if fallback_checkout_repo_with_archive "${real_git}"; then
           return 0
         fi
-        if run_git_command_with_optional_no_proxy_retry "${real_git}" "$@"; then
+        if remote_git_fallback_enabled && run_git_command_with_optional_no_proxy_retry "${real_git}" "$@"; then
           return 0
         fi
         die "falha ao fazer checkout via archive para ${checkout_origin_url:-origin}; checkout remoto via git está desabilitado para repositórios GitHub"
@@ -2073,7 +2140,7 @@ main() {
 
   command -v tar >/dev/null 2>&1 || die "tar não encontrado"
   command -v mktemp >/dev/null 2>&1 || die "mktemp não encontrado"
-  if is_truthy "${ALLOW_ZIP_FALLBACK}"; then
+  if [[ "${ARCHIVE_FORMAT}" == "zip" ]] || is_truthy "${ALLOW_ZIP_FALLBACK}"; then
     command -v unzip >/dev/null 2>&1 || die "unzip não encontrado"
   fi
 
@@ -2107,31 +2174,10 @@ main() {
     if clone_with_real_git "${real_git}" "$@"; then
       return 0
     fi
-
-    if is_truthy "${GIT_ZIP_WRAPPER_STRICT}"; then
-      die "falha no git clone real para ${repo_url}; fallback por archive desabilitado pela política atual"
-    fi
   fi
 
   if resolve_download_curl >/dev/null 2>&1; then
-    case "${ARCHIVE_FORMAT}" in
-      tar.gz)
-        archive_path="${GIT_ZIP_WRAPPER_TMP_DIR}/repo.tar.gz"
-        ;;
-      tgz)
-        archive_path="${GIT_ZIP_WRAPPER_TMP_DIR}/repo.tgz"
-        ;;
-      tar)
-        archive_path="${GIT_ZIP_WRAPPER_TMP_DIR}/repo.tar"
-        ;;
-      zip)
-        archive_path="${GIT_ZIP_WRAPPER_TMP_DIR}/repo.zip"
-        ;;
-      *)
-        archive_path="${GIT_ZIP_WRAPPER_TMP_DIR}/repo.tar.gz"
-        ;;
-    esac
-
+    archive_path="$(archive_path_for_temp_dir "${GIT_ZIP_WRAPPER_TMP_DIR}")"
     assert_supported_archive_format "${archive_path}"
 
     GIT_ZIP_WRAPPER_FORCE_LOCAL_DOWNLOADS=1
@@ -2144,12 +2190,12 @@ main() {
       log "clone(${ARCHIVE_FORMAT}) concluído: ${repo_url} -> ${destination} (source: ${source_url})"
       return 0
     fi
-    if ! is_truthy "${GIT_ZIP_WRAPPER_STRICT}" && clone_with_real_git "${real_git}" "$@"; then
+    if remote_git_fallback_enabled && clone_with_real_git "${real_git}" "$@"; then
       return 0
     fi
     die "falha ao baixar arquivo para ${repo_url} (branch/tag: ${branch:-HEAD}); clone remoto via git está desabilitado para repositórios GitHub"
   else
-    if ! is_truthy "${GIT_ZIP_WRAPPER_STRICT}" && clone_with_real_git "${real_git}" "$@"; then
+    if remote_git_fallback_enabled && clone_with_real_git "${real_git}" "$@"; then
       return 0
     fi
     die "curl não encontrado para clone local por arquivo: ${repo_url}"

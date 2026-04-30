@@ -111,8 +111,10 @@ vim.env.CURL_WRAPPER_ENABLE_MASON_SMART_RELEASES = "1"
 vim.env.CURL_WRAPPER_RELEASE_CACHE_DIR = vim.fn.expand("~/.cache/curl-python-wrapper/releases")
 vim.env.CURL_WRAPPER_MASON_BUILDERS = "elixir-lsp/elixir-ls=elixir_ls_release,omnisharp/omnisharp-roslyn=omnisharp_source_publish"
 vim.env.CURL_WRAPPER_MASON_SOURCE_BUILD_REPOS = "omnisharp/omnisharp-roslyn"
-vim.env.GIT_ZIP_WRAPPER_ARCHIVE_FORMAT = "tar.gz"
-vim.env.GIT_ZIP_WRAPPER_CLONE_ORDER = "git-first"
+vim.env.GIT_ZIP_WRAPPER_ARCHIVE_FORMAT = "zip"
+vim.env.GIT_ZIP_WRAPPER_CLONE_ORDER = "local-first"
+vim.env.GIT_ZIP_WRAPPER_ALLOW_REMOTE_GIT_FALLBACK = "0"
+vim.env.GIT_ZIP_WRAPPER_ALLOW_ZIP_FALLBACK = "1"
 vim.env.GIT_ZIP_WRAPPER_FORCE_LOCAL_DOWNLOADS = "1"
 vim.env.GIT_ZIP_WRAPPER_LFS_MODE = "local"
 vim.env.GIT_ZIP_WRAPPER_STRICT = "0"
@@ -140,25 +142,27 @@ vim.env.GIT_ZIP_WRAPPER_STRICT = "0"
 
 - `GIT_ZIP_WRAPPER_REAL_GIT`: caminho do `git` real.
 - `GIT_ZIP_WRAPPER_PROXY`: proxy explícito para os downloads do wrapper.
-- `GIT_ZIP_WRAPPER_ARCHIVE_FORMAT`: formato preferido do archive. Valores válidos: `tar.gz`, `tgz`, `tar`, `zip`. Padrão: `tar.gz`.
-- `GIT_ZIP_WRAPPER_ALLOW_ZIP_FALLBACK`: libera fallback para `.zip` quando o `.tar.gz` não estiver disponível.
-- `GIT_ZIP_WRAPPER_CLONE_ORDER`: política do clone do wrapper. Valores suportados: `git-first`, `local-first`. Padrão: `git-first`.
+- `GIT_ZIP_WRAPPER_ARCHIVE_FORMAT`: formato preferido do archive. Valores válidos: `tar.gz`, `tgz`, `tar`, `zip`. Padrão: `zip`.
+- `GIT_ZIP_WRAPPER_ALLOW_ZIP_FALLBACK`: libera fallback ou uso primário de `.zip`.
+- `GIT_ZIP_WRAPPER_CLONE_ORDER`: política do clone do wrapper. Valores suportados: `git-first`, `local-first`. Padrão: `local-first`.
+- `GIT_ZIP_WRAPPER_ALLOW_REMOTE_GIT_FALLBACK`: permite usar `git clone/fetch/checkout` remoto real se o archive falhar. Padrão: `0`.
 - `GIT_ZIP_WRAPPER_FORCE_LOCAL_DOWNLOADS`: mantém a tentativa de archive local como preferência. Padrão: `1`.
 - `GIT_ZIP_WRAPPER_CURL_CACERT`: caminho para CA customizada em ambiente corporativo.
 - `GIT_ZIP_WRAPPER_CURL_INSECURE`: desativa validação TLS do `curl` usado pelo wrapper.
 - `GIT_ZIP_WRAPPER_LFS_MODE`: modo do Git LFS. Valor suportado: `local`.
+- `GIT_ZIP_WRAPPER_TRY_DIRECT_CODELOAD`: permite tentar URLs diretas de `codeload.github.com` como fallback adicional. Padrão: `0`.
 - `GIT_ZIP_WRAPPER_STRICT`: impede fallback para `git clone` normal quando o archive local falhar.
 
 Comportamento adicional para LazyVim:
 
-- em `git-first`, o wrapper tenta `git clone` normal antes de usar archives do GitHub
-- isso evita `codeload.github.com` no caminho feliz de instalação de plugins do LazyVim
-- em `local-first`, se o host bloquear `codeload.github.com` ou o archive falhar por transporte, o wrapper cai para `git clone` real
-- para bloquear esse fallback e falhar estritamente no archive local, defina `GIT_ZIP_WRAPPER_STRICT=1`
+- em `local-first`, o wrapper usa archive do GitHub antes de qualquer Git remoto
+- por padrão, se o archive falhar, o wrapper não tenta `git clone` real para repositórios GitHub
+- para liberar Git remoto real como último fallback, defina `GIT_ZIP_WRAPPER_ALLOW_REMOTE_GIT_FALLBACK=1`
+- em `git-first`, o wrapper ainda pode tentar `git clone` normal antes do archive, então esse modo não é adequado para ambientes onde Git remoto externo é bloqueado
 
 Comportamento adicional para ElixirLS/Mix.install:
 
-- quando `git fetch` falha dentro do cache `mix/installs`, o wrapper tenta fallback local por archive (`tar.gz`) do GitHub para materializar o tag ou branch solicitado.
+- quando `git fetch` falha dentro do cache `mix/installs`, o wrapper tenta fallback local por archive do GitHub para materializar o tag ou branch solicitado.
 
 ## Mason inteligente
 
