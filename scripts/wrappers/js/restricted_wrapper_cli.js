@@ -408,20 +408,105 @@ function resolveArchiveBaseUrl() {
   return (process.env.RESTRICTED_GIT_ARCHIVE_BASE_URL || "https://github.com").replace(/\/$/, "");
 }
 
-function githubCloneArchiveCandidates(slug, requestedRef) {
-  const baseUrl = resolveArchiveBaseUrl();
-  const refs = requestedRef ? [requestedRef] : ["main", "master", "HEAD"];
-  const candidatesForRef = (rawRef) => {
-    const ref = normalizeArchiveRef(rawRef);
-    if (!ref) return [{ url: `${baseUrl}/${slug}/archive/HEAD.zip`, ref: "HEAD", refType: "head" }];
-    if (/^[0-9a-fA-F]{7,40}$/.test(ref)) return [{ url: `${baseUrl}/${slug}/archive/${ref}.zip`, ref, refType: "commit" }];
-    return [
-      { url: `${baseUrl}/${slug}/archive/${ref}.zip`, ref, refType: "branch" },
-      { url: `${baseUrl}/${slug}/archive/refs/heads/${ref}.zip`, ref, refType: "branch" },
-      { url: `${baseUrl}/${slug}/archive/refs/tags/${ref}.zip`, ref, refType: "tag" },
-    ];
+function resolveCodeloadBaseUrl() {
+  return (process.env.RESTRICTED_CODELOAD_BASE_URL || "https://codeload.github.com").replace(/\/$/, "");
+}
+
+function resolveGithubApiBaseUrl() {
+  return (process.env.RESTRICTED_GITHUB_API_BASE_URL || "https://api.github.com").replace(/\/$/, "");
+}
+
+function splitGithubSlug(slug) {
+  const [owner, repo] = slug.split("/");
+  if (!owner || !repo) fail(`slug GitHub inválido: ${slug}`, 2);
+  return { owner, repo };
+}
+
+function githubCloneArchiveCandidatesForRef(slug, rawRef) {
+  const { owner, repo } = splitGithubSlug(slug);
+  const githubBaseUrl = resolveArchiveBaseUrl();
+  const codeloadBaseUrl = resolveCodeloadBaseUrl();
+  const ref = normalizeArchiveRef(rawRef);
+  const add = (items, candidate) => {
+    if (!items.some((item) => item.url === candidate.url)) items.push(candidate);
+    return items;
   };
-  return unique(refs.flatMap(candidatesForRef).map((candidate) => JSON.stringify(candidate))).map((value) => JSON.parse(value));
+
+  if (!ref) {
+    return [
+      { url: `${githubBaseUrl}/${slug}/archive/HEAD.zip`, ref: "HEAD", refType: "head" },
+      { url: `${codeloadBaseUrl}/${owner}/${repo}/zip/HEAD`, ref: "HEAD", refType: "head" },
+    ];
+  }
+
+  if (/^[0-9a-fA-F]{7,40}$/.test(ref)) {
+    return [
+      { url: `${githubBaseUrl}/${slug}/archive/${ref}.zip`, ref, refType: "commit" },
+      { url: `${codeloadBaseUrl}/${owner}/${repo}/zip/${ref}`, ref, refType: "commit" },
+    ];
+  }
+
+  return [
+    { url: `${githubBaseUrl}/${slug}/archive/${ref}.zip`, ref, refType: "branch" },
+    { url: `${githubBaseUrl}/${slug}/archive/refs/heads/${ref}.zip`, ref, refType: "branch" },
+    { url: `${codeloadBaseUrl}/${owner}/${repo}/zip/refs/heads/${ref}`, ref, refType: "branch" },
+    { url: `${githubBaseUrl}/${slug}/archive/refs/tags/${ref}.zip`, ref, refType: "tag" },
+    { url: `${codeloadBaseUrl}/${owner}/${repo}/zip/refs/tags/${ref}`, ref, refType: "tag" },
+  ].reduce(add, []);
+}
+
+async function resolveGithubDefaultBranch(slug) {
+  const request = {
+    url: `${resolveGithubApiBaseUrl()}/repos/${slug}`,
+    output: "",
+    headers: { Accept: "application/vnd.github+json" },
+    userAgent: "restricted-js-wrapper",
+    proxy: process.env.GIT_ZIP_WRAPPER_PROXY || "",
+    allowRedirects: true,
+    insecure: truthy(process.env.GIT_ZIP_WRAPPER_CURL_INSECURE),
+    remoteName: false,
+    outputDir: "",
+    createDirs: false,
+    connectTimeoutMs: 20_000,
+    maxTimeMs: 60_000,
+  };
+
+  return new Promise((resolve, reject) => {
+    requestUrl(request.url, request, resolveProxy("git", request), 0, (error, response) => {
+      if (error) {
+        reject(error);
+        return;
+      }
+      try {
+        const payload = JSON.parse(response.body.toString("utf8"));
+        const defaultBranch = String(payload.default_branch || "").trim();
+        if (!defaultBranch) throw new Error("default_branch ausente");
+        resolve(defaultBranch);
+      } catch (parseError) {
+        reject(parseError);
+      }
+    });
+  });
+}
+
+async function githubCloneArchiveCandidates(slug, requestedRef) {
+  const refs = [];
+  if (requestedRef) {
+    refs.push(requestedRef);
+  } else {
+    try {
+      const defaultBranch = await resolveGithubDefaultBranch(slug);
+      log(`default branch resolvida para ${slug}: ${defaultBranch}`);
+      refs.push(defaultBranch);
+    } catch (error) {
+      log(`não foi possível resolver default branch de ${slug}: ${error.message}`);
+    }
+    refs.push("main", "master", "HEAD");
+  }
+
+  return unique(refs)
+    .flatMap((ref) => githubCloneArchiveCandidatesForRef(slug, ref))
+    .filter((candidate, index, candidates) => candidates.findIndex((item) => item.url === candidate.url) === index);
 }
 
 function validateCloneDestination(destination) {
@@ -565,7 +650,8 @@ async function runGit(rawArgs) {
   const tempDir = createTempDir("restricted-git-clone-");
   const archivePath = path.join(tempDir, "repo.zip");
   try {
-    const source = await downloadFirstArchiveCandidate(githubCloneArchiveCandidates(slug, clone.branch), archivePath);
+    const candidates = await githubCloneArchiveCandidates(slug, clone.branch);
+    const source = await downloadFirstArchiveCandidate(candidates, archivePath);
     extractZipArchive(archivePath, clone.destination);
     configureArchiveGitRepository({
       realGit: resolveRealGit(),

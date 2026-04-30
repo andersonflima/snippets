@@ -137,3 +137,30 @@ env -u HTTPS_PROXY -u https_proxy -u HTTP_PROXY -u http_proxy -u ALL_PROXY -u al
 
 test -f "${GIT_WRAPPER_DESTINATION}/README.md"
 test "$(git -C "${GIT_WRAPPER_DESTINATION}" branch --show-current)" = "feature/foo"
+
+DEFAULT_BRANCH_API_ROOT="${HTTP_ROOT}/repos/acme/not-main"
+DEFAULT_BRANCH_CODELOAD_ROOT="${HTTP_ROOT}/acme/not-main/zip/refs/heads"
+mkdir -p "${DEFAULT_BRANCH_API_ROOT}" "${DEFAULT_BRANCH_CODELOAD_ROOT}"
+printf '%s\n' '{"default_branch":"trunk"}' > "${DEFAULT_BRANCH_API_ROOT}/index.html"
+python3 - "${DEFAULT_BRANCH_CODELOAD_ROOT}/trunk" <<'PY'
+import sys
+import zipfile
+
+output_path = sys.argv[1]
+with zipfile.ZipFile(output_path, "w", zipfile.ZIP_DEFLATED) as archive:
+    archive.writestr("not-main-trunk/", "")
+    archive.writestr("not-main-trunk/README.md", "default branch via codeload\n")
+PY
+
+DEFAULT_BRANCH_DESTINATION="${TMP_DIR}/not-main-js"
+
+env -u HTTPS_PROXY -u https_proxy -u HTTP_PROXY -u http_proxy -u ALL_PROXY -u all_proxy \
+  RESTRICTED_GIT_ARCHIVE_BASE_URL="http://127.0.0.1:${PORT}" \
+  RESTRICTED_CODELOAD_BASE_URL="http://127.0.0.1:${PORT}" \
+  RESTRICTED_GITHUB_API_BASE_URL="http://127.0.0.1:${PORT}" \
+  GIT_ZIP_WRAPPER_REAL_GIT="${REAL_GIT}" \
+  node "${REPO_ROOT}/scripts/wrappers/js/restricted_wrapper_cli.js" \
+    git clone https://github.com/acme/not-main "${DEFAULT_BRANCH_DESTINATION}"
+
+test "$(cat "${DEFAULT_BRANCH_DESTINATION}/README.md")" = "default branch via codeload"
+test "$(git -C "${DEFAULT_BRANCH_DESTINATION}" branch --show-current)" = "trunk"
