@@ -376,22 +376,35 @@ run_step() {
   "$@"
 }
 
+run_bash_script() {
+  local script_path
+  script_path="$1"
+  shift
+
+  if command -v bash >/dev/null 2>&1; then
+    bash "${script_path}" "$@"
+    return $?
+  fi
+
+  "${script_path}" "$@"
+}
+
 install_curl_wrapper() {
   if [[ -n "${REAL_WGET_BIN}" ]]; then
-    sh "${ROOT_DIR}/install/install_curl_python_wrapper.sh" \
+    run_bash_script "${ROOT_DIR}/install/install_curl_python_wrapper.sh" \
       --real-curl "${REAL_CURL_BIN}" \
       --real-wget "${REAL_WGET_BIN}" \
       >/dev/null
     return 0
   fi
 
-  sh "${ROOT_DIR}/install/install_curl_python_wrapper.sh" \
+  run_bash_script "${ROOT_DIR}/install/install_curl_python_wrapper.sh" \
     --real-curl "${REAL_CURL_BIN}" \
     >/dev/null
 }
 
 install_git_wrapper() {
-  sh "${ROOT_DIR}/install/install_git_zip_wrapper.sh" \
+  run_bash_script "${ROOT_DIR}/install/install_git_zip_wrapper.sh" \
     --real-git "${REAL_GIT_BIN}" \
     >/dev/null
 }
@@ -720,7 +733,7 @@ run_step "instalando wrapper do git" install_git_wrapper
 run_step "sincronizando shims em ~/.local/bin" ensure_wrapper_shims
 run_step "removendo wrapper legado do brew" remove_legacy_brew_wrapper_installation
 run_step "configurando ambiente compartilhado dos wrappers em modo local-only" \
-  sh "${ROOT_DIR}/install/configure_wrapper_envs.sh" "${WRAPPER_ENV_ARGS[@]}"
+  run_bash_script "${ROOT_DIR}/install/configure_wrapper_envs.sh" "${WRAPPER_ENV_ARGS[@]}"
 run_step "gerando env fish compartilhado para wrappers" write_fish_env_file
 
 if [[ "${CONFIGURE_HEX}" == "1" ]]; then
@@ -741,7 +754,7 @@ if [[ "${CONFIGURE_HEX}" == "1" ]]; then
   fi
 
   run_step "configurando Hex no host local" \
-    sh "${ROOT_DIR}/install/configure_hex_config.sh" "${HEX_ARGS[@]}"
+    run_bash_script "${ROOT_DIR}/install/configure_hex_config.sh" "${HEX_ARGS[@]}"
 fi
 
 run_step "sincronizando persistência do ambiente restrito" sync_shell_rc_state
@@ -782,10 +795,10 @@ Para aplicar na sessão atual (fish):
   # reinicie o nvim/tmux já aberto depois disso
 
 Para validar o env persistido:
-  sh "${ROOT_DIR}/install/validate_wrappers.sh"
+  bash "${ROOT_DIR}/install/validate_wrappers.sh"
 
 Para validar o shell atual:
-  sh "${ROOT_DIR}/install/validate_wrappers.sh" --current-shell
+  bash "${ROOT_DIR}/install/validate_wrappers.sh" --current-shell
 
 Para validar o Neovim atual:
   nvim --headless '+lua print(vim.fn.exepath("git"))' +qa
