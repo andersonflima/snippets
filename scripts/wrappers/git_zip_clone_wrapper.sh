@@ -36,7 +36,6 @@ GIT_ZIP_WRAPPER_LFS_STRICT="${GIT_ZIP_WRAPPER_LFS_STRICT:-0}"
 GIT_ZIP_WRAPPER_LFS_RETRY_NO_PROXY="${GIT_ZIP_WRAPPER_LFS_RETRY_NO_PROXY:-1}"
 GIT_ZIP_WRAPPER_LFS_MODE="local"
 GIT_ZIP_WRAPPER_STRICT="${GIT_ZIP_WRAPPER_STRICT:-0}"
-GIT_ZIP_WRAPPER_TRY_DIRECT_CODELOAD="${GIT_ZIP_WRAPPER_TRY_DIRECT_CODELOAD:-0}"
 GIT_ZIP_WRAPPER_ALLOW_REMOTE_GIT_FALLBACK="${GIT_ZIP_WRAPPER_ALLOW_REMOTE_GIT_FALLBACK:-0}"
 GIT_ZIP_WRAPPER_LAST_DOWNLOAD_ERROR_KIND=""
 GIT_GLOBAL_ARGS=()
@@ -825,58 +824,42 @@ download_github_archive() {
     case "${ref_type}" in
       commit)
         try_download_candidate_urls "${archive_path}" \
-          "https://github.com/${slug}/archive/${normalized_ref}.zip" \
-          "https://codeload.github.com/${slug}/zip/${normalized_ref}" && return 0
+          "https://github.com/${slug}/archive/${normalized_ref}.zip" && return 0
         ;;
       tag)
         try_download_candidate_urls "${archive_path}" \
-          "https://github.com/${slug}/archive/refs/tags/${normalized_ref}.zip" \
-          "https://codeload.github.com/${slug}/zip/refs/tags/${normalized_ref}" \
-          "https://codeload.github.com/${slug}/zip/${normalized_ref}" && return 0
+          "https://github.com/${slug}/archive/${normalized_ref}.zip" && return 0
         ;;
       branch)
         try_download_candidate_urls "${archive_path}" \
-          "https://github.com/${slug}/archive/refs/heads/${normalized_ref}.zip" \
-          "https://codeload.github.com/${slug}/zip/refs/heads/${normalized_ref}" \
-          "https://github.com/${slug}/archive/refs/tags/${normalized_ref}.zip" \
-          "https://codeload.github.com/${slug}/zip/refs/tags/${normalized_ref}" \
-          "https://codeload.github.com/${slug}/zip/${normalized_ref}" && return 0
+          "https://github.com/${slug}/archive/${normalized_ref}.zip" && return 0
         ;;
       *)
         try_download_candidate_urls "${archive_path}" \
-          "https://github.com/${slug}/archive/HEAD.zip" \
-          "https://codeload.github.com/${slug}/zip/HEAD" && return 0
+          "https://github.com/${slug}/archive/main.zip" \
+          "https://github.com/${slug}/archive/master.zip" \
+          "https://github.com/${slug}/archive/HEAD.zip" && return 0
         ;;
     esac
   else
     case "${ref_type}" in
       commit)
         try_download_candidate_urls "${archive_path}" \
-          "https://github.com/${slug}/archive/${normalized_ref}.tar.gz" \
-          "https://codeload.github.com/${slug}/tar.gz/${normalized_ref}" && return 0
+          "https://github.com/${slug}/archive/${normalized_ref}.tar.gz" && return 0
         ;;
       tag)
         try_download_candidate_urls "${archive_path}" \
-          "https://github.com/${slug}/archive/refs/tags/${normalized_ref}.tar.gz" \
-          "https://codeload.github.com/${slug}/tar.gz/refs/tags/${normalized_ref}" \
-          "https://codeload.github.com/${slug}/tar.gz/${normalized_ref}" && return 0
+          "https://github.com/${slug}/archive/${normalized_ref}.tar.gz" && return 0
         ;;
       branch)
         try_download_candidate_urls "${archive_path}" \
-          "https://github.com/${slug}/archive/refs/heads/${normalized_ref}.tar.gz" \
-          "https://codeload.github.com/${slug}/tar.gz/refs/heads/${normalized_ref}" \
-          "https://github.com/${slug}/archive/refs/tags/${normalized_ref}.tar.gz" \
-          "https://codeload.github.com/${slug}/tar.gz/refs/tags/${normalized_ref}" \
-          "https://codeload.github.com/${slug}/tar.gz/${normalized_ref}" && return 0
+          "https://github.com/${slug}/archive/${normalized_ref}.tar.gz" && return 0
         ;;
       *)
         try_download_candidate_urls "${archive_path}" \
-          "https://github.com/${slug}/archive/HEAD.tar.gz" \
-          "https://codeload.github.com/${slug}/tar.gz/HEAD" \
-          "https://github.com/${slug}/archive/refs/heads/main.tar.gz" \
-          "https://codeload.github.com/${slug}/tar.gz/refs/heads/main" \
-          "https://github.com/${slug}/archive/refs/heads/master.tar.gz" \
-          "https://codeload.github.com/${slug}/tar.gz/refs/heads/master" && return 0
+          "https://github.com/${slug}/archive/main.tar.gz" \
+          "https://github.com/${slug}/archive/master.tar.gz" \
+          "https://github.com/${slug}/archive/HEAD.tar.gz" && return 0
         ;;
     esac
 
@@ -884,31 +867,21 @@ download_github_archive() {
       case "${ref_type}" in
         commit)
           try_download_candidate_urls "${archive_path}" \
-            "https://github.com/${slug}/archive/${normalized_ref}.zip" \
-            "https://codeload.github.com/${slug}/zip/${normalized_ref}" && return 0
+            "https://github.com/${slug}/archive/${normalized_ref}.zip" && return 0
           ;;
         tag)
           try_download_candidate_urls "${archive_path}" \
-            "https://github.com/${slug}/archive/refs/tags/${normalized_ref}.zip" \
-            "https://codeload.github.com/${slug}/zip/refs/tags/${normalized_ref}" \
-            "https://codeload.github.com/${slug}/zip/${normalized_ref}" && return 0
+            "https://github.com/${slug}/archive/${normalized_ref}.zip" && return 0
           ;;
         branch)
           try_download_candidate_urls "${archive_path}" \
-            "https://github.com/${slug}/archive/refs/heads/${normalized_ref}.zip" \
-            "https://codeload.github.com/${slug}/zip/refs/heads/${normalized_ref}" \
-            "https://github.com/${slug}/archive/refs/tags/${normalized_ref}.zip" \
-            "https://codeload.github.com/${slug}/zip/refs/tags/${normalized_ref}" \
-            "https://codeload.github.com/${slug}/zip/${normalized_ref}" && return 0
+            "https://github.com/${slug}/archive/${normalized_ref}.zip" && return 0
           ;;
         *)
           try_download_candidate_urls "${archive_path}" \
-            "https://github.com/${slug}/archive/HEAD.zip" \
-            "https://codeload.github.com/${slug}/zip/HEAD" \
-            "https://github.com/${slug}/archive/refs/heads/main.zip" \
-            "https://codeload.github.com/${slug}/zip/refs/heads/main" \
-            "https://github.com/${slug}/archive/refs/heads/master.zip" \
-            "https://codeload.github.com/${slug}/zip/refs/heads/master" && return 0
+            "https://github.com/${slug}/archive/main.zip" \
+            "https://github.com/${slug}/archive/master.zip" \
+            "https://github.com/${slug}/archive/HEAD.zip" && return 0
           ;;
       esac
     fi
@@ -923,10 +896,6 @@ try_download_candidate_urls() {
   shift
 
   for url in "$@"; do
-    if [[ "${url}" == https://codeload.github.com/* ]] && ! is_truthy "${GIT_ZIP_WRAPPER_TRY_DIRECT_CODELOAD}"; then
-      continue
-    fi
-
     if download_url_with_retries "${url}" "${archive_path}"; then
       printf '%s\n' "${url}"
       return 0

@@ -84,7 +84,7 @@ case "\${url}" in
     tar -czf "\${output}" -C "${ARCHIVE_PARENT}" lazy.nvim-main
     exit 0
     ;;
-  https://github.com/folke/lazy.nvim/archive/refs/heads/main.zip)
+  https://github.com/folke/lazy.nvim/archive/main.zip)
     python3 - "\${output}" "${ARCHIVE_PARENT}" <<'PY'
 import os
 import sys
@@ -157,7 +157,7 @@ GIT_ZIP_WRAPPER_ALLOW_REMOTE_GIT_FALLBACK=0 \
 
 test -d "${ARCHIVE_DESTINATION}/.git"
 test -f "${ARCHIVE_DESTINATION}/README.md"
-test "$(sed -n '1p' "${ARCHIVE_CURL_LOG}")" = "https://github.com/folke/lazy.nvim/archive/refs/heads/main.zip"
+test "$(sed -n '1p' "${ARCHIVE_CURL_LOG}")" = "https://github.com/folke/lazy.nvim/archive/main.zip"
 
 ARCHIVE_GIT_FIRST_DESTINATION="${TMP_DIR}/lazy-archive-git-first.nvim"
 
@@ -172,7 +172,7 @@ GIT_ZIP_WRAPPER_ALLOW_REMOTE_GIT_FALLBACK=0 \
 
 test -d "${ARCHIVE_GIT_FIRST_DESTINATION}/.git"
 test -f "${ARCHIVE_GIT_FIRST_DESTINATION}/README.md"
-test "$(sed -n '2p' "${ARCHIVE_CURL_LOG}")" = "https://github.com/folke/lazy.nvim/archive/refs/heads/main.zip"
+test "$(sed -n '2p' "${ARCHIVE_CURL_LOG}")" = "https://github.com/folke/lazy.nvim/archive/main.zip"
 
 ARCHIVE_GLOBAL_CONFIG_DESTINATION="${TMP_DIR}/lazy-archive-global-config.nvim"
 ARCHIVE_GLOBAL_CONFIG_FAKE_GIT="${TMP_DIR}/archive-global-config-git"
@@ -203,7 +203,7 @@ GIT_ZIP_WRAPPER_ALLOW_REMOTE_GIT_FALLBACK=0 \
 
 test -d "${ARCHIVE_GLOBAL_CONFIG_DESTINATION}/.git"
 test -f "${ARCHIVE_GLOBAL_CONFIG_DESTINATION}/README.md"
-test "$(sed -n '3p' "${ARCHIVE_CURL_LOG}")" = "https://github.com/folke/lazy.nvim/archive/refs/heads/main.zip"
+test "$(sed -n '3p' "${ARCHIVE_CURL_LOG}")" = "https://github.com/folke/lazy.nvim/archive/main.zip"
 
 ARCHIVE_DEFAULT_BRANCH_DESTINATION="${TMP_DIR}/lazy-archive-default-branch.nvim"
 
@@ -213,14 +213,13 @@ GIT_ZIP_WRAPPER_STRICT=0 \
 GIT_ZIP_WRAPPER_CLONE_ORDER=local-first \
 GIT_ZIP_WRAPPER_ARCHIVE_FORMAT=zip \
 GIT_ZIP_WRAPPER_ALLOW_REMOTE_GIT_FALLBACK=0 \
-GIT_ZIP_WRAPPER_TRY_DIRECT_CODELOAD=0 \
   "${REPO_ROOT}/scripts/wrappers/git_zip_clone_wrapper.sh" \
     clone --filter=blob:none https://github.com/folke/lazy.nvim "${ARCHIVE_DEFAULT_BRANCH_DESTINATION}"
 
 test -d "${ARCHIVE_DEFAULT_BRANCH_DESTINATION}/.git"
 test -f "${ARCHIVE_DEFAULT_BRANCH_DESTINATION}/README.md"
 test "$(git -C "${ARCHIVE_DEFAULT_BRANCH_DESTINATION}" branch --show-current)" = "main"
-test "$(sed -n '4p' "${ARCHIVE_CURL_LOG}")" = "https://github.com/folke/lazy.nvim/archive/refs/heads/main.zip"
+test "$(sed -n '4p' "${ARCHIVE_CURL_LOG}")" = "https://github.com/folke/lazy.nvim/archive/main.zip"
 
 PERMANENT_404_DESTINATION="${TMP_DIR}/lazy-permanent-404.nvim"
 PERMANENT_404_CURL_LOG="${TMP_DIR}/permanent-404-curl-urls"
@@ -272,7 +271,6 @@ GIT_ZIP_WRAPPER_STRICT=0 \
 GIT_ZIP_WRAPPER_CLONE_ORDER=local-first \
 GIT_ZIP_WRAPPER_ARCHIVE_FORMAT=zip \
 GIT_ZIP_WRAPPER_ALLOW_REMOTE_GIT_FALLBACK=0 \
-GIT_ZIP_WRAPPER_TRY_DIRECT_CODELOAD=0 \
   "${REPO_ROOT}/scripts/wrappers/git_zip_clone_wrapper.sh" \
     clone --branch missing-ref https://github.com/folke/lazy.nvim "${PERMANENT_404_DESTINATION}"
 permanent_404_status=$?
@@ -280,7 +278,7 @@ set -e
 
 test "${permanent_404_status}" -ne 0
 test ! -d "${PERMANENT_404_DESTINATION}/.git"
-test "$(wc -l < "${PERMANENT_404_CURL_LOG}" | tr -d ' ')" = "2"
+test "$(wc -l < "${PERMANENT_404_CURL_LOG}" | tr -d ' ')" = "1"
 ! grep -q 'https://codeload.github.com/' "${PERMANENT_404_CURL_LOG}"
 
 PERMANENT_404_FALLBACK_DESTINATION="${TMP_DIR}/lazy-permanent-404-fallback.nvim"
@@ -291,7 +289,6 @@ GIT_ZIP_WRAPPER_STRICT=0 \
 GIT_ZIP_WRAPPER_CLONE_ORDER=local-first \
 GIT_ZIP_WRAPPER_ARCHIVE_FORMAT=zip \
 GIT_ZIP_WRAPPER_ALLOW_REMOTE_GIT_FALLBACK=1 \
-GIT_ZIP_WRAPPER_TRY_DIRECT_CODELOAD=0 \
   "${REPO_ROOT}/scripts/wrappers/git_zip_clone_wrapper.sh" \
     clone --branch missing-ref https://github.com/folke/lazy.nvim "${PERMANENT_404_FALLBACK_DESTINATION}"
 

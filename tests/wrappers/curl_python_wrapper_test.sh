@@ -71,7 +71,7 @@ PY
     printf '%s\n' 'curl: (22) The requested URL returned error: 403' >&2
     exit 22
     ;;
-  https://codeload.github.com/mason-org/mason-registry/zip/refs/heads/main)
+  https://github.com/mason-org/mason-registry/archive/main.zip)
     python3 - "\${output}" <<'PY'
 import sys
 import zipfile
@@ -133,8 +133,29 @@ with zipfile.ZipFile(output_path) as archive:
     assert "mason-registry-main/registry.json" in archive.namelist()
 PY
 test "$(sed -n '3p' "${CURL_LOG}")" = "https://github.com/mason-org/mason-registry/archive/refs/heads/main.zip"
-test "$(sed -n '4p' "${CURL_LOG}")" = "https://github.com/mason-org/mason-registry/archive/refs/heads/main.zip"
-test "$(sed -n '5p' "${CURL_LOG}")" = "https://codeload.github.com/mason-org/mason-registry/zip/refs/heads/main"
+test "$(sed -n '4p' "${CURL_LOG}")" = "https://github.com/mason-org/mason-registry/archive/main.zip"
+
+OUTPUT_REGISTRY_FROM_CODELOAD_ZIP="${TMP_DIR}/mason-registry-from-codeload.zip"
+
+CURL_WRAPPER_REAL_CURL="${FAKE_CURL}" \
+  "${REPO_ROOT}/scripts/wrappers/curl_python_wrapper.sh" \
+    --silent \
+    --fail \
+    --show-error \
+    -L \
+    https://codeload.github.com/mason-org/mason-registry/zip/refs/heads/main \
+    --output "${OUTPUT_REGISTRY_FROM_CODELOAD_ZIP}"
+
+python3 - "${OUTPUT_REGISTRY_FROM_CODELOAD_ZIP}" <<'PY'
+import sys
+import zipfile
+
+output_path = sys.argv[1]
+
+with zipfile.ZipFile(output_path) as archive:
+    assert "mason-registry-main/registry.json" in archive.namelist()
+PY
+test "$(sed -n '5p' "${CURL_LOG}")" = "https://github.com/mason-org/mason-registry/archive/main.zip"
 
 API_ROOT="${TMP_DIR}/api-root"
 API_PORT_FILE="${TMP_DIR}/api-port"

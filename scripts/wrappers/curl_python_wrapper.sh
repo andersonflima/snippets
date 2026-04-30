@@ -769,7 +769,6 @@ download_github_archive_tarball_via_zip() {
   zip_path="${tmp_dir}/archive.zip"
   candidate_urls=(
     "https://github.com/${owner}/${repo}/archive/${ref}.zip"
-    "https://codeload.github.com/${owner}/${repo}/zip/${ref}"
   )
 
   for url in "${candidate_urls[@]}"; do
@@ -795,30 +794,18 @@ archive_ref_candidate_urls() {
 
   case "${normalized_ref}" in
     refs/heads/*)
-      printf '%s\n' "https://github.com/${owner}/${repo}/archive/${normalized_ref}.zip"
-      printf '%s\n' "https://codeload.github.com/${owner}/${repo}/zip/${normalized_ref}"
-      printf '%s\n' "https://codeload.github.com/${owner}/${repo}/zip/${normalized_ref#refs/heads/}"
+      printf '%s\n' "https://github.com/${owner}/${repo}/archive/${normalized_ref#refs/heads/}.zip"
       ;;
     refs/tags/*)
-      printf '%s\n' "https://github.com/${owner}/${repo}/archive/${normalized_ref}.zip"
-      printf '%s\n' "https://codeload.github.com/${owner}/${repo}/zip/${normalized_ref}"
-      printf '%s\n' "https://codeload.github.com/${owner}/${repo}/zip/${normalized_ref#refs/tags/}"
+      printf '%s\n' "https://github.com/${owner}/${repo}/archive/${normalized_ref#refs/tags/}.zip"
       ;;
     HEAD|"")
-      printf '%s\n' "https://github.com/${owner}/${repo}/archive/refs/heads/main.zip"
-      printf '%s\n' "https://codeload.github.com/${owner}/${repo}/zip/refs/heads/main"
-      printf '%s\n' "https://github.com/${owner}/${repo}/archive/refs/heads/master.zip"
-      printf '%s\n' "https://codeload.github.com/${owner}/${repo}/zip/refs/heads/master"
+      printf '%s\n' "https://github.com/${owner}/${repo}/archive/main.zip"
+      printf '%s\n' "https://github.com/${owner}/${repo}/archive/master.zip"
       printf '%s\n' "https://github.com/${owner}/${repo}/archive/HEAD.zip"
-      printf '%s\n' "https://codeload.github.com/${owner}/${repo}/zip/HEAD"
       ;;
     *)
       printf '%s\n' "https://github.com/${owner}/${repo}/archive/${normalized_ref}.zip"
-      printf '%s\n' "https://codeload.github.com/${owner}/${repo}/zip/${normalized_ref}"
-      printf '%s\n' "https://github.com/${owner}/${repo}/archive/refs/heads/${normalized_ref}.zip"
-      printf '%s\n' "https://codeload.github.com/${owner}/${repo}/zip/refs/heads/${normalized_ref}"
-      printf '%s\n' "https://github.com/${owner}/${repo}/archive/refs/tags/${normalized_ref}.zip"
-      printf '%s\n' "https://codeload.github.com/${owner}/${repo}/zip/refs/tags/${normalized_ref}"
       ;;
   esac
 }
@@ -848,6 +835,12 @@ EOF2
 
   rm -f "${output_path}" 2>/dev/null || true
   return 1
+}
+
+should_prefer_github_archive_zip_alternates() {
+  local url
+  url="${1%%\?*}"
+  [[ "${url}" =~ ^https://codeload\.github\.com/[^/]+/[^/]+/zip/.+$ ]]
 }
 
 should_skip_direct_release_download() {
@@ -1488,6 +1481,14 @@ main() {
     fi
 
     die "download direto de release bloqueado para ${CURL_FALLBACK_URL}. Garanta gh autenticado ou ajuste CURL_WRAPPER_RELEASE_FALLBACK_REPOS/CURL_WRAPPER_ALLOW_DIRECT_RELEASE_FALLBACK."
+  fi
+
+  if should_prefer_github_archive_zip_alternates "${CURL_FALLBACK_URL:-}"; then
+    log "codeload indisponível neste ambiente; usando download zip direto do GitHub para ${CURL_FALLBACK_URL}"
+    if download_github_archive_zip_via_alternates; then
+      log "fallback GitHub archive zip direto concluído com sucesso para ${CURL_FALLBACK_URL}"
+      exit 0
+    fi
   fi
 
   if [[ -z "${CURL_FALLBACK_PROXY:-}" ]] && [[ -n "${resolved_proxy}" ]] && ! has_explicit_proxy_arg "$@"; then
