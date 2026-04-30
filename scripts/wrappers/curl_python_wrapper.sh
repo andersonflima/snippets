@@ -860,6 +860,7 @@ should_prefer_github_archive_zip_alternates() {
 }
 
 should_skip_direct_release_download() {
+  is_mason_registry_release_asset_url "${1:-}" && return 0
   is_restricted_release_asset_url "${1:-}" && ! is_truthy "${CURL_WRAPPER_ALLOW_DIRECT_RELEASE_FALLBACK}"
 }
 
@@ -1096,16 +1097,18 @@ download_with_js_wrapper() {
 }
 
 download_release_asset_by_name() {
-  local owner repo tag asset output_path
+  local owner repo tag asset output_path asset_url
   owner="$1"
   repo="$2"
   tag="$3"
   asset="$4"
   output_path="$5"
+  asset_url="https://github.com/${owner}/${repo}/releases/download/${tag}/${asset}"
 
-  if [[ "${asset}" != *.zip ]] || is_truthy "${CURL_WRAPPER_ALLOW_DIRECT_RELEASE_FALLBACK}"; then
+  if ! is_mason_registry_release_asset_url "${asset_url}" &&
+    ([[ "${asset}" != *.zip ]] || is_truthy "${CURL_WRAPPER_ALLOW_DIRECT_RELEASE_FALLBACK}"); then
     if download_url_with_real_curl \
-      "https://github.com/${owner}/${repo}/releases/download/${tag}/${asset}" \
+      "${asset_url}" \
       "${output_path}" \
       "1"; then
       if validate_release_asset_output "${asset}" "${output_path}" "curl direto"; then
@@ -1129,8 +1132,12 @@ download_release_asset_by_name() {
     return 0
   fi
 
+  if is_mason_registry_release_asset_url "${asset_url}"; then
+    return 1
+  fi
+
   if ! download_url_with_python_fallback \
-    "https://github.com/${owner}/${repo}/releases/download/${tag}/${asset}" \
+    "${asset_url}" \
     "${output_path}"; then
     return 1
   fi

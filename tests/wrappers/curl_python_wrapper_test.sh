@@ -285,6 +285,32 @@ with zipfile.ZipFile(output_path) as archive:
     assert archive.read("registry.json") == b"[]\n"
 PY
 
+OUTPUT_MASON_REGISTRY_RELEASE_ZIP_DIRECT_ALLOWED="${TMP_DIR}/registry-direct-allowed.json.zip"
+direct_release_calls_before="$(grep -c 'https://github.com/mason-org/mason-registry/releases/download/2026-04-30-stable-registry/registry.json.zip' "${CURL_LOG}" || true)"
+
+PATH="${TMP_DIR}:${PATH}" \
+CURL_WRAPPER_ALLOW_DIRECT_RELEASE_FALLBACK=1 \
+CURL_WRAPPER_REAL_CURL="${FAKE_CURL}" \
+  "${REPO_ROOT}/scripts/wrappers/curl_python_wrapper.sh" \
+    --silent \
+    --fail \
+    --show-error \
+    -L \
+    https://github.com/mason-org/mason-registry/releases/download/2026-04-30-stable-registry/registry.json.zip \
+    --output "${OUTPUT_MASON_REGISTRY_RELEASE_ZIP_DIRECT_ALLOWED}"
+
+direct_release_calls_after="$(grep -c 'https://github.com/mason-org/mason-registry/releases/download/2026-04-30-stable-registry/registry.json.zip' "${CURL_LOG}" || true)"
+test "${direct_release_calls_before}" = "${direct_release_calls_after}"
+python3 - "${OUTPUT_MASON_REGISTRY_RELEASE_ZIP_DIRECT_ALLOWED}" <<'PY'
+import sys
+import zipfile
+
+output_path = sys.argv[1]
+
+with zipfile.ZipFile(output_path) as archive:
+    assert archive.read("registry.json") == b"[]\n"
+PY
+
 OUTPUT_MASON_REGISTRY_CHECKSUMS="${TMP_DIR}/checksums.txt"
 
 PATH="${TMP_DIR}:${PATH}" \

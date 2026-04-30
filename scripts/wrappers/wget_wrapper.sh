@@ -235,6 +235,12 @@ is_github_release_zip_url() {
   [[ "${url}" =~ ^https://github\.com/[^/]+/[^/]+/releases/download/[^/]+/.+\.zip$ ]]
 }
 
+is_mason_registry_release_asset_url() {
+  local url
+  url="${1%%\?*}"
+  [[ "${url}" =~ ^https://github\.com/mason-org/mason-registry/releases/download/[^/]+/(registry\.json\.zip|checksums\.txt)$ ]]
+}
+
 is_github_url() {
   local url
   url="${1%%\?*}"
@@ -329,6 +335,9 @@ download_with_curl_wrapper() {
   curl_env=()
   if [[ "${WGET_URL}" == *.zip* || "${WGET_OUTPUT}" == *.zip ]]; then
     curl_env+=("CURL_WRAPPER_ALLOW_ZIP_DOWNLOAD=1")
+  fi
+  if is_mason_registry_release_asset_url "${WGET_URL}"; then
+    curl_env+=("CURL_WRAPPER_ALLOW_DIRECT_RELEASE_FALLBACK=0")
   fi
 
   if (( ${#curl_env[@]} > 0 )); then
@@ -586,6 +595,14 @@ main() {
   fi
 
   parse_args "$@" || die "argumentos wget não suportados para wrapper local"
+
+  if is_mason_registry_release_asset_url "${WGET_URL}"; then
+    log "delegando asset do Mason registry via curl wrapper: ${WGET_URL}"
+    if download_with_curl_wrapper; then
+      exit 0
+    fi
+    log "curl wrapper falhou para Mason registry; seguindo fluxo padrão do wget"
+  fi
 
   if is_truthy "${WGET_WRAPPER_USE_JS_ENGINE}" && resolve_js_wrapper_cli >/dev/null 2>&1; then
     log "tentando motor JS para wget: ${WGET_URL}"

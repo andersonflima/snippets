@@ -90,6 +90,60 @@ WRAPPER_WGET_STDOUT="$(
 
 test "${WRAPPER_WGET_STDOUT}" = "download via js"
 
+FAKE_RELEASE_CURL="${TMP_DIR}/release-curl"
+FAKE_RELEASE_CURL_LOG="${TMP_DIR}/release-curl-args"
+FAKE_RELEASE_OUTPUT="${TMP_DIR}/registry-via-wget.zip"
+cat > "${FAKE_RELEASE_CURL}" <<EOF2
+#!/usr/bin/env bash
+set -euo pipefail
+
+output=""
+printf '%s\n' "\$*" > "${FAKE_RELEASE_CURL_LOG}"
+[[ "\${CURL_WRAPPER_ALLOW_DIRECT_RELEASE_FALLBACK:-}" == "0" ]]
+
+while [[ \$# -gt 0 ]]; do
+  case "\$1" in
+    -o)
+      output="\${2:-}"
+      shift 2
+      ;;
+    *)
+      shift
+      ;;
+  esac
+done
+
+python3 - "\${output}" <<'PY'
+import sys
+import zipfile
+
+output_path = sys.argv[1]
+with zipfile.ZipFile(output_path, "w", zipfile.ZIP_DEFLATED) as archive:
+    archive.writestr("registry.json", "[]\\n")
+PY
+EOF2
+chmod +x "${FAKE_RELEASE_CURL}"
+
+env -u HTTPS_PROXY -u https_proxy -u HTTP_PROXY -u http_proxy -u ALL_PROXY -u all_proxy \
+  WGET_WRAPPER_USE_JS_ENGINE=1 \
+  WGET_WRAPPER_CURL_BIN="${FAKE_RELEASE_CURL}" \
+  "${REPO_ROOT}/scripts/wrappers/wget_wrapper.sh" \
+    --header "User-Agent: mason.nvim test" \
+    -o /dev/null \
+    -O "${FAKE_RELEASE_OUTPUT}" \
+    -T 30 \
+    "https://github.com/mason-org/mason-registry/releases/download/2026-04-30-stable-registry/registry.json.zip"
+
+grep -Fq 'https://github.com/mason-org/mason-registry/releases/download/2026-04-30-stable-registry/registry.json.zip' "${FAKE_RELEASE_CURL_LOG}"
+python3 - "${FAKE_RELEASE_OUTPUT}" <<'PY'
+import sys
+import zipfile
+
+output_path = sys.argv[1]
+with zipfile.ZipFile(output_path) as archive:
+    assert archive.read("registry.json") == b"[]\n"
+PY
+
 MASON_REGISTRY_ARCHIVE_ROOT="${HTTP_ROOT}/mason-org/mason-registry/archive/refs/heads"
 mkdir -p "${MASON_REGISTRY_ARCHIVE_ROOT}"
 python3 - "${MASON_REGISTRY_ARCHIVE_ROOT}/main.zip" <<'PY'
