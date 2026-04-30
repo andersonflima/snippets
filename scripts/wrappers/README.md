@@ -150,7 +150,6 @@ vim.env.GIT_ZIP_WRAPPER_STRICT = "0"
 - `GIT_ZIP_WRAPPER_CURL_CACERT`: caminho para CA customizada em ambiente corporativo.
 - `GIT_ZIP_WRAPPER_CURL_INSECURE`: desativa validação TLS do `curl` usado pelo wrapper.
 - `GIT_ZIP_WRAPPER_LFS_MODE`: modo do Git LFS. Valor suportado: `local`.
-- `GIT_ZIP_WRAPPER_TRY_DIRECT_CODELOAD`: permite tentar URLs diretas de `codeload.github.com` como fallback adicional. Padrão: `0`.
 - `GIT_ZIP_WRAPPER_STRICT`: impede fallback para `git clone` normal quando o archive local falhar.
 
 Comportamento adicional para LazyVim:

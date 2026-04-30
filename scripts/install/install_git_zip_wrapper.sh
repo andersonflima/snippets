@@ -144,8 +144,6 @@ export GIT_ZIP_WRAPPER_ALLOW_REMOTE_GIT_FALLBACK=0
 # padrão para GitHub externo: usar archive .zip
 export GIT_ZIP_WRAPPER_ARCHIVE_FORMAT=zip
 export GIT_ZIP_WRAPPER_ALLOW_ZIP_FALLBACK=1
-# opcional: tentar URLs diretas de codeload como fallback adicional
-# export GIT_ZIP_WRAPPER_TRY_DIRECT_CODELOAD=1
 # proxy do ambiente (preferência: GIT_ZIP_WRAPPER_PROXY > HTTPS_PROXY > ALL_PROXY > HTTP_PROXY)
 # export GIT_ZIP_WRAPPER_PROXY=http://proxy.seu-dominio:3128
 # opcional: permitir Git remoto real como último fallback
@@ -165,8 +163,6 @@ vim.env.GIT_ZIP_WRAPPER_ALLOW_REMOTE_GIT_FALLBACK = "0"
 -- padrão para GitHub externo: usar archive .zip
 vim.env.GIT_ZIP_WRAPPER_ARCHIVE_FORMAT = "zip"
 vim.env.GIT_ZIP_WRAPPER_ALLOW_ZIP_FALLBACK = "1"
--- opcional: tentar URLs diretas de codeload como fallback adicional
--- vim.env.GIT_ZIP_WRAPPER_TRY_DIRECT_CODELOAD = "1"
 -- proxy do ambiente
 -- vim.env.GIT_ZIP_WRAPPER_PROXY = "http://proxy.seu-dominio:3128"
 -- opcional: permitir Git remoto real como último fallback
