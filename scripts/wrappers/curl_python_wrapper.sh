@@ -549,6 +549,29 @@ parse_curl_arguments_for_python_fallback() {
         CURL_FALLBACK_INSECURE="1"
         index=$((index + 1))
         ;;
+      -X|--request)
+        (( index + 1 < ${#args[@]} )) || return 1
+        case "$(printf '%s' "${args[index + 1]}" | tr '[:lower:]' '[:upper:]')" in
+          GET)
+            index=$((index + 2))
+            ;;
+          *)
+            CURL_FALLBACK_CAN_HANDLE="0"
+            return 0
+            ;;
+        esac
+        ;;
+      --request=*)
+        case "$(printf '%s' "${arg#--request=}" | tr '[:lower:]' '[:upper:]')" in
+          GET)
+            index=$((index + 1))
+            ;;
+          *)
+            CURL_FALLBACK_CAN_HANDLE="0"
+            return 0
+            ;;
+        esac
+        ;;
       --connect-timeout)
         (( index + 1 < ${#args[@]} )) || return 1
         CURL_FALLBACK_CONNECT_TIMEOUT="${args[index + 1]}"
@@ -575,11 +598,11 @@ parse_curl_arguments_for_python_fallback() {
           index=$((index + 1))
         fi
         ;;
-      -I|--head|-X|--request|-T|--upload-file|-F|--form|-d|--data|--data-binary|--data-raw|--data-urlencode|--compressed|--proxy-user)
+      -I|--head|-T|--upload-file|-F|--form|-d|--data|--data-binary|--data-raw|--data-urlencode|--compressed|--proxy-user)
         CURL_FALLBACK_CAN_HANDLE="0"
         return 0
         ;;
-      --request=*|--data=*|--data-binary=*|--data-raw=*|--data-urlencode=*|--form=*|--proxy-user=*|--upload-file=*|--cacert=*|--cert=*|--key=*)
+      --data=*|--data-binary=*|--data-raw=*|--data-urlencode=*|--form=*|--proxy-user=*|--upload-file=*|--cacert=*|--cert=*|--key=*)
         CURL_FALLBACK_CAN_HANDLE="0"
         return 0
         ;;
@@ -618,9 +641,6 @@ parse_curl_arguments_for_python_fallback() {
     CURL_FALLBACK_OUTPUT="${CURL_FALLBACK_OUTPUT_DIR%/}/${CURL_FALLBACK_OUTPUT}"
   fi
 
-  if [[ -z "${CURL_FALLBACK_OUTPUT}" ]]; then
-    CURL_FALLBACK_CAN_HANDLE="0"
-  fi
   return 0
 }
 
@@ -652,6 +672,28 @@ parse_github_archive_tarball_url() {
   fi
 
   if [[ "${url}" =~ ^https://codeload\.github\.com/([^/]+)/([^/]+)/tar\.gz/(.+)$ ]]; then
+    GITHUB_ARCHIVE_OWNER="${BASH_REMATCH[1]}"
+    GITHUB_ARCHIVE_REPO="${BASH_REMATCH[2]}"
+    ref="${BASH_REMATCH[3]}"
+    GITHUB_ARCHIVE_REF="${ref}"
+    return 0
+  fi
+
+  return 1
+}
+
+parse_github_archive_zip_url() {
+  local url ref
+  url="${1%%\?*}"
+
+  if [[ "${url}" =~ ^https://github\.com/([^/]+)/([^/]+)/archive/(.+)\.zip$ ]]; then
+    GITHUB_ARCHIVE_OWNER="${BASH_REMATCH[1]}"
+    GITHUB_ARCHIVE_REPO="${BASH_REMATCH[2]}"
+    GITHUB_ARCHIVE_REF="${BASH_REMATCH[3]}"
+    return 0
+  fi
+
+  if [[ "${url}" =~ ^https://codeload\.github\.com/([^/]+)/([^/]+)/zip/(.+)$ ]]; then
     GITHUB_ARCHIVE_OWNER="${BASH_REMATCH[1]}"
     GITHUB_ARCHIVE_REPO="${BASH_REMATCH[2]}"
     ref="${BASH_REMATCH[3]}"
@@ -741,6 +783,70 @@ download_github_archive_tarball_via_zip() {
   done
 
   rm -rf "${tmp_dir}"
+  return 1
+}
+
+archive_ref_candidate_urls() {
+  local owner repo ref normalized_ref
+  owner="$1"
+  repo="$2"
+  ref="$3"
+  normalized_ref="${ref}"
+
+  case "${normalized_ref}" in
+    refs/heads/*)
+      printf '%s\n' "https://github.com/${owner}/${repo}/archive/${normalized_ref}.zip"
+      printf '%s\n' "https://codeload.github.com/${owner}/${repo}/zip/${normalized_ref}"
+      printf '%s\n' "https://codeload.github.com/${owner}/${repo}/zip/${normalized_ref#refs/heads/}"
+      ;;
+    refs/tags/*)
+      printf '%s\n' "https://github.com/${owner}/${repo}/archive/${normalized_ref}.zip"
+      printf '%s\n' "https://codeload.github.com/${owner}/${repo}/zip/${normalized_ref}"
+      printf '%s\n' "https://codeload.github.com/${owner}/${repo}/zip/${normalized_ref#refs/tags/}"
+      ;;
+    HEAD|"")
+      printf '%s\n' "https://github.com/${owner}/${repo}/archive/refs/heads/main.zip"
+      printf '%s\n' "https://codeload.github.com/${owner}/${repo}/zip/refs/heads/main"
+      printf '%s\n' "https://github.com/${owner}/${repo}/archive/refs/heads/master.zip"
+      printf '%s\n' "https://codeload.github.com/${owner}/${repo}/zip/refs/heads/master"
+      printf '%s\n' "https://github.com/${owner}/${repo}/archive/HEAD.zip"
+      printf '%s\n' "https://codeload.github.com/${owner}/${repo}/zip/HEAD"
+      ;;
+    *)
+      printf '%s\n' "https://github.com/${owner}/${repo}/archive/${normalized_ref}.zip"
+      printf '%s\n' "https://codeload.github.com/${owner}/${repo}/zip/${normalized_ref}"
+      printf '%s\n' "https://github.com/${owner}/${repo}/archive/refs/heads/${normalized_ref}.zip"
+      printf '%s\n' "https://codeload.github.com/${owner}/${repo}/zip/refs/heads/${normalized_ref}"
+      printf '%s\n' "https://github.com/${owner}/${repo}/archive/refs/tags/${normalized_ref}.zip"
+      printf '%s\n' "https://codeload.github.com/${owner}/${repo}/zip/refs/tags/${normalized_ref}"
+      ;;
+  esac
+}
+
+download_github_archive_zip_via_alternates() {
+  local url output_path owner repo ref candidate
+
+  url="${CURL_FALLBACK_URL:-}"
+  output_path="${CURL_FALLBACK_OUTPUT:-}"
+  [[ -n "${url}" && -n "${output_path}" ]] || return 1
+  parse_github_archive_zip_url "${url}" || return 1
+
+  owner="${GITHUB_ARCHIVE_OWNER}"
+  repo="${GITHUB_ARCHIVE_REPO}"
+  ref="${GITHUB_ARCHIVE_REF}"
+  [[ -n "${owner}" && -n "${repo}" ]] || return 1
+
+  while IFS= read -r candidate; do
+    [[ -n "${candidate}" ]] || continue
+    rm -f "${output_path}" 2>/dev/null || true
+    if download_url_with_real_curl "${candidate}" "${output_path}" "1" && is_valid_zip_file "${output_path}"; then
+      return 0
+    fi
+  done <<EOF2
+$(archive_ref_candidate_urls "${owner}" "${repo}" "${ref}")
+EOF2
+
+  rm -f "${output_path}" 2>/dev/null || true
   return 1
 }
 
@@ -1469,6 +1575,11 @@ main() {
 
   if download_github_archive_tarball_via_zip; then
     log "fallback GitHub archive zip->tar.gz concluído com sucesso para ${CURL_FALLBACK_URL}"
+    exit 0
+  fi
+
+  if download_github_archive_zip_via_alternates; then
+    log "fallback GitHub archive zip alternativo concluído com sucesso para ${CURL_FALLBACK_URL}"
     exit 0
   fi
 
