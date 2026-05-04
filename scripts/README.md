@@ -24,6 +24,15 @@ sh scripts/configure.sh \
   --mason-packages "lua-language-server,pyright,elixir-ls"
 ```
 
+Se `git fetch` em repositórios não-itau retornar “remote disabled”, use:
+
+```bash
+sh scripts/configure.sh \
+  --disable-remote-git-fallback \
+  --proxy "http://proxy.corp:3128" \
+  --ca-cert "/etc/ssl/certs/corp-ca.pem"
+```
+
 Com proxy ou CA corporativa:
 
 ```bash
@@ -45,6 +54,8 @@ Para clonar seu estado atual do Neovim (config + plugins já instalados do Lazy/
 ```bash
 sh scripts/install/nvim_offline_bundle.sh snapshot --copy-wrapper-env
 ```
+
+No snapshot, o `--no-data` mantém a pasta `.local/share/nvim` fora e registra apenas `mason-packages.txt` para bootstrap posterior.
 
 Diretório gerado:
 
@@ -71,7 +82,12 @@ Após restore na máquina nova, rode seu fluxo de wrapper para reativar o ambien
 sh scripts/configure.sh --skip-lazy-bootstrap --skip-mason-bootstrap
 ```
 
-Assim os wrappers ficam instalados e os pacotes copiados permanecem prontos para uso.
+Assim os wrappers ficam instalados e os pacotes copiados permanecem prontos para bootstrap.
+Se quiser evitar qualquer alteração de rede na restauração, rode:
+
+```bash
+sh scripts/install/nvim_offline_bundle.sh restore --bundle-dir ./nvim-offline-bundle --no-bootstrap
+```
 
 ## Diagnóstico
 

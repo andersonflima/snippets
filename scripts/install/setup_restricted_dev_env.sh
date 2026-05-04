@@ -189,6 +189,8 @@ Opções:
   --configure-hex              Também aplica mix hex.config no host local.
   --hex-unsafe-https           Define unsafe_https/registry/origin no Hex.
   --hex-no-test                Não executa mix hex.info ao final da config do Hex.
+  --disable-remote-git-fallback Não usa git remoto para repositórios não-itau quando archive falha.
+  --enable-remote-git-fallback  Permite git remoto para repositórios não-itau em fallback.
   --no-shell-rc                Não altera o arquivo rc do shell.
   -h, --help                   Mostra esta ajuda.
 
@@ -216,6 +218,7 @@ CA_CERT_PATH="${GIT_ZIP_WRAPPER_CURL_CACERT:-${HEX_CACERTS_PATH:-${SSL_CERT_FILE
 AUTO_INSECURE_ON_CERT_ERROR="${CURL_WRAPPER_AUTO_INSECURE_ON_CERT_ERROR:-0}"
 MASON_SEED_DIR="${CURL_WRAPPER_MASON_SEED_DIR:-}"
 MASON_BOOTSTRAP_PACKAGES="${MASON_BOOTSTRAP_PACKAGES:-}"
+GIT_ZIP_WRAPPER_ALLOW_REMOTE_GIT_FALLBACK="0"
 BOOTSTRAP_LAZY_TIMEOUT_SECONDS="600"
 BOOTSTRAP_SKIP_LAZY="0"
 BOOTSTRAP_SKIP_MASON="0"
@@ -282,6 +285,14 @@ while [[ $# -gt 0 ]]; do
     --bootstrap-lazy-timeout)
       BOOTSTRAP_LAZY_TIMEOUT_SECONDS="${2:-}"
       shift 2
+      ;;
+    --disable-remote-git-fallback)
+      GIT_ZIP_WRAPPER_ALLOW_REMOTE_GIT_FALLBACK="0"
+      shift
+      ;;
+    --enable-remote-git-fallback)
+      GIT_ZIP_WRAPPER_ALLOW_REMOTE_GIT_FALLBACK="1"
+      shift
       ;;
     --skip-lazy-bootstrap)
       BOOTSTRAP_SKIP_LAZY="1"
@@ -722,6 +733,11 @@ if [[ -n "${CA_CERT_PATH}" ]]; then
 fi
 if [[ -n "${MASON_SEED_DIR}" ]]; then
   WRAPPER_ENV_ARGS+=(--mason-seed-dir "${MASON_SEED_DIR}")
+fi
+if [[ "${GIT_ZIP_WRAPPER_ALLOW_REMOTE_GIT_FALLBACK}" == "1" ]]; then
+  WRAPPER_ENV_ARGS+=(--allow-remote-git-fallback)
+else
+  WRAPPER_ENV_ARGS+=(--disable-remote-git-fallback)
 fi
 if [[ "${AUTO_INSECURE_ON_CERT_ERROR}" == "1" ]]; then
   WRAPPER_ENV_ARGS+=(--auto-insecure-on-cert-error)

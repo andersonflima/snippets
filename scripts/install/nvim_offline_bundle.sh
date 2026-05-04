@@ -27,6 +27,8 @@ Opções:
   --target-data <dir>           Caminho de destino do data nvim (restore).
   --data-components <lista>     Componentes do data a incluir (snapshot).
                                 Padrão: lazy,mason.
+  --no-bootstrap                Não executar bootstrap automático do Lazy/Mason após restore.
+  --bootstrap-timeout <segundos> Timeout por pacote no bootstrap. Padrão: 1200.
   --no-config                   Não copiar/configurar .config/nvim.
   --no-data                     Não copiar/configurar dados de runtime.
   --backup                      Faz backup dos diretórios existentes no restore.
@@ -41,6 +43,8 @@ Observações:
   restore:
     --target-config e --target-data usam valores padrão do usuário atual.
     diretórios existentes geram backup com sufixo .offline-backup.<timestamp>.
+  snapshot:
+    ao usar --no-data, o script apenas captura a lista de pacotes Mason para bootstrap.
 USAGE
 }
 
@@ -59,6 +63,8 @@ DO_DATA="1"
 DO_BACKUP="1"
 DO_OVERWRITE="0"
 COPY_WRAPPER_ENV="0"
+DO_BOOTSTRAP="1"
+BOOTSTRAP_TIMEOUT_SECONDS="1200"
 
 copy_tree() {
   local source_dir target_dir source_path target_path
@@ -113,6 +119,60 @@ copy_data_components() {
 
     log "componente inexistente no source-data e ignorado: ${source_path}"
   done
+}
+
+collect_mason_packages_snapshot() {
+  local bundle_data_dir source_mason_dir output_file entry package_name
+  source_mason_dir="${1}"
+  output_file="${2}"
+
+  mkdir -p "$(dirname "${output_file}")"
+  rm -f "${output_file}"
+
+  [[ -d "${source_mason_dir}" ]] || return 0
+
+  for entry in "${source_mason_dir}"/*; do
+    [[ -e "${entry}" ]] || continue
+    [[ -d "${entry}" ]] || continue
+    package_name="$(basename "${entry}")"
+    [[ -n "${package_name}" ]] || continue
+    printf '%s\n' "${package_name}" >> "${output_file}"
+  done
+
+  sort -u "${output_file}" -o "${output_file}" 2>/dev/null || true
+}
+
+build_packages_from_bundle_file() {
+  local file_path="${1}"
+
+  [[ -f "${file_path}" ]] || { echo ""; return 0; }
+
+  awk 'NF {printf "%s,", $0}' "${file_path}" | sed 's/,$//'
+}
+
+run_restore_bootstrap() {
+  local packages_file packages_list bootstrap_args env_file
+
+  [[ -x "${SCRIPT_DIR}/bootstrap_lazyvim_mason.sh" ]] || return 0
+  command -v nvim >/dev/null 2>&1 || {
+    log "nvim não encontrado; bootstrap de lazy/mason não executado"
+    return 0
+  }
+
+  env_file="${HOME}/.config/wrapper-envs.sh"
+  if [[ -f "${env_file}" ]]; then
+    # shellcheck disable=SC1090
+    . "${env_file}"
+  fi
+
+  packages_file="${BUNDLE_DIR}/mason-packages.txt"
+  packages_list="$(build_packages_from_bundle_file "${packages_file}")"
+
+  bootstrap_args=(--env-file "${env_file}" --bootstrap-timeout "${BOOTSTRAP_TIMEOUT_SECONDS}")
+  [[ -n "${packages_list}" ]] && bootstrap_args+=(--mason-packages "${packages_list}")
+
+  log "executando bootstrap lazy/mason na máquina atual"
+  sh "${SCRIPT_DIR}/bootstrap_lazyvim_mason.sh" "${bootstrap_args[@]}"
 }
 
 restore_item() {
@@ -201,6 +261,10 @@ snapshot_bundle() {
     copy_data_components "${bundle_data_dir}" "${SOURCE_DATA_DIR}"
   fi
 
+  collect_mason_packages_snapshot \
+    "${SOURCE_DATA_DIR}/mason/packages" \
+    "${BUNDLE_DIR}/mason-packages.txt"
+
   if [[ "${COPY_WRAPPER_ENV}" == "1" ]]; then
     copy_file "${HOME}/.config/wrapper-envs.sh" "${BUNDLE_DIR}/wrapper-envs.sh"
     copy_file "${HOME}/.config/restricted-dev-env/state.sh" "${BUNDLE_DIR}/restricted-dev-env-state.sh"
@@ -239,7 +303,11 @@ restore_bundle() {
   fi
 
   log "restore concluído."
-  log "próximo passo recomendado: executar nvim --headless '+Lazy! sync' '+Mason' +qa ou abrir o nvim e validar."
+  if [[ "${DO_BOOTSTRAP}" == "1" ]]; then
+    run_restore_bootstrap
+  else
+    log "próximo passo recomendado: executar nvim --headless '+Lazy! sync' +qa e validar."
+  fi
 }
 
 while [[ $# -gt 0 ]]; do
@@ -293,6 +361,14 @@ while [[ $# -gt 0 ]]; do
     --copy-wrapper-env)
       COPY_WRAPPER_ENV="1"
       shift
+      ;;
+    --no-bootstrap)
+      DO_BOOTSTRAP="0"
+      shift
+      ;;
+    --bootstrap-timeout)
+      BOOTSTRAP_TIMEOUT_SECONDS="${2:-1200}"
+      shift 2
       ;;
     -h|--help)
       usage

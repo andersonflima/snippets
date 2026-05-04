@@ -137,6 +137,10 @@ Opções:
   --ca-cert <arquivo>          Define CA customizada para o wrapper de git.
   --auto-insecure-on-cert-error
                                Ativa retry inseguro no wrapper de curl.
+  --allow-remote-git-fallback
+                               Habilita fallback remoto de git para repositórios não-itau.
+  --disable-remote-git-fallback
+                               Desabilita fallback remoto de git para repositórios não-itau.
   -h, --help                   Mostra esta ajuda.
 USAGE
 }
@@ -152,6 +156,7 @@ REAL_CURL_BIN="${CURL_WRAPPER_REAL_CURL:-}"
 REAL_WGET_BIN="${WGET_WRAPPER_REAL_WGET:-}"
 REAL_GIT_BIN="${GIT_ZIP_WRAPPER_REAL_GIT:-}"
 GIT_LFS_MODE="${GIT_ZIP_WRAPPER_LFS_MODE:-local}"
+GIT_ZIP_WRAPPER_ALLOW_REMOTE_GIT_FALLBACK="0"
 PROXY_URL=""
 CA_CERT_PATH=""
 AUTO_INSECURE_ON_CERT_ERROR="0"
@@ -219,6 +224,14 @@ while [[ $# -gt 0 ]]; do
       AUTO_INSECURE_ON_CERT_ERROR="1"
       shift
       ;;
+    --allow-remote-git-fallback)
+      GIT_ZIP_WRAPPER_ALLOW_REMOTE_GIT_FALLBACK="1"
+      shift
+      ;;
+    --disable-remote-git-fallback)
+      GIT_ZIP_WRAPPER_ALLOW_REMOTE_GIT_FALLBACK="0"
+      shift
+      ;;
     -h|--help)
       usage
       exit 0
@@ -264,6 +277,13 @@ case "${AUTO_INSECURE_ON_CERT_ERROR}" in
     ;;
   *)
     die "CURL_WRAPPER_AUTO_INSECURE_ON_CERT_ERROR inválido: ${AUTO_INSECURE_ON_CERT_ERROR}"
+    ;;
+esac
+case "${GIT_ZIP_WRAPPER_ALLOW_REMOTE_GIT_FALLBACK}" in
+  0|1)
+    ;;
+  *)
+    die "GIT_ZIP_WRAPPER_ALLOW_REMOTE_GIT_FALLBACK inválido: ${GIT_ZIP_WRAPPER_ALLOW_REMOTE_GIT_FALLBACK}"
     ;;
 esac
 case "$(printf '%s' "${GIT_LFS_MODE}" | tr '[:upper:]' '[:lower:]')" in
@@ -331,7 +351,7 @@ render_local_exports() {
   printf 'export GIT_ZIP_WRAPPER_STRICT=%s\n' "$(shell_quote "0")"
   printf 'export GIT_ZIP_WRAPPER_ARCHIVE_FORMAT=%s\n' "$(shell_quote "zip")"
   printf 'export GIT_ZIP_WRAPPER_ALLOW_ZIP_FALLBACK=%s\n' "$(shell_quote "1")"
-  printf 'export GIT_ZIP_WRAPPER_ALLOW_REMOTE_GIT_FALLBACK=%s\n' "$(shell_quote "1")"
+  printf 'export GIT_ZIP_WRAPPER_ALLOW_REMOTE_GIT_FALLBACK=%s\n' "$(shell_quote "${GIT_ZIP_WRAPPER_ALLOW_REMOTE_GIT_FALLBACK}")"
   printf 'export CURL_WRAPPER_ALLOW_ZIP_DOWNLOAD=%s\n' "$(shell_quote "1")"
   printf 'export RESTRICTED_GIT_PLAIN_OWNER_PREFIXES=%s\n' "$(shell_quote "itau-,itau")"
   printf 'export GIT_ZIP_WRAPPER_LFS_MODE=%s\n' "$(shell_quote "${GIT_LFS_MODE}")"
@@ -427,7 +447,7 @@ export CURL_WRAPPER_MASON_BUILDERS="elixir-lsp/elixir-ls=elixir_ls_release,omnis
 export CURL_WRAPPER_MASON_REPACKAGE_EXTENSIONS="tar.gz,tgz,tar"
 export GIT_ZIP_WRAPPER_ARCHIVE_FORMAT="zip"
 export GIT_ZIP_WRAPPER_CLONE_ORDER="local-first"
-export GIT_ZIP_WRAPPER_ALLOW_REMOTE_GIT_FALLBACK="1"
+export GIT_ZIP_WRAPPER_ALLOW_REMOTE_GIT_FALLBACK="${GIT_ZIP_WRAPPER_ALLOW_REMOTE_GIT_FALLBACK}"
 export GIT_ZIP_WRAPPER_ALLOW_ZIP_FALLBACK="1"
 export RESTRICTED_GIT_PLAIN_OWNER_PREFIXES="itau-,itau"
 EOF2

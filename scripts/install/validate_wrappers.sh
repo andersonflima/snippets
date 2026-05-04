@@ -281,10 +281,10 @@ validate_local_policy() {
     ok "GIT_ZIP_WRAPPER_ARCHIVE_FORMAT=zip"
   fi
 
-  if [[ "${remote_git_fallback}" != "1" ]]; then
-    fail "GIT_ZIP_WRAPPER_ALLOW_REMOTE_GIT_FALLBACK=${remote_git_fallback} (esperado: 1)"
+  if [[ "${remote_git_fallback}" != "0" && "${remote_git_fallback}" != "1" ]]; then
+    fail "GIT_ZIP_WRAPPER_ALLOW_REMOTE_GIT_FALLBACK=${remote_git_fallback} (esperado: 0|1)"
   else
-    ok "GIT_ZIP_WRAPPER_ALLOW_REMOTE_GIT_FALLBACK=1"
+    ok "GIT_ZIP_WRAPPER_ALLOW_REMOTE_GIT_FALLBACK=${remote_git_fallback}"
   fi
 
   if [[ "${force_local_downloads}" != "1" ]]; then

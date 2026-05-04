@@ -117,7 +117,7 @@ vim.env.CURL_WRAPPER_MASON_BUILDERS = "elixir-lsp/elixir-ls=elixir_ls_release,om
 vim.env.CURL_WRAPPER_MASON_SOURCE_BUILD_REPOS = "omnisharp/omnisharp-roslyn"
 vim.env.GIT_ZIP_WRAPPER_ARCHIVE_FORMAT = "zip"
 vim.env.GIT_ZIP_WRAPPER_CLONE_ORDER = "local-first"
-vim.env.GIT_ZIP_WRAPPER_ALLOW_REMOTE_GIT_FALLBACK = "1"
+vim.env.GIT_ZIP_WRAPPER_ALLOW_REMOTE_GIT_FALLBACK = "0"
 vim.env.GIT_ZIP_WRAPPER_ALLOW_ZIP_FALLBACK = "1"
 vim.env.GIT_ZIP_WRAPPER_FORCE_LOCAL_DOWNLOADS = "1"
 vim.env.GIT_ZIP_WRAPPER_LFS_MODE = "local"
@@ -157,7 +157,7 @@ vim.env.GIT_ZIP_WRAPPER_STRICT = "0"
 - `GIT_ZIP_WRAPPER_ALLOW_ZIP_FALLBACK`: libera fallback ou uso primário de `.zip`.
 - `RESTRICTED_GIT_PLAIN_OWNER_PREFIXES`: lista separada por vírgulas de owners GitHub cuja origem usa Git real (ex: org interna Itaú). Padrão: `itau-,itau`.
 - `GIT_ZIP_WRAPPER_CLONE_ORDER`: política do clone do wrapper. Valores suportados: `git-first`, `local-first`. Padrão: `local-first`.
-- `GIT_ZIP_WRAPPER_ALLOW_REMOTE_GIT_FALLBACK`: permite usar `git clone/fetch/checkout` remoto real se o archive falhar. Padrão: `1`.
+- `GIT_ZIP_WRAPPER_ALLOW_REMOTE_GIT_FALLBACK`: permite usar `git clone/fetch/checkout` remoto real se o archive falhar. Padrão recomendado: `0`.
 - `GIT_ZIP_WRAPPER_FORCE_LOCAL_DOWNLOADS`: mantém a tentativa de archive local como preferência. Padrão: `1`.
 - `GIT_ZIP_WRAPPER_CURL_CACERT`: caminho para CA customizada em ambiente corporativo.
 - `GIT_ZIP_WRAPPER_CURL_INSECURE`: desativa validação TLS do `curl` usado pelo wrapper.
