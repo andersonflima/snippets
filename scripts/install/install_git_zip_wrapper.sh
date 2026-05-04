@@ -138,17 +138,17 @@ Instalação concluída.
 1) Exporte no shell:
 export GIT_ZIP_WRAPPER_REAL_GIT="${REAL_GIT_BIN}"
 export PATH="${INSTALL_DIR}:\$PATH"
-# padrão para ambiente restrito: Git remoto externo é bloqueado, archive local é obrigatório
+# padrão para ambiente restrito: Git interno funciona normalmente; não-itau usa archive local com fallback remoto habilitado
 export GIT_ZIP_WRAPPER_CLONE_ORDER=local-first
-export GIT_ZIP_WRAPPER_ALLOW_REMOTE_GIT_FALLBACK=0
+export GIT_ZIP_WRAPPER_ALLOW_REMOTE_GIT_FALLBACK=1
 # padrão para GitHub externo: usar archive .zip
 export GIT_ZIP_WRAPPER_ARCHIVE_FORMAT=zip
 export GIT_ZIP_WRAPPER_ALLOW_ZIP_FALLBACK=1
 export RESTRICTED_GIT_PLAIN_OWNER_PREFIXES="itau-,itau"
 # proxy do ambiente (preferência: GIT_ZIP_WRAPPER_PROXY > HTTPS_PROXY > ALL_PROXY > HTTP_PROXY)
 # export GIT_ZIP_WRAPPER_PROXY=http://proxy.seu-dominio:3128
-# opcional: permitir Git remoto real como último fallback
-# export GIT_ZIP_WRAPPER_ALLOW_REMOTE_GIT_FALLBACK=1
+# opcional: desativar fallback remoto real (força exclusividade de archive para não-itau)
+# export GIT_ZIP_WRAPPER_ALLOW_REMOTE_GIT_FALLBACK=0
 # modo de Git LFS é sempre local
 export GIT_ZIP_WRAPPER_LFS_MODE=local
 # resolver certificado em ambiente corporativo/proxy:
@@ -158,17 +158,17 @@ export GIT_ZIP_WRAPPER_LFS_MODE=local
 2) Para LazyVim/Mason (init.lua):
 vim.env.GIT_ZIP_WRAPPER_REAL_GIT = "${REAL_GIT_BIN}"
 vim.env.PATH = "${INSTALL_DIR}:" .. vim.env.PATH
--- padrão para ambiente restrito: Git remoto externo é bloqueado, archive local é obrigatório
+-- padrão para ambiente restrito: Git interno funciona normalmente; não-itau usa archive local com fallback remoto habilitado
 vim.env.GIT_ZIP_WRAPPER_CLONE_ORDER = "local-first"
-vim.env.GIT_ZIP_WRAPPER_ALLOW_REMOTE_GIT_FALLBACK = "0"
+vim.env.GIT_ZIP_WRAPPER_ALLOW_REMOTE_GIT_FALLBACK = "1"
 -- padrão para GitHub externo: usar archive .zip
 vim.env.GIT_ZIP_WRAPPER_ARCHIVE_FORMAT = "zip"
 vim.env.GIT_ZIP_WRAPPER_ALLOW_ZIP_FALLBACK = "1"
 vim.env.RESTRICTED_GIT_PLAIN_OWNER_PREFIXES = "itau-,itau"
 -- proxy do ambiente
 -- vim.env.GIT_ZIP_WRAPPER_PROXY = "http://proxy.seu-dominio:3128"
--- opcional: permitir Git remoto real como último fallback
--- vim.env.GIT_ZIP_WRAPPER_ALLOW_REMOTE_GIT_FALLBACK = "1"
+-- opcional: desativar fallback remoto real (força exclusividade de archive para não-itau)
+-- vim.env.GIT_ZIP_WRAPPER_ALLOW_REMOTE_GIT_FALLBACK = "0"
 -- modo de Git LFS é sempre local
 vim.env.GIT_ZIP_WRAPPER_LFS_MODE = "local"
 -- opcional: informar CA intermediária personalizada

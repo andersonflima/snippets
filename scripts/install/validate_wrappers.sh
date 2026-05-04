@@ -257,11 +257,14 @@ validate_curl_wrapper_homebrew_contract() {
 
 validate_local_policy() {
   local clone_order force_local_downloads lfs_mode archive_format remote_git_fallback
+  local allow_zip_download wget_always_use_curl
   clone_order="${GIT_ZIP_WRAPPER_CLONE_ORDER:-local-first}"
   force_local_downloads="${GIT_ZIP_WRAPPER_FORCE_LOCAL_DOWNLOADS:-1}"
   lfs_mode="${GIT_ZIP_WRAPPER_LFS_MODE:-local}"
   archive_format="${GIT_ZIP_WRAPPER_ARCHIVE_FORMAT:-zip}"
-  remote_git_fallback="${GIT_ZIP_WRAPPER_ALLOW_REMOTE_GIT_FALLBACK:-0}"
+  remote_git_fallback="${GIT_ZIP_WRAPPER_ALLOW_REMOTE_GIT_FALLBACK:-1}"
+  allow_zip_download="${CURL_WRAPPER_ALLOW_ZIP_DOWNLOAD:-1}"
+  wget_always_use_curl="${WGET_WRAPPER_ALWAYS_USE_CURL:-1}"
 
   case "${clone_order}" in
     local-first)
@@ -278,10 +281,10 @@ validate_local_policy() {
     ok "GIT_ZIP_WRAPPER_ARCHIVE_FORMAT=zip"
   fi
 
-  if [[ "${remote_git_fallback}" != "0" ]]; then
-    fail "GIT_ZIP_WRAPPER_ALLOW_REMOTE_GIT_FALLBACK=${remote_git_fallback} (esperado: 0)"
+  if [[ "${remote_git_fallback}" != "1" ]]; then
+    fail "GIT_ZIP_WRAPPER_ALLOW_REMOTE_GIT_FALLBACK=${remote_git_fallback} (esperado: 1)"
   else
-    ok "GIT_ZIP_WRAPPER_ALLOW_REMOTE_GIT_FALLBACK=0"
+    ok "GIT_ZIP_WRAPPER_ALLOW_REMOTE_GIT_FALLBACK=1"
   fi
 
   if [[ "${force_local_downloads}" != "1" ]]; then
@@ -294,6 +297,18 @@ validate_local_policy() {
     fail "GIT_ZIP_WRAPPER_LFS_MODE=${lfs_mode} (esperado: local)"
   else
     ok "GIT_ZIP_WRAPPER_LFS_MODE=local"
+  fi
+
+  if [[ "${allow_zip_download}" != "1" ]]; then
+    fail "CURL_WRAPPER_ALLOW_ZIP_DOWNLOAD=${allow_zip_download} (esperado: 1)"
+  else
+    ok "CURL_WRAPPER_ALLOW_ZIP_DOWNLOAD=1"
+  fi
+
+  if [[ "${wget_always_use_curl}" != "1" ]]; then
+    fail "WGET_WRAPPER_ALWAYS_USE_CURL=${wget_always_use_curl} (esperado: 1)"
+  else
+    ok "WGET_WRAPPER_ALWAYS_USE_CURL=1"
   fi
 }
 

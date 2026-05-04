@@ -36,7 +36,7 @@ GIT_ZIP_WRAPPER_LFS_STRICT="${GIT_ZIP_WRAPPER_LFS_STRICT:-0}"
 GIT_ZIP_WRAPPER_LFS_RETRY_NO_PROXY="${GIT_ZIP_WRAPPER_LFS_RETRY_NO_PROXY:-1}"
 GIT_ZIP_WRAPPER_LFS_MODE="local"
 GIT_ZIP_WRAPPER_STRICT="${GIT_ZIP_WRAPPER_STRICT:-0}"
-GIT_ZIP_WRAPPER_ALLOW_REMOTE_GIT_FALLBACK="${GIT_ZIP_WRAPPER_ALLOW_REMOTE_GIT_FALLBACK:-0}"
+GIT_ZIP_WRAPPER_ALLOW_REMOTE_GIT_FALLBACK="${GIT_ZIP_WRAPPER_ALLOW_REMOTE_GIT_FALLBACK:-1}"
 GIT_ZIP_WRAPPER_LAST_DOWNLOAD_ERROR_KIND=""
 GIT_GLOBAL_ARGS=()
 GIT_SUBCOMMAND=""
@@ -831,20 +831,23 @@ download_github_archive() {
   archive_path="$3"
   ref_type="$(resolve_archive_ref_type "${branch}")"
   normalized_ref="$(normalize_archive_ref_name "${branch}")"
+  local encoded_ref
+
+  encoded_ref="$(url_encode_github_archive_ref "${normalized_ref}")"
 
   if [[ "${ARCHIVE_FORMAT}" == "zip" ]]; then
     case "${ref_type}" in
       commit)
         try_download_candidate_urls "${archive_path}" \
-          "https://github.com/${slug}/archive/${normalized_ref}.zip" && return 0
+          "https://github.com/${slug}/archive/${encoded_ref}.zip" && return 0
         ;;
       tag)
         try_download_candidate_urls "${archive_path}" \
-          "https://github.com/${slug}/archive/${normalized_ref}.zip" && return 0
+          "https://github.com/${slug}/archive/${encoded_ref}.zip" && return 0
         ;;
       branch)
         try_download_candidate_urls "${archive_path}" \
-          "https://github.com/${slug}/archive/${normalized_ref}.zip" && return 0
+          "https://github.com/${slug}/archive/${encoded_ref}.zip" && return 0
         ;;
       *)
         try_download_candidate_urls "${archive_path}" \
@@ -857,15 +860,15 @@ download_github_archive() {
     case "${ref_type}" in
       commit)
         try_download_candidate_urls "${archive_path}" \
-          "https://github.com/${slug}/archive/${normalized_ref}.tar.gz" && return 0
+          "https://github.com/${slug}/archive/${encoded_ref}.tar.gz" && return 0
         ;;
       tag)
         try_download_candidate_urls "${archive_path}" \
-          "https://github.com/${slug}/archive/${normalized_ref}.tar.gz" && return 0
+          "https://github.com/${slug}/archive/${encoded_ref}.tar.gz" && return 0
         ;;
       branch)
         try_download_candidate_urls "${archive_path}" \
-          "https://github.com/${slug}/archive/${normalized_ref}.tar.gz" && return 0
+          "https://github.com/${slug}/archive/${encoded_ref}.tar.gz" && return 0
         ;;
       *)
         try_download_candidate_urls "${archive_path}" \
@@ -879,15 +882,15 @@ download_github_archive() {
       case "${ref_type}" in
         commit)
           try_download_candidate_urls "${archive_path}" \
-            "https://github.com/${slug}/archive/${normalized_ref}.zip" && return 0
+            "https://github.com/${slug}/archive/${encoded_ref}.zip" && return 0
           ;;
         tag)
           try_download_candidate_urls "${archive_path}" \
-            "https://github.com/${slug}/archive/${normalized_ref}.zip" && return 0
+            "https://github.com/${slug}/archive/${encoded_ref}.zip" && return 0
           ;;
         branch)
           try_download_candidate_urls "${archive_path}" \
-            "https://github.com/${slug}/archive/${normalized_ref}.zip" && return 0
+            "https://github.com/${slug}/archive/${encoded_ref}.zip" && return 0
           ;;
         *)
           try_download_candidate_urls "${archive_path}" \
@@ -900,6 +903,38 @@ download_github_archive() {
   fi
 
   return 1
+}
+
+url_encode_github_archive_ref() {
+  local ref
+  local encoded
+
+  ref="${1:-}"
+  [[ -n "${ref}" ]] || {
+    printf '%s\n' ""
+    return 0
+  }
+
+  if command -v python3 >/dev/null 2>&1; then
+    encoded="$(python3 - "${ref}" <<'PY'
+import sys
+from urllib.parse import quote
+print(quote(sys.argv[1], safe=""))
+PY
+)" || encoded=""
+  else
+    encoded="${ref//%/%25}"
+    encoded="${encoded//\//%2F}"
+    encoded="${encoded// /%20}"
+    encoded="${encoded//\"/%22}"
+    encoded="${encoded//#/%23}"
+    encoded="${encoded//&/%26}"
+    encoded="${encoded/=/%3D}"
+    encoded="${encoded/?/%3F}"
+    encoded="${encoded/\$/%24}"
+  fi
+
+  printf '%s\n' "${encoded}"
 }
 
 try_download_candidate_urls() {

@@ -211,11 +211,15 @@ Instalação concluída.
 export CURL_WRAPPER_REAL_CURL="${REAL_CURL_BIN}"
 export WGET_WRAPPER_REAL_WGET="${REAL_WGET_BIN}"
 export PATH="${INSTALL_DIR}:\$PATH"
+export CURL_WRAPPER_ALLOW_ZIP_DOWNLOAD="1"
+export WGET_WRAPPER_ALWAYS_USE_CURL="1"
 
 2) Para LazyVim/Mason (init.lua):
 vim.env.CURL_WRAPPER_REAL_CURL = "${REAL_CURL_BIN}"
 vim.env.WGET_WRAPPER_REAL_WGET = "${REAL_WGET_BIN}"
 vim.env.PATH = "${INSTALL_DIR}:" .. vim.env.PATH
+vim.env.CURL_WRAPPER_ALLOW_ZIP_DOWNLOAD = "1"
+vim.env.WGET_WRAPPER_ALWAYS_USE_CURL = "1"
 vim.env.CURL_WRAPPER_RELEASE_FALLBACK_REPOS = "elixir-lsp/elixir-ls,johnnymorganz/stylua,luals/lua-language-server,omnisharp/omnisharp-roslyn"
 vim.env.CURL_WRAPPER_ALLOW_DIRECT_RELEASE_FALLBACK = "1"
 vim.env.CURL_WRAPPER_ENABLE_MASON_SMART_RELEASES = "1"

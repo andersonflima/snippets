@@ -87,6 +87,8 @@ Se você não usar o configurador automático, exporte manualmente os paths e va
 ```bash
 export CURL_WRAPPER_REAL_CURL="$(command -v curl)"
 export WGET_WRAPPER_REAL_WGET="$(command -v wget)"
+export CURL_WRAPPER_ALLOW_ZIP_DOWNLOAD="1"
+export WGET_WRAPPER_ALWAYS_USE_CURL="1"
 export GIT_ZIP_WRAPPER_REAL_GIT="$(command -v git)"
 export PATH="$HOME/.local/share/curl-python-wrapper/bin:$HOME/.local/share/git-zip-wrapper/bin:$PATH"
 ```
@@ -98,6 +100,8 @@ Exemplo de configuração por ambiente:
 ```lua
 vim.env.CURL_WRAPPER_REAL_CURL = "/usr/bin/curl"
 vim.env.WGET_WRAPPER_REAL_WGET = "/usr/bin/wget"
+vim.env.CURL_WRAPPER_ALLOW_ZIP_DOWNLOAD = "1"
+vim.env.WGET_WRAPPER_ALWAYS_USE_CURL = "1"
 vim.env.GIT_ZIP_WRAPPER_REAL_GIT = "/usr/bin/git"
 vim.env.PATH = table.concat({
   vim.fn.expand("~/.local/share/curl-python-wrapper/bin"),
@@ -113,7 +117,7 @@ vim.env.CURL_WRAPPER_MASON_BUILDERS = "elixir-lsp/elixir-ls=elixir_ls_release,om
 vim.env.CURL_WRAPPER_MASON_SOURCE_BUILD_REPOS = "omnisharp/omnisharp-roslyn"
 vim.env.GIT_ZIP_WRAPPER_ARCHIVE_FORMAT = "zip"
 vim.env.GIT_ZIP_WRAPPER_CLONE_ORDER = "local-first"
-vim.env.GIT_ZIP_WRAPPER_ALLOW_REMOTE_GIT_FALLBACK = "0"
+vim.env.GIT_ZIP_WRAPPER_ALLOW_REMOTE_GIT_FALLBACK = "1"
 vim.env.GIT_ZIP_WRAPPER_ALLOW_ZIP_FALLBACK = "1"
 vim.env.GIT_ZIP_WRAPPER_FORCE_LOCAL_DOWNLOADS = "1"
 vim.env.GIT_ZIP_WRAPPER_LFS_MODE = "local"
@@ -126,7 +130,7 @@ vim.env.GIT_ZIP_WRAPPER_STRICT = "0"
 
 - `CURL_WRAPPER_REAL_CURL`: caminho do `curl` real.
 - `CURL_WRAPPER_PROXY`: proxy explícito do wrapper; tem precedência sobre `HTTPS_PROXY`, `ALL_PROXY` e `HTTP_PROXY`.
-- `CURL_WRAPPER_ALLOW_ZIP_DOWNLOAD`: libera download direto de `.zip` quando necessário. Padrão: `0`.
+- `CURL_WRAPPER_ALLOW_ZIP_DOWNLOAD`: libera download direto de `.zip` quando necessário. Padrão atual no fluxo de configure: `1`.
 - `CURL_WRAPPER_AUTO_INSECURE_ON_CERT_ERROR`: tenta novamente sem validação TLS quando o erro for de certificado. Padrão: `0`.
 - `CURL_WRAPPER_RELEASE_FALLBACK_REPOS`: lista CSV de repositórios GitHub tratados como releases restritas.
 - `CURL_WRAPPER_ALLOW_DIRECT_RELEASE_FALLBACK`: reabilita tentativa direta do asset remoto da release. Padrão: `0`.
@@ -138,6 +142,13 @@ vim.env.GIT_ZIP_WRAPPER_STRICT = "0"
 - `CURL_WRAPPER_MASON_REPACKAGE_EXTENSIONS`: extensões candidatas que a engine dinâmica pode baixar e reempacotar em `.zip`.
 - `CURL_WRAPPER_STRICT`: desativa fallbacks e faz o wrapper retornar o erro do `curl` real.
 
+### `wget_wrapper.sh`
+
+- `WGET_WRAPPER_REAL_WGET`: caminho do `wget` real.
+- `WGET_WRAPPER_PROXY`: proxy explícito do wrapper.
+- `WGET_WRAPPER_ALWAYS_USE_CURL`: força delegação para o `curl` wrapper. Padrão atual no fluxo de configure: `1`.
+- `WGET_WRAPPER_RETRY_WITHOUT_PROXY_ON_AUTH_ERROR`: repete sem proxy quando o erro é de autenticação.
+
 ### `git_zip_clone_wrapper.sh`
 
 - `GIT_ZIP_WRAPPER_REAL_GIT`: caminho do `git` real.
@@ -146,7 +157,7 @@ vim.env.GIT_ZIP_WRAPPER_STRICT = "0"
 - `GIT_ZIP_WRAPPER_ALLOW_ZIP_FALLBACK`: libera fallback ou uso primário de `.zip`.
 - `RESTRICTED_GIT_PLAIN_OWNER_PREFIXES`: lista separada por vírgulas de owners GitHub cuja origem usa Git real (ex: org interna Itaú). Padrão: `itau-,itau`.
 - `GIT_ZIP_WRAPPER_CLONE_ORDER`: política do clone do wrapper. Valores suportados: `git-first`, `local-first`. Padrão: `local-first`.
-- `GIT_ZIP_WRAPPER_ALLOW_REMOTE_GIT_FALLBACK`: permite usar `git clone/fetch/checkout` remoto real se o archive falhar. Padrão: `0`.
+- `GIT_ZIP_WRAPPER_ALLOW_REMOTE_GIT_FALLBACK`: permite usar `git clone/fetch/checkout` remoto real se o archive falhar. Padrão: `1`.
 - `GIT_ZIP_WRAPPER_FORCE_LOCAL_DOWNLOADS`: mantém a tentativa de archive local como preferência. Padrão: `1`.
 - `GIT_ZIP_WRAPPER_CURL_CACERT`: caminho para CA customizada em ambiente corporativo.
 - `GIT_ZIP_WRAPPER_CURL_INSECURE`: desativa validação TLS do `curl` usado pelo wrapper.
@@ -156,8 +167,8 @@ vim.env.GIT_ZIP_WRAPPER_STRICT = "0"
 Comportamento adicional para LazyVim:
 
 - em `local-first`, o wrapper usa archive do GitHub antes de qualquer Git remoto
-- por padrão, se o archive falhar, o wrapper não tenta `git clone` real para repositórios GitHub
-- para liberar Git remoto real como último fallback, defina `GIT_ZIP_WRAPPER_ALLOW_REMOTE_GIT_FALLBACK=1`
+- por padrão, com o template atual, se o archive falhar, o wrapper tenta `git clone/fetch/checkout` real como fallback para repositórios GitHub
+- para bloquear fallback remoto e manter somente archive local, defina `GIT_ZIP_WRAPPER_ALLOW_REMOTE_GIT_FALLBACK=0`
 - em `git-first`, o wrapper ainda pode tentar `git clone` normal antes do archive, então esse modo não é adequado para ambientes onde Git remoto externo é bloqueado
 
 Comportamento adicional para ElixirLS/Mix.install:

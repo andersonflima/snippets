@@ -331,12 +331,14 @@ render_local_exports() {
   printf 'export GIT_ZIP_WRAPPER_STRICT=%s\n' "$(shell_quote "0")"
   printf 'export GIT_ZIP_WRAPPER_ARCHIVE_FORMAT=%s\n' "$(shell_quote "zip")"
   printf 'export GIT_ZIP_WRAPPER_ALLOW_ZIP_FALLBACK=%s\n' "$(shell_quote "1")"
-  printf 'export GIT_ZIP_WRAPPER_ALLOW_REMOTE_GIT_FALLBACK=%s\n' "$(shell_quote "0")"
+  printf 'export GIT_ZIP_WRAPPER_ALLOW_REMOTE_GIT_FALLBACK=%s\n' "$(shell_quote "1")"
+  printf 'export CURL_WRAPPER_ALLOW_ZIP_DOWNLOAD=%s\n' "$(shell_quote "1")"
   printf 'export RESTRICTED_GIT_PLAIN_OWNER_PREFIXES=%s\n' "$(shell_quote "itau-,itau")"
   printf 'export GIT_ZIP_WRAPPER_LFS_MODE=%s\n' "$(shell_quote "${GIT_LFS_MODE}")"
   printf 'export CURL_WRAPPER_RETRY_WITHOUT_PROXY_ON_AUTH_ERROR=%s\n' "$(shell_quote "1")"
   printf 'export GIT_ZIP_WRAPPER_RETRY_WITHOUT_PROXY_ON_AUTH_ERROR=%s\n' "$(shell_quote "1")"
   printf 'export WGET_WRAPPER_RETRY_WITHOUT_PROXY_ON_AUTH_ERROR=%s\n' "$(shell_quote "1")"
+  printf 'export WGET_WRAPPER_ALWAYS_USE_CURL=%s\n' "$(shell_quote "1")"
 
   if [[ -n "${PROXY_URL}" ]]; then
     cat <<EOF2
@@ -425,7 +427,7 @@ export CURL_WRAPPER_MASON_BUILDERS="elixir-lsp/elixir-ls=elixir_ls_release,omnis
 export CURL_WRAPPER_MASON_REPACKAGE_EXTENSIONS="tar.gz,tgz,tar"
 export GIT_ZIP_WRAPPER_ARCHIVE_FORMAT="zip"
 export GIT_ZIP_WRAPPER_CLONE_ORDER="local-first"
-export GIT_ZIP_WRAPPER_ALLOW_REMOTE_GIT_FALLBACK="0"
+export GIT_ZIP_WRAPPER_ALLOW_REMOTE_GIT_FALLBACK="1"
 export GIT_ZIP_WRAPPER_ALLOW_ZIP_FALLBACK="1"
 export RESTRICTED_GIT_PLAIN_OWNER_PREFIXES="itau-,itau"
 EOF2
