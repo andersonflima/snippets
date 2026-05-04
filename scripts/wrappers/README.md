@@ -164,6 +164,12 @@ vim.env.GIT_ZIP_WRAPPER_STRICT = "0"
 - `GIT_ZIP_WRAPPER_LFS_MODE`: modo do Git LFS. Valor suportado: `local`.
 - `GIT_ZIP_WRAPPER_STRICT`: impede fallback para `git clone` normal quando o archive local falhar.
 
+Em ambiente sem CA corporativa, ative:
+
+- `sh scripts/configure.sh --allow-insecure-tls`
+
+para forçar `GIT_ZIP_WRAPPER_CURL_INSECURE=1` e `CURL_WRAPPER_AUTO_INSECURE_ON_CERT_ERROR=1`.
+
 Comportamento adicional para LazyVim:
 
 - em `local-first`, o wrapper usa archive do GitHub antes de qualquer Git remoto

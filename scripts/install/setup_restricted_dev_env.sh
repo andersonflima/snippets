@@ -180,6 +180,8 @@ Opções:
   --ca-cert <arquivo>          CA customizada para wrappers/Hex.
   --auto-insecure-on-cert-error
                                Ativa retry inseguro no curl wrapper.
+  --allow-insecure-tls
+                               Desativa validação TLS em fluxos internos (github/curl/wget/git).
   --mason-seed-dir <dir>       Diretório seed para artefatos do Mason.
   --mason-packages <lista>     Lista de pacotes Mason (vírgula/espaco).
   --bootstrap-lazy-timeout <s> Timeout para instalação de pacotes Mason.
@@ -216,6 +218,7 @@ REAL_MIX_BIN=""
 PROXY_URL="${HTTPS_PROXY:-${https_proxy:-${ALL_PROXY:-${all_proxy:-${HTTP_PROXY:-${http_proxy:-}}}}}}"
 CA_CERT_PATH="${GIT_ZIP_WRAPPER_CURL_CACERT:-${HEX_CACERTS_PATH:-${SSL_CERT_FILE:-${REQUESTS_CA_BUNDLE:-${AWS_CA_BUNDLE:-}}}}}"
 AUTO_INSECURE_ON_CERT_ERROR="${CURL_WRAPPER_AUTO_INSECURE_ON_CERT_ERROR:-0}"
+GIT_ZIP_WRAPPER_CURL_INSECURE="${GIT_ZIP_WRAPPER_CURL_INSECURE:-0}"
 MASON_SEED_DIR="${CURL_WRAPPER_MASON_SEED_DIR:-}"
 MASON_BOOTSTRAP_PACKAGES="${MASON_BOOTSTRAP_PACKAGES:-}"
 GIT_ZIP_WRAPPER_ALLOW_REMOTE_GIT_FALLBACK="0"
@@ -272,6 +275,11 @@ while [[ $# -gt 0 ]]; do
       ;;
     --auto-insecure-on-cert-error)
       AUTO_INSECURE_ON_CERT_ERROR="1"
+      shift
+      ;;
+    --allow-insecure-tls)
+      AUTO_INSECURE_ON_CERT_ERROR="1"
+      GIT_ZIP_WRAPPER_CURL_INSECURE="1"
       shift
       ;;
     --mason-seed-dir)
@@ -369,7 +377,17 @@ if [[ "${CONFIGURE_HEX}" == "1" ]]; then
   is_wrapper_binary_path mix "${REAL_MIX_BIN}" && die "mix real não pode apontar para o wrapper instalado: ${REAL_MIX_BIN}"
 fi
 if [[ -n "${CA_CERT_PATH}" ]]; then
-  [[ -f "${CA_CERT_PATH}" ]] || die "CA customizada não encontrada: ${CA_CERT_PATH}"
+  if [[ ! -f "${CA_CERT_PATH}" ]]; then
+    if [[ "${GIT_ZIP_WRAPPER_CURL_INSECURE}" == "1" ]]; then
+      log "aviso: CA customizada não encontrada: ${CA_CERT_PATH}; seguindo sem arquivo de CA e TLS inseguro habilitado"
+      CA_CERT_PATH=""
+    else
+      die "CA customizada não encontrada: ${CA_CERT_PATH}"
+    fi
+  fi
+fi
+if [[ "${GIT_ZIP_WRAPPER_CURL_INSECURE}" != "0" && "${GIT_ZIP_WRAPPER_CURL_INSECURE}" != "1" ]]; then
+  die "GIT_ZIP_WRAPPER_CURL_INSECURE inválido: ${GIT_ZIP_WRAPPER_CURL_INSECURE}"
 fi
 case "${AUTO_INSECURE_ON_CERT_ERROR}" in
   0|1)
@@ -741,6 +759,9 @@ else
 fi
 if [[ "${AUTO_INSECURE_ON_CERT_ERROR}" == "1" ]]; then
   WRAPPER_ENV_ARGS+=(--auto-insecure-on-cert-error)
+fi
+if [[ "${GIT_ZIP_WRAPPER_CURL_INSECURE}" == "1" ]]; then
+  WRAPPER_ENV_ARGS+=(--allow-insecure-tls)
 fi
 WRAPPER_ENV_ARGS+=(--no-shell-rc)
 

@@ -33,6 +33,14 @@ sh scripts/configure.sh \
   --ca-cert "/etc/ssl/certs/corp-ca.pem"
 ```
 
+Se você não tiver certificado corporativo e ainda precisar de download local-only:
+
+```bash
+sh scripts/configure.sh \
+  --disable-remote-git-fallback \
+  --allow-insecure-tls
+```
+
 Com proxy ou CA corporativa:
 
 ```bash

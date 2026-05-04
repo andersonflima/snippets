@@ -137,6 +137,8 @@ Opções:
   --ca-cert <arquivo>          Define CA customizada para o wrapper de git.
   --auto-insecure-on-cert-error
                                Ativa retry inseguro no wrapper de curl.
+  --allow-insecure-tls
+                               Desativa validação TLS para downloads do git wrapper.
   --allow-remote-git-fallback
                                Habilita fallback remoto de git para repositórios não-itau.
   --disable-remote-git-fallback
@@ -160,6 +162,7 @@ GIT_ZIP_WRAPPER_ALLOW_REMOTE_GIT_FALLBACK="0"
 PROXY_URL=""
 CA_CERT_PATH=""
 AUTO_INSECURE_ON_CERT_ERROR="0"
+GIT_ZIP_WRAPPER_CURL_INSECURE="0"
 MASON_SEED_DIR="${CURL_WRAPPER_MASON_SEED_DIR:-}"
 
 while [[ $# -gt 0 ]]; do
@@ -224,6 +227,10 @@ while [[ $# -gt 0 ]]; do
       AUTO_INSECURE_ON_CERT_ERROR="1"
       shift
       ;;
+    --allow-insecure-tls)
+      GIT_ZIP_WRAPPER_CURL_INSECURE="1"
+      shift
+      ;;
     --allow-remote-git-fallback)
       GIT_ZIP_WRAPPER_ALLOW_REMOTE_GIT_FALLBACK="1"
       shift
@@ -277,6 +284,13 @@ case "${AUTO_INSECURE_ON_CERT_ERROR}" in
     ;;
   *)
     die "CURL_WRAPPER_AUTO_INSECURE_ON_CERT_ERROR inválido: ${AUTO_INSECURE_ON_CERT_ERROR}"
+    ;;
+esac
+case "${GIT_ZIP_WRAPPER_CURL_INSECURE}" in
+  0|1)
+    ;;
+  *)
+    die "GIT_ZIP_WRAPPER_CURL_INSECURE inválido: ${GIT_ZIP_WRAPPER_CURL_INSECURE}"
     ;;
 esac
 case "${GIT_ZIP_WRAPPER_ALLOW_REMOTE_GIT_FALLBACK}" in
@@ -381,6 +395,11 @@ EOF2
     printf 'export GIT_ZIP_WRAPPER_CURL_CACERT=%s\n' "$(shell_quote "${CA_CERT_PATH}")"
   else
     printf 'unset GIT_ZIP_WRAPPER_CURL_CACERT\n'
+  fi
+  if [[ "${GIT_ZIP_WRAPPER_CURL_INSECURE}" == "1" ]]; then
+    printf 'export GIT_ZIP_WRAPPER_CURL_INSECURE=%s\n' "$(shell_quote "1")"
+  else
+    printf 'unset GIT_ZIP_WRAPPER_CURL_INSECURE\n'
   fi
 
   if [[ "${AUTO_INSECURE_ON_CERT_ERROR}" == "1" ]]; then

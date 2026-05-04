@@ -186,6 +186,7 @@ sanitize_current_wrapper_env() {
   unset GIT_ZIP_WRAPPER_FORCE_LOCAL_DOWNLOADS 2>/dev/null || true
   unset CURL_WRAPPER_MASON_SEED_DIR 2>/dev/null || true
   unset CURL_WRAPPER_AUTO_INSECURE_ON_CERT_ERROR 2>/dev/null || true
+  unset GIT_ZIP_WRAPPER_CURL_INSECURE 2>/dev/null || true
 
   IFS=':'
   for path_entry in ${old_path}; do

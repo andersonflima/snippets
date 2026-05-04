@@ -38,6 +38,8 @@ Opções:
   --ca-cert <arquivo>          CA customizada para wrapper de git.
   --auto-insecure-on-cert-error
                                Ativa retry inseguro no wrapper de curl.
+  --allow-insecure-tls
+                               Desativa validação TLS para downloads do git wrapper.
   --mason-seed-dir <dir>       Diretório seed para artefatos do Mason.
   --git-lfs-mode <modo>        Aceita apenas local.
   -h, --help                   Mostra esta ajuda.
@@ -64,6 +66,7 @@ REAL_GIT_BIN=""
 PROXY_URL=""
 CA_CERT_PATH=""
 AUTO_INSECURE_ON_CERT_ERROR="0"
+GIT_ZIP_WRAPPER_CURL_INSECURE="0"
 MASON_SEED_DIR=""
 GIT_LFS_MODE=""
 
@@ -117,6 +120,10 @@ while [[ $# -gt 0 ]]; do
       AUTO_INSECURE_ON_CERT_ERROR="1"
       shift
       ;;
+    --allow-insecure-tls)
+      GIT_ZIP_WRAPPER_CURL_INSECURE="1"
+      shift
+      ;;
     --mason-seed-dir)
       MASON_SEED_DIR="${2:-}"
       shift 2
@@ -150,6 +157,9 @@ load_existing_env_defaults() {
   [[ -n "${REAL_GIT_BIN}" ]] || REAL_GIT_BIN="${GIT_ZIP_WRAPPER_REAL_GIT:-}"
   [[ -n "${PROXY_URL}" ]] || PROXY_URL="${CURL_WRAPPER_PROXY:-${HTTPS_PROXY:-${HTTP_PROXY:-}}}"
   [[ -n "${CA_CERT_PATH}" ]] || CA_CERT_PATH="${GIT_ZIP_WRAPPER_CURL_CACERT:-}"
+  [[ -n "${GIT_ZIP_WRAPPER_CURL_INSECURE}" ]] || GIT_ZIP_WRAPPER_CURL_INSECURE="0"
+  [[ "${GIT_ZIP_WRAPPER_CURL_INSECURE}" == "0" || "${GIT_ZIP_WRAPPER_CURL_INSECURE}" == "1" ]] || \
+    GIT_ZIP_WRAPPER_CURL_INSECURE="0"
   [[ -n "${MASON_SEED_DIR}" ]] || MASON_SEED_DIR="${CURL_WRAPPER_MASON_SEED_DIR:-}"
   [[ -n "${GIT_LFS_MODE}" ]] || GIT_LFS_MODE="${GIT_ZIP_WRAPPER_LFS_MODE:-local}"
 }
@@ -219,6 +229,9 @@ configure_wrapper_env_file() {
   [[ -n "${PROXY_URL}" ]] && configure_args+=(--proxy "${PROXY_URL}")
   [[ -n "${CA_CERT_PATH}" ]] && configure_args+=(--ca-cert "${CA_CERT_PATH}")
   [[ -n "${MASON_SEED_DIR}" ]] && configure_args+=(--mason-seed-dir "${MASON_SEED_DIR}")
+  if [[ "${GIT_ZIP_WRAPPER_CURL_INSECURE}" == "1" ]]; then
+    configure_args+=(--allow-insecure-tls)
+  fi
 
   if [[ "${AUTO_INSECURE_ON_CERT_ERROR}" == "1" ]]; then
     configure_args+=(--auto-insecure-on-cert-error)
