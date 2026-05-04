@@ -710,19 +710,31 @@ extract_repo_source_owner() {
 }
 
 repo_source_requires_plain_git() {
-  local repo_url owner normalized_owner
+  local repo_url owner normalized_owner raw_prefixes normalized_prefixes prefix normalized_prefix
   repo_url="$1"
   owner="$(extract_repo_source_owner "${repo_url}" 2>/dev/null || true)"
   [[ -n "${owner}" ]] || return 1
   normalized_owner="$(printf '%s' "${owner}" | tr '[:upper:]' '[:lower:]')"
+  raw_prefixes="${RESTRICTED_GIT_PLAIN_OWNER_PREFIXES:-itau-,itau}"
+  IFS=',' read -r -a normalized_prefixes <<<"${raw_prefixes}"
 
-  case "${normalized_owner}" in
-    itau-*)
-      return 0
-      ;;
-  esac
+  for prefix in "${normalized_prefixes[@]-}"; do
+    normalized_prefix="$(printf '%s' "${prefix}" | tr '[:upper:]' '[:lower:]' | tr -d '[:space:]')"
+    [[ -n "${normalized_prefix}" ]] || continue
+    case "${normalized_owner}" in
+      "${normalized_prefix}"*)
+        return 0
+        ;;
+    esac
+  done
 
   return 1
+}
+
+log_plain_git_source() {
+  local context
+  context="$1"
+  log "source interno configurado detectado no ${context}; usando git comum"
 }
 
 resolve_archive_ref_type() {
@@ -2057,7 +2069,7 @@ main() {
     ls-remote)
       resolve_proxy_config
       if current_repo_origin_requires_plain_git "${real_git}" && [[ -z "$(extract_requested_ls_remote_target || true)" ]]; then
-        log "source itau-* detectado no origin; usando git comum para ls-remote"
+        log_plain_git_source "ls-remote"
         exec "${real_git}" "$@"
       fi
 
@@ -2072,7 +2084,7 @@ main() {
       resolve_proxy_config
       local fetch_git_dir fetch_exit_code fetch_origin_url
       if current_repo_origin_requires_plain_git "${real_git}"; then
-        log "source itau-* detectado no origin; usando git comum para fetch"
+        log_plain_git_source "fetch"
         exec "${real_git}" "$@"
       fi
       fetch_git_dir="$(resolve_fetch_git_dir "${real_git}" || true)"
@@ -2108,7 +2120,7 @@ main() {
       resolve_proxy_config
       local checkout_git_dir checkout_exit_code checkout_origin_url checkout_target_ref
       if current_repo_origin_requires_plain_git "${real_git}"; then
-        log "source itau-* detectado no origin; usando git comum para checkout"
+        log_plain_git_source "checkout"
         exec "${real_git}" "$@"
       fi
       checkout_git_dir="$(resolve_fetch_git_dir "${real_git}" || true)"
@@ -2163,7 +2175,7 @@ main() {
   destination="${CLONE_DESTINATION}"
   branch="$(first_clone_branch_value || true)"
   if repo_source_requires_plain_git "${repo_url}"; then
-    log "source itau-* detectado no clone; usando git comum"
+    log_plain_git_source "clone"
     exec "${real_git}" "$@"
   fi
   resolve_proxy_config

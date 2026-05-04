@@ -144,6 +144,7 @@ vim.env.GIT_ZIP_WRAPPER_STRICT = "0"
 - `GIT_ZIP_WRAPPER_PROXY`: proxy explícito para os downloads do wrapper.
 - `GIT_ZIP_WRAPPER_ARCHIVE_FORMAT`: formato preferido do archive. Valores válidos: `tar.gz`, `tgz`, `tar`, `zip`. Padrão: `zip`.
 - `GIT_ZIP_WRAPPER_ALLOW_ZIP_FALLBACK`: libera fallback ou uso primário de `.zip`.
+- `RESTRICTED_GIT_PLAIN_OWNER_PREFIXES`: lista separada por vírgulas de owners GitHub cuja origem usa Git real (ex: org interna Itaú). Padrão: `itau-,itau`.
 - `GIT_ZIP_WRAPPER_CLONE_ORDER`: política do clone do wrapper. Valores suportados: `git-first`, `local-first`. Padrão: `local-first`.
 - `GIT_ZIP_WRAPPER_ALLOW_REMOTE_GIT_FALLBACK`: permite usar `git clone/fetch/checkout` remoto real se o archive falhar. Padrão: `0`.
 - `GIT_ZIP_WRAPPER_FORCE_LOCAL_DOWNLOADS`: mantém a tentativa de archive local como preferência. Padrão: `1`.

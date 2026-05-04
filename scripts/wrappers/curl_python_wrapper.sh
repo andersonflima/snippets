@@ -1460,8 +1460,33 @@ main() {
     log "backend selecionado: local (${CURL_FALLBACK_URL})"
   fi
 
-  if should_skip_direct_release_download "${CURL_FALLBACK_URL:-}"; then
-    log "release corporativamente restrita detectada; pulando curl direto para ${CURL_FALLBACK_URL}"
+if should_skip_direct_release_download "${CURL_FALLBACK_URL:-}"; then
+  log "release corporativamente restrita detectada; pulando curl direto para ${CURL_FALLBACK_URL}"
+  if is_mason_registry_release_asset_url "${CURL_FALLBACK_URL:-}"; then
+    local mason_registry_url mason_registry_asset
+    mason_registry_url="${CURL_FALLBACK_URL%%\?*}"
+    mason_registry_asset="${mason_registry_url##*/}"
+
+    if handle_smart_release_asset; then
+      log "fallback inteligente para Mason registry concluído com sucesso."
+      exit 0
+    fi
+
+    if download_with_gh_release; then
+      log "fallback release do Mason registry concluído com sucesso."
+      exit 0
+    fi
+
+    if [[ -n "${CURL_FALLBACK_OUTPUT:-}" ]] && download_with_python_fallback "${mason_registry_url}" "${CURL_FALLBACK_OUTPUT}"; then
+      if validate_release_asset_output "${mason_registry_asset}" "${CURL_FALLBACK_OUTPUT}" "python fallback"; then
+        log "fallback Python para asset do Mason registry concluído com sucesso."
+        exit 0
+      fi
+      rm -f "${CURL_FALLBACK_OUTPUT}" 2>/dev/null || true
+    fi
+
+    die "download do asset do Mason registry falhou para ${CURL_FALLBACK_URL}"
+  fi
 
     if handle_smart_release_asset; then
       exit 0
