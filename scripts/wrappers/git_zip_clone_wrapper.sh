@@ -2131,6 +2131,10 @@ main() {
         if [[ -n "${fetch_git_dir}" ]] && replace_mix_install_repo_with_archive "${real_git}" "${fetch_git_dir}"; then
           return 0
         fi
+        if ! remote_git_fallback_enabled; then
+          log "fetch remoto está desabilitado; mantendo estado atual da cópia local para ${fetch_origin_url:-origin}"
+          return 0
+        fi
         if remote_git_fallback_enabled && run_git_command_with_optional_no_proxy_retry "${real_git}" "$@"; then
           return 0
         fi
@@ -2169,6 +2173,10 @@ main() {
           fi
         fi
         if fallback_checkout_repo_with_archive "${real_git}"; then
+          return 0
+        fi
+        if ! remote_git_fallback_enabled; then
+          log "checkout remoto está desabilitado; mantendo estado atual da cópia local para ${checkout_origin_url:-origin}"
           return 0
         fi
         if remote_git_fallback_enabled && run_git_command_with_optional_no_proxy_retry "${real_git}" "$@"; then
