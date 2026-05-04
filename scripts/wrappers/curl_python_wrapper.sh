@@ -158,6 +158,16 @@ is_mason_registry_archive_url() {
   return 1
 }
 
+is_mason_registry_release_asset_url() {
+  local url
+  url="${1%%\?*}"
+
+  is_mason_registry_archive_url "${url}" && return 0
+  [[ "${url}" =~ ^https://github\.com/mason-org/mason-registry/releases/download/.+/.+ ]] && return 0
+  [[ "${url}" =~ ^https://codeload\.github\.com/mason-org/mason-registry/releases/download/.+/.+ ]] && return 0
+  return 1
+}
+
 resolve_proxy_config() {
   local proxy
   proxy="${CURL_WRAPPER_PROXY:-}"
@@ -844,7 +854,8 @@ should_prefer_github_archive_zip_alternates() {
 }
 
 should_skip_direct_release_download() {
-  is_restricted_release_asset_url "${1:-}" && ! is_truthy "${CURL_WRAPPER_ALLOW_DIRECT_RELEASE_FALLBACK}"
+  is_restricted_release_asset_url "${1:-}" || is_mason_registry_release_asset_url "${1:-}" \
+    && ! is_truthy "${CURL_WRAPPER_ALLOW_DIRECT_RELEASE_FALLBACK}"
 }
 
 parse_github_release_asset_url() {

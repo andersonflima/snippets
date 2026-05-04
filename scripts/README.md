@@ -38,6 +38,41 @@ Remoção completa:
 sh scripts/reset.sh
 ```
 
+## Snapshot do Neovim para outra máquina
+
+Para clonar seu estado atual do Neovim (config + plugins já instalados do Lazy/Mason):
+
+```bash
+sh scripts/install/nvim_offline_bundle.sh snapshot --copy-wrapper-env
+```
+
+Diretório gerado:
+
+```bash
+./nvim-offline-bundle
+```
+
+Para restaurar em outra máquina:
+
+```bash
+sh scripts/install/nvim_offline_bundle.sh restore --bundle-dir ./nvim-offline-bundle
+```
+
+Opções úteis:
+
+- `--overwrite` para substituir diretórios existentes sem criar backup.
+- `--data-components "lazy,mason"` para escolher componentes de runtime.
+- `--no-config` e `--no-data` para reduzir escopo.
+- `--copy-wrapper-env` para levar `wrapper-envs.sh` e `restricted-dev-env/state.sh` junto com a configuração.
+
+Após restore na máquina nova, rode seu fluxo de wrapper para reativar o ambiente:
+
+```bash
+sh scripts/configure.sh --skip-lazy-bootstrap --skip-mason-bootstrap
+```
+
+Assim os wrappers ficam instalados e os pacotes copiados permanecem prontos para uso.
+
 ## Diagnóstico
 
 Validação rápida:
