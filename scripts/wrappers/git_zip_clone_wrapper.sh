@@ -2135,10 +2135,22 @@ main() {
           log "fetch remoto está desabilitado; mantendo estado atual da cópia local para ${fetch_origin_url:-origin}"
           return 0
         fi
-        if remote_git_fallback_enabled && run_git_command_with_optional_no_proxy_retry "${real_git}" "$@"; then
+
+        if run_git_command_with_optional_no_proxy_retry "${real_git}" "$@"; then
           return 0
         fi
-        die "falha ao atualizar refs via archive para ${fetch_origin_url:-origin}; fetch remoto via git está desabilitado para repositórios GitHub"
+
+        fetch_exit_code=$?
+        if [[ -n "${fetch_git_dir}" ]] && is_proxy_or_transport_block_error_log "${GIT_ZIP_WRAPPER_LAST_COMMAND_STDERR}"; then
+          if fallback_fetch_repo_with_archive "${real_git}" "${fetch_git_dir}"; then
+            return 0
+          fi
+          if replace_mix_install_repo_with_archive "${real_git}" "${fetch_git_dir}"; then
+            return 0
+          fi
+        fi
+
+        die "falha ao atualizar refs via archive para ${fetch_origin_url:-origin}; fetch remoto via git falhou com código ${fetch_exit_code}"
       fi
       set +e
       "${real_git}" "$@"

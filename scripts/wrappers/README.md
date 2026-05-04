@@ -174,6 +174,7 @@ Comportamento adicional para LazyVim:
 
 - em `local-first`, o wrapper usa archive do GitHub antes de qualquer Git remoto
 - por padrão, com o template atual, se o archive falhar, o wrapper tenta `git clone/fetch/checkout` real como fallback para repositórios GitHub
+- para `fetch` em repositórios GitHub não internos, se a chamada remota falhar por erro de proxy/autenticação (por exemplo `407`), o wrapper tenta materializar novamente via archive antes de encerrar
 - para bloquear fallback remoto e manter somente archive/local em `fetch` e `checkout` (sem erro de “remote disabled”), defina `GIT_ZIP_WRAPPER_ALLOW_REMOTE_GIT_FALLBACK=0`
 - em `git-first`, o wrapper ainda pode tentar `git clone` normal antes do archive, então esse modo não é adequado para ambientes onde Git remoto externo é bloqueado
 
