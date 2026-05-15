@@ -4,6 +4,10 @@ set -eu
 DRY_RUN=0
 ONLY_PLUGIN=""
 NVIM_DATA_DIR="${XDG_DATA_HOME:-${HOME}/.local/share}/nvim"
+LOCK_FILE="${XDG_CONFIG_HOME:-${HOME}/.config}/nvim/lazy-lock.json"
+LOCK_INDEX_FILE=""
+LOCK_INDEX_READY=0
+META_FILE_NAME=".lazyvim-archive-meta"
 TMP_PATHS=""
 
 log() {
@@ -35,6 +39,7 @@ Uso:
 
 Opcoes:
   --data-dir <dir>       Diretorio data do Neovim. Default: ${XDG_DATA_HOME:-$HOME/.local/share}/nvim
+  --lock-file <arquivo>  Caminho do lazy-lock.json. Default: ${XDG_CONFIG_HOME:-$HOME/.config}/nvim/lazy-lock.json
   --only <plugin>        Instala/atualiza apenas um plugin pelo nome do diretorio.
   --list                 Lista os plugins gerenciados e sai.
   --dry-run              Mostra as acoes sem baixar nem alterar arquivos.
@@ -42,7 +47,9 @@ Opcoes:
 
 Comportamento:
   - Nao usa git clone.
-  - Baixa cada plugin via archive da branch registrada no lazy-lock.json analisado.
+  - Usa lazy-lock.json quando disponivel para baixar commits fixos.
+  - Sem lazy-lock, tenta resolver o SHA remoto da branch com git ls-remote.
+  - Evita reinstalar plugins ja atualizados (instala apenas o que falta ou mudou).
   - Substitui diretorios existentes de forma atomica com backup temporario.
   - Deve ser executado manualmente quando quiser atualizar os plugins.
 USAGE
@@ -61,6 +68,7 @@ copilot.lua|zbirenbaum/copilot.lua|master
 crates.nvim|Saecki/crates.nvim|main
 dial.nvim|monaqa/dial.nvim|master
 friendly-snippets|rafamadriz/friendly-snippets|main
+flash.nvim|folke/flash.nvim|main
 fzf-lua|ibhagwan/fzf-lua|main
 git.nvim|dinhhuy258/git.nvim|main
 gitsigns.nvim|lewis6991/gitsigns.nvim|main
@@ -128,6 +136,10 @@ while [ "$#" -gt 0 ]; do
       NVIM_DATA_DIR="${2:-}"
       shift 2
       ;;
+    --lock-file)
+      LOCK_FILE="${2:-}"
+      shift 2
+      ;;
     --only)
       ONLY_PLUGIN="${2:-}"
       shift 2
@@ -151,6 +163,7 @@ while [ "$#" -gt 0 ]; do
 done
 
 [ -n "${NVIM_DATA_DIR}" ] || die "--data-dir nao pode ser vazio"
+[ -n "${LOCK_FILE}" ] || die "--lock-file nao pode ser vazio"
 
 download() {
   url="$1"
@@ -169,22 +182,150 @@ download() {
   die "curl ou wget e obrigatorio"
 }
 
+is_commit_sha() {
+  value="$1"
+  printf '%s' "${value}" | grep -Eq '^[0-9a-f]{40}$'
+}
+
+resolve_archive_url() {
+  repo="$1"
+  ref="$2"
+  if is_commit_sha "${ref}"; then
+    printf 'https://github.com/%s/archive/%s.tar.gz\n' "${repo}" "${ref}"
+    return
+  fi
+  printf 'https://codeload.github.com/%s/tar.gz/refs/heads/%s\n' "${repo}" "${ref}"
+}
+
+resolve_branch_head_sha() {
+  repo="$1"
+  branch="$2"
+
+  if ! command -v git >/dev/null 2>&1; then
+    return 1
+  fi
+
+  git ls-remote --heads "https://github.com/${repo}.git" "${branch}" 2>/dev/null | awk 'NR==1 {print $1}'
+}
+
+build_lock_index() {
+  if [ ! -f "${LOCK_FILE}" ]; then
+    return 0
+  fi
+
+  if ! command -v python3 >/dev/null 2>&1; then
+    log "aviso: python3 nao encontrado; lazy-lock.json sera ignorado"
+    return 0
+  fi
+
+  LOCK_INDEX_FILE="$(mktemp)"
+  remember_tmp_path "${LOCK_INDEX_FILE}"
+
+  if ! python3 - "${LOCK_FILE}" > "${LOCK_INDEX_FILE}" <<'PY'
+import json
+import sys
+
+path = sys.argv[1]
+with open(path, "r", encoding="utf-8") as fh:
+    data = json.load(fh)
+
+for plugin_name, meta in data.items():
+    if not isinstance(meta, dict):
+        continue
+    branch = str(meta.get("branch", "")).strip()
+    commit = str(meta.get("commit", "")).strip()
+    if not commit:
+        continue
+    print(f"{plugin_name}|{branch}|{commit}")
+PY
+  then
+    die "falha ao analisar lock file: ${LOCK_FILE}"
+  fi
+
+  LOCK_INDEX_READY=1
+  log "lock file habilitado: ${LOCK_FILE}"
+}
+
+lookup_lock_plugin() {
+  plugin_name="$1"
+  if [ "${LOCK_INDEX_READY}" != "1" ] || [ ! -s "${LOCK_INDEX_FILE}" ]; then
+    return 1
+  fi
+
+  awk -F'|' -v plugin="${plugin_name}" '$1 == plugin { print $2 "|" $3; found=1; exit } END { if (!found) exit 1 }' "${LOCK_INDEX_FILE}"
+}
+
+read_metadata_value() {
+  key="$1"
+  file="$2"
+  sed -n "s/^${key}=//p" "${file}" | sed -n '1p'
+}
+
 install_plugin() {
   plugin_name="$1"
   repo="$2"
   branch="$3"
   install_root="${NVIM_DATA_DIR%/}/lazy"
   target_dir="${install_root}/${plugin_name}"
-  archive_url="https://codeload.github.com/${repo}/tar.gz/refs/heads/${branch}"
+  meta_file="${target_dir}/${META_FILE_NAME}"
+  desired_ref="${branch}"
+  resolved_branch="${branch}"
+  ref_source="manifest-branch"
 
   if [ -n "${ONLY_PLUGIN}" ] && [ "${ONLY_PLUGIN}" != "${plugin_name}" ]; then
     return 0
   fi
 
-  log "instalando ${plugin_name} de ${repo}#${branch}"
+  lock_info="$(lookup_lock_plugin "${plugin_name}" || true)"
+  if [ -n "${lock_info}" ]; then
+    resolved_branch="$(printf '%s' "${lock_info}" | cut -d'|' -f1)"
+    desired_ref="$(printf '%s' "${lock_info}" | cut -d'|' -f2)"
+    [ -n "${resolved_branch}" ] || resolved_branch="${branch}"
+    ref_source="lazy-lock"
+  else
+    remote_sha="$(resolve_branch_head_sha "${repo}" "${branch}" || true)"
+    if [ -n "${remote_sha}" ]; then
+      desired_ref="${remote_sha}"
+      ref_source="remote-head"
+    fi
+  fi
+
+  archive_url="$(resolve_archive_url "${repo}" "${desired_ref}")"
+
+  if [ ! -d "${target_dir}" ]; then
+    action="install"
+    reason="diretorio ausente"
+  else
+    installed_repo=""
+    installed_branch=""
+    installed_ref=""
+    installed_source=""
+
+    if [ -f "${meta_file}" ]; then
+      installed_repo="$(read_metadata_value "repo" "${meta_file}")"
+      installed_branch="$(read_metadata_value "branch" "${meta_file}")"
+      installed_ref="$(read_metadata_value "ref" "${meta_file}")"
+      installed_source="$(read_metadata_value "source" "${meta_file}")"
+    fi
+
+    if [ "${installed_repo}" = "${repo}" ] && [ "${installed_branch}" = "${resolved_branch}" ] && [ "${installed_ref}" = "${desired_ref}" ]; then
+      log "mantendo ${plugin_name} (${installed_source:-sem-origem}) - ja esta em ${desired_ref}"
+      return 0
+    fi
+
+    if [ -f "${meta_file}" ]; then
+      action="update"
+      reason="metadados divergentes"
+    else
+      action="update"
+      reason="metadados ausentes"
+    fi
+  fi
+
+  log "${action} ${plugin_name} de ${repo}#${resolved_branch} (ref=${desired_ref}, origem=${ref_source}, motivo=${reason})"
 
   if [ "${DRY_RUN}" = "1" ]; then
-    printf '[dry-run] download %s -> %s\n' "${archive_url}" "${target_dir}" >&2
+    printf '[dry-run] %s: download %s -> %s\n' "${action}" "${archive_url}" "${target_dir}" >&2
     return 0
   fi
 
@@ -204,6 +345,12 @@ install_plugin() {
   [ -n "${source_dir}" ] || die "archive sem diretorio raiz para ${plugin_name}"
 
   mv "${source_dir}" "${new_dir}"
+  cat > "${new_dir}/${META_FILE_NAME}" <<EOF
+repo=${repo}
+branch=${resolved_branch}
+ref=${desired_ref}
+source=${ref_source}
+EOF
 
   if [ -e "${target_dir}" ]; then
     mv "${target_dir}" "${backup_dir}"
@@ -220,6 +367,7 @@ install_plugin() {
 }
 
 command -v tar >/dev/null 2>&1 || die "tar e obrigatorio"
+build_lock_index
 
 manifest_file="$(mktemp)"
 remember_tmp_path "${manifest_file}"
