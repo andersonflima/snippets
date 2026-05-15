@@ -74,6 +74,53 @@ upsert_path_block() {
   rm -f "${temp_file}"
 }
 
+resolve_real_binary() {
+  bin_name="$1"
+  shim_path="${TARGET_DIR%/}/${bin_name}"
+
+  direct_candidate="$(command -v "${bin_name}" 2>/dev/null || true)"
+
+  case "${direct_candidate}" in
+    "${shim_path}"|"")
+      ;;
+    *)
+      printf '%s\n' "${direct_candidate}"
+      return 0
+      ;;
+  esac
+
+  path_without_shim="$(printf '%s' "${PATH}" | awk -F: -v skip="${TARGET_DIR}" '
+    BEGIN { first = 1 }
+    {
+      for (i = 1; i <= NF; i++) {
+        if ($i == "" || $i == skip) {
+          continue
+        }
+        if (!first) {
+          printf(":")
+        }
+        printf("%s", $i)
+        first = 0
+      }
+    }
+  ')"
+
+  fallback_candidate="$(PATH="${path_without_shim}" command -v "${bin_name}" 2>/dev/null || true)"
+  if [ -n "${fallback_candidate}" ] && [ "${fallback_candidate}" != "${shim_path}" ]; then
+    printf '%s\n' "${fallback_candidate}"
+    return 0
+  fi
+
+  for known_path in "/usr/bin/${bin_name}" "/bin/${bin_name}" "/usr/local/bin/${bin_name}"; do
+    if [ -x "${known_path}" ] && [ "${known_path}" != "${shim_path}" ]; then
+      printf '%s\n' "${known_path}"
+      return 0
+    fi
+  done
+
+  return 1
+}
+
 while [ "$#" -gt 0 ]; do
   case "$1" in
     --target-dir)
@@ -110,10 +157,10 @@ WRAPPER_DIR="${REPO_ROOT}/scripts/wrappers"
 [ -x "${WRAPPER_DIR}/git_zip_clone_wrapper.sh" ] || die "wrapper git ausente em ${WRAPPER_DIR}"
 [ -x "${WRAPPER_DIR}/curl_python_wrapper.sh" ] || die "wrapper curl ausente em ${WRAPPER_DIR}"
 
-REAL_GIT_BIN="$(command -v git 2>/dev/null || true)"
-REAL_CURL_BIN="$(command -v curl 2>/dev/null || true)"
-[ -n "${REAL_GIT_BIN}" ] || die "git real nao encontrado no PATH"
-[ -n "${REAL_CURL_BIN}" ] || die "curl real nao encontrado no PATH"
+REAL_GIT_BIN="$(resolve_real_binary git || true)"
+REAL_CURL_BIN="$(resolve_real_binary curl || true)"
+[ -n "${REAL_GIT_BIN}" ] || die "git real nao encontrado no PATH (sem recursao de shim)"
+[ -n "${REAL_CURL_BIN}" ] || die "curl real nao encontrado no PATH (sem recursao de shim)"
 
 mkdir -p "${TARGET_DIR}"
 
