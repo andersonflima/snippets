@@ -1,12 +1,14 @@
 #!/usr/bin/env sh
 set -eu
 
+SCRIPT_DIR="$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)"
 REGISTRY_REPO="mason-org/mason-registry"
 REGISTRY_BRANCH="main"
 
 DRY_RUN=0
 NVIM_BIN="${NVIM_BIN:-nvim}"
 NVIM_DATA_DIR="${XDG_DATA_HOME:-${HOME}/.local/share}/nvim"
+CURL_BIN="${CURL_BIN:-${SCRIPT_DIR}/wrappers/curl_python_wrapper.sh}"
 REGISTRY_DIR="${XDG_CACHE_HOME:-${HOME}/.cache}/nvim/mason-registry-main"
 INSTALL_TIMEOUT_MS="${INSTALL_TIMEOUT_MS:-1800000}"
 MAX_CONCURRENT_INSTALLERS="${MAX_CONCURRENT_INSTALLERS:-4}"
@@ -153,17 +155,68 @@ download() {
   url="$1"
   output="$2"
 
+  if [ -x "${CURL_BIN}" ]; then
+    if "${CURL_BIN}" -fL --retry 3 --connect-timeout 20 "${url}" -o "${output}"; then
+      return 0
+    fi
+  fi
+
   if command -v curl >/dev/null 2>&1; then
-    curl -fL --retry 3 --connect-timeout 20 "${url}" -o "${output}"
-    return
+    if curl -fL --retry 3 --connect-timeout 20 "${url}" -o "${output}"; then
+      return 0
+    fi
   fi
 
   if command -v wget >/dev/null 2>&1; then
-    wget -O "${output}" "${url}"
-    return
+    if wget -O "${output}" "${url}"; then
+      return 0
+    fi
+  fi
+
+  if [ -x "${CURL_BIN}" ] || command -v curl >/dev/null 2>&1 || command -v wget >/dev/null 2>&1; then
+    return 1
   fi
 
   die "curl ou wget e obrigatorio"
+}
+
+fetch_latest_release_tag() {
+  api_url="https://api.github.com/repos/${REGISTRY_REPO}/releases/latest"
+  response=""
+
+  if [ -x "${CURL_BIN}" ]; then
+    response="$("${CURL_BIN}" -fsSL "${api_url}" 2>/dev/null || true)"
+  elif command -v curl >/dev/null 2>&1; then
+    response="$(curl -fsSL "${api_url}" 2>/dev/null || true)"
+  else
+    response=""
+  fi
+
+  if [ -z "${response}" ]; then
+    return 1
+  fi
+
+  if ! command -v python3 >/dev/null 2>&1; then
+    return 1
+  fi
+
+  tag_name="$(printf '%s' "${response}" | python3 - <<'PY' 2>/dev/null || true
+import json
+import sys
+
+try:
+    payload = json.loads(sys.stdin.read() or "{}")
+except Exception:
+    payload = {}
+
+tag = str(payload.get("tag_name", "")).strip()
+if tag:
+    print(tag)
+PY
+)"
+
+  [ -n "${tag_name}" ] || return 1
+  printf '%s\n' "${tag_name}"
 }
 
 build_package_list() {
@@ -190,15 +243,16 @@ build_package_list() {
 }
 
 install_registry_archive() {
-  archive_url="https://codeload.github.com/${REGISTRY_REPO}/tar.gz/refs/heads/${REGISTRY_BRANCH}"
-
-  log "baixando registry ${REGISTRY_REPO}#${REGISTRY_BRANCH}"
-
   if [ "${DRY_RUN}" = "1" ]; then
-    printf '[dry-run] download %s -> %s\n' "${archive_url}" "${REGISTRY_DIR}" >&2
+    latest_tag="$(fetch_latest_release_tag || true)"
+    if [ -n "${latest_tag}" ]; then
+      printf '[dry-run] download %s -> %s\n' "https://codeload.github.com/${REGISTRY_REPO}/tar.gz/refs/tags/${latest_tag}" "${REGISTRY_DIR}" >&2
+    fi
+    printf '[dry-run] download %s -> %s\n' "https://codeload.github.com/${REGISTRY_REPO}/tar.gz/refs/heads/${REGISTRY_BRANCH}" "${REGISTRY_DIR}" >&2
     return 0
   fi
 
+  latest_tag="$(fetch_latest_release_tag || true)"
   tmp_dir="$(mktemp -d)"
   remember_tmp_path "${tmp_dir}"
   archive_path="${tmp_dir}/mason-registry.tar.gz"
@@ -207,7 +261,24 @@ install_registry_archive() {
   backup_dir="${REGISTRY_DIR}.archive-backup.${timestamp}"
 
   mkdir -p "${extract_dir}" "$(dirname "${REGISTRY_DIR}")"
-  download "${archive_url}" "${archive_path}"
+  downloaded=0
+
+  if [ -n "${latest_tag}" ]; then
+    release_archive_url="https://codeload.github.com/${REGISTRY_REPO}/tar.gz/refs/tags/${latest_tag}"
+    log "baixando registry ${REGISTRY_REPO}@${latest_tag} (release)"
+    if download "${release_archive_url}" "${archive_path}" 2>/dev/null; then
+      downloaded=1
+    else
+      log "aviso: falha no download da release ${latest_tag}; fallback para branch ${REGISTRY_BRANCH}"
+    fi
+  fi
+
+  if [ "${downloaded}" != "1" ]; then
+    branch_archive_url="https://codeload.github.com/${REGISTRY_REPO}/tar.gz/refs/heads/${REGISTRY_BRANCH}"
+    log "baixando registry ${REGISTRY_REPO}#${REGISTRY_BRANCH}"
+    download "${branch_archive_url}" "${archive_path}"
+  fi
+
   tar -xzf "${archive_path}" -C "${extract_dir}"
 
   source_dir="$(find "${extract_dir}" -mindepth 1 -maxdepth 1 -type d | sed -n '1p')"
