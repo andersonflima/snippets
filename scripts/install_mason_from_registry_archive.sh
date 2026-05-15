@@ -236,7 +236,7 @@ run_mason_install() {
   [ -n "${package_list}" ] || die "lista de pacotes vazia"
 
   if [ "${DRY_RUN}" = "1" ]; then
-    printf '[dry-run] %s --headless -u NONE -S <mason install script>\n' "${NVIM_BIN}" >&2
+    printf '[dry-run] %s --headless -u NONE -c \"luafile <mason install script>\"\n' "${NVIM_BIN}" >&2
     printf '[dry-run] packages=%s\n' "${package_list}" >&2
     return 0
   fi
@@ -354,7 +354,7 @@ LUA
     MASON_INSTALL_TIMEOUT_MS="${INSTALL_TIMEOUT_MS}" \
     MASON_MAX_CONCURRENT_INSTALLERS="${MAX_CONCURRENT_INSTALLERS}" \
     MASON_PACKAGE_LIST="${package_list}" \
-    "${NVIM_BIN}" --headless -u NONE -S "${lua_script}"
+    "${NVIM_BIN}" --headless -u NONE -c "luafile ${lua_script}"
 
   rm -f "${lua_script}"
 }
