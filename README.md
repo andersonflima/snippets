@@ -5,6 +5,28 @@ Repositório configurado apenas para deploy em AWS Lambda.
 - Handler: `dynamodb_snapshot_lambda.lambda_handler`
 - Implementação completa da Lambda: `dynamodb_snapshot_lambda.py`
 
+## Wrappers para LazyVim e Mason (sem git clone direto)
+
+Para ambientes de serviço onde você quer evitar `git clone` direto durante instalação/atualização de plugins, este repositório inclui wrappers de `git` e `curl`:
+
+- `scripts/wrappers/git_zip_clone_wrapper.sh`
+- `scripts/wrappers/curl_python_wrapper.sh`
+- `scripts/install_nvim_wrappers.sh` (instala shims `git`/`curl` no PATH)
+- `scripts/update_lazyvim_mason_wrapped.sh` (atualiza LazyVim + Mason usando os wrappers)
+
+Exemplo na máquina de serviço:
+
+```bash
+sh scripts/install_nvim_wrappers.sh --force
+export PATH="$HOME/.local/share/nvim/wrappers/bin:$PATH"
+sh scripts/update_lazyvim_mason_wrapped.sh
+```
+
+Comportamento:
+
+- LazyVim: tenta archive/release para instalação de plugins e fallback controlado.
+- Mason registry: tenta release mais recente do `mason-registry`; se falhar, cai para `main`.
+
 ## Requisitos
 
 - Python `3.10+`

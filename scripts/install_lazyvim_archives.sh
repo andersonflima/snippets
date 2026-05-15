@@ -1,10 +1,13 @@
 #!/usr/bin/env sh
 set -eu
 
+SCRIPT_DIR="$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)"
 DRY_RUN=0
 ONLY_PLUGIN=""
 NVIM_DATA_DIR="${XDG_DATA_HOME:-${HOME}/.local/share}/nvim"
 LOCK_FILE="${XDG_CONFIG_HOME:-${HOME}/.config}/nvim/lazy-lock.json"
+CURL_BIN="${CURL_BIN:-${SCRIPT_DIR}/wrappers/curl_python_wrapper.sh}"
+GIT_BIN="${GIT_BIN:-git}"
 LOCK_INDEX_FILE=""
 LOCK_INDEX_READY=0
 META_FILE_NAME=".lazyvim-archive-meta"
@@ -169,6 +172,11 @@ download() {
   url="$1"
   output="$2"
 
+  if [ -x "${CURL_BIN}" ]; then
+    "${CURL_BIN}" -fL --retry 3 --connect-timeout 20 "${url}" -o "${output}"
+    return
+  fi
+
   if command -v curl >/dev/null 2>&1; then
     curl -fL --retry 3 --connect-timeout 20 "${url}" -o "${output}"
     return
@@ -201,11 +209,11 @@ resolve_branch_head_sha() {
   repo="$1"
   branch="$2"
 
-  if ! command -v git >/dev/null 2>&1; then
+  if ! command -v "${GIT_BIN}" >/dev/null 2>&1; then
     return 1
   fi
 
-  git ls-remote --heads "https://github.com/${repo}.git" "${branch}" 2>/dev/null | awk 'NR==1 {print $1}'
+  "${GIT_BIN}" ls-remote --heads "https://github.com/${repo}.git" "${branch}" 2>/dev/null | awk 'NR==1 {print $1}'
 }
 
 repo_default_plugin_name() {
