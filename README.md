@@ -18,9 +18,13 @@ Exemplo na máquina de serviço:
 
 ```bash
 sh scripts/install_nvim_wrappers.sh --force
-export PATH="$HOME/.local/share/nvim/wrappers/bin:$PATH"
 sh scripts/update_lazyvim_mason_wrapped.sh
 ```
+
+Observação:
+
+- `install_nvim_wrappers.sh` já configura automaticamente o `PATH` no perfil do shell (`.zshrc`, `.bashrc` ou `.profile`).
+- para desativar isso, use `--no-shell-profile`.
 
 Comportamento:
 

@@ -6,6 +6,7 @@ WRAPPER_BIN_DIR="${HOME}/.local/share/nvim/wrappers/bin"
 LAZY_ONLY=0
 MASON_ONLY=0
 FORCE_WRAPPER_INSTALL=0
+AUTO_SHELL_PROFILE=1
 
 log() {
   printf '[lazyvim-mason-update] %s\n' "$*" >&2
@@ -27,6 +28,7 @@ Opcoes:
   --lazy-only              Executa apenas install_lazyvim_archives.sh
   --mason-only             Executa apenas install_mason_from_registry_archive.sh
   --force-wrapper-install  Reinstala os shims de wrapper antes de atualizar
+  --no-shell-profile       Nao altera arquivo de perfil durante instalacao dos wrappers
   -h, --help               Mostra esta ajuda.
 USAGE
 }
@@ -49,6 +51,10 @@ while [ "$#" -gt 0 ]; do
       FORCE_WRAPPER_INSTALL=1
       shift
       ;;
+    --no-shell-profile)
+      AUTO_SHELL_PROFILE=0
+      shift
+      ;;
     -h|--help)
       usage
       exit 0
@@ -65,9 +71,17 @@ fi
 
 if [ "${FORCE_WRAPPER_INSTALL}" = "1" ] || [ ! -x "${WRAPPER_BIN_DIR}/git" ] || [ ! -x "${WRAPPER_BIN_DIR}/curl" ]; then
   if [ "${FORCE_WRAPPER_INSTALL}" = "1" ]; then
-    sh "${SCRIPT_DIR}/install_nvim_wrappers.sh" --target-dir "${WRAPPER_BIN_DIR}" --force
+    if [ "${AUTO_SHELL_PROFILE}" = "0" ]; then
+      sh "${SCRIPT_DIR}/install_nvim_wrappers.sh" --target-dir "${WRAPPER_BIN_DIR}" --force --no-shell-profile
+    else
+      sh "${SCRIPT_DIR}/install_nvim_wrappers.sh" --target-dir "${WRAPPER_BIN_DIR}" --force
+    fi
   else
-    sh "${SCRIPT_DIR}/install_nvim_wrappers.sh" --target-dir "${WRAPPER_BIN_DIR}"
+    if [ "${AUTO_SHELL_PROFILE}" = "0" ]; then
+      sh "${SCRIPT_DIR}/install_nvim_wrappers.sh" --target-dir "${WRAPPER_BIN_DIR}" --no-shell-profile
+    else
+      sh "${SCRIPT_DIR}/install_nvim_wrappers.sh" --target-dir "${WRAPPER_BIN_DIR}"
+    fi
   fi
 fi
 

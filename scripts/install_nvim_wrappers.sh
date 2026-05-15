@@ -3,6 +3,8 @@ set -eu
 
 TARGET_DIR="${HOME}/.local/share/nvim/wrappers/bin"
 FORCE=0
+AUTO_SHELL_PROFILE=1
+SHELL_RC_FILE=""
 
 log() {
   printf '[nvim-wrappers] %s\n' "$*" >&2
@@ -22,12 +24,54 @@ Opcoes:
   --target-dir <dir>  Diretorio onde os shims git/curl serao instalados.
                       Default: $HOME/.local/share/nvim/wrappers/bin
   --force             Sobrescreve shims existentes.
+  --rc-file <arquivo> Define explicitamente o arquivo de perfil para receber o PATH.
+  --no-shell-profile  Nao altera arquivo de perfil; apenas instala os shims.
   -h, --help          Mostra esta ajuda.
 
 Resultado:
   - instala shims "git" e "curl" para wrappers locais do repositorio
-  - imprime o export de PATH para aplicar na maquina do servico
+  - por padrao, grava automaticamente o PATH no perfil do shell
 USAGE
+}
+
+detect_shell_rc_file() {
+  shell_name="$(basename "${SHELL:-}")"
+  case "${shell_name}" in
+    zsh)
+      printf '%s\n' "${HOME}/.zshrc"
+      ;;
+    bash)
+      printf '%s\n' "${HOME}/.bashrc"
+      ;;
+    *)
+      printf '%s\n' "${HOME}/.profile"
+      ;;
+  esac
+}
+
+upsert_path_block() {
+  rc_file="$1"
+  marker_begin="# >>> nvim-wrappers PATH >>>"
+  marker_end="# <<< nvim-wrappers PATH <<<"
+  temp_file="$(mktemp)"
+  mkdir -p "$(dirname "${rc_file}")"
+
+  if [ -f "${rc_file}" ]; then
+    awk -v begin="${marker_begin}" -v end="${marker_end}" '
+      $0 == begin { in_block=1; next }
+      $0 == end { in_block=0; next }
+      !in_block { print }
+    ' "${rc_file}" > "${temp_file}"
+  fi
+
+  {
+    cat "${temp_file}"
+    printf '%s\n' "${marker_begin}"
+    printf '%s\n' "export PATH=\"${TARGET_DIR}:\$PATH\""
+    printf '%s\n' "${marker_end}"
+  } > "${rc_file}"
+
+  rm -f "${temp_file}"
 }
 
 while [ "$#" -gt 0 ]; do
@@ -38,6 +82,14 @@ while [ "$#" -gt 0 ]; do
       ;;
     --force)
       FORCE=1
+      shift
+      ;;
+    --rc-file)
+      SHELL_RC_FILE="${2:-}"
+      shift 2
+      ;;
+    --no-shell-profile)
+      AUTO_SHELL_PROFILE=0
       shift
       ;;
     -h|--help)
@@ -97,5 +149,14 @@ EOF2
 chmod +x "${TARGET_DIR}/git" "${TARGET_DIR}/curl"
 
 log "wrappers instalados em ${TARGET_DIR}"
-log "adicione no ambiente da maquina de servico:"
-printf 'export PATH="%s:$PATH"\n' "${TARGET_DIR}"
+
+if [ "${AUTO_SHELL_PROFILE}" = "1" ]; then
+  if [ -z "${SHELL_RC_FILE}" ]; then
+    SHELL_RC_FILE="$(detect_shell_rc_file)"
+  fi
+  upsert_path_block "${SHELL_RC_FILE}"
+  log "PATH configurado automaticamente em ${SHELL_RC_FILE}"
+else
+  log "adicione no ambiente da maquina do servico:"
+  printf 'export PATH="%s:$PATH"\n' "${TARGET_DIR}"
+fi
