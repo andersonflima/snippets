@@ -61,6 +61,7 @@ copilot.lua|zbirenbaum/copilot.lua|master
 crates.nvim|Saecki/crates.nvim|main
 dial.nvim|monaqa/dial.nvim|master
 friendly-snippets|rafamadriz/friendly-snippets|main
+flash.nvim|folke/flash.nvim|main
 fzf-lua|ibhagwan/fzf-lua|main
 git.nvim|dinhhuy258/git.nvim|main
 gitsigns.nvim|lewis6991/gitsigns.nvim|main
