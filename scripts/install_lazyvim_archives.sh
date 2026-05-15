@@ -214,7 +214,7 @@ build_lock_index() {
   fi
 
   if ! command -v python3 >/dev/null 2>&1; then
-    log "aviso: python3 nao encontrado; lazy-lock.json sera ignorado"
+    log "aviso: python3 nao encontrado; lazy-lock.json sera ignorado (fallback: remote-head/branch)"
     return 0
   fi
 
@@ -226,8 +226,14 @@ import json
 import sys
 
 path = sys.argv[1]
-with open(path, "r", encoding="utf-8") as fh:
-    data = json.load(fh)
+try:
+    with open(path, "r", encoding="utf-8") as fh:
+        data = json.load(fh)
+    if not isinstance(data, dict):
+        raise ValueError("conteudo nao e objeto JSON")
+except Exception as exc:
+    print(f"lock-parse-error: {exc}", file=sys.stderr)
+    sys.exit(1)
 
 for plugin_name, meta in data.items():
     if not isinstance(meta, dict):
@@ -239,7 +245,17 @@ for plugin_name, meta in data.items():
     print(f"{plugin_name}|{branch}|{commit}")
 PY
   then
-    die "falha ao analisar lock file: ${LOCK_FILE}"
+    log "aviso: falha ao analisar lock file ${LOCK_FILE}; fallback para remote-head/branch"
+    rm -f "${LOCK_INDEX_FILE}" 2>/dev/null || true
+    LOCK_INDEX_FILE=""
+    LOCK_INDEX_READY=0
+    return 0
+  fi
+
+  if [ ! -s "${LOCK_INDEX_FILE}" ]; then
+    log "aviso: lock file sem entradas validas; fallback para remote-head/branch"
+    LOCK_INDEX_READY=0
+    return 0
   fi
 
   LOCK_INDEX_READY=1
@@ -278,11 +294,20 @@ install_plugin() {
 
   lock_info="$(lookup_lock_plugin "${plugin_name}" || true)"
   if [ -n "${lock_info}" ]; then
-    resolved_branch="$(printf '%s' "${lock_info}" | cut -d'|' -f1)"
-    desired_ref="$(printf '%s' "${lock_info}" | cut -d'|' -f2)"
-    [ -n "${resolved_branch}" ] || resolved_branch="${branch}"
-    ref_source="lazy-lock"
-  else
+    lock_branch="$(printf '%s' "${lock_info}" | cut -d'|' -f1)"
+    lock_ref="$(printf '%s' "${lock_info}" | cut -d'|' -f2)"
+    [ -n "${lock_branch}" ] || lock_branch="${branch}"
+
+    if is_commit_sha "${lock_ref}"; then
+      resolved_branch="${lock_branch}"
+      desired_ref="${lock_ref}"
+      ref_source="lazy-lock"
+    else
+      log "aviso: lock entry invalida para ${plugin_name} (commit='${lock_ref}'); fallback para remote-head/branch"
+    fi
+  fi
+
+  if [ "${ref_source}" != "lazy-lock" ]; then
     remote_sha="$(resolve_branch_head_sha "${repo}" "${branch}" || true)"
     if [ -n "${remote_sha}" ]; then
       desired_ref="${remote_sha}"
