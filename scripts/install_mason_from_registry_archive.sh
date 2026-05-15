@@ -54,7 +54,7 @@ Opcoes:
 
 Comportamento:
   - Nao usa git clone.
-  - Baixa o mason-registry via archive da branch main no GitHub.
+  - Tenta baixar primeiro a ultima release do mason-registry; se falhar, cai para a branch main.
   - Usa registry local file:<registry-dir>, evitando o update remoto padrao.
   - Reinstala pacotes existentes para atualizar conforme o registry local.
 
@@ -200,12 +200,13 @@ fetch_latest_release_tag() {
     return 1
   fi
 
-  tag_name="$(printf '%s' "${response}" | python3 - <<'PY' 2>/dev/null || true
+  tag_name="$(MASON_REGISTRY_RELEASE_JSON="${response}" python3 - <<'PY' 2>/dev/null || true
 import json
-import sys
+import os
 
+raw = os.environ.get("MASON_REGISTRY_RELEASE_JSON", "")
 try:
-    payload = json.loads(sys.stdin.read() or "{}")
+    payload = json.loads(raw or "{}")
 except Exception:
     payload = {}
 
@@ -217,6 +218,22 @@ PY
 
   [ -n "${tag_name}" ] || return 1
   printf '%s\n' "${tag_name}"
+}
+
+download_first_available() {
+  output="$1"
+  shift
+
+  for candidate_url in "$@"; do
+    [ -n "${candidate_url}" ] || continue
+    log "tentando download: ${candidate_url}"
+    if download "${candidate_url}" "${output}"; then
+      log "download concluido: ${candidate_url}"
+      return 0
+    fi
+  done
+
+  return 1
 }
 
 build_package_list() {
@@ -243,16 +260,27 @@ build_package_list() {
 }
 
 install_registry_archive() {
+  latest_tag="$(fetch_latest_release_tag || true)"
+  release_url_primary=""
+  release_url_fallback=""
+  branch_url_primary="https://github.com/${REGISTRY_REPO}/archive/refs/heads/${REGISTRY_BRANCH}.tar.gz"
+  branch_url_fallback="https://codeload.github.com/${REGISTRY_REPO}/tar.gz/refs/heads/${REGISTRY_BRANCH}"
+
+  if [ -n "${latest_tag}" ]; then
+    release_url_primary="https://github.com/${REGISTRY_REPO}/archive/refs/tags/${latest_tag}.tar.gz"
+    release_url_fallback="https://codeload.github.com/${REGISTRY_REPO}/tar.gz/refs/tags/${latest_tag}"
+  fi
+
   if [ "${DRY_RUN}" = "1" ]; then
-    latest_tag="$(fetch_latest_release_tag || true)"
     if [ -n "${latest_tag}" ]; then
-      printf '[dry-run] download %s -> %s\n' "https://codeload.github.com/${REGISTRY_REPO}/tar.gz/refs/tags/${latest_tag}" "${REGISTRY_DIR}" >&2
+      printf '[dry-run] download %s -> %s\n' "${release_url_primary}" "${REGISTRY_DIR}" >&2
+      printf '[dry-run] download %s -> %s\n' "${release_url_fallback}" "${REGISTRY_DIR}" >&2
     fi
-    printf '[dry-run] download %s -> %s\n' "https://codeload.github.com/${REGISTRY_REPO}/tar.gz/refs/heads/${REGISTRY_BRANCH}" "${REGISTRY_DIR}" >&2
+    printf '[dry-run] download %s -> %s\n' "${branch_url_primary}" "${REGISTRY_DIR}" >&2
+    printf '[dry-run] download %s -> %s\n' "${branch_url_fallback}" "${REGISTRY_DIR}" >&2
     return 0
   fi
 
-  latest_tag="$(fetch_latest_release_tag || true)"
   tmp_dir="$(mktemp -d)"
   remember_tmp_path "${tmp_dir}"
   archive_path="${tmp_dir}/mason-registry.tar.gz"
@@ -264,9 +292,8 @@ install_registry_archive() {
   downloaded=0
 
   if [ -n "${latest_tag}" ]; then
-    release_archive_url="https://codeload.github.com/${REGISTRY_REPO}/tar.gz/refs/tags/${latest_tag}"
     log "baixando registry ${REGISTRY_REPO}@${latest_tag} (release)"
-    if download "${release_archive_url}" "${archive_path}" 2>/dev/null; then
+    if download_first_available "${archive_path}" "${release_url_primary}" "${release_url_fallback}"; then
       downloaded=1
     else
       log "aviso: falha no download da release ${latest_tag}; fallback para branch ${REGISTRY_BRANCH}"
@@ -274,9 +301,10 @@ install_registry_archive() {
   fi
 
   if [ "${downloaded}" != "1" ]; then
-    branch_archive_url="https://codeload.github.com/${REGISTRY_REPO}/tar.gz/refs/heads/${REGISTRY_BRANCH}"
     log "baixando registry ${REGISTRY_REPO}#${REGISTRY_BRANCH}"
-    download "${branch_archive_url}" "${archive_path}"
+    if ! download_first_available "${archive_path}" "${branch_url_primary}" "${branch_url_fallback}"; then
+      die "falha no download do registry via release e via branch ${REGISTRY_BRANCH}"
+    fi
   fi
 
   tar -xzf "${archive_path}" -C "${extract_dir}"
