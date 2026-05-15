@@ -208,6 +208,11 @@ resolve_branch_head_sha() {
   git ls-remote --heads "https://github.com/${repo}.git" "${branch}" 2>/dev/null | awk 'NR==1 {print $1}'
 }
 
+repo_default_plugin_name() {
+  repo="$1"
+  printf '%s\n' "${repo##*/}"
+}
+
 build_lock_index() {
   if [ ! -f "${LOCK_FILE}" ]; then
     return 0
@@ -262,13 +267,48 @@ PY
   log "lock file habilitado: ${LOCK_FILE}"
 }
 
-lookup_lock_plugin() {
+lookup_lock_by_name() {
   plugin_name="$1"
   if [ "${LOCK_INDEX_READY}" != "1" ] || [ ! -s "${LOCK_INDEX_FILE}" ]; then
     return 1
   fi
 
   awk -F'|' -v plugin="${plugin_name}" '$1 == plugin { print $2 "|" $3; found=1; exit } END { if (!found) exit 1 }' "${LOCK_INDEX_FILE}"
+}
+
+lookup_lock_plugin() {
+  plugin_name="$1"
+  repo="$2"
+
+  lock_info="$(lookup_lock_by_name "${plugin_name}" || true)"
+  if [ -n "${lock_info}" ]; then
+    printf '%s\n' "${lock_info}"
+    return 0
+  fi
+
+  repo_plugin_name="$(repo_default_plugin_name "${repo}")"
+  if [ -n "${repo_plugin_name}" ] && [ "${repo_plugin_name}" != "${plugin_name}" ]; then
+    lock_info="$(lookup_lock_by_name "${repo_plugin_name}" || true)"
+    if [ -n "${lock_info}" ]; then
+      log "aviso: usando lock alias ${repo_plugin_name} para ${plugin_name}"
+      printf '%s\n' "${lock_info}"
+      return 0
+    fi
+  fi
+
+  return 1
+}
+
+plugin_sentinel_relative_path() {
+  plugin_name="$1"
+  case "${plugin_name}" in
+    flash.nvim)
+      printf '%s\n' "lua/flash/init.lua"
+      ;;
+    *)
+      printf '%s\n' ""
+      ;;
+  esac
 }
 
 read_metadata_value() {
@@ -292,7 +332,7 @@ install_plugin() {
     return 0
   fi
 
-  lock_info="$(lookup_lock_plugin "${plugin_name}" || true)"
+  lock_info="$(lookup_lock_plugin "${plugin_name}" "${repo}" || true)"
   if [ -n "${lock_info}" ]; then
     lock_branch="$(printf '%s' "${lock_info}" | cut -d'|' -f1)"
     lock_ref="$(printf '%s' "${lock_info}" | cut -d'|' -f2)"
@@ -317,9 +357,14 @@ install_plugin() {
 
   archive_url="$(resolve_archive_url "${repo}" "${desired_ref}")"
 
+  sentinel_rel="$(plugin_sentinel_relative_path "${plugin_name}")"
+
   if [ ! -d "${target_dir}" ]; then
     action="install"
     reason="diretorio ausente"
+  elif [ -n "${sentinel_rel}" ] && [ ! -f "${target_dir}/${sentinel_rel}" ]; then
+    action="update"
+    reason="integridade ausente (${sentinel_rel})"
   else
     installed_repo=""
     installed_branch=""
