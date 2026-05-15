@@ -1,8 +1,8 @@
-#!/usr/bin/env bash
-set -euo pipefail
+#!/usr/bin/env sh
+set -eu
 
-readonly REGISTRY_REPO="mason-org/mason-registry"
-readonly REGISTRY_BRANCH="main"
+REGISTRY_REPO="mason-org/mason-registry"
+REGISTRY_BRANCH="main"
 
 DRY_RUN=0
 NVIM_BIN="${NVIM_BIN:-nvim}"
@@ -11,17 +11,7 @@ REGISTRY_DIR="${XDG_CACHE_HOME:-${HOME}/.cache}/nvim/mason-registry-main"
 INSTALL_TIMEOUT_MS="${INSTALL_TIMEOUT_MS:-1800000}"
 MAX_CONCURRENT_INSTALLERS="${MAX_CONCURRENT_INSTALLERS:-4}"
 ONLY_PACKAGE=""
-TMP_FILES=()
-
-cleanup() {
-  local file
-  for file in "${TMP_FILES[@]:-}"; do
-    [[ -n "${file}" ]] || continue
-    rm -f "${file}" 2>/dev/null || true
-  done
-}
-
-trap cleanup EXIT
+TMP_PATHS=""
 
 log() {
   printf '[mason-registry-archive] %s\n' "$*" >&2
@@ -32,10 +22,23 @@ die() {
   exit 1
 }
 
+remember_tmp_path() {
+  TMP_PATHS="${TMP_PATHS}${TMP_PATHS:+ }$1"
+}
+
+cleanup() {
+  for tmp_path in ${TMP_PATHS}; do
+    [ -n "${tmp_path}" ] || continue
+    rm -rf "${tmp_path}" 2>/dev/null || true
+  done
+}
+
+trap cleanup EXIT HUP INT TERM
+
 usage() {
   cat <<'USAGE'
 Uso:
-  bash scripts/install_mason_from_registry_archive.sh [opcoes]
+  sh scripts/install_mason_from_registry_archive.sh [opcoes]
 
 Opcoes:
   --nvim <binario>       Binario do Neovim. Default: nvim
@@ -102,7 +105,7 @@ yaml-language-server
 EOF
 }
 
-while [[ $# -gt 0 ]]; do
+while [ "$#" -gt 0 ]; do
   case "$1" in
     --nvim)
       NVIM_BIN="${2:-}"
@@ -142,13 +145,13 @@ while [[ $# -gt 0 ]]; do
   esac
 done
 
-[[ -n "${NVIM_BIN}" ]] || die "--nvim nao pode ser vazio"
-[[ -n "${NVIM_DATA_DIR}" ]] || die "--data-dir nao pode ser vazio"
-[[ -n "${REGISTRY_DIR}" ]] || die "--registry-dir nao pode ser vazio"
+[ -n "${NVIM_BIN}" ] || die "--nvim nao pode ser vazio"
+[ -n "${NVIM_DATA_DIR}" ] || die "--data-dir nao pode ser vazio"
+[ -n "${REGISTRY_DIR}" ] || die "--registry-dir nao pode ser vazio"
 
 download() {
-  local url="$1"
-  local output="$2"
+  url="$1"
+  output="$2"
 
   if command -v curl >/dev/null 2>&1; then
     curl -fL --retry 3 --connect-timeout 20 "${url}" -o "${output}"
@@ -164,35 +167,40 @@ download() {
 }
 
 build_package_list() {
-  local matched=0
-  local package_name
+  manifest_file="$(mktemp)"
+  remember_tmp_path "${manifest_file}"
+  packages_manifest > "${manifest_file}"
 
+  matched=0
+  package_list=""
   while IFS= read -r package_name; do
-    [[ -n "${package_name}" ]] || continue
-    if [[ -n "${ONLY_PACKAGE}" && "${ONLY_PACKAGE}" != "${package_name}" ]]; then
+    [ -n "${package_name}" ] || continue
+    if [ -n "${ONLY_PACKAGE}" ] && [ "${ONLY_PACKAGE}" != "${package_name}" ]; then
       continue
     fi
     matched=1
-    printf '%s,' "${package_name}"
-  done < <(packages_manifest)
+    package_list="${package_list}${package_list:+,}${package_name}"
+  done < "${manifest_file}"
 
-  if [[ -n "${ONLY_PACKAGE}" && "${matched}" != "1" ]]; then
+  if [ -n "${ONLY_PACKAGE}" ] && [ "${matched}" != "1" ]; then
     die "pacote nao encontrado no manifesto: ${ONLY_PACKAGE}"
   fi
+
+  printf '%s\n' "${package_list}"
 }
 
 install_registry_archive() {
-  local archive_url="https://codeload.github.com/${REGISTRY_REPO}/tar.gz/refs/heads/${REGISTRY_BRANCH}"
-  local tmp_dir archive_path extract_dir source_dir backup_dir timestamp
+  archive_url="https://codeload.github.com/${REGISTRY_REPO}/tar.gz/refs/heads/${REGISTRY_BRANCH}"
 
   log "baixando registry ${REGISTRY_REPO}#${REGISTRY_BRANCH}"
 
-  if [[ "${DRY_RUN}" == "1" ]]; then
+  if [ "${DRY_RUN}" = "1" ]; then
     printf '[dry-run] download %s -> %s\n' "${archive_url}" "${REGISTRY_DIR}" >&2
     return 0
   fi
 
   tmp_dir="$(mktemp -d)"
+  remember_tmp_path "${tmp_dir}"
   archive_path="${tmp_dir}/mason-registry.tar.gz"
   extract_dir="${tmp_dir}/extract"
   timestamp="$(date +%Y%m%d_%H%M%S)"
@@ -202,16 +210,16 @@ install_registry_archive() {
   download "${archive_url}" "${archive_path}"
   tar -xzf "${archive_path}" -C "${extract_dir}"
 
-  source_dir="$(find "${extract_dir}" -mindepth 1 -maxdepth 1 -type d | head -n 1)"
-  [[ -n "${source_dir}" ]] || die "archive do registry sem diretorio raiz"
-  [[ -d "${source_dir}/packages" ]] || die "archive do registry sem packages/"
+  source_dir="$(find "${extract_dir}" -mindepth 1 -maxdepth 1 -type d | sed -n '1p')"
+  [ -n "${source_dir}" ] || die "archive do registry sem diretorio raiz"
+  [ -d "${source_dir}/packages" ] || die "archive do registry sem packages/"
 
-  if [[ -e "${REGISTRY_DIR}" ]]; then
+  if [ -e "${REGISTRY_DIR}" ]; then
     mv "${REGISTRY_DIR}" "${backup_dir}"
   fi
 
   if ! mv "${source_dir}" "${REGISTRY_DIR}"; then
-    if [[ -d "${backup_dir}" && ! -e "${REGISTRY_DIR}" ]]; then
+    if [ -d "${backup_dir}" ] && [ ! -e "${REGISTRY_DIR}" ]; then
       mv "${backup_dir}" "${REGISTRY_DIR}"
     fi
     die "falha ao publicar registry local"
@@ -221,15 +229,13 @@ install_registry_archive() {
 }
 
 run_mason_install() {
-  local mason_plugin_dir="${NVIM_DATA_DIR%/}/lazy/mason.nvim"
-  local mason_install_root="${NVIM_DATA_DIR%/}/mason"
-  local lua_script package_list
+  mason_plugin_dir="${NVIM_DATA_DIR%/}/lazy/mason.nvim"
+  mason_install_root="${NVIM_DATA_DIR%/}/mason"
 
   package_list="$(build_package_list)"
-  package_list="${package_list%,}"
-  [[ -n "${package_list}" ]] || die "lista de pacotes vazia"
+  [ -n "${package_list}" ] || die "lista de pacotes vazia"
 
-  if [[ "${DRY_RUN}" == "1" ]]; then
+  if [ "${DRY_RUN}" = "1" ]; then
     printf '[dry-run] %s --headless -u NONE -S <mason install script>\n' "${NVIM_BIN}" >&2
     printf '[dry-run] packages=%s\n' "${package_list}" >&2
     return 0
@@ -237,11 +243,11 @@ run_mason_install() {
 
   command -v "${NVIM_BIN}" >/dev/null 2>&1 || die "Neovim nao encontrado: ${NVIM_BIN}"
   command -v yq >/dev/null 2>&1 || die "yq nao encontrado no PATH; necessario para registry local file:"
-  [[ -d "${mason_plugin_dir}" ]] || die "mason.nvim nao encontrado em ${mason_plugin_dir}; rode install_lazyvim_archives.sh antes"
-  [[ -d "${REGISTRY_DIR}/packages" ]] || die "registry local invalido: ${REGISTRY_DIR}"
+  [ -d "${mason_plugin_dir}" ] || die "mason.nvim nao encontrado em ${mason_plugin_dir}; rode install_lazyvim_archives.sh antes"
+  [ -d "${REGISTRY_DIR}/packages" ] || die "registry local invalido: ${REGISTRY_DIR}"
 
   lua_script="$(mktemp)"
-  TMP_FILES+=("${lua_script}")
+  remember_tmp_path "${lua_script}"
   cat > "${lua_script}" <<'LUA'
 local mason_plugin_dir = assert(os.getenv("MASON_PLUGIN_DIR"), "MASON_PLUGIN_DIR ausente")
 local registry_dir = assert(os.getenv("MASON_REGISTRY_DIR"), "MASON_REGISTRY_DIR ausente")
