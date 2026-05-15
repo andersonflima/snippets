@@ -1,9 +1,10 @@
-#!/usr/bin/env bash
-set -euo pipefail
+#!/usr/bin/env sh
+set -eu
 
 DRY_RUN=0
 ONLY_PLUGIN=""
 NVIM_DATA_DIR="${XDG_DATA_HOME:-${HOME}/.local/share}/nvim"
+TMP_PATHS=""
 
 log() {
   printf '[lazyvim-archives] %s\n' "$*" >&2
@@ -14,10 +15,23 @@ die() {
   exit 1
 }
 
+remember_tmp_path() {
+  TMP_PATHS="${TMP_PATHS}${TMP_PATHS:+ }$1"
+}
+
+cleanup() {
+  for tmp_path in ${TMP_PATHS}; do
+    [ -n "${tmp_path}" ] || continue
+    rm -rf "${tmp_path}" 2>/dev/null || true
+  done
+}
+
+trap cleanup EXIT HUP INT TERM
+
 usage() {
   cat <<'USAGE'
 Uso:
-  bash scripts/install_lazyvim_archives.sh [opcoes]
+  sh scripts/install_lazyvim_archives.sh [opcoes]
 
 Opcoes:
   --data-dir <dir>       Diretorio data do Neovim. Default: ${XDG_DATA_HOME:-$HOME/.local/share}/nvim
@@ -108,7 +122,7 @@ zen-mode.nvim|folke/zen-mode.nvim|main
 EOF
 }
 
-while [[ $# -gt 0 ]]; do
+while [ "$#" -gt 0 ]; do
   case "$1" in
     --data-dir)
       NVIM_DATA_DIR="${2:-}"
@@ -136,11 +150,11 @@ while [[ $# -gt 0 ]]; do
   esac
 done
 
-[[ -n "${NVIM_DATA_DIR}" ]] || die "--data-dir nao pode ser vazio"
+[ -n "${NVIM_DATA_DIR}" ] || die "--data-dir nao pode ser vazio"
 
 download() {
-  local url="$1"
-  local output="$2"
+  url="$1"
+  output="$2"
 
   if command -v curl >/dev/null 2>&1; then
     curl -fL --retry 3 --connect-timeout 20 "${url}" -o "${output}"
@@ -156,26 +170,26 @@ download() {
 }
 
 install_plugin() {
-  local plugin_name="$1"
-  local repo="$2"
-  local branch="$3"
-  local install_root="${NVIM_DATA_DIR%/}/lazy"
-  local target_dir="${install_root}/${plugin_name}"
-  local archive_url="https://codeload.github.com/${repo}/tar.gz/refs/heads/${branch}"
-  local tmp_dir archive_path extract_dir source_dir new_dir backup_dir timestamp
+  plugin_name="$1"
+  repo="$2"
+  branch="$3"
+  install_root="${NVIM_DATA_DIR%/}/lazy"
+  target_dir="${install_root}/${plugin_name}"
+  archive_url="https://codeload.github.com/${repo}/tar.gz/refs/heads/${branch}"
 
-  if [[ -n "${ONLY_PLUGIN}" && "${ONLY_PLUGIN}" != "${plugin_name}" ]]; then
+  if [ -n "${ONLY_PLUGIN}" ] && [ "${ONLY_PLUGIN}" != "${plugin_name}" ]; then
     return 0
   fi
 
   log "instalando ${plugin_name} de ${repo}#${branch}"
 
-  if [[ "${DRY_RUN}" == "1" ]]; then
+  if [ "${DRY_RUN}" = "1" ]; then
     printf '[dry-run] download %s -> %s\n' "${archive_url}" "${target_dir}" >&2
     return 0
   fi
 
   tmp_dir="$(mktemp -d)"
+  remember_tmp_path "${tmp_dir}"
   archive_path="${tmp_dir}/${plugin_name}.tar.gz"
   extract_dir="${tmp_dir}/extract"
   new_dir="${tmp_dir}/new"
@@ -186,17 +200,17 @@ install_plugin() {
   download "${archive_url}" "${archive_path}"
   tar -xzf "${archive_path}" -C "${extract_dir}"
 
-  source_dir="$(find "${extract_dir}" -mindepth 1 -maxdepth 1 -type d | head -n 1)"
-  [[ -n "${source_dir}" ]] || die "archive sem diretorio raiz para ${plugin_name}"
+  source_dir="$(find "${extract_dir}" -mindepth 1 -maxdepth 1 -type d | sed -n '1p')"
+  [ -n "${source_dir}" ] || die "archive sem diretorio raiz para ${plugin_name}"
 
   mv "${source_dir}" "${new_dir}"
 
-  if [[ -e "${target_dir}" ]]; then
+  if [ -e "${target_dir}" ]; then
     mv "${target_dir}" "${backup_dir}"
   fi
 
   if ! mv "${new_dir}" "${target_dir}"; then
-    if [[ -d "${backup_dir}" && ! -e "${target_dir}" ]]; then
+    if [ -d "${backup_dir}" ] && [ ! -e "${target_dir}" ]; then
       mv "${backup_dir}" "${target_dir}"
     fi
     die "falha ao publicar ${plugin_name}"
@@ -207,16 +221,20 @@ install_plugin() {
 
 command -v tar >/dev/null 2>&1 || die "tar e obrigatorio"
 
+manifest_file="$(mktemp)"
+remember_tmp_path "${manifest_file}"
+plugins_manifest > "${manifest_file}"
+
 matched=0
 while IFS='|' read -r plugin_name repo branch; do
-  [[ -n "${plugin_name}" && -n "${repo}" && -n "${branch}" ]] || continue
-  if [[ -z "${ONLY_PLUGIN}" || "${ONLY_PLUGIN}" == "${plugin_name}" ]]; then
+  [ -n "${plugin_name}" ] && [ -n "${repo}" ] && [ -n "${branch}" ] || continue
+  if [ -z "${ONLY_PLUGIN}" ] || [ "${ONLY_PLUGIN}" = "${plugin_name}" ]; then
     matched=1
   fi
   install_plugin "${plugin_name}" "${repo}" "${branch}"
-done < <(plugins_manifest)
+done < "${manifest_file}"
 
-if [[ -n "${ONLY_PLUGIN}" && "${matched}" != "1" ]]; then
+if [ -n "${ONLY_PLUGIN}" ] && [ "${matched}" != "1" ]; then
   die "plugin nao encontrado no manifesto: ${ONLY_PLUGIN}"
 fi
 
