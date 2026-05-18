@@ -13,12 +13,22 @@ Para ambientes de serviço onde você quer evitar `git clone` direto durante ins
 - `scripts/wrappers/curl_python_wrapper.sh`
 - `scripts/install_nvim_wrappers.sh` (instala shims `git`/`curl` no PATH)
 - `scripts/update_lazyvim_mason_wrapped.sh` (atualiza LazyVim + Mason usando os wrappers)
+- `scripts/remove_lazyvim_mason_wrapped.sh` (remove configuracoes criadas pelos scripts acima)
 
 Exemplo na máquina de serviço:
 
 ```bash
 sh scripts/install_nvim_wrappers.sh --force
 sh scripts/update_lazyvim_mason_wrapped.sh
+```
+
+Para remover as configuracoes aplicadas por esses scripts:
+
+```bash
+sh scripts/remove_lazyvim_mason_wrapped.sh --dry-run
+sh scripts/remove_lazyvim_mason_wrapped.sh
+# opcional: remove todos os plugins do manifesto mesmo sem .lazyvim-archive-meta
+sh scripts/remove_lazyvim_mason_wrapped.sh --force-manifest-plugins
 ```
 
 Observação:
