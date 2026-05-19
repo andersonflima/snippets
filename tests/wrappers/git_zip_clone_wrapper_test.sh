@@ -293,3 +293,77 @@ GIT_ZIP_WRAPPER_ALLOW_REMOTE_GIT_FALLBACK=1 \
     clone --branch missing-ref https://github.com/folke/lazy.nvim "${PERMANENT_404_FALLBACK_DESTINATION}"
 
 test -d "${PERMANENT_404_FALLBACK_DESTINATION}/.git"
+
+EC2_DESTINATION="${TMP_DIR}/lazy-ec2.nvim"
+EC2_SOURCE_PARENT="${TMP_DIR}/ec2-source"
+EC2_SOURCE_ROOT="${EC2_SOURCE_PARENT}/repo"
+EC2_FAKE_SSH="${TMP_DIR}/ssh"
+EC2_FAKE_CURL="${TMP_DIR}/ec2-curl"
+EC2_FAKE_GIT="${TMP_DIR}/ec2-git"
+EC2_SSH_LOG="${TMP_DIR}/ec2-ssh-log"
+EC2_GIT_LOG="${TMP_DIR}/ec2-git-log"
+
+mkdir -p "${EC2_SOURCE_ROOT}"
+printf '%s\n' 'ec2 clone content' > "${EC2_SOURCE_ROOT}/README.md"
+
+cat > "${EC2_FAKE_SSH}" <<EOF2
+#!/usr/bin/env bash
+set -euo pipefail
+
+host="\${1:-}"
+script="\${2:-}"
+printf '%s\n' "\${host}" >> "${EC2_SSH_LOG}"
+printf '%s\n' "\${script}" >> "${EC2_SSH_LOG}"
+tar -czf - -C "${EC2_SOURCE_ROOT}" .
+EOF2
+
+cat > "${EC2_FAKE_CURL}" <<'EOF2'
+#!/usr/bin/env bash
+set -euo pipefail
+exit 22
+EOF2
+
+cat > "${EC2_FAKE_GIT}" <<EOF2
+#!/usr/bin/env bash
+set -euo pipefail
+
+printf '%s\n' "\$*" >> "${EC2_GIT_LOG}"
+
+if [[ "\${1:-}" == "clone" ]]; then
+  exit 1
+fi
+
+exec "${REAL_GIT}" "\$@"
+EOF2
+
+chmod +x "${EC2_FAKE_SSH}" "${EC2_FAKE_CURL}" "${EC2_FAKE_GIT}"
+
+GIT_ZIP_WRAPPER_REAL_GIT="${EC2_FAKE_GIT}" \
+CURL="${EC2_FAKE_CURL}" \
+SSH="${EC2_FAKE_SSH}" \
+GIT_ZIP_WRAPPER_STRICT=0 \
+GIT_ZIP_WRAPPER_CLONE_ORDER=ec2-first \
+GIT_ZIP_WRAPPER_EC2_HOST=ec2-user@example \
+GIT_ZIP_WRAPPER_ALLOW_REMOTE_GIT_FALLBACK=0 \
+  "${REPO_ROOT}/scripts/wrappers/git_zip_clone_wrapper.sh" \
+    clone --branch main https://github.com/folke/lazy.nvim "${EC2_DESTINATION}"
+
+test -d "${EC2_DESTINATION}/.git"
+test -f "${EC2_DESTINATION}/README.md"
+test "$(sed -n '1p' "${EC2_SSH_LOG}")" = "ec2-user@example"
+grep -q 'https://github.com/folke/lazy.nvim' "${EC2_SSH_LOG}"
+
+ITAU_DESTINATION="${TMP_DIR}/itau-local.nvim"
+
+GIT_ZIP_WRAPPER_REAL_GIT="${EC2_FAKE_GIT}" \
+CURL="${EC2_FAKE_CURL}" \
+SSH="${EC2_FAKE_SSH}" \
+GIT_ZIP_WRAPPER_STRICT=0 \
+GIT_ZIP_WRAPPER_CLONE_ORDER=ec2-first \
+GIT_ZIP_WRAPPER_EC2_HOST=ec2-user@example \
+GIT_ZIP_WRAPPER_ALLOW_REMOTE_GIT_FALLBACK=0 \
+  "${REPO_ROOT}/scripts/wrappers/git_zip_clone_wrapper.sh" \
+    clone --branch main https://github.com/itau-corp/plugin.nvim "${ITAU_DESTINATION}" || true
+
+test "$(grep -c 'ec2-user@example' "${EC2_SSH_LOG}")" = "1"
+grep -q 'https://github.com/itau-corp/plugin.nvim' "${EC2_GIT_LOG}"

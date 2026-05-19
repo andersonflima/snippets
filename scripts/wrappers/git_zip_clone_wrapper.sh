@@ -26,10 +26,15 @@ resolve_real_git() {
 
 REAL_GIT="$(resolve_real_git)"
 CURL_BIN="${CURL:-curl}"
+SSH_BIN="${SSH:-ssh}"
 STRICT_MODE="${GIT_ZIP_WRAPPER_STRICT:-0}"
 CLONE_ORDER="${GIT_ZIP_WRAPPER_CLONE_ORDER:-local-first}"
 ARCHIVE_FORMAT="${GIT_ZIP_WRAPPER_ARCHIVE_FORMAT:-tar.gz}"
 ALLOW_REMOTE_GIT_FALLBACK="${GIT_ZIP_WRAPPER_ALLOW_REMOTE_GIT_FALLBACK:-1}"
+EC2_HOST="${GIT_ZIP_WRAPPER_EC2_HOST:-}"
+EC2_REMOTE_GIT="${GIT_ZIP_WRAPPER_EC2_REMOTE_GIT:-git}"
+EC2_REMOTE_TAR="${GIT_ZIP_WRAPPER_EC2_REMOTE_TAR:-tar}"
+EC2_REMOTE_MKDIR="${GIT_ZIP_WRAPPER_EC2_REMOTE_MKDIR:-mktemp}"
 
 log() {
   if [[ "${STRICT_MODE}" == "1" ]]; then
@@ -177,6 +182,22 @@ extract_github_repo() {
   return 1
 }
 
+github_repo_owner() {
+  local repo="$1"
+  printf '%s\n' "${repo%%/*}"
+}
+
+is_itau_github_repo() {
+  local repo_url="$1"
+  local repo
+  repo="$(extract_github_repo "${repo_url}" || true)"
+  [[ -n "${repo}" && "$(github_repo_owner "${repo}")" == itau-* ]]
+}
+
+shell_quote() {
+  printf '%q' "$1"
+}
+
 extract_archive_to_destination() {
   local archive_path="$1"
   local destination="$2"
@@ -225,6 +246,30 @@ PY
   return 0
 }
 
+extract_tar_stream_to_destination() {
+  local destination="$1"
+  local extract_dir
+  extract_dir="$(mktemp -d)"
+
+  if ! tar -xzf - -C "${extract_dir}"; then
+    rm -rf "${extract_dir}"
+    return 1
+  fi
+
+  rm -rf "${destination}"
+  mkdir -p "${destination}"
+
+  shopt -s dotglob nullglob
+  local item
+  for item in "${extract_dir}"/*; do
+    mv "${item}" "${destination}/"
+  done
+  shopt -u dotglob nullglob
+
+  rm -rf "${extract_dir}"
+  return 0
+}
+
 init_local_git_repo() {
   local destination="$1"
   local branch="$2"
@@ -253,20 +298,57 @@ archive_clone() {
   fi
 
   local archive_url="https://github.com/${repo}/archive/${branch}.${archive_ext}"
-  local archive_path
-  archive_path="$(mktemp "${TMPDIR:-/tmp}/git-zip-wrapper-archive.XXXXXX.${archive_ext}")"
+  local archive_tmp_dir
+  archive_tmp_dir="$(mktemp -d)"
+  local archive_path="${archive_tmp_dir}/archive.${archive_ext}"
 
   if ! "${CURL_BIN}" -fsSL "${archive_url}" --output "${archive_path}"; then
-    rm -f "${archive_path}"
+    rm -rf "${archive_tmp_dir}"
     return 1
   fi
 
   if ! extract_archive_to_destination "${archive_path}" "${destination}"; then
-    rm -f "${archive_path}"
+    rm -rf "${archive_tmp_dir}"
     return 1
   fi
 
-  rm -f "${archive_path}"
+  rm -rf "${archive_tmp_dir}"
+  init_local_git_repo "${destination}" "${branch}"
+  return 0
+}
+
+ec2_clone() {
+  local repo_url="$1"
+  local destination="$2"
+  local branch="$3"
+
+  if [[ -z "${EC2_HOST}" ]]; then
+    return 1
+  fi
+
+  local remote_script
+  remote_script="$(cat <<EOF2
+set -euo pipefail
+repo_url=$(shell_quote "${repo_url}")
+branch=$(shell_quote "${branch}")
+remote_git=$(shell_quote "${EC2_REMOTE_GIT}")
+remote_tar=$(shell_quote "${EC2_REMOTE_TAR}")
+remote_mkdir=$(shell_quote "${EC2_REMOTE_MKDIR}")
+workdir="\$("\${remote_mkdir}" -d)"
+cleanup() {
+  rm -rf "\${workdir}"
+}
+trap cleanup EXIT HUP INT TERM
+"\${remote_git}" clone --depth 1 --branch "\${branch}" "\${repo_url}" "\${workdir}/repo" >/dev/null
+"\${remote_tar}" -C "\${workdir}/repo" --exclude=.git -czf - .
+EOF2
+)"
+
+  if ! "${SSH_BIN}" "${EC2_HOST}" "${remote_script}" | extract_tar_stream_to_destination "${destination}"; then
+    rm -rf "${destination}"
+    return 1
+  fi
+
   init_local_git_repo "${destination}" "${branch}"
   return 0
 }
@@ -282,6 +364,29 @@ run_clone_with_strategy() {
       log "falha parse clone; encaminhando para git real"
     fi
     exec_real_git "${original_args[@]}"
+  fi
+
+  if is_itau_github_repo "${repo_url}"; then
+    log "repositorio itau-* detectado; usando git local: ${repo_url}"
+    "${REAL_GIT}" "${original_args[@]}"
+    return $?
+  fi
+
+  if [[ "${CLONE_ORDER}" == "ec2-first" ]]; then
+    if ec2_clone "${repo_url}" "${destination}" "${branch}"; then
+      return 0
+    fi
+
+    if archive_clone "${repo_url}" "${destination}" "${branch}"; then
+      return 0
+    fi
+
+    if [[ "${ALLOW_REMOTE_GIT_FALLBACK}" == "1" ]]; then
+      "${REAL_GIT}" "${original_args[@]}"
+      return $?
+    fi
+
+    return 1
   fi
 
   if [[ "${CLONE_ORDER}" == "git-first" ]]; then
