@@ -362,6 +362,75 @@ test "$(git -C "${EC2_DESTINATION}" branch --show-current)" = "main"
 test "$(sed -n '1p' "${EC2_SSH_LOG}")" = "ec2-user@example"
 grep -q 'https://github.com/folke/lazy.nvim' "${EC2_SSH_LOG}"
 
+EC2_S3_DESTINATION="${TMP_DIR}/lazy-ec2-s3.nvim"
+EC2_S3_FAKE_AWS="${TMP_DIR}/aws"
+EC2_S3_ARCHIVE="${TMP_DIR}/ec2-s3-repo.tar.gz"
+EC2_S3_LOG="${TMP_DIR}/ec2-s3-aws-log"
+
+tar -czf "${EC2_S3_ARCHIVE}" -C "${EC2_SOURCE_ROOT}" .
+
+cat > "${EC2_S3_FAKE_AWS}" <<EOF2
+#!/usr/bin/env bash
+set -euo pipefail
+
+printf '%s\n' "\$*" >> "${EC2_S3_LOG}"
+
+if [[ "\${1:-}" == "--region" ]]; then
+  shift 2
+fi
+
+if [[ "\${1:-}" == "ssm" && "\${2:-}" == "send-command" ]]; then
+  while [[ \$# -gt 0 ]]; do
+    if [[ "\$1" == "--parameters" ]]; then
+      params="\${2#file://}"
+      cat "\${params}" >> "${EC2_S3_LOG}"
+      break
+    fi
+    shift
+  done
+  printf '%s\n' 'cmd-1'
+  exit 0
+fi
+
+if [[ "\${1:-}" == "ssm" && "\${2:-}" == "get-command-invocation" ]]; then
+  printf '%s\n' 'Success'
+  exit 0
+fi
+
+if [[ "\${1:-}" == "s3" && "\${2:-}" == "cp" ]]; then
+  cp "${EC2_S3_ARCHIVE}" "\${4:-}"
+  exit 0
+fi
+
+if [[ "\${1:-}" == "s3" && "\${2:-}" == "rm" ]]; then
+  exit 0
+fi
+
+exit 1
+EOF2
+
+chmod +x "${EC2_S3_FAKE_AWS}"
+
+GIT_ZIP_WRAPPER_REAL_GIT="${EC2_FAKE_GIT}" \
+CURL="${EC2_FAKE_CURL}" \
+AWS="${EC2_S3_FAKE_AWS}" \
+GIT_ZIP_WRAPPER_STRICT=0 \
+GIT_ZIP_WRAPPER_CLONE_ORDER=ec2-s3-first \
+GIT_ZIP_WRAPPER_EC2_INSTANCE_ID=i-0123456789abcdef0 \
+GIT_ZIP_WRAPPER_EC2_S3_URI=s3://bucket/nvim-wrapper \
+GIT_ZIP_WRAPPER_ALLOW_REMOTE_GIT_FALLBACK=0 \
+  "${REPO_ROOT}/scripts/wrappers/git_zip_clone_wrapper.sh" \
+    clone --branch main https://github.com/folke/lazy.nvim "${EC2_S3_DESTINATION}"
+
+test -d "${EC2_S3_DESTINATION}/.git"
+test -f "${EC2_S3_DESTINATION}/README.md"
+test "$(git -C "${EC2_S3_DESTINATION}" config --get remote.origin.url)" = "https://github.com/folke/lazy.nvim"
+test "$(git -C "${EC2_S3_DESTINATION}" branch --show-current)" = "main"
+grep -q 'AWS-RunShellScript' "${EC2_S3_LOG}"
+grep -q 's3://bucket/nvim-wrapper' "${EC2_S3_LOG}"
+grep -q 'clone --depth 1 --branch' "${EC2_S3_LOG}"
+grep -q 'https://github.com/folke/lazy.nvim' "${EC2_S3_LOG}"
+
 ITAU_DESTINATION="${TMP_DIR}/itau-local.nvim"
 
 GIT_ZIP_WRAPPER_REAL_GIT="${EC2_FAKE_GIT}" \
