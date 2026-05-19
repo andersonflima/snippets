@@ -305,6 +305,13 @@ EC2_GIT_LOG="${TMP_DIR}/ec2-git-log"
 
 mkdir -p "${EC2_SOURCE_ROOT}"
 printf '%s\n' 'ec2 clone content' > "${EC2_SOURCE_ROOT}/README.md"
+git -C "${EC2_SOURCE_ROOT}" init -b main >/dev/null 2>&1 || {
+  git -C "${EC2_SOURCE_ROOT}" init >/dev/null 2>&1
+  git -C "${EC2_SOURCE_ROOT}" checkout -B main >/dev/null 2>&1
+}
+git -C "${EC2_SOURCE_ROOT}" remote add origin https://github.com/folke/lazy.nvim
+git -C "${EC2_SOURCE_ROOT}" add README.md
+git -C "${EC2_SOURCE_ROOT}" -c user.name='Wrapper Test' -c user.email='wrapper-test@example.invalid' commit -m 'test fixture' >/dev/null
 
 cat > "${EC2_FAKE_SSH}" <<EOF2
 #!/usr/bin/env bash
@@ -350,6 +357,8 @@ GIT_ZIP_WRAPPER_ALLOW_REMOTE_GIT_FALLBACK=0 \
 
 test -d "${EC2_DESTINATION}/.git"
 test -f "${EC2_DESTINATION}/README.md"
+test "$(git -C "${EC2_DESTINATION}" config --get remote.origin.url)" = "https://github.com/folke/lazy.nvim"
+test "$(git -C "${EC2_DESTINATION}" branch --show-current)" = "main"
 test "$(sed -n '1p' "${EC2_SSH_LOG}")" = "ec2-user@example"
 grep -q 'https://github.com/folke/lazy.nvim' "${EC2_SSH_LOG}"
 
