@@ -7,6 +7,8 @@ LAZY_ONLY=0
 MASON_ONLY=0
 FORCE_WRAPPER_INSTALL=0
 AUTO_SHELL_PROFILE=1
+EC2_HOST=""
+CLONE_ORDER=""
 
 log() {
   printf '[lazyvim-mason-update] %s\n' "$*" >&2
@@ -28,6 +30,9 @@ Opcoes:
   --lazy-only              Executa apenas install_lazyvim_archives.sh
   --mason-only             Executa apenas install_mason_from_registry_archive.sh
   --force-wrapper-install  Reinstala os shims de wrapper antes de atualizar
+  --ec2-host <host>        Host SSH da EC2 usado para git clone de repositorios externos.
+                           Reinstala os shims com clone order ec2-first.
+  --clone-order <ordem>    Ordem do wrapper git: local-first, git-first ou ec2-first.
   --no-shell-profile       Nao altera arquivo de perfil durante instalacao dos wrappers
   -h, --help               Mostra esta ajuda.
 USAGE
@@ -51,6 +56,17 @@ while [ "$#" -gt 0 ]; do
       FORCE_WRAPPER_INSTALL=1
       shift
       ;;
+    --ec2-host)
+      EC2_HOST="${2:-}"
+      CLONE_ORDER="ec2-first"
+      FORCE_WRAPPER_INSTALL=1
+      shift 2
+      ;;
+    --clone-order)
+      CLONE_ORDER="${2:-}"
+      FORCE_WRAPPER_INSTALL=1
+      shift 2
+      ;;
     --no-shell-profile)
       AUTO_SHELL_PROFILE=0
       shift
@@ -69,25 +85,46 @@ if [ "${LAZY_ONLY}" = "1" ] && [ "${MASON_ONLY}" = "1" ]; then
   die "--lazy-only e --mason-only nao podem ser usados juntos"
 fi
 
-if [ "${FORCE_WRAPPER_INSTALL}" = "1" ] || [ ! -x "${WRAPPER_BIN_DIR}/git" ] || [ ! -x "${WRAPPER_BIN_DIR}/curl" ]; then
+build_install_args() {
+  printf '%s\n' "--target-dir"
+  printf '%s\n' "${WRAPPER_BIN_DIR}"
+
   if [ "${FORCE_WRAPPER_INSTALL}" = "1" ]; then
-    if [ "${AUTO_SHELL_PROFILE}" = "0" ]; then
-      sh "${SCRIPT_DIR}/install_nvim_wrappers.sh" --target-dir "${WRAPPER_BIN_DIR}" --force --no-shell-profile
-    else
-      sh "${SCRIPT_DIR}/install_nvim_wrappers.sh" --target-dir "${WRAPPER_BIN_DIR}" --force
-    fi
-  else
-    if [ "${AUTO_SHELL_PROFILE}" = "0" ]; then
-      sh "${SCRIPT_DIR}/install_nvim_wrappers.sh" --target-dir "${WRAPPER_BIN_DIR}" --no-shell-profile
-    else
-      sh "${SCRIPT_DIR}/install_nvim_wrappers.sh" --target-dir "${WRAPPER_BIN_DIR}"
-    fi
+    printf '%s\n' "--force"
   fi
+
+  if [ -n "${EC2_HOST}" ]; then
+    printf '%s\n' "--ec2-host"
+    printf '%s\n' "${EC2_HOST}"
+  fi
+
+  if [ -n "${CLONE_ORDER}" ]; then
+    printf '%s\n' "--clone-order"
+    printf '%s\n' "${CLONE_ORDER}"
+  fi
+
+  if [ "${AUTO_SHELL_PROFILE}" = "0" ]; then
+    printf '%s\n' "--no-shell-profile"
+  fi
+}
+
+if [ "${FORCE_WRAPPER_INSTALL}" = "1" ] || [ ! -x "${WRAPPER_BIN_DIR}/git" ] || [ ! -x "${WRAPPER_BIN_DIR}/curl" ]; then
+  install_args_file="$(mktemp)"
+  build_install_args > "${install_args_file}"
+  xargs sh "${SCRIPT_DIR}/install_nvim_wrappers.sh" < "${install_args_file}"
+  rm -f "${install_args_file}"
 fi
 
 PATH="${WRAPPER_BIN_DIR}:$PATH"
 export PATH
 
+if [ -n "${EC2_HOST}" ]; then
+  export GIT_ZIP_WRAPPER_EC2_HOST="${GIT_ZIP_WRAPPER_EC2_HOST:-${EC2_HOST}}"
+  export GIT_ZIP_WRAPPER_CLONE_ORDER="${GIT_ZIP_WRAPPER_CLONE_ORDER:-ec2-first}"
+fi
+if [ -n "${CLONE_ORDER}" ]; then
+  export GIT_ZIP_WRAPPER_CLONE_ORDER="${GIT_ZIP_WRAPPER_CLONE_ORDER:-${CLONE_ORDER}}"
+fi
 export GIT_ZIP_WRAPPER_CLONE_ORDER="${GIT_ZIP_WRAPPER_CLONE_ORDER:-local-first}"
 export GIT_ZIP_WRAPPER_ARCHIVE_FORMAT="${GIT_ZIP_WRAPPER_ARCHIVE_FORMAT:-zip}"
 export GIT_ZIP_WRAPPER_ALLOW_REMOTE_GIT_FALLBACK="${GIT_ZIP_WRAPPER_ALLOW_REMOTE_GIT_FALLBACK:-1}"

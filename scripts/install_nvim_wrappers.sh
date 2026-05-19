@@ -5,6 +5,8 @@ TARGET_DIR="${HOME}/.local/share/nvim/wrappers/bin"
 FORCE=0
 AUTO_SHELL_PROFILE=1
 SHELL_RC_FILE=""
+EC2_HOST=""
+CLONE_ORDER="local-first"
 
 log() {
   printf '[nvim-wrappers] %s\n' "$*" >&2
@@ -25,6 +27,11 @@ Opcoes:
                       Default: $HOME/.local/share/nvim/wrappers/bin
   --force             Sobrescreve shims existentes.
   --rc-file <arquivo> Define explicitamente o arquivo de perfil para receber o PATH.
+  --ec2-host <host>   Host SSH da EC2 usado para git clone de repositorios externos.
+                      Quando definido, usa clone order ec2-first.
+  --clone-order <ordem>
+                      Ordem do wrapper git: local-first, git-first ou ec2-first.
+                      Default: local-first
   --no-shell-profile  Nao altera arquivo de perfil; apenas instala os shims.
   -h, --help          Mostra esta ajuda.
 
@@ -121,6 +128,10 @@ resolve_real_binary() {
   return 1
 }
 
+escape_double_quoted_value() {
+  printf '%s' "$1" | sed 's/[\\$"`]/\\&/g'
+}
+
 while [ "$#" -gt 0 ]; do
   case "$1" in
     --target-dir)
@@ -133,6 +144,15 @@ while [ "$#" -gt 0 ]; do
       ;;
     --rc-file)
       SHELL_RC_FILE="${2:-}"
+      shift 2
+      ;;
+    --ec2-host)
+      EC2_HOST="${2:-}"
+      CLONE_ORDER="ec2-first"
+      shift 2
+      ;;
+    --clone-order)
+      CLONE_ORDER="${2:-}"
       shift 2
       ;;
     --no-shell-profile)
@@ -150,6 +170,13 @@ while [ "$#" -gt 0 ]; do
 done
 
 [ -n "${TARGET_DIR}" ] || die "--target-dir nao pode ser vazio"
+case "${CLONE_ORDER}" in
+  local-first|git-first|ec2-first)
+    ;;
+  *)
+    die "--clone-order invalido: ${CLONE_ORDER}"
+    ;;
+esac
 SCRIPT_DIR="$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)"
 REPO_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
 WRAPPER_DIR="${REPO_ROOT}/scripts/wrappers"
@@ -161,6 +188,7 @@ REAL_GIT_BIN="$(resolve_real_binary git || true)"
 REAL_CURL_BIN="$(resolve_real_binary curl || true)"
 [ -n "${REAL_GIT_BIN}" ] || die "git real nao encontrado no PATH (sem recursao de shim)"
 [ -n "${REAL_CURL_BIN}" ] || die "curl real nao encontrado no PATH (sem recursao de shim)"
+EC2_HOST_ESCAPED="$(escape_double_quoted_value "${EC2_HOST}")"
 
 mkdir -p "${TARGET_DIR}"
 
@@ -178,7 +206,8 @@ cat > "${TARGET_DIR}/git" <<EOF2
 set -eu
 
 export GIT_ZIP_WRAPPER_REAL_GIT="${REAL_GIT_BIN}"
-export GIT_ZIP_WRAPPER_CLONE_ORDER="\${GIT_ZIP_WRAPPER_CLONE_ORDER:-local-first}"
+export GIT_ZIP_WRAPPER_CLONE_ORDER="\${GIT_ZIP_WRAPPER_CLONE_ORDER:-${CLONE_ORDER}}"
+export GIT_ZIP_WRAPPER_EC2_HOST="\${GIT_ZIP_WRAPPER_EC2_HOST:-${EC2_HOST_ESCAPED}}"
 export GIT_ZIP_WRAPPER_ARCHIVE_FORMAT="\${GIT_ZIP_WRAPPER_ARCHIVE_FORMAT:-zip}"
 export GIT_ZIP_WRAPPER_ALLOW_REMOTE_GIT_FALLBACK="\${GIT_ZIP_WRAPPER_ALLOW_REMOTE_GIT_FALLBACK:-1}"
 export GIT_ZIP_WRAPPER_STRICT="\${GIT_ZIP_WRAPPER_STRICT:-0}"
