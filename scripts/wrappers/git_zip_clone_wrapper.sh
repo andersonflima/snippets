@@ -340,7 +340,7 @@ cleanup() {
 }
 trap cleanup EXIT HUP INT TERM
 "\${remote_git}" clone --depth 1 --branch "\${branch}" "\${repo_url}" "\${workdir}/repo" >/dev/null
-"\${remote_tar}" -C "\${workdir}/repo" --exclude=.git -czf - .
+"\${remote_tar}" -C "\${workdir}/repo" -czf - .
 EOF2
 )"
 
@@ -349,7 +349,6 @@ EOF2
     return 1
   fi
 
-  init_local_git_repo "${destination}" "${branch}"
   return 0
 }
 

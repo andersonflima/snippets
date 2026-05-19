@@ -29,7 +29,7 @@ sh scripts/install_nvim_wrappers.sh --force --ec2-host ec2-user@<ip-ou-host>
 sh scripts/update_lazyvim_mason_wrapped.sh --ec2-host ec2-user@<ip-ou-host>
 ```
 
-Nesse modo, o wrapper de `git` usa a EC2 via SSH para clonar repositórios GitHub que não são corporativos, transmite o conteúdo para a máquina de serviço e inicializa um repositório Git local no destino. Repositórios GitHub cuja organização começa com `itau-` não usam a EC2: o wrapper encaminha o clone para o `git` normal da própria máquina.
+Nesse modo, o wrapper de `git` usa a EC2 via SSH para clonar repositórios GitHub que não são corporativos e transmite o clone completo para a máquina de serviço, preservando `.git`, remote `origin`, branch e metadados esperados por LazyVim/Mason. Repositórios GitHub cuja organização começa com `itau-` não usam a EC2: o wrapper encaminha o clone para o `git` normal da própria máquina.
 
 Para remover as configuracoes aplicadas por esses scripts:
 
