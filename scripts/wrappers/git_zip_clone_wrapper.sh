@@ -27,14 +27,19 @@ resolve_real_git() {
 REAL_GIT="$(resolve_real_git)"
 CURL_BIN="${CURL:-curl}"
 SSH_BIN="${SSH:-ssh}"
+AWS_BIN="${AWS:-aws}"
 STRICT_MODE="${GIT_ZIP_WRAPPER_STRICT:-0}"
 CLONE_ORDER="${GIT_ZIP_WRAPPER_CLONE_ORDER:-local-first}"
 ARCHIVE_FORMAT="${GIT_ZIP_WRAPPER_ARCHIVE_FORMAT:-tar.gz}"
 ALLOW_REMOTE_GIT_FALLBACK="${GIT_ZIP_WRAPPER_ALLOW_REMOTE_GIT_FALLBACK:-1}"
 EC2_HOST="${GIT_ZIP_WRAPPER_EC2_HOST:-}"
+EC2_INSTANCE_ID="${GIT_ZIP_WRAPPER_EC2_INSTANCE_ID:-}"
+EC2_S3_URI="${GIT_ZIP_WRAPPER_EC2_S3_URI:-}"
+EC2_SSM_REGION="${GIT_ZIP_WRAPPER_EC2_SSM_REGION:-${AWS_REGION:-${AWS_DEFAULT_REGION:-}}}"
 EC2_REMOTE_GIT="${GIT_ZIP_WRAPPER_EC2_REMOTE_GIT:-git}"
 EC2_REMOTE_TAR="${GIT_ZIP_WRAPPER_EC2_REMOTE_TAR:-tar}"
 EC2_REMOTE_MKDIR="${GIT_ZIP_WRAPPER_EC2_REMOTE_MKDIR:-mktemp}"
+EC2_REMOTE_AWS="${GIT_ZIP_WRAPPER_EC2_REMOTE_AWS:-aws}"
 
 log() {
   if [[ "${STRICT_MODE}" == "1" ]]; then
@@ -198,6 +203,27 @@ shell_quote() {
   printf '%q' "$1"
 }
 
+sanitize_s3_key_part() {
+  printf '%s' "$1" | tr -c 'A-Za-z0-9._=-' '-'
+}
+
+build_ec2_s3_archive_uri() {
+  local repo_url="$1"
+  local branch="$2"
+  local repo
+  repo="$(extract_github_repo "${repo_url}" || true)"
+  if [[ -z "${repo}" ]]; then
+    repo="$(sanitize_s3_key_part "${repo_url}")"
+  else
+    repo="$(sanitize_s3_key_part "${repo}")"
+  fi
+
+  local branch_key
+  branch_key="$(sanitize_s3_key_part "${branch}")"
+  local base_uri="${EC2_S3_URI%/}"
+  printf '%s/%s/%s/%s-%s.tar.gz\n' "${base_uri}" "${repo}" "${branch_key}" "$$" "$(date +%s)"
+}
+
 extract_archive_to_destination() {
   local archive_path="$1"
   local destination="$2"
@@ -252,6 +278,31 @@ extract_tar_stream_to_destination() {
   extract_dir="$(mktemp -d)"
 
   if ! tar -xzf - -C "${extract_dir}"; then
+    rm -rf "${extract_dir}"
+    return 1
+  fi
+
+  rm -rf "${destination}"
+  mkdir -p "${destination}"
+
+  shopt -s dotglob nullglob
+  local item
+  for item in "${extract_dir}"/*; do
+    mv "${item}" "${destination}/"
+  done
+  shopt -u dotglob nullglob
+
+  rm -rf "${extract_dir}"
+  return 0
+}
+
+extract_flat_tar_archive_to_destination() {
+  local archive_path="$1"
+  local destination="$2"
+  local extract_dir
+  extract_dir="$(mktemp -d)"
+
+  if ! tar -xzf "${archive_path}" -C "${extract_dir}"; then
     rm -rf "${extract_dir}"
     return 1
   fi
@@ -352,6 +403,140 @@ EOF2
   return 0
 }
 
+aws_region_args() {
+  if [[ -n "${EC2_SSM_REGION}" ]]; then
+    printf '%s\0%s\0' "--region" "${EC2_SSM_REGION}"
+  fi
+}
+
+write_ssm_parameters_file() {
+  local remote_script="$1"
+  local params_file="$2"
+
+  python3 - "${remote_script}" "${params_file}" <<'PY'
+import json
+import sys
+
+script, params_path = sys.argv[1:3]
+with open(params_path, "w", encoding="utf-8") as handle:
+    json.dump({"commands": [script]}, handle)
+PY
+}
+
+wait_ssm_command() {
+  local command_id="$1"
+
+  local -a region_args=()
+  while IFS= read -r -d '' arg; do
+    region_args+=("${arg}")
+  done < <(aws_region_args)
+
+  local attempt
+  for attempt in $(seq 1 120); do
+    local status
+    status="$("${AWS_BIN}" "${region_args[@]}" ssm get-command-invocation \
+      --command-id "${command_id}" \
+      --instance-id "${EC2_INSTANCE_ID}" \
+      --query Status \
+      --output text 2>/dev/null || true)"
+
+    case "${status}" in
+      Success)
+        return 0
+        ;;
+      Failed|Cancelled|TimedOut|Cancelling)
+        return 1
+        ;;
+      Pending|InProgress|Delayed|"")
+        sleep 2
+        ;;
+      *)
+        sleep 2
+        ;;
+    esac
+  done
+
+  return 1
+}
+
+ec2_s3_clone() {
+  local repo_url="$1"
+  local destination="$2"
+  local branch="$3"
+
+  if [[ -z "${EC2_INSTANCE_ID}" || -z "${EC2_S3_URI}" ]]; then
+    return 1
+  fi
+
+  local archive_uri
+  archive_uri="$(build_ec2_s3_archive_uri "${repo_url}" "${branch}")"
+
+  local remote_script
+  remote_script="$(cat <<EOF2
+set -euo pipefail
+repo_url=$(shell_quote "${repo_url}")
+branch=$(shell_quote "${branch}")
+archive_uri=$(shell_quote "${archive_uri}")
+remote_git=$(shell_quote "${EC2_REMOTE_GIT}")
+remote_tar=$(shell_quote "${EC2_REMOTE_TAR}")
+remote_mkdir=$(shell_quote "${EC2_REMOTE_MKDIR}")
+remote_aws=$(shell_quote "${EC2_REMOTE_AWS}")
+workdir="\$("\${remote_mkdir}" -d)"
+cleanup() {
+  rm -rf "\${workdir}"
+}
+trap cleanup EXIT HUP INT TERM
+"\${remote_git}" clone --depth 1 --branch "\${branch}" "\${repo_url}" "\${workdir}/repo" >/dev/null
+"\${remote_tar}" -C "\${workdir}/repo" -czf "\${workdir}/repo.tar.gz" .
+"\${remote_aws}" s3 cp "\${workdir}/repo.tar.gz" "\${archive_uri}" >/dev/null
+EOF2
+)"
+
+  local params_file
+  params_file="$(mktemp)"
+  write_ssm_parameters_file "${remote_script}" "${params_file}"
+
+  local -a region_args=()
+  while IFS= read -r -d '' arg; do
+    region_args+=("${arg}")
+  done < <(aws_region_args)
+
+  local command_id
+  command_id="$("${AWS_BIN}" "${region_args[@]}" ssm send-command \
+    --instance-ids "${EC2_INSTANCE_ID}" \
+    --document-name "AWS-RunShellScript" \
+    --parameters "file://${params_file}" \
+    --query "Command.CommandId" \
+    --output text)"
+  rm -f "${params_file}"
+
+  if [[ -z "${command_id}" || "${command_id}" == "None" ]]; then
+    return 1
+  fi
+
+  if ! wait_ssm_command "${command_id}"; then
+    return 1
+  fi
+
+  local archive_tmp_dir
+  archive_tmp_dir="$(mktemp -d)"
+  local archive_path="${archive_tmp_dir}/repo.tar.gz"
+
+  if ! "${AWS_BIN}" s3 cp "${archive_uri}" "${archive_path}" >/dev/null; then
+    rm -rf "${archive_tmp_dir}"
+    return 1
+  fi
+
+  if ! extract_flat_tar_archive_to_destination "${archive_path}" "${destination}"; then
+    rm -rf "${archive_tmp_dir}"
+    return 1
+  fi
+
+  "${AWS_BIN}" s3 rm "${archive_uri}" >/dev/null 2>&1 || true
+  rm -rf "${archive_tmp_dir}"
+  return 0
+}
+
 run_clone_with_strategy() {
   local -a original_args=("$@")
 
@@ -369,6 +554,23 @@ run_clone_with_strategy() {
     log "repositorio itau-* detectado; usando git local: ${repo_url}"
     "${REAL_GIT}" "${original_args[@]}"
     return $?
+  fi
+
+  if [[ "${CLONE_ORDER}" == "ec2-s3-first" ]]; then
+    if ec2_s3_clone "${repo_url}" "${destination}" "${branch}"; then
+      return 0
+    fi
+
+    if archive_clone "${repo_url}" "${destination}" "${branch}"; then
+      return 0
+    fi
+
+    if [[ "${ALLOW_REMOTE_GIT_FALLBACK}" == "1" ]]; then
+      "${REAL_GIT}" "${original_args[@]}"
+      return $?
+    fi
+
+    return 1
   fi
 
   if [[ "${CLONE_ORDER}" == "ec2-first" ]]; then

@@ -22,14 +22,19 @@ sh scripts/install_nvim_wrappers.sh --force
 sh scripts/update_lazyvim_mason_wrapped.sh
 ```
 
-Exemplo usando uma EC2 como ponte para `git clone` de repositórios externos ao GitHub corporativo:
+Exemplo usando uma EC2 gerenciada por SSM e um bucket S3 como ponte para `git clone` de repositórios externos ao GitHub corporativo:
 
 ```bash
-sh scripts/install_nvim_wrappers.sh --force --ec2-host ec2-user@<ip-ou-host>
-sh scripts/update_lazyvim_mason_wrapped.sh --ec2-host ec2-user@<ip-ou-host>
+sh scripts/install_nvim_wrappers.sh --force \
+  --ec2-instance-id i-0123456789abcdef0 \
+  --ec2-s3-uri s3://meu-bucket/nvim-wrapper-clones
+
+sh scripts/update_lazyvim_mason_wrapped.sh \
+  --ec2-instance-id i-0123456789abcdef0 \
+  --ec2-s3-uri s3://meu-bucket/nvim-wrapper-clones
 ```
 
-Nesse modo, o wrapper de `git` usa a EC2 via SSH para clonar repositórios GitHub que não são corporativos e transmite o clone completo para a máquina de serviço, preservando `.git`, remote `origin`, branch e metadados esperados por LazyVim/Mason. Repositórios GitHub cuja organização começa com `itau-` não usam a EC2: o wrapper encaminha o clone para o `git` normal da própria máquina.
+Nesse modo, o wrapper de `git` envia um comando SSM para a EC2 clonar repositórios GitHub que não são corporativos, compactar o clone completo, enviar o pacote para S3, baixar o pacote na máquina de serviço e extrair no destino. O pacote preserva `.git`, remote `origin`, branch e metadados esperados por LazyVim/Mason. Repositórios GitHub cuja organização começa com `itau-` não usam a EC2 nem S3: o wrapper encaminha o clone para o `git` normal da própria máquina.
 
 Para remover as configuracoes aplicadas por esses scripts:
 
@@ -49,18 +54,29 @@ Comportamento:
 
 - LazyVim: tenta archive/release para instalação de plugins e fallback controlado.
 - Mason registry: tenta release mais recente do `mason-registry`; se falhar, cai para `main`.
-- Com `--ec2-host`, clones externos usam `GIT_ZIP_WRAPPER_CLONE_ORDER=ec2-first`.
-- A exceção `itau-*` preserva o fluxo corporativo local e evita enviar esses clones para a EC2.
+- Com `--ec2-instance-id` e `--ec2-s3-uri`, clones externos usam `GIT_ZIP_WRAPPER_CLONE_ORDER=ec2-s3-first`.
+- A exceção `itau-*` preserva o fluxo corporativo local e evita enviar esses clones para a EC2 ou S3.
 
 Variáveis úteis para customizar o wrapper de clone via EC2:
 
 | Variável | Padrão | Descrição |
 | --- | --- | --- |
-| `GIT_ZIP_WRAPPER_EC2_HOST` | vazio | Host SSH da EC2, por exemplo `ec2-user@host` |
-| `GIT_ZIP_WRAPPER_CLONE_ORDER` | `local-first` | Estratégia de clone: `local-first`, `git-first` ou `ec2-first` |
+| `GIT_ZIP_WRAPPER_EC2_INSTANCE_ID` | vazio | Instance ID da EC2 gerenciada pelo SSM |
+| `GIT_ZIP_WRAPPER_EC2_S3_URI` | vazio | Prefixo S3 temporário para transportar clones, por exemplo `s3://bucket/prefix` |
+| `GIT_ZIP_WRAPPER_EC2_SSM_REGION` | `AWS_REGION`/`AWS_DEFAULT_REGION` | Região usada nas chamadas SSM |
+| `GIT_ZIP_WRAPPER_CLONE_ORDER` | `local-first` | Estratégia de clone: `local-first`, `git-first`, `ec2-first` ou `ec2-s3-first` |
 | `GIT_ZIP_WRAPPER_EC2_REMOTE_GIT` | `git` | Binário `git` na EC2 |
 | `GIT_ZIP_WRAPPER_EC2_REMOTE_TAR` | `tar` | Binário `tar` na EC2 |
+| `GIT_ZIP_WRAPPER_EC2_REMOTE_AWS` | `aws` | Binário AWS CLI na EC2 |
 | `GIT_ZIP_WRAPPER_ALLOW_REMOTE_GIT_FALLBACK` | `1` | Permite fallback para `git clone` local quando as estratégias anteriores falham |
+
+Requisitos do modo EC2 + S3:
+
+- AWS CLI disponível na máquina de serviço.
+- EC2 registrada no AWS Systems Manager.
+- EC2 com `git`, `tar` e AWS CLI no PATH.
+- Permissão local para `ssm:SendCommand`, `ssm:GetCommandInvocation`, `s3:GetObject` e `s3:DeleteObject` no prefixo usado.
+- Permissão da EC2 para `s3:PutObject` no prefixo usado.
 
 ## Requisitos
 
