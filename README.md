@@ -22,6 +22,14 @@ sh scripts/install_nvim_wrappers.sh --force
 sh scripts/update_lazyvim_mason_wrapped.sh
 ```
 
+Se `curl`/`wget` forem bloqueados no ambiente, rode em modo Python-only:
+
+```bash
+GIT_ZIP_WRAPPER_HTTP_CLIENT=python \
+CURL_WRAPPER_DISABLE_REAL_CURL=1 \
+sh scripts/update_lazyvim_mason_wrapped.sh
+```
+
 O wrapper de `git` usa archive `.zip` do GitHub para montar os diretórios dos plugins, preservando estrutura de trabalho esperada por LazyVim/Mason e inicializando um repositório Git local com `origin` e branch alvo.
 
 Para remover as configuracoes aplicadas por esses scripts:

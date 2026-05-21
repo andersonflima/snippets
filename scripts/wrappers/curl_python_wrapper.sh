@@ -29,6 +29,7 @@ resolve_real_curl() {
 }
 
 REAL_CURL="$(resolve_real_curl)"
+DISABLE_REAL_CURL="${CURL_WRAPPER_DISABLE_REAL_CURL:-0}"
 
 extract_url() {
   local token
@@ -222,10 +223,12 @@ main() {
   fi
 
   local status=0
-  if "${REAL_CURL}" "${original_args[@]}"; then
-    exit 0
-  else
-    status=$?
+  if [[ "${DISABLE_REAL_CURL}" != "1" ]]; then
+    if "${REAL_CURL}" "${original_args[@]}"; then
+      exit 0
+    else
+      status=$?
+    fi
   fi
 
   original_url="${request_url}"

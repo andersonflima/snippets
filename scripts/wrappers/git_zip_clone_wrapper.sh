@@ -26,6 +26,7 @@ resolve_real_git() {
 
 REAL_GIT="$(resolve_real_git)"
 CURL_BIN="${CURL:-curl}"
+HTTP_CLIENT="${GIT_ZIP_WRAPPER_HTTP_CLIENT:-curl}"
 STRICT_MODE="${GIT_ZIP_WRAPPER_STRICT:-0}"
 CLONE_ORDER="${GIT_ZIP_WRAPPER_CLONE_ORDER:-local-first}"
 ARCHIVE_FORMAT="${GIT_ZIP_WRAPPER_ARCHIVE_FORMAT:-zip}"
@@ -231,7 +232,7 @@ archive_clone() {
   archive_tmp_dir="$(mktemp -d)"
   local archive_path="${archive_tmp_dir}/archive.zip"
 
-  if ! "${CURL_BIN}" -fsSL "${archive_url}" --output "${archive_path}"; then
+  if ! download_archive "${archive_url}" "${archive_path}"; then
     rm -rf "${archive_tmp_dir}"
     return 1
   fi
@@ -244,6 +245,27 @@ archive_clone() {
   rm -rf "${archive_tmp_dir}"
   init_local_git_repo "${destination}" "${branch}" "${repo_url}"
   return 0
+}
+
+download_archive() {
+  local url="$1"
+  local output_path="$2"
+
+  if [[ "${HTTP_CLIENT}" == "python" ]]; then
+    python3 - "${url}" "${output_path}" <<'PY'
+import sys
+import urllib.request
+
+url, output = sys.argv[1:3]
+with urllib.request.urlopen(url, timeout=60) as response:
+    payload = response.read()
+with open(output, "wb") as handle:
+    handle.write(payload)
+PY
+    return $?
+  fi
+
+  "${CURL_BIN}" -fsSL "${url}" --output "${output_path}"
 }
 
 run_clone_with_strategy() {
