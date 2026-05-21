@@ -7,9 +7,6 @@ LAZY_ONLY=0
 MASON_ONLY=0
 FORCE_WRAPPER_INSTALL=0
 AUTO_SHELL_PROFILE=1
-EC2_HOST=""
-EC2_INSTANCE_ID=""
-EC2_S3_URI=""
 CLONE_ORDER=""
 
 log() {
@@ -32,12 +29,7 @@ Opcoes:
   --lazy-only              Executa apenas install_lazyvim_archives.sh
   --mason-only             Executa apenas install_mason_from_registry_archive.sh
   --force-wrapper-install  Reinstala os shims de wrapper antes de atualizar
-  --ec2-host <host>        Host SSH da EC2 usado para git clone de repositorios externos.
-                           Reinstala os shims com clone order ec2-first.
-  --ec2-instance-id <id>   Instance ID da EC2 gerenciada pelo SSM.
-  --ec2-s3-uri <uri>       Prefixo S3 usado para transportar clones da EC2 para a maquina.
-                           Junto com --ec2-instance-id, reinstala com ec2-s3-first.
-  --clone-order <ordem>    Ordem do wrapper git: local-first, git-first, ec2-first ou ec2-s3-first.
+  --clone-order <ordem>    Ordem do wrapper git: local-first ou git-first.
   --no-shell-profile       Nao altera arquivo de perfil durante instalacao dos wrappers
   -h, --help               Mostra esta ajuda.
 USAGE
@@ -60,28 +52,6 @@ while [ "$#" -gt 0 ]; do
     --force-wrapper-install)
       FORCE_WRAPPER_INSTALL=1
       shift
-      ;;
-    --ec2-host)
-      EC2_HOST="${2:-}"
-      CLONE_ORDER="ec2-first"
-      FORCE_WRAPPER_INSTALL=1
-      shift 2
-      ;;
-    --ec2-instance-id)
-      EC2_INSTANCE_ID="${2:-}"
-      if [ -n "${EC2_S3_URI}" ]; then
-        CLONE_ORDER="ec2-s3-first"
-      fi
-      FORCE_WRAPPER_INSTALL=1
-      shift 2
-      ;;
-    --ec2-s3-uri)
-      EC2_S3_URI="${2:-}"
-      if [ -n "${EC2_INSTANCE_ID}" ]; then
-        CLONE_ORDER="ec2-s3-first"
-      fi
-      FORCE_WRAPPER_INSTALL=1
-      shift 2
       ;;
     --clone-order)
       CLONE_ORDER="${2:-}"
@@ -114,21 +84,6 @@ build_install_args() {
     printf '%s\n' "--force"
   fi
 
-  if [ -n "${EC2_HOST}" ]; then
-    printf '%s\n' "--ec2-host"
-    printf '%s\n' "${EC2_HOST}"
-  fi
-
-  if [ -n "${EC2_INSTANCE_ID}" ]; then
-    printf '%s\n' "--ec2-instance-id"
-    printf '%s\n' "${EC2_INSTANCE_ID}"
-  fi
-
-  if [ -n "${EC2_S3_URI}" ]; then
-    printf '%s\n' "--ec2-s3-uri"
-    printf '%s\n' "${EC2_S3_URI}"
-  fi
-
   if [ -n "${CLONE_ORDER}" ]; then
     printf '%s\n' "--clone-order"
     printf '%s\n' "${CLONE_ORDER}"
@@ -149,15 +104,6 @@ fi
 PATH="${WRAPPER_BIN_DIR}:$PATH"
 export PATH
 
-if [ -n "${EC2_HOST}" ]; then
-  export GIT_ZIP_WRAPPER_EC2_HOST="${GIT_ZIP_WRAPPER_EC2_HOST:-${EC2_HOST}}"
-  export GIT_ZIP_WRAPPER_CLONE_ORDER="${GIT_ZIP_WRAPPER_CLONE_ORDER:-ec2-first}"
-fi
-if [ -n "${EC2_INSTANCE_ID}" ] && [ -n "${EC2_S3_URI}" ]; then
-  export GIT_ZIP_WRAPPER_EC2_INSTANCE_ID="${GIT_ZIP_WRAPPER_EC2_INSTANCE_ID:-${EC2_INSTANCE_ID}}"
-  export GIT_ZIP_WRAPPER_EC2_S3_URI="${GIT_ZIP_WRAPPER_EC2_S3_URI:-${EC2_S3_URI}}"
-  export GIT_ZIP_WRAPPER_CLONE_ORDER="${GIT_ZIP_WRAPPER_CLONE_ORDER:-ec2-s3-first}"
-fi
 if [ -n "${CLONE_ORDER}" ]; then
   export GIT_ZIP_WRAPPER_CLONE_ORDER="${GIT_ZIP_WRAPPER_CLONE_ORDER:-${CLONE_ORDER}}"
 fi
