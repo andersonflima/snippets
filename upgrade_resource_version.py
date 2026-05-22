@@ -1,4 +1,56 @@
 #!/usr/bin/env python3
+"""
+upgrade_resource_version.py
+
+Exemplos de version-map por cenario:
+
+1) ElastiCache (cluster/replication-group) com troca de tipo de instancia:
+{
+  "redis:7.0": {"engine": "redis", "version": "7.1", "instanceType": "cache.r7g.large"},
+  "valkey:7.2": {"engine": "valkey", "version": "8.0", "instanceType": "cache.r7g.large"}
+}
+CLI:
+  --resource elasticache --instance-type cache.r7g.large
+
+2) RDS (resource_kind=db-instance) com DBInstanceClass:
+{
+  "mysql:8.0": {"engine": "mysql", "version": "8.4", "instanceType": "db.r7g.large"},
+  "postgres:14": {"engine": "postgres", "version": "16", "instanceType": "db.r7g.large"}
+}
+CLI:
+  --resource rds --instance-type db.r7g.large
+
+3) DocDB (resource_kind=db-instance):
+{
+  "docdb:4.0": {"engine": "docdb", "version": "5.0", "instanceType": "db.r6g.large"}
+}
+CLI:
+  --resource docdb --instance-type db.r6g.large
+
+4) Neptune (resource_kind=db-instance):
+{
+  "neptune:1.2": {"engine": "neptune", "version": "1.3", "instanceType": "db.r6g.large"}
+}
+CLI:
+  --resource neptune --instance-type db.r6g.large
+
+5) Redshift (resource_kind=cluster) com NodeType:
+{
+  "redshift:1.0": {"engine": "redshift", "version": "1.0.70720", "instanceType": "ra3.xlplus"}
+}
+CLI:
+  --resource redshift --instance-type ra3.xlplus
+
+Notas:
+- O version-map e sempre JSON objeto "origem":"destino" ou "origem":{"engine","version"}.
+- O tipo de instancia pode ser informado no map via "instanceType".
+- Quando houver "instanceType" no map, ele tem prioridade sobre --instance-type.
+- --instance-type requer execucao com um unico --resource por vez.
+- ElastiCache serverless-cache nao suporta --instance-type.
+- RDS/DocDB/Neptune resource_kind=db-cluster nao suporta --instance-type no fluxo atual.
+- O plano de update parte do version-map: se currentVersion == targetVersion e
+  currentEngine == targetEngine, o recurso nao entra no update.
+"""
 
 import argparse
 import csv
@@ -207,6 +259,14 @@ def parse_args() -> argparse.Namespace:
         required=False,
         help="Nome explicito de DB parameter group de instancia para upgrades de DB cluster Aurora.",
     )
+    parser.add_argument(
+        "--instance-type",
+        required=False,
+        help=(
+            "Tipo de instancia alvo para recursos que suportam scale vertical "
+            "(ex.: cache.r7g.large, db.r7g.large, ra3.xlplus)."
+        ),
+    )
     parser.add_argument("--version-map", required=False, help="JSON de de/para inline")
     parser.add_argument(
         "--version-map-file",
@@ -297,6 +357,10 @@ def validate_args(args: argparse.Namespace) -> None:
     validate_positive_integer_arg(args.threads, "--threads")
     validate_positive_integer_arg(args.update_threads, "--update-threads")
     validate_positive_integer_arg(args.region_threads, "--region-threads")
+    validate_instance_type_option(
+        instance_type=args.instance_type,
+        resolved_resources=resolved_resources,
+    )
 
 
 def validate_positive_integer_arg(value: Optional[int], name: str) -> None:
@@ -304,6 +368,69 @@ def validate_positive_integer_arg(value: Optional[int], name: str) -> None:
         return
     if not isinstance(value, int) or value <= 0:
         raise ValueError(f"Parametro invalido: {name} deve ser um inteiro positivo.")
+
+
+def validate_instance_type_option(
+    *,
+    instance_type: Any,
+    resolved_resources: Sequence[str],
+) -> None:
+    normalized_instance_type = normalize_version(instance_type)
+    if not normalized_instance_type:
+        return
+
+    if any(char.isspace() for char in normalized_instance_type):
+        raise ValueError(
+            "Parametro invalido: --instance-type nao pode conter espacos."
+        )
+
+    if len(resolved_resources) != 1:
+        raise ValueError(
+            "Parametro invalido: --instance-type requer apenas um --resource por execucao. "
+            "Use chamadas separadas por tipo de recurso."
+        )
+
+    resource_type = normalize_resource(resolved_resources[0])
+    validate_instance_type_for_resource(
+        instance_type=normalized_instance_type,
+        resource_type=resource_type,
+    )
+
+
+def validate_instance_type_for_resource(
+    *,
+    instance_type: str,
+    resource_type: str,
+) -> None:
+    normalized_instance_type = normalize_version(instance_type)
+    normalized_resource_type = normalize_resource(resource_type)
+    if not normalized_instance_type:
+        return
+
+    supported_resources = {"elasticache", "rds", "docdb", "neptune", "redshift"}
+    if normalized_resource_type not in supported_resources:
+        raise ValueError(
+            "Parametro invalido: instanceType suportado apenas para "
+            "elasticache, rds, docdb, neptune e redshift."
+        )
+
+    if (
+        normalized_resource_type == "elasticache"
+        and not normalized_instance_type.lower().startswith("cache.")
+    ):
+        raise ValueError(
+            "Parametro invalido: instanceType para ElastiCache deve iniciar com "
+            "'cache.' (ex.: cache.r7g.large)."
+        )
+
+    if (
+        normalized_resource_type in {"rds", "docdb", "neptune"}
+        and not normalized_instance_type.lower().startswith("db.")
+    ):
+        raise ValueError(
+            "Parametro invalido: instanceType para RDS/DocDB/Neptune deve iniciar com "
+            "'db.' (ex.: db.r7g.large)."
+        )
 
 
 def normalize_resource(resource: Any) -> str:
@@ -350,6 +477,17 @@ def normalize_rds_status(status: Any) -> str:
 
 def build_message(*parts: Any) -> str:
     return " ".join(str(part).strip() for part in parts if str(part or "").strip())
+
+
+def resolve_target_instance_type_for_update(
+    *,
+    resource: Dict[str, str],
+    adapter_options: Dict[str, Any],
+) -> str:
+    mapped_instance_type = normalize_version(resource.get("targetInstanceType"))
+    if mapped_instance_type:
+        return mapped_instance_type
+    return normalize_version(safe_read(adapter_options, "instance_type", ""))
 
 
 def normalize_elasticache_cluster_mode(cluster_mode: Any) -> str:
@@ -400,6 +538,7 @@ def load_version_map(args: argparse.Namespace) -> Tuple[Dict[str, str], ...]:
                 "source_version": source.get("version", ""),
                 "target_engine": target.get("engine", ""),
                 "target_version": target.get("version", ""),
+                "target_instance_type": target.get("instance_type", ""),
             }
         )
 
@@ -438,11 +577,15 @@ def parse_version_map_target(target_raw: Any) -> Dict[str, str]:
             parsed_engine = normalize_engine(normalized_target[:separator_index])
             parsed_version = normalize_version(normalized_target[separator_index + 1 :])
             if parsed_engine and parsed_version and parsed_engine in KNOWN_ENGINE_KEYS:
-                return {"engine": parsed_engine, "version": parsed_version}
-        return {"engine": "", "version": normalized_target}
+                return {
+                    "engine": parsed_engine,
+                    "version": parsed_version,
+                    "instance_type": "",
+                }
+        return {"engine": "", "version": normalized_target, "instance_type": ""}
 
     if not isinstance(target_raw, dict):
-        return {"engine": "", "version": ""}
+        return {"engine": "", "version": "", "instance_type": ""}
 
     target_engine = normalize_engine(
         target_raw.get("engine") or target_raw.get("targetEngine") or ""
@@ -455,8 +598,21 @@ def parse_version_map_target(target_raw: Any) -> Dict[str, str]:
         or target_raw.get("runtime")
         or ""
     )
+    target_instance_type = normalize_version(
+        target_raw.get("instanceType")
+        or target_raw.get("targetInstanceType")
+        or target_raw.get("instance_type")
+        or target_raw.get("cacheNodeType")
+        or target_raw.get("dbInstanceClass")
+        or target_raw.get("nodeType")
+        or ""
+    )
 
-    return {"engine": target_engine, "version": target_version}
+    return {
+        "engine": target_engine,
+        "version": target_version,
+        "instance_type": target_instance_type,
+    }
 
 
 def build_update_plan(
@@ -485,14 +641,26 @@ def build_resource_update_plan_entry(
     current_engine = normalize_engine(resource.get("engine"))
     target_version = normalize_version(target.get("target_version"))
     target_engine = normalize_engine(target.get("target_engine") or current_engine)
+    current_instance_type = normalize_version(resource.get("instanceType"))
+    target_instance_type = normalize_version(target.get("target_instance_type"))
+    if target_instance_type:
+        validate_instance_type_for_resource(
+            instance_type=target_instance_type,
+            resource_type=resource.get("resourceType", ""),
+        )
 
-    if current_version == target_version and current_engine == target_engine:
+    if (
+        current_version == target_version
+        and current_engine == target_engine
+        and (not target_instance_type or current_instance_type == target_instance_type)
+    ):
         return None
 
     return {
         **resource,
         "targetVersion": target_version,
         "targetEngine": target_engine,
+        "targetInstanceType": target_instance_type,
         "targetOptionGroupName": infer_planned_rds_target_option_group_name(
             resource=resource,
             target_engine=target_engine,
@@ -584,6 +752,7 @@ def resolve_target_for_resource(
     return {
         "target_version": normalize_version(selected.get("target_version")),
         "target_engine": normalize_engine(selected.get("target_engine") or current_engine),
+        "target_instance_type": normalize_version(selected.get("target_instance_type")),
     }
 
 
@@ -1310,6 +1479,7 @@ def collect_elasticache_region(
                     "currentVersion": normalize_version(cluster.get("EngineVersion")),
                     "arn": str(cluster.get("ARN") or ""),
                     "parameterGroupName": parameter_group_name,
+                    "instanceType": normalize_version(cluster.get("CacheNodeType")),
                 }
 
                 if cluster.get("ReplicationGroupId"):
@@ -1331,6 +1501,7 @@ def collect_elasticache_region(
                         current_version=normalize_version(cluster.get("EngineVersion")),
                         arn=str(cluster.get("ARN") or ""),
                         parameter_group_name=parameter_group_name,
+                        instance_type=normalize_version(cluster.get("CacheNodeType")),
                         cluster_mode=normalize_elasticache_cluster_mode(
                             cluster.get("ClusterEnabled")
                         )
@@ -1403,6 +1574,10 @@ def collect_elasticache_region(
                         arn=str(
                             group.get("ARN")
                             or safe_read(member_cluster or {}, "arn", "")
+                        ),
+                        instance_type=normalize_version(
+                            group.get("CacheNodeType")
+                            or safe_read(member_cluster or {}, "instanceType", "")
                         ),
                         parameter_group_name=normalize_version(
                             safe_read(member_cluster or {}, "parameterGroupName", "")
@@ -1509,6 +1684,10 @@ def submit_elasticache_update(
     )
 
     explicit_group_name = normalize_version(safe_read(adapter_options, "parameter_group_name", ""))
+    explicit_instance_type = resolve_target_instance_type_for_update(
+        resource=resource,
+        adapter_options=adapter_options,
+    )
 
     resolved_target_parameter_group_name = (
         resolve_elasticache_target_parameter_group(
@@ -1534,14 +1713,21 @@ def submit_elasticache_update(
             modify_input["Engine"] = normalized_target_engine
         if resolved_target_parameter_group_name:
             modify_input["CacheParameterGroupName"] = resolved_target_parameter_group_name
+        if explicit_instance_type:
+            modify_input["CacheNodeType"] = explicit_instance_type
 
         response = send_aws_call(lambda: client.modify_replication_group(**modify_input))
         return {
             "status": safe_read(response, "ReplicationGroup.Status", "modifying"),
-            "message": (
+            "message": build_message(
                 "Engine alterada para "
                 f"{normalized_target_engine or normalized_current_engine or 'default'} "
-                f"e versao para {target_version}"
+                f"e versao para {target_version}",
+                (
+                    f"Tipo de instancia alterado para {explicit_instance_type}."
+                    if explicit_instance_type
+                    else ""
+                ),
             ),
             "targetParameterGroupName": resolved_target_parameter_group_name,
         }
@@ -1556,19 +1742,31 @@ def submit_elasticache_update(
             modify_input["Engine"] = normalized_target_engine
         if resolved_target_parameter_group_name:
             modify_input["CacheParameterGroupName"] = resolved_target_parameter_group_name
+        if explicit_instance_type:
+            modify_input["CacheNodeType"] = explicit_instance_type
 
         response = send_aws_call(lambda: client.modify_cache_cluster(**modify_input))
         return {
             "status": safe_read(response, "CacheCluster.CacheClusterStatus", "modifying"),
-            "message": (
+            "message": build_message(
                 "Engine alterada para "
                 f"{normalized_target_engine or normalized_current_engine or 'default'} "
-                f"e versao para {target_version}"
+                f"e versao para {target_version}",
+                (
+                    f"Tipo de instancia alterado para {explicit_instance_type}."
+                    if explicit_instance_type
+                    else ""
+                ),
             ),
             "targetParameterGroupName": resolved_target_parameter_group_name,
         }
 
     if resource_kind == "serverless-cache":
+        if explicit_instance_type:
+            raise ValueError(
+                "ElastiCache serverless-cache nao suporta --instance-type "
+                "(usa capacidade serverless, sem CacheNodeType)."
+            )
         major_engine_version = extract_major_version(target_version) or normalize_version(
             target_version
         )
@@ -2108,6 +2306,7 @@ def collect_redshift_region(
                         current_version=normalize_version(cluster.get("ClusterVersion")),
                         arn=str(cluster.get("ClusterArn") or ""),
                         parameter_group_name=parameter_group_name,
+                        instance_type=normalize_version(cluster.get("NodeType")),
                     )
                 )
 
@@ -2243,6 +2442,7 @@ def collect_rds_region(
                         option_group_name=option_group_name,
                         instance_parameter_group_name=parameter_group_name,
                         instance_parameter_groups=parameter_group_name,
+                        instance_type=normalize_version(instance.get("DBInstanceClass")),
                     )
                 )
 
@@ -2310,6 +2510,7 @@ def collect_rds_region(
                             else ""
                         ),
                         instance_parameter_groups=",".join(instance_parameter_group_names),
+                        instance_type=normalize_version(cluster.get("DBClusterInstanceClass")),
                     )
                 )
 
@@ -2378,6 +2579,20 @@ def describe_rds_db_cluster(
         return clusters[0]
 
     raise ValueError(f"DB cluster nao encontrado: {db_cluster_identifier}")
+
+
+def describe_redshift_cluster(
+    client: Any,
+    cluster_identifier: str,
+) -> Dict[str, Any]:
+    response = send_aws_call(
+        lambda: client.describe_clusters(ClusterIdentifier=cluster_identifier)
+    )
+    clusters = response.get("Clusters", [])
+    if clusters:
+        return clusters[0]
+
+    raise ValueError(f"Redshift cluster nao encontrado: {cluster_identifier}")
 
 
 def is_rds_terminal_blocked_status(status: Any) -> bool:
@@ -2649,6 +2864,10 @@ def submit_redshift_update(
     explicit_parameter_group_name = normalize_version(
         safe_read(adapter_options, "parameter_group_name", "")
     )
+    explicit_instance_type = resolve_target_instance_type_for_update(
+        resource=resource,
+        adapter_options=adapter_options,
+    )
     cluster_identifier = normalize_version(resource.get("resourceId"))
     if not cluster_identifier:
         raise ValueError("ResourceID do redshift vazio.")
@@ -2658,6 +2877,23 @@ def submit_redshift_update(
     }
     if explicit_parameter_group_name:
         modify_input["ClusterParameterGroupName"] = explicit_parameter_group_name
+    if explicit_instance_type:
+        cluster_snapshot = describe_redshift_cluster(client, cluster_identifier)
+        current_number_of_nodes = safe_read(cluster_snapshot, "NumberOfNodes", 0)
+        try:
+            resolved_number_of_nodes = int(current_number_of_nodes)
+        except Exception as error:  # noqa: BLE001
+            raise ValueError(
+                "Nao foi possivel resolver NumberOfNodes do cluster Redshift "
+                f"{cluster_identifier} para aplicar --instance-type."
+            ) from error
+        if resolved_number_of_nodes <= 0:
+            raise ValueError(
+                f"NumberOfNodes invalido para cluster Redshift {cluster_identifier}: "
+                f"{current_number_of_nodes}"
+            )
+        modify_input["NodeType"] = explicit_instance_type
+        modify_input["NumberOfNodes"] = resolved_number_of_nodes
     if target_version:
         modify_input["ClusterVersion"] = target_version
     modify_input["ApplyImmediately"] = True
@@ -2666,7 +2902,14 @@ def submit_redshift_update(
 
     return {
         "status": safe_read(response, "Cluster.ClusterStatus", "modifying"),
-        "message": f"EngineVersion alterada para {target_version or resource.get('currentVersion', '')}",
+        "message": build_message(
+            f"EngineVersion alterada para {target_version or resource.get('currentVersion', '')}",
+            (
+                f"NodeType alterado para {explicit_instance_type}."
+                if explicit_instance_type
+                else ""
+            ),
+        ),
         "targetParameterGroupName": explicit_parameter_group_name,
     }
 
@@ -2683,6 +2926,10 @@ def submit_rds_instance_update(
     db_instance_identifier = resource.get("resourceId", "")
     explicit_parameter_group_name = normalize_version(
         safe_read(adapter_options, "parameter_group_name", "")
+    )
+    explicit_instance_type = resolve_target_instance_type_for_update(
+        resource=resource,
+        adapter_options=adapter_options,
     )
     normalized_target_engine = normalize_engine(target_engine or resource.get("engine"))
     normalized_current_engine = normalize_engine(resource.get("engine"))
@@ -2734,6 +2981,7 @@ def submit_rds_instance_update(
         major_version_changed=major_version_changed,
         target_parameter_group_name=resolved_target_parameter_group_name,
         target_option_group_name=resolved_target_option_group_name,
+        target_instance_class=explicit_instance_type,
     )
 
     response = send_aws_call(lambda: client.modify_db_instance(**modify_input))
@@ -2763,6 +3011,11 @@ def submit_rds_instance_update(
                 readiness=readiness,
             ),
             f"EngineVersion alterada para {target_version}.",
+            (
+                f"DBInstanceClass alterada para {explicit_instance_type}."
+                if explicit_instance_type
+                else ""
+            ),
             option_group_message,
             post_update_action.get("message", ""),
         ),
@@ -2788,6 +3041,15 @@ def submit_rds_cluster_update(
     explicit_instance_parameter_group_name = normalize_version(
         safe_read(adapter_options, "instance_parameter_group_name", "")
     )
+    explicit_instance_type = resolve_target_instance_type_for_update(
+        resource=resource,
+        adapter_options=adapter_options,
+    )
+    if explicit_instance_type:
+        raise ValueError(
+            "--instance-type para rds/docdb/neptune e suportado apenas em recursos "
+            "resource_kind=db-instance no fluxo atual."
+        )
     normalized_target_engine = normalize_engine(target_engine or resource.get("engine"))
     normalized_current_engine = normalize_engine(resource.get("engine"))
     if (
@@ -5027,12 +5289,14 @@ def build_resource_row(
     instance_parameter_group_name: str = "",
     instance_parameter_groups: str = "",
     cluster_mode: str = "",
+    instance_type: str = "",
 ) -> Dict[str, str]:
     normalized_parameter_group_name = normalize_version(parameter_group_name)
     normalized_option_group_name = normalize_version(option_group_name)
     normalized_cluster_parameter_group_name = normalize_version(cluster_parameter_group_name)
     normalized_instance_parameter_group_name = normalize_version(instance_parameter_group_name)
     normalized_instance_parameter_groups = normalize_version(instance_parameter_groups)
+    normalized_instance_type = normalize_version(instance_type)
 
     return {
         "accountId": str(account_id or ""),
@@ -5048,11 +5312,13 @@ def build_resource_row(
         "clusterParameterGroupName": normalized_cluster_parameter_group_name,
         "instanceParameterGroupName": normalized_instance_parameter_group_name,
         "instanceParameterGroups": normalized_instance_parameter_groups,
+        "instanceType": normalized_instance_type,
         "clusterMode": normalize_elasticache_cluster_mode(cluster_mode),
         "targetParameterGroupName": "",
         "targetOptionGroupName": "",
         "targetClusterParameterGroupName": "",
         "targetInstanceParameterGroupName": "",
+        "targetInstanceType": "",
     }
 
 
@@ -5267,6 +5533,7 @@ def build_rds_instance_modify_input(
     major_version_changed: bool,
     target_parameter_group_name: str,
     target_option_group_name: str,
+    target_instance_class: str,
 ) -> Dict[str, Any]:
     return {
         "DBInstanceIdentifier": db_instance_identifier,
@@ -5278,6 +5545,7 @@ def build_rds_instance_modify_input(
             if target_parameter_group_name
             else {}
         ),
+        **({"DBInstanceClass": target_instance_class} if target_instance_class else {}),
         **({"OptionGroupName": target_option_group_name} if target_option_group_name else {}),
     }
 
@@ -5723,6 +5991,10 @@ def run_upgrade_for_resource_type(
         f"region={forced_regions[0] if forced_regions else 'all-enabled'} "
         f"dry_run={'true' if dry_run else 'false'}"
     )
+    validate_instance_type_option(
+        instance_type=safe_read(adapter_options, "instance_type", ""),
+        resolved_resources=[resource_type],
+    )
 
     account_by_id = {account.get("accountId", ""): account for account in accounts}
     discovery_progress = create_progress_tracker(
@@ -5820,6 +6092,7 @@ def main() -> None:
         "instance_parameter_group_name": normalize_version(
             args.instance_parameter_group_name
         ),
+        "instance_type": normalize_version(args.instance_type),
     }
     csv_resource_label = (
         resource_types[0] if len(resource_types) == 1 else RESOURCE_TYPE_ALL

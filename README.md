@@ -67,6 +67,39 @@ Variáveis úteis para customizar o wrapper de clone:
 - bucket S3 para snapshots
 - tabela DynamoDB dedicada para checkpoint
 
+## `upgrade_resource_version.py` - suporte a tipo de instancia
+
+O script `upgrade_resource_version.py` aceita `--instance-type` para alterar tipo/classe de instancia, com suporte atual:
+
+- `--resource elasticache`
+  - `resource_kind=cluster` via `modify_cache_cluster(CacheNodeType=...)`
+  - `resource_kind=replication-group` via `modify_replication_group(CacheNodeType=...)`
+- `--resource rds|docdb|neptune`
+  - `resource_kind=db-instance` via `modify_db_instance(DBInstanceClass=...)`
+- `--resource redshift`
+  - `resource_kind=cluster` via `modify_cluster(NodeType=..., NumberOfNodes=<atual>)`
+
+Validacoes aplicadas:
+
+- `--instance-type` exige execucao com um unico `--resource` por vez
+- formatos:
+  - ElastiCache: `cache.*` (ex.: `cache.r7g.large`)
+  - RDS/DocDB/Neptune: `db.*` (ex.: `db.r7g.large`)
+- `elasticache resource_kind=serverless-cache` nao suporta `--instance-type`
+- `rds/docdb/neptune resource_kind=db-cluster` nao suporta `--instance-type` no fluxo atual
+
+Mapeamento recomendado de tipo de instancia no `version-map`:
+
+```json
+{
+  "redis:7.0": { "engine": "redis", "version": "7.1", "instanceType": "cache.r7g.large" },
+  "mysql:8.0": { "engine": "mysql", "version": "8.4", "instanceType": "db.r7g.large" },
+  "redshift:1.0": { "engine": "redshift", "version": "1.0.70720", "instanceType": "ra3.xlplus" }
+}
+```
+
+Quando `instanceType` estiver no `version-map`, ele tem prioridade sobre `--instance-type`.
+
 ## Variáveis de ambiente
 
 ### Obrigatórias
