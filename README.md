@@ -100,6 +100,26 @@ Mapeamento recomendado de tipo de instancia no `version-map`:
 
 Quando `instanceType` estiver no `version-map`, ele tem prioridade sobre `--instance-type`.
 
+### Parameter group explicito: criacao automatica quando ausente
+
+Para recursos que suportam `parameter group`, quando um nome explicito for informado e o grupo nao existir, o script passa a:
+
+- criar automaticamente o `parameter group` alvo com a family compativel;
+- copiar os parametros `Source=user` do grupo de origem quando aplicavel;
+- aplicar o grupo criado no update do recurso.
+
+Cobertura:
+
+- `elasticache` (`cluster` e `replication-group`) via `--parameter-group-name`
+- `rds/docdb/neptune` `db-instance` via `--parameter-group-name`
+- `rds/docdb/neptune` `db-cluster` via:
+  - `--cluster-parameter-group-name` (cluster)
+  - `--instance-parameter-group-name` (instance do cluster)
+  - fallback de `--parameter-group-name` para o cluster
+- `redshift` (`cluster`) via `--parameter-group-name`
+
+Se o grupo explicito ja existir, ele e reutilizado sem criacao.
+
 ## Variáveis de ambiente
 
 ### Obrigatórias

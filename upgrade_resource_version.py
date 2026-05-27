@@ -1801,7 +1801,14 @@ def resolve_elasticache_target_parameter_group(
     adapter_options: Dict[str, Any],
 ) -> str:
     if explicit_cache_parameter_group_name:
-        return explicit_cache_parameter_group_name
+        return ensure_explicit_elasticache_parameter_group_for_target(
+            client=client,
+            explicit_parameter_group_name=explicit_cache_parameter_group_name,
+            resource=resource,
+            target_engine=target_engine,
+            target_version=target_version,
+            adapter_options=adapter_options,
+        )
 
     source_parameter_group_name = normalize_version(resource.get("parameterGroupName"))
     if not source_parameter_group_name:
@@ -2061,6 +2068,113 @@ def is_cache_parameter_group_already_exists_error(error: Exception) -> bool:
         "CacheParameterGroupAlreadyExists",
         "CacheParameterGroupAlreadyExistsFault",
     )
+
+
+def is_cache_parameter_group_not_found_error(error: Exception) -> bool:
+    error_code = extract_client_error_code(error)
+    return error_code in (
+        "CacheParameterGroupNotFound",
+        "CacheParameterGroupNotFoundFault",
+    )
+
+
+def does_elasticache_parameter_group_exist(
+    *,
+    client: Any,
+    cache_parameter_group_name: str,
+) -> bool:
+    normalized_name = normalize_version(cache_parameter_group_name)
+    if not normalized_name:
+        return False
+
+    try:
+        send_aws_call(
+            lambda: client.describe_cache_parameter_groups(
+                CacheParameterGroupName=normalized_name,
+                MaxRecords=100,
+            )
+        )
+        return True
+    except Exception as error:  # noqa: BLE001
+        if is_cache_parameter_group_not_found_error(error):
+            return False
+        raise
+
+
+def ensure_explicit_elasticache_parameter_group_for_target(
+    *,
+    client: Any,
+    explicit_parameter_group_name: str,
+    resource: Dict[str, str],
+    target_engine: str,
+    target_version: str,
+    adapter_options: Dict[str, Any],
+) -> str:
+    normalized_explicit_parameter_group_name = normalize_version(explicit_parameter_group_name)
+    if not normalized_explicit_parameter_group_name:
+        return ""
+    if does_elasticache_parameter_group_exist(
+        client=client,
+        cache_parameter_group_name=normalized_explicit_parameter_group_name,
+    ):
+        return normalized_explicit_parameter_group_name
+
+    source_parameter_group_name = normalize_version(resource.get("parameterGroupName"))
+    normalized_target_engine = normalize_engine(target_engine or resource.get("engine"))
+    normalized_target_version = normalize_version(target_version)
+
+    target_family = (
+        resolve_elasticache_parameter_group_family(
+            client=client,
+            target_engine=normalized_target_engine,
+            target_version=normalized_target_version,
+            adapter_options=adapter_options,
+        )
+        if normalized_target_engine and normalized_target_version
+        else ""
+    )
+    if not target_family and source_parameter_group_name:
+        target_family = resolve_elasticache_source_parameter_group_family(
+            client=client,
+            source_parameter_group_name=source_parameter_group_name,
+            adapter_options=adapter_options,
+        )
+    if not target_family:
+        raise ValueError(
+            "Nao foi possivel criar CacheParameterGroup "
+            f"{normalized_explicit_parameter_group_name}: familia alvo nao resolvida."
+        )
+
+    try:
+        send_aws_call(
+            lambda: client.create_cache_parameter_group(
+                CacheParameterGroupFamily=target_family,
+                CacheParameterGroupName=normalized_explicit_parameter_group_name,
+                Description=(
+                    f"Generated from {source_parameter_group_name or 'engine-default'} "
+                    f"for {target_family}"
+                ),
+            )
+        )
+    except Exception as error:  # noqa: BLE001
+        if not is_cache_parameter_group_already_exists_error(error):
+            raise
+
+    if (
+        source_parameter_group_name
+        and source_parameter_group_name.lower() != normalized_explicit_parameter_group_name.lower()
+    ):
+        user_defined_parameters = list_user_defined_cache_parameters(
+            client=client,
+            cache_parameter_group_name=source_parameter_group_name,
+        )
+        apply_user_defined_parameters(
+            client=client,
+            target_parameter_group_name=normalized_explicit_parameter_group_name,
+            parameters=user_defined_parameters,
+        )
+
+    return normalized_explicit_parameter_group_name
 
 
 def build_unique_cache_parameter_group_name(
@@ -2872,11 +2986,17 @@ def submit_redshift_update(
     if not cluster_identifier:
         raise ValueError("ResourceID do redshift vazio.")
 
+    resolved_target_parameter_group_name = resolve_redshift_target_parameter_group(
+        client=client,
+        explicit_parameter_group_name=explicit_parameter_group_name,
+        source_parameter_group_name=normalize_version(resource.get("parameterGroupName")),
+    )
+
     modify_input = {
         "ClusterIdentifier": cluster_identifier,
     }
-    if explicit_parameter_group_name:
-        modify_input["ClusterParameterGroupName"] = explicit_parameter_group_name
+    if resolved_target_parameter_group_name:
+        modify_input["ClusterParameterGroupName"] = resolved_target_parameter_group_name
     if explicit_instance_type:
         cluster_snapshot = describe_redshift_cluster(client, cluster_identifier)
         current_number_of_nodes = safe_read(cluster_snapshot, "NumberOfNodes", 0)
@@ -2910,7 +3030,7 @@ def submit_redshift_update(
                 else ""
             ),
         ),
-        "targetParameterGroupName": explicit_parameter_group_name,
+        "targetParameterGroupName": resolved_target_parameter_group_name,
     }
 
 
@@ -3206,6 +3326,415 @@ def resolve_redshift_cluster_parameter_group_name(cluster: Dict[str, Any]) -> st
     )
 
 
+def is_redshift_cluster_parameter_group_already_exists_error(error: Exception) -> bool:
+    error_code = extract_client_error_code(error)
+    return error_code in (
+        "ClusterParameterGroupAlreadyExists",
+        "ClusterParameterGroupAlreadyExistsFault",
+    )
+
+
+def is_redshift_cluster_parameter_group_not_found_error(error: Exception) -> bool:
+    error_code = extract_client_error_code(error)
+    return error_code in (
+        "ClusterParameterGroupNotFound",
+        "ClusterParameterGroupNotFoundFault",
+    )
+
+
+def does_redshift_cluster_parameter_group_exist(
+    *,
+    client: Any,
+    parameter_group_name: str,
+) -> bool:
+    normalized_parameter_group_name = normalize_version(parameter_group_name)
+    if not normalized_parameter_group_name:
+        return False
+
+    try:
+        send_aws_call(
+            lambda: client.describe_cluster_parameter_groups(
+                ParameterGroupName=normalized_parameter_group_name,
+                MaxRecords=100,
+            )
+        )
+        return True
+    except Exception as error:  # noqa: BLE001
+        if is_redshift_cluster_parameter_group_not_found_error(error):
+            return False
+        raise
+
+
+def resolve_redshift_source_parameter_group_family(
+    *,
+    client: Any,
+    source_parameter_group_name: str,
+) -> str:
+    normalized_source_parameter_group_name = normalize_version(source_parameter_group_name)
+    if not normalized_source_parameter_group_name:
+        return ""
+
+    response = send_aws_call(
+        lambda: client.describe_cluster_parameter_groups(
+            ParameterGroupName=normalized_source_parameter_group_name,
+            MaxRecords=100,
+        )
+    )
+    parameter_groups = response.get("ParameterGroups", [])
+    selected_group = next(
+        (
+            parameter_group
+            for parameter_group in parameter_groups
+            if normalize_version(parameter_group.get("ParameterGroupName")).lower()
+            == normalized_source_parameter_group_name.lower()
+        ),
+        parameter_groups[0] if parameter_groups else {},
+    )
+    return normalize_version(selected_group.get("ParameterGroupFamily"))
+
+
+def list_user_defined_redshift_cluster_parameters(
+    *,
+    client: Any,
+    source_parameter_group_name: str,
+) -> List[Dict[str, Any]]:
+    normalized_source_parameter_group_name = normalize_version(source_parameter_group_name)
+    if not normalized_source_parameter_group_name:
+        return []
+
+    parameters: List[Dict[str, Any]] = []
+    marker: Optional[str] = None
+    while True:
+        request: Dict[str, Any] = {
+            "ParameterGroupName": normalized_source_parameter_group_name,
+            "Source": "user",
+            "MaxRecords": 100,
+        }
+        if marker:
+            request["Marker"] = marker
+
+        response = send_aws_call(lambda: client.describe_cluster_parameters(**request))
+        parameters.extend(response.get("Parameters", []))
+
+        marker = response.get("Marker")
+        if not marker:
+            break
+
+    return parameters
+
+
+def apply_user_defined_redshift_cluster_parameters(
+    *,
+    client: Any,
+    target_parameter_group_name: str,
+    parameters: Sequence[Dict[str, Any]],
+) -> None:
+    parameter_values = [
+        {
+            "ParameterName": parameter.get("ParameterName"),
+            "ParameterValue": str(parameter.get("ParameterValue")),
+        }
+        for parameter in parameters
+        if parameter
+        and parameter.get("ParameterName")
+        and parameter.get("ParameterValue") is not None
+    ]
+
+    for batch in chunk_array(parameter_values, 20):
+        if not batch:
+            continue
+
+        try:
+            send_aws_call(
+                lambda: client.modify_cluster_parameter_group(
+                    ParameterGroupName=target_parameter_group_name,
+                    Parameters=batch,
+                )
+            )
+        except Exception:  # noqa: BLE001
+            for parameter in batch:
+                try:
+                    send_aws_call(
+                        lambda: client.modify_cluster_parameter_group(
+                            ParameterGroupName=target_parameter_group_name,
+                            Parameters=[parameter],
+                        )
+                    )
+                except Exception:  # noqa: BLE001
+                    continue
+
+
+def resolve_redshift_target_parameter_group(
+    *,
+    client: Any,
+    explicit_parameter_group_name: str,
+    source_parameter_group_name: str,
+) -> str:
+    normalized_explicit_parameter_group_name = normalize_version(explicit_parameter_group_name)
+    normalized_source_parameter_group_name = normalize_version(source_parameter_group_name)
+    if not normalized_explicit_parameter_group_name:
+        return ""
+
+    if does_redshift_cluster_parameter_group_exist(
+        client=client,
+        parameter_group_name=normalized_explicit_parameter_group_name,
+    ):
+        return normalized_explicit_parameter_group_name
+
+    parameter_group_family = resolve_redshift_source_parameter_group_family(
+        client=client,
+        source_parameter_group_name=normalized_source_parameter_group_name,
+    )
+    if not parameter_group_family:
+        raise ValueError(
+            "Nao foi possivel criar ClusterParameterGroup "
+            f"{normalized_explicit_parameter_group_name}: familia alvo nao resolvida."
+        )
+
+    try:
+        send_aws_call(
+            lambda: client.create_cluster_parameter_group(
+                ParameterGroupName=normalized_explicit_parameter_group_name,
+                ParameterGroupFamily=parameter_group_family,
+                Description=(
+                    f"Generated from {normalized_source_parameter_group_name or 'engine-default'} "
+                    f"for {parameter_group_family}"
+                ),
+            )
+        )
+    except Exception as error:  # noqa: BLE001
+        if not is_redshift_cluster_parameter_group_already_exists_error(error):
+            raise
+
+    if (
+        normalized_source_parameter_group_name
+        and normalized_source_parameter_group_name.lower()
+        != normalized_explicit_parameter_group_name.lower()
+    ):
+        user_defined_parameters = list_user_defined_redshift_cluster_parameters(
+            client=client,
+            source_parameter_group_name=normalized_source_parameter_group_name,
+        )
+        apply_user_defined_redshift_cluster_parameters(
+            client=client,
+            target_parameter_group_name=normalized_explicit_parameter_group_name,
+            parameters=user_defined_parameters,
+        )
+
+    return normalized_explicit_parameter_group_name
+
+
+def is_db_parameter_group_not_found_error(error: Exception) -> bool:
+    error_code = extract_client_error_code(error)
+    return error_code in ("DBParameterGroupNotFound", "DBParameterGroupNotFoundFault")
+
+
+def is_db_cluster_parameter_group_not_found_error(error: Exception) -> bool:
+    error_code = extract_client_error_code(error)
+    return error_code in (
+        "DBClusterParameterGroupNotFound",
+        "DBClusterParameterGroupNotFoundFault",
+    )
+
+
+def does_rds_db_parameter_group_exist(
+    *,
+    client: Any,
+    parameter_group_name: str,
+) -> bool:
+    normalized_parameter_group_name = normalize_version(parameter_group_name)
+    if not normalized_parameter_group_name:
+        return False
+
+    try:
+        send_aws_call(
+            lambda: client.describe_db_parameter_groups(
+                DBParameterGroupName=normalized_parameter_group_name,
+                MaxRecords=100,
+            )
+        )
+        return True
+    except Exception as error:  # noqa: BLE001
+        if is_db_parameter_group_not_found_error(error):
+            return False
+        raise
+
+
+def does_rds_db_cluster_parameter_group_exist(
+    *,
+    client: Any,
+    parameter_group_name: str,
+) -> bool:
+    normalized_parameter_group_name = normalize_version(parameter_group_name)
+    if not normalized_parameter_group_name:
+        return False
+
+    try:
+        send_aws_call(
+            lambda: client.describe_db_cluster_parameter_groups(
+                DBClusterParameterGroupName=normalized_parameter_group_name,
+                MaxRecords=100,
+            )
+        )
+        return True
+    except Exception as error:  # noqa: BLE001
+        if is_db_cluster_parameter_group_not_found_error(error):
+            return False
+        raise
+
+
+def ensure_explicit_rds_db_parameter_group_for_target(
+    *,
+    client: Any,
+    explicit_parameter_group_name: str,
+    source_parameter_group_name: str,
+    target_engine: str,
+    target_version: str,
+    adapter_options: Dict[str, Any],
+) -> str:
+    normalized_explicit_parameter_group_name = normalize_version(explicit_parameter_group_name)
+    normalized_source_parameter_group_name = normalize_version(source_parameter_group_name)
+    if not normalized_explicit_parameter_group_name:
+        return ""
+    if does_rds_db_parameter_group_exist(
+        client=client,
+        parameter_group_name=normalized_explicit_parameter_group_name,
+    ):
+        return normalized_explicit_parameter_group_name
+
+    normalized_target_engine = normalize_engine(target_engine)
+    normalized_target_version = normalize_version(target_version)
+    target_family = (
+        resolve_rds_parameter_group_family_for_engine_version(
+            client=client,
+            target_engine=normalized_target_engine,
+            target_version=normalized_target_version,
+            adapter_options=adapter_options,
+        )
+        if normalized_target_engine and normalized_target_version
+        else ""
+    )
+    if not target_family and normalized_source_parameter_group_name:
+        target_family = resolve_rds_source_db_parameter_group_family(
+            client=client,
+            source_parameter_group_name=normalized_source_parameter_group_name,
+            adapter_options=adapter_options,
+        )
+    if not target_family:
+        raise ValueError(
+            "Nao foi possivel criar DBParameterGroup "
+            f"{normalized_explicit_parameter_group_name}: familia alvo nao resolvida."
+        )
+
+    try:
+        send_aws_call(
+            lambda: client.create_db_parameter_group(
+                DBParameterGroupFamily=target_family,
+                DBParameterGroupName=normalized_explicit_parameter_group_name,
+                Description=(
+                    f"Generated from {normalized_source_parameter_group_name or 'engine-default'} "
+                    f"for {target_family}"
+                ),
+            )
+        )
+    except Exception as error:  # noqa: BLE001
+        if not is_db_parameter_group_already_exists_error(error):
+            raise
+
+    if (
+        normalized_source_parameter_group_name
+        and normalized_source_parameter_group_name.lower()
+        != normalized_explicit_parameter_group_name.lower()
+    ):
+        user_defined_parameters = list_user_defined_db_parameters(
+            client=client,
+            source_parameter_group_name=normalized_source_parameter_group_name,
+        )
+        apply_user_defined_db_parameters(
+            client=client,
+            target_parameter_group_name=normalized_explicit_parameter_group_name,
+            parameters=user_defined_parameters,
+        )
+
+    return normalized_explicit_parameter_group_name
+
+
+def ensure_explicit_rds_db_cluster_parameter_group_for_target(
+    *,
+    client: Any,
+    explicit_parameter_group_name: str,
+    source_parameter_group_name: str,
+    target_engine: str,
+    target_version: str,
+    adapter_options: Dict[str, Any],
+) -> str:
+    normalized_explicit_parameter_group_name = normalize_version(explicit_parameter_group_name)
+    normalized_source_parameter_group_name = normalize_version(source_parameter_group_name)
+    if not normalized_explicit_parameter_group_name:
+        return ""
+    if does_rds_db_cluster_parameter_group_exist(
+        client=client,
+        parameter_group_name=normalized_explicit_parameter_group_name,
+    ):
+        return normalized_explicit_parameter_group_name
+
+    normalized_target_engine = normalize_engine(target_engine)
+    normalized_target_version = normalize_version(target_version)
+    target_family = (
+        resolve_rds_parameter_group_family_for_engine_version(
+            client=client,
+            target_engine=normalized_target_engine,
+            target_version=normalized_target_version,
+            adapter_options=adapter_options,
+        )
+        if normalized_target_engine and normalized_target_version
+        else ""
+    )
+    if not target_family and normalized_source_parameter_group_name:
+        target_family = resolve_rds_source_db_cluster_parameter_group_family(
+            client=client,
+            source_parameter_group_name=normalized_source_parameter_group_name,
+            adapter_options=adapter_options,
+        )
+    if not target_family:
+        raise ValueError(
+            "Nao foi possivel criar DBClusterParameterGroup "
+            f"{normalized_explicit_parameter_group_name}: familia alvo nao resolvida."
+        )
+
+    try:
+        send_aws_call(
+            lambda: client.create_db_cluster_parameter_group(
+                DBParameterGroupFamily=target_family,
+                DBClusterParameterGroupName=normalized_explicit_parameter_group_name,
+                Description=(
+                    f"Generated from {normalized_source_parameter_group_name or 'engine-default'} "
+                    f"for {target_family}"
+                ),
+            )
+        )
+    except Exception as error:  # noqa: BLE001
+        if not is_db_cluster_parameter_group_already_exists_error(error):
+            raise
+
+    if (
+        normalized_source_parameter_group_name
+        and normalized_source_parameter_group_name.lower()
+        != normalized_explicit_parameter_group_name.lower()
+    ):
+        user_defined_parameters = list_user_defined_db_cluster_parameters(
+            client=client,
+            source_parameter_group_name=normalized_source_parameter_group_name,
+        )
+        apply_user_defined_db_cluster_parameters(
+            client=client,
+            target_parameter_group_name=normalized_explicit_parameter_group_name,
+            parameters=user_defined_parameters,
+        )
+
+    return normalized_explicit_parameter_group_name
+
+
 def resolve_rds_target_parameter_group(
     *,
     client: Any,
@@ -3216,7 +3745,14 @@ def resolve_rds_target_parameter_group(
     adapter_options: Dict[str, Any],
 ) -> str:
     if explicit_parameter_group_name:
-        return explicit_parameter_group_name
+        return ensure_explicit_rds_db_parameter_group_for_target(
+            client=client,
+            explicit_parameter_group_name=explicit_parameter_group_name,
+            source_parameter_group_name=normalize_version(resource.get("parameterGroupName")),
+            target_engine=target_engine,
+            target_version=target_version,
+            adapter_options=adapter_options,
+        )
 
     source_parameter_group_name = normalize_version(resource.get("parameterGroupName"))
     if not source_parameter_group_name:
@@ -3372,7 +3908,16 @@ def resolve_rds_target_cluster_parameter_group(
     adapter_options: Dict[str, Any],
 ) -> str:
     if explicit_parameter_group_name:
-        return explicit_parameter_group_name
+        return ensure_explicit_rds_db_cluster_parameter_group_for_target(
+            client=client,
+            explicit_parameter_group_name=explicit_parameter_group_name,
+            source_parameter_group_name=normalize_version(
+                resource.get("clusterParameterGroupName") or resource.get("parameterGroupName")
+            ),
+            target_engine=target_engine,
+            target_version=target_version,
+            adapter_options=adapter_options,
+        )
 
     if not requires_parameter_group_migration:
         return ""
@@ -3428,7 +3973,24 @@ def resolve_rds_target_cluster_instance_parameter_group(
     adapter_options: Dict[str, Any],
 ) -> str:
     if explicit_parameter_group_name:
-        return explicit_parameter_group_name
+        source_parameter_group_names = sorted(
+            set(
+                split_parameter_group_names(
+                    resource.get("instanceParameterGroups")
+                    or resource.get("instanceParameterGroupName")
+                )
+            )
+        )
+        return ensure_explicit_rds_db_parameter_group_for_target(
+            client=client,
+            explicit_parameter_group_name=explicit_parameter_group_name,
+            source_parameter_group_name=(
+                source_parameter_group_names[0] if source_parameter_group_names else ""
+            ),
+            target_engine=target_engine,
+            target_version=target_version,
+            adapter_options=adapter_options,
+        )
 
     if not requires_parameter_group_migration:
         return ""
