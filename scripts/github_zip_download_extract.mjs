@@ -18,6 +18,59 @@ function ensureOkResponse(response, url) {
   die(`falha no download (${response.status}) para ${url}`);
 }
 
+function sleep(ms) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+function toErrorMessage(error) {
+  if (!(error instanceof Error)) {
+    return String(error);
+  }
+  const cause = error.cause;
+  const causeMessage =
+    cause && typeof cause === "object"
+      ? [cause.code, cause.errno, cause.syscall, cause.hostname, cause.message]
+          .filter(Boolean)
+          .join(" | ")
+      : "";
+  return causeMessage ? `${error.message} (${causeMessage})` : error.message;
+}
+
+function buildCandidateUrls(primaryUrl) {
+  const urls = [primaryUrl];
+  const match = primaryUrl.match(
+    /^https:\/\/github\.com\/([^/]+)\/([^/]+)\/archive\/refs\/heads\/([^/]+)\.zip$/,
+  );
+  if (!match) {
+    return urls;
+  }
+  const [, owner, repo, branch] = match;
+  urls.push(`https://codeload.github.com/${owner}/${repo}/zip/refs/heads/${branch}`);
+  return urls;
+}
+
+async function downloadWithRetryAndFallback(urls, headers) {
+  let lastError = "";
+  for (const url of urls) {
+    for (let attempt = 1; attempt <= 3; attempt += 1) {
+      try {
+        const response = await fetch(url, { headers });
+        ensureOkResponse(response, url);
+        if (!response.body) {
+          throw new Error(`resposta sem body para ${url}`);
+        }
+        return response;
+      } catch (error) {
+        lastError = `${url} [tentativa ${attempt}/3]: ${toErrorMessage(error)}`;
+        if (attempt < 3) {
+          await sleep(attempt * 500);
+        }
+      }
+    }
+  }
+  throw new Error(lastError || "falha desconhecida de download");
+}
+
 function extractZip(zipPath, extractRoot) {
   const unzipResult = spawnSync("unzip", ["-q", zipPath, "-d", extractRoot], {
     stdio: "pipe",
@@ -44,11 +97,8 @@ async function main() {
     headers.Authorization = `Bearer ${token}`;
   }
 
-  const response = await fetch(url, { headers });
-  ensureOkResponse(response, url);
-  if (!response.body) {
-    die(`resposta sem body para ${url}`);
-  }
+  const candidateUrls = buildCandidateUrls(url);
+  const response = await downloadWithRetryAndFallback(candidateUrls, headers);
 
   await pipeline(response.body, fs.createWriteStream(zipPath));
   extractZip(zipPath, extractRoot);
