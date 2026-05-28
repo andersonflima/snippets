@@ -20,6 +20,7 @@ Este repo é intencionalmente flexível: pode conter scripts independentes, help
 ## Requisitos gerais
 
 - Python `3.10+`.
+- Node.js `18+` (necessario para scripts de setup que usam `fetch` nativo).
 - Dependências variam por script (ex.: `boto3` para integrações AWS).
 - Em scripts AWS, use credenciais/região válidas no ambiente de execução.
 
@@ -33,7 +34,7 @@ A pasta `scripts/` mantém dois scripts:
 ### O que o setup faz
 
 - baixa dependências usando rota ZIP do GitHub (`/archive/refs/heads/<branch>.zip`);
-- não usa `curl` nem `wget` (download por código Python);
+- não usa `curl` nem `wget` (download por helper Node.js);
 - instala configuração do `LazyVim/starter`;
 - instala plugins do manifesto em `~/.local/share/nvim/lazy`;
 - instala registry local do Mason em `~/.cache/nvim/mason-registry-main`;

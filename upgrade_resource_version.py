@@ -1960,6 +1960,41 @@ def align_elasticache_target_family_with_source(
     return normalized_target_family
 
 
+def normalize_elasticache_parameter_group_family_for_create(target_family: str) -> str:
+    normalized_target_family = normalize_version(target_family)
+    if not normalized_target_family:
+        return ""
+    if normalized_target_family.lower().endswith(".cluster.on"):
+        return normalized_target_family[: -len(".cluster.on")]
+    return normalized_target_family
+
+
+def should_force_elasticache_cluster_mode_on(
+    *,
+    resource: Dict[str, str],
+    target_family: str,
+) -> bool:
+    resource_cluster_mode = normalize_elasticache_cluster_mode(resource.get("clusterMode"))
+    if resource_cluster_mode == "on":
+        return True
+    return normalize_version(target_family).lower().endswith(".cluster.on")
+
+
+def apply_elasticache_cluster_mode_on_if_needed(
+    *,
+    client: Any,
+    target_parameter_group_name: str,
+    should_force_on: bool,
+) -> None:
+    if not should_force_on:
+        return
+    apply_user_defined_parameters(
+        client=client,
+        target_parameter_group_name=target_parameter_group_name,
+        parameters=[{"ParameterName": "cluster-enabled", "ParameterValue": "yes"}],
+    )
+
+
 def resolve_elasticache_cluster_mode_for_resource(
     *,
     resource: Dict[str, str],
@@ -2055,17 +2090,29 @@ def ensure_custom_target_parameter_group_for_migration(
         cached = custom_group_by_key.get(cache_key)
     if cached:
         return cached
+    should_force_cluster_mode_on = should_force_elasticache_cluster_mode_on(
+        resource=resource,
+        target_family=target_family,
+    )
 
     target_parameter_group_name = build_unique_cache_parameter_group_name(
         source_parameter_group_name=source_parameter_group_name,
         target_family=target_family,
         resource=resource,
     )
+    target_family_for_create = normalize_elasticache_parameter_group_family_for_create(
+        target_family
+    )
+    if not target_family_for_create:
+        raise ValueError(
+            "Nao foi possivel criar CacheParameterGroup customizado: "
+            f"familia de criacao invalida para {target_parameter_group_name}."
+        )
 
     try:
         send_aws_call(
             lambda: client.create_cache_parameter_group(
-                CacheParameterGroupFamily=target_family,
+                CacheParameterGroupFamily=target_family_for_create,
                 CacheParameterGroupName=target_parameter_group_name,
                 Description=(
                     f"Generated from {source_parameter_group_name} for {target_family}"
@@ -2085,6 +2132,11 @@ def ensure_custom_target_parameter_group_for_migration(
         client=client,
         target_parameter_group_name=target_parameter_group_name,
         parameters=user_defined_parameters,
+    )
+    apply_elasticache_cluster_mode_on_if_needed(
+        client=client,
+        target_parameter_group_name=target_parameter_group_name,
+        should_force_on=should_force_cluster_mode_on,
     )
 
     with RUNTIME_STATE_LOCK:
@@ -2192,11 +2244,22 @@ def ensure_explicit_elasticache_parameter_group_for_target(
             "Nao foi possivel criar CacheParameterGroup "
             f"{normalized_explicit_parameter_group_name}: familia alvo nao resolvida."
         )
+    should_force_cluster_mode_on = source_cluster_mode == "on" or normalize_version(
+        target_family
+    ).lower().endswith(".cluster.on")
+    target_family_for_create = normalize_elasticache_parameter_group_family_for_create(
+        target_family
+    )
+    if not target_family_for_create:
+        raise ValueError(
+            "Nao foi possivel criar CacheParameterGroup "
+            f"{normalized_explicit_parameter_group_name}: familia de criacao invalida."
+        )
 
     try:
         send_aws_call(
             lambda: client.create_cache_parameter_group(
-                CacheParameterGroupFamily=target_family,
+                CacheParameterGroupFamily=target_family_for_create,
                 CacheParameterGroupName=normalized_explicit_parameter_group_name,
                 Description=(
                     f"Generated from {source_parameter_group_name or 'engine-default'} "
@@ -2221,6 +2284,11 @@ def ensure_explicit_elasticache_parameter_group_for_target(
             target_parameter_group_name=normalized_explicit_parameter_group_name,
             parameters=user_defined_parameters,
         )
+    apply_elasticache_cluster_mode_on_if_needed(
+        client=client,
+        target_parameter_group_name=normalized_explicit_parameter_group_name,
+        should_force_on=should_force_cluster_mode_on,
+    )
 
     return normalized_explicit_parameter_group_name
 

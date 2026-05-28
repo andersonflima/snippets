@@ -26,7 +26,7 @@ Opcoes:
 
 Observacoes:
 - Nao usa curl/wget.
-- Download feito por codigo Python (urllib).
+- Download feito por codigo Node.js (fetch).
 - Usa ZIP no formato /archive/refs/heads/<branch>.zip.
 USAGE
 }
@@ -74,7 +74,7 @@ while [ "$#" -gt 0 ]; do
   esac
 done
 
-command -v python3 >/dev/null 2>&1 || die "python3 nao encontrado"
+command -v node >/dev/null 2>&1 || die "node nao encontrado"
 
 [ -n "$NVIM_CONFIG_DIR" ] || die "--config-dir vazio"
 [ -n "$NVIM_DATA_DIR" ] || die "--data-dir vazio"
@@ -122,52 +122,8 @@ download_and_extract_branch_zip() {
 
   mkdir -p "$extract_root"
 
-  python3 - "$url" "$temp_zip" "$extract_root" "$destination_dir" <<'PY'
-import os
-import shutil
-import sys
-import tempfile
-import urllib.request
-import zipfile
-
-url = sys.argv[1]
-zip_path = sys.argv[2]
-extract_root = sys.argv[3]
-destination = sys.argv[4]
-
-token = os.environ.get("GITHUB_TOKEN", "").strip()
-headers = {"User-Agent": "nvim-zip-bootstrap/1.0"}
-if token:
-    headers["Authorization"] = f"Bearer {token}"
-
-request = urllib.request.Request(url, headers=headers)
-with urllib.request.urlopen(request, timeout=120) as response, open(zip_path, "wb") as fh:
-    fh.write(response.read())
-
-with zipfile.ZipFile(zip_path, "r") as zf:
-    zf.extractall(extract_root)
-
-entries = [
-    os.path.join(extract_root, name)
-    for name in os.listdir(extract_root)
-    if not name.startswith(".__")
-]
-dirs = [path for path in entries if os.path.isdir(path)]
-if len(dirs) != 1:
-    raise RuntimeError(f"arquivo zip com formato inesperado: {url}")
-
-source = dirs[0]
-parent = os.path.dirname(destination)
-os.makedirs(parent, exist_ok=True)
-
-if os.path.exists(destination) or os.path.islink(destination):
-    if os.path.isdir(destination) and not os.path.islink(destination):
-        shutil.rmtree(destination)
-    else:
-        os.unlink(destination)
-
-shutil.move(source, destination)
-PY
+  node "$(dirname "$0")/github_zip_download_extract.mjs" \
+    "$url" "$temp_zip" "$extract_root" "$destination_dir"
 }
 
 write_mason_local_registry_override() {
