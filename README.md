@@ -14,7 +14,7 @@ Este repo é intencionalmente flexível: pode conter scripts independentes, help
 
 - `*.py`: scripts Python (utilitários, automações, integrações AWS etc.).
 - `*.sh`: scripts shell para operação e setup.
-- `scripts/`: automações auxiliares e wrappers.
+- `scripts/`: automações de setup/rollback.
 - `tests/` e `test_*.py`: testes automatizados.
 
 ## Requisitos gerais
@@ -22,6 +22,29 @@ Este repo é intencionalmente flexível: pode conter scripts independentes, help
 - Python `3.10+`.
 - Dependências variam por script (ex.: `boto3` para integrações AWS).
 - Em scripts AWS, use credenciais/região válidas no ambiente de execução.
+
+## Scripts de setup de máquina (LazyVim + Mason)
+
+A pasta `scripts/` mantém dois scripts:
+
+- `scripts/setup_lazyvim_mason_from_zip.sh`
+- `scripts/undo_lazyvim_mason_from_zip.sh`
+
+### O que o setup faz
+
+- baixa dependências usando rota ZIP do GitHub (`/archive/refs/heads/<branch>.zip`);
+- não usa `curl` nem `wget` (download por código Python);
+- instala configuração do `LazyVim/starter`;
+- instala plugins do manifesto em `~/.local/share/nvim/lazy`;
+- instala registry local do Mason em `~/.cache/nvim/mason-registry-main`;
+- cria override para Mason priorizar registry local `file:`.
+
+### Execução
+
+```bash
+bash scripts/setup_lazyvim_mason_from_zip.sh --force
+bash scripts/undo_lazyvim_mason_from_zip.sh
+```
 
 ## Como usar
 
@@ -34,7 +57,7 @@ Exemplos:
 ```bash
 python3 upgrade_resource_version.py --help
 python3 dynamodb_snapshot_lambda.py --help
-bash scripts/update_lazyvim_mason_wrapped.sh
+bash scripts/setup_lazyvim_mason_from_zip.sh --help
 ```
 
 ## Testes
@@ -46,7 +69,6 @@ Exemplos:
 ```bash
 python3 -m unittest test_crate_tables.py
 python3 -m unittest test_kms_lambda.py
-bash tests/wrappers/git_zip_clone_wrapper_test.sh
 ```
 
 ## Convenções para novos scripts

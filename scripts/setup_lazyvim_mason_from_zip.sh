@@ -1,0 +1,313 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+log() {
+  printf '[setup-lazyvim-mason] %s\n' "$*" >&2
+}
+
+die() {
+  log "erro: $*"
+  exit 1
+}
+
+usage() {
+  cat <<'USAGE'
+Uso:
+  bash scripts/setup_lazyvim_mason_from_zip.sh [opcoes]
+
+Opcoes:
+  --force                Sobrescreve instalacao atual (com backup automatico).
+  --skip-plugins         Instala somente configuracao do LazyVim e registry do Mason.
+  --config-dir <dir>     Default: ${XDG_CONFIG_HOME:-$HOME/.config}/nvim
+  --data-dir <dir>       Default: ${XDG_DATA_HOME:-$HOME/.local/share}/nvim
+  --cache-dir <dir>      Default: ${XDG_CACHE_HOME:-$HOME/.cache}/nvim
+  --github-base <url>    Default: https://github.com
+  -h, --help             Mostra ajuda.
+
+Observacoes:
+- Nao usa curl/wget.
+- Download feito por codigo Python (urllib).
+- Usa ZIP no formato /archive/refs/heads/<branch>.zip.
+USAGE
+}
+
+FORCE=0
+SKIP_PLUGINS=0
+NVIM_CONFIG_DIR="${XDG_CONFIG_HOME:-$HOME/.config}/nvim"
+NVIM_DATA_DIR="${XDG_DATA_HOME:-$HOME/.local/share}/nvim"
+NVIM_CACHE_DIR="${XDG_CACHE_HOME:-$HOME/.cache}/nvim"
+GITHUB_BASE_URL="https://github.com"
+
+while [ "$#" -gt 0 ]; do
+  case "$1" in
+    --force)
+      FORCE=1
+      shift
+      ;;
+    --skip-plugins)
+      SKIP_PLUGINS=1
+      shift
+      ;;
+    --config-dir)
+      NVIM_CONFIG_DIR="${2:-}"
+      shift 2
+      ;;
+    --data-dir)
+      NVIM_DATA_DIR="${2:-}"
+      shift 2
+      ;;
+    --cache-dir)
+      NVIM_CACHE_DIR="${2:-}"
+      shift 2
+      ;;
+    --github-base)
+      GITHUB_BASE_URL="${2:-}"
+      shift 2
+      ;;
+    -h|--help)
+      usage
+      exit 0
+      ;;
+    *)
+      die "parametro invalido: $1"
+      ;;
+  esac
+done
+
+command -v python3 >/dev/null 2>&1 || die "python3 nao encontrado"
+
+[ -n "$NVIM_CONFIG_DIR" ] || die "--config-dir vazio"
+[ -n "$NVIM_DATA_DIR" ] || die "--data-dir vazio"
+[ -n "$NVIM_CACHE_DIR" ] || die "--cache-dir vazio"
+
+STATE_ROOT="${HOME}/.local/share/nvim-zip-bootstrap"
+STATE_FILE="${STATE_ROOT}/state.env"
+TIMESTAMP="$(date +%Y%m%d_%H%M%S)"
+BACKUP_DIR="${STATE_ROOT}/backup_${TIMESTAMP}"
+TMP_DIR="$(mktemp -d)"
+
+cleanup() {
+  rm -rf "$TMP_DIR" 2>/dev/null || true
+}
+trap cleanup EXIT HUP INT TERM
+
+mkdir -p "$STATE_ROOT"
+
+backup_if_exists() {
+  local target_path="$1"
+  local backup_name="$2"
+  if [ -e "$target_path" ] || [ -L "$target_path" ]; then
+    mkdir -p "$BACKUP_DIR"
+    mv "$target_path" "$BACKUP_DIR/$backup_name"
+    log "backup: $target_path -> $BACKUP_DIR/$backup_name"
+  fi
+}
+
+ensure_absent_or_force() {
+  local target_path="$1"
+  if [ -e "$target_path" ] || [ -L "$target_path" ]; then
+    if [ "$FORCE" != "1" ]; then
+      die "caminho ja existe: $target_path (use --force)"
+    fi
+  fi
+}
+
+download_and_extract_branch_zip() {
+  local repo="$1"
+  local branch="$2"
+  local destination_dir="$3"
+  local temp_zip="$TMP_DIR/${repo##*/}_${branch}.zip"
+  local extract_root="$TMP_DIR/extract_${repo##*/}_${branch}"
+  local url="${GITHUB_BASE_URL}/${repo}/archive/refs/heads/${branch}.zip"
+
+  mkdir -p "$extract_root"
+
+  python3 - "$url" "$temp_zip" "$extract_root" "$destination_dir" <<'PY'
+import os
+import shutil
+import sys
+import tempfile
+import urllib.request
+import zipfile
+
+url = sys.argv[1]
+zip_path = sys.argv[2]
+extract_root = sys.argv[3]
+destination = sys.argv[4]
+
+token = os.environ.get("GITHUB_TOKEN", "").strip()
+headers = {"User-Agent": "nvim-zip-bootstrap/1.0"}
+if token:
+    headers["Authorization"] = f"Bearer {token}"
+
+request = urllib.request.Request(url, headers=headers)
+with urllib.request.urlopen(request, timeout=120) as response, open(zip_path, "wb") as fh:
+    fh.write(response.read())
+
+with zipfile.ZipFile(zip_path, "r") as zf:
+    zf.extractall(extract_root)
+
+entries = [
+    os.path.join(extract_root, name)
+    for name in os.listdir(extract_root)
+    if not name.startswith(".__")
+]
+dirs = [path for path in entries if os.path.isdir(path)]
+if len(dirs) != 1:
+    raise RuntimeError(f"arquivo zip com formato inesperado: {url}")
+
+source = dirs[0]
+parent = os.path.dirname(destination)
+os.makedirs(parent, exist_ok=True)
+
+if os.path.exists(destination) or os.path.islink(destination):
+    if os.path.isdir(destination) and not os.path.islink(destination):
+        shutil.rmtree(destination)
+    else:
+        os.unlink(destination)
+
+shutil.move(source, destination)
+PY
+}
+
+write_mason_local_registry_override() {
+  local plugin_dir="${NVIM_CONFIG_DIR}/lua/plugins"
+  local target_file="${plugin_dir}/mason_local_registry.lua"
+  mkdir -p "$plugin_dir"
+  cat > "$target_file" <<'LUA'
+return {
+  {
+    "mason-org/mason.nvim",
+    opts = function(_, opts)
+      opts = opts or {}
+      local registry_path = os.getenv("MASON_REGISTRY_DIR")
+      if not registry_path or registry_path == "" then
+        registry_path = vim.fn.stdpath("cache") .. "/mason-registry-main"
+      end
+      opts.registries = { "file:" .. registry_path }
+      return opts
+    end,
+  },
+}
+LUA
+}
+
+install_plugins_from_manifest() {
+  local lazy_dir="${NVIM_DATA_DIR}/lazy"
+  mkdir -p "$lazy_dir"
+
+  while IFS='|' read -r plugin_name repo branch; do
+    [ -n "$plugin_name" ] || continue
+    [ -n "$repo" ] || continue
+    [ -n "$branch" ] || branch="main"
+    log "plugin: $plugin_name (${repo}@${branch})"
+    download_and_extract_branch_zip "$repo" "$branch" "${lazy_dir}/${plugin_name}"
+    printf '%s\n' "${repo}@${branch}" > "${lazy_dir}/${plugin_name}/.zip-source"
+  done <<'MANIFEST'
+LazyVim|LazyVim/LazyVim|main
+SchemaStore.nvim|b0o/SchemaStore.nvim|main
+blink.cmp|saghen/blink.cmp|main
+bufferline.nvim|akinsho/bufferline.nvim|main
+catppuccin|catppuccin/nvim|main
+codex.nvim|kkrampis/codex.nvim|main
+conform.nvim|stevearc/conform.nvim|master
+copilot.lua|zbirenbaum/copilot.lua|master
+crates.nvim|Saecki/crates.nvim|main
+dial.nvim|monaqa/dial.nvim|master
+friendly-snippets|rafamadriz/friendly-snippets|main
+flash.nvim|folke/flash.nvim|main
+fzf-lua|ibhagwan/fzf-lua|main
+git.nvim|dinhhuy258/git.nvim|main
+gitsigns.nvim|lewis6991/gitsigns.nvim|main
+grug-far.nvim|MagicDuck/grug-far.nvim|main
+inc-rename.nvim|smjonas/inc-rename.nvim|main
+incline.nvim|b0o/incline.nvim|main
+lazy.nvim|folke/lazy.nvim|main
+lazydev.nvim|folke/lazydev.nvim|main
+lspsaga.nvim|glepnir/lspsaga.nvim|main
+lualine.nvim|nvim-lualine/lualine.nvim|master
+luarocks.nvim|vhyrro/luarocks.nvim|main
+markdown-preview.nvim|iamcco/markdown-preview.nvim|master
+mason-lspconfig.nvim|mason-org/mason-lspconfig.nvim|main
+mason-nvim-dap.nvim|jay-babu/mason-nvim-dap.nvim|main
+mason.nvim|mason-org/mason.nvim|main
+mini.ai|nvim-mini/mini.ai|main
+mini.animate|nvim-mini/mini.animate|main
+mini.bracketed|nvim-mini/mini.bracketed|main
+mini.hipatterns|nvim-mini/mini.hipatterns|main
+mini.icons|nvim-mini/mini.icons|main
+mini.pairs|nvim-mini/mini.pairs|main
+neogen|danymat/neogen|main
+noice.nvim|folke/noice.nvim|main
+nui.nvim|MunifTanjim/nui.nvim|main
+nvim-dap|mfussenegger/nvim-dap|master
+nvim-dap-go|leoluz/nvim-dap-go|main
+nvim-dap-python|mfussenegger/nvim-dap-python|master
+nvim-dap-ui|rcarriga/nvim-dap-ui|master
+nvim-dap-virtual-text|theHamsta/nvim-dap-virtual-text|master
+nvim-jdtls|mfussenegger/nvim-jdtls|master
+nvim-lint|mfussenegger/nvim-lint|master
+nvim-lspconfig|neovim/nvim-lspconfig|master
+nvim-nio|nvim-neotest/nvim-nio|master
+nvim-notify|rcarriga/nvim-notify|master
+nvim-treesitter|nvim-treesitter/nvim-treesitter|main
+nvim-treesitter-textobjects|nvim-treesitter/nvim-treesitter-textobjects|main
+nvim-ts-autotag|windwp/nvim-ts-autotag|main
+persistence.nvim|folke/persistence.nvim|main
+pingu_ai_codding_pair_programming|andersonflima/pingu_ai_codding_pair_programming|main
+playground|nvim-treesitter/playground|master
+plenary.nvim|nvim-lua/plenary.nvim|master
+render-markdown.nvim|MeanderingProgrammer/render-markdown.nvim|main
+rest.nvim|rest-nvim/rest.nvim|main
+rustaceanvim|mrcjkb/rustaceanvim|main
+snacks.nvim|folke/snacks.nvim|main
+solarized-osaka.nvim|craftzdog/solarized-osaka.nvim|main
+symbols-outline.nvim|simrat39/symbols-outline.nvim|master
+telescope-file-browser.nvim|nvim-telescope/telescope-file-browser.nvim|master
+telescope-fzf-native.nvim|nvim-telescope/telescope-fzf-native.nvim|main
+telescope.nvim|nvim-telescope/telescope.nvim|master
+todo-comments.nvim|folke/todo-comments.nvim|main
+toggleterm.nvim|akinsho/toggleterm.nvim|main
+tokyonight.nvim|folke/tokyonight.nvim|main
+trouble.nvim|folke/trouble.nvim|main
+ts-comments.nvim|folke/ts-comments.nvim|main
+venv-selector.nvim|linux-cultist/venv-selector.nvim|main
+which-key.nvim|folke/which-key.nvim|main
+zen-mode.nvim|folke/zen-mode.nvim|main
+MANIFEST
+}
+
+ensure_absent_or_force "$NVIM_CONFIG_DIR"
+ensure_absent_or_force "${NVIM_DATA_DIR}/lazy"
+ensure_absent_or_force "${NVIM_CACHE_DIR}/mason-registry-main"
+
+if [ "$FORCE" = "1" ]; then
+  backup_if_exists "$NVIM_CONFIG_DIR" "nvim-config"
+  backup_if_exists "${NVIM_DATA_DIR}/lazy" "nvim-lazy"
+  backup_if_exists "${NVIM_CACHE_DIR}/mason-registry-main" "mason-registry-main"
+fi
+
+log "instalando LazyVim starter"
+download_and_extract_branch_zip "LazyVim/starter" "main" "$NVIM_CONFIG_DIR"
+
+log "instalando registry local do Mason"
+download_and_extract_branch_zip "mason-org/mason-registry" "main" "${NVIM_CACHE_DIR}/mason-registry-main"
+
+log "configurando Mason para usar registry local"
+write_mason_local_registry_override
+
+if [ "$SKIP_PLUGINS" != "1" ]; then
+  log "instalando plugins do LazyVim por ZIP"
+  install_plugins_from_manifest
+fi
+
+cat > "$STATE_FILE" <<EOFSTATE
+NVIM_CONFIG_DIR='${NVIM_CONFIG_DIR}'
+NVIM_DATA_DIR='${NVIM_DATA_DIR}'
+NVIM_CACHE_DIR='${NVIM_CACHE_DIR}'
+BACKUP_DIR='${BACKUP_DIR}'
+SETUP_TIMESTAMP='${TIMESTAMP}'
+EOFSTATE
+
+log "concluido"
+log "proximo passo: abrir o neovim e rodar :checkhealth e :Mason"
