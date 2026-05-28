@@ -2,19 +2,12 @@
 
 import fs from "node:fs";
 import path from "node:path";
+import https from "node:https";
 import { spawnSync } from "node:child_process";
-import { pipeline } from "node:stream/promises";
 
 function die(message) {
   console.error(`[github-zip-download-extract] erro: ${message}`);
   process.exit(1);
-}
-
-function ensureOkResponse(response, url) {
-  if (response.ok) {
-    return;
-  }
-  die(`falha no download (${response.status}) para ${url}`);
 }
 
 function sleep(ms) {
@@ -39,21 +32,66 @@ function buildCandidateUrls(primaryUrl) {
   return [primaryUrl];
 }
 
-async function downloadWithRetryAndFallback(urls, headers) {
+function downloadUrlToFile(url, outputPath, headers, redirectDepth = 0) {
+  return new Promise((resolve, reject) => {
+    if (redirectDepth > 5) {
+      reject(new Error(`redirecionamento excessivo para ${url}`));
+      return;
+    }
+
+    const request = https.request(
+      url,
+      {
+        method: "GET",
+        headers,
+        timeout: 120000,
+      },
+      (response) => {
+        const statusCode = response.statusCode || 0;
+        const location = response.headers.location;
+        if (statusCode >= 300 && statusCode < 400 && location) {
+          response.resume();
+          const redirectedUrl = new URL(location, url).toString();
+          downloadUrlToFile(redirectedUrl, outputPath, headers, redirectDepth + 1)
+            .then(resolve)
+            .catch(reject);
+          return;
+        }
+        if (statusCode < 200 || statusCode >= 300) {
+          response.resume();
+          reject(new Error(`falha no download (${statusCode}) para ${url}`));
+          return;
+        }
+
+        const fileStream = fs.createWriteStream(outputPath);
+        response.pipe(fileStream);
+        fileStream.on("finish", () => {
+          fileStream.close(() => resolve());
+        });
+        fileStream.on("error", (error) => reject(error));
+      },
+    );
+
+    request.on("timeout", () => {
+      request.destroy(new Error(`timeout ao baixar ${url}`));
+    });
+    request.on("error", (error) => reject(error));
+    request.end();
+  });
+}
+
+async function downloadWithRetry(urls, zipPath, headers) {
   let lastError = "";
   for (const url of urls) {
-    for (let attempt = 1; attempt <= 3; attempt += 1) {
+    for (let attempt = 1; attempt <= 4; attempt += 1) {
       try {
-        const response = await fetch(url, { headers });
-        ensureOkResponse(response, url);
-        if (!response.body) {
-          throw new Error(`resposta sem body para ${url}`);
-        }
-        return response;
+        await downloadUrlToFile(url, zipPath, headers);
+        return;
       } catch (error) {
-        lastError = `${url} [tentativa ${attempt}/3]: ${toErrorMessage(error)}`;
-        if (attempt < 3) {
-          await sleep(attempt * 500);
+        lastError = `${url} [tentativa ${attempt}/4]: ${toErrorMessage(error)}`;
+        fs.rmSync(zipPath, { force: true });
+        if (attempt < 4) {
+          await sleep(attempt * 1000);
         }
       }
     }
@@ -89,8 +127,7 @@ async function main() {
 
   const candidateUrls = buildCandidateUrls(url);
   try {
-    const response = await downloadWithRetryAndFallback(candidateUrls, headers);
-    await pipeline(response.body, fs.createWriteStream(zipPath));
+    await downloadWithRetry(candidateUrls, zipPath, headers);
     extractZip(zipPath, extractRoot);
 
     const entries = fs
