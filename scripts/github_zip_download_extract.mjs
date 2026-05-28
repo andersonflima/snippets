@@ -32,6 +32,14 @@ function buildCandidateUrls(primaryUrl) {
   return [primaryUrl];
 }
 
+function buildHttpsAgentFromProxyEnv() {
+  try {
+    return new https.Agent({ proxyEnv: process.env });
+  } catch {
+    return undefined;
+  }
+}
+
 function downloadUrlToFile(url, outputPath, headers, redirectDepth = 0) {
   return new Promise((resolve, reject) => {
     if (redirectDepth > 5) {
@@ -45,6 +53,7 @@ function downloadUrlToFile(url, outputPath, headers, redirectDepth = 0) {
         method: "GET",
         headers,
         timeout: 120000,
+        agent: buildHttpsAgentFromProxyEnv(),
       },
       (response) => {
         const statusCode = response.statusCode || 0;
