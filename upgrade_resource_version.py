@@ -1800,6 +1800,8 @@ def resolve_elasticache_target_parameter_group(
     explicit_cache_parameter_group_name: str,
     adapter_options: Dict[str, Any],
 ) -> str:
+    cache_scope_key = build_elasticache_runtime_cache_scope(resource)
+
     if explicit_cache_parameter_group_name:
         return ensure_explicit_elasticache_parameter_group_for_target(
             client=client,
@@ -1818,6 +1820,7 @@ def resolve_elasticache_target_parameter_group(
         client=client,
         source_parameter_group_name=source_parameter_group_name,
         adapter_options=adapter_options,
+        cache_scope_key=cache_scope_key,
     )
     source_cluster_mode = resolve_elasticache_cluster_mode_for_resource(
         resource=resource,
@@ -1828,6 +1831,7 @@ def resolve_elasticache_target_parameter_group(
         target_engine=target_engine,
         target_version=target_version,
         adapter_options=adapter_options,
+        cache_scope_key=cache_scope_key,
     )
     target_family = align_elasticache_target_family_with_source(
         target_family=target_family,
@@ -1844,7 +1848,19 @@ def resolve_elasticache_target_parameter_group(
         return source_parameter_group_name
 
     if is_default_parameter_group(source_parameter_group_name):
-        return f"default.{target_family}"
+        default_target_parameter_group_name = f"default.{target_family}"
+        if does_elasticache_parameter_group_exist(
+            client=client,
+            cache_parameter_group_name=default_target_parameter_group_name,
+        ):
+            return default_target_parameter_group_name
+        return ensure_custom_target_parameter_group_for_migration(
+            client=client,
+            source_parameter_group_name=source_parameter_group_name,
+            target_family=target_family,
+            resource=resource,
+            adapter_options=adapter_options,
+        )
 
     return ensure_custom_target_parameter_group_for_migration(
         client=client,
@@ -1868,18 +1884,24 @@ def ensure_elasticache_runtime_state(adapter_options: Dict[str, Any]) -> Dict[st
         return runtime_state
 
 
+def build_elasticache_runtime_cache_scope(resource: Dict[str, str]) -> str:
+    return "|".join([resource.get("accountId", ""), resource.get("region", "")])
+
+
 def resolve_elasticache_source_parameter_group_family(
     *,
     client: Any,
     source_parameter_group_name: str,
     adapter_options: Dict[str, Any],
+    cache_scope_key: str,
 ) -> str:
     runtime_state = ensure_elasticache_runtime_state(adapter_options)
     source_family_by_parameter_group: Dict[str, str] = runtime_state[
         "source_family_by_parameter_group"
     ]
 
-    key = normalize_version(source_parameter_group_name).lower()
+    normalized_source_parameter_group_name = normalize_version(source_parameter_group_name).lower()
+    key = "|".join([cache_scope_key, normalized_source_parameter_group_name])
     with RUNTIME_STATE_LOCK:
         cached = source_family_by_parameter_group.get(key)
     if cached:
@@ -1896,7 +1918,8 @@ def resolve_elasticache_source_parameter_group_family(
         (
             group
             for group in groups
-            if normalize_version(group.get("CacheParameterGroupName")).lower() == key
+            if normalize_version(group.get("CacheParameterGroupName")).lower()
+            == normalized_source_parameter_group_name
         ),
         groups[0] if groups else {},
     )
@@ -1959,11 +1982,14 @@ def resolve_elasticache_parameter_group_family(
     target_engine: str,
     target_version: str,
     adapter_options: Dict[str, Any],
+    cache_scope_key: str,
 ) -> str:
     runtime_state = ensure_elasticache_runtime_state(adapter_options)
     family_by_engine_version: Dict[str, str] = runtime_state["family_by_engine_version"]
 
-    key = f"{target_engine}|{target_version}"
+    normalized_target_engine = normalize_engine(target_engine)
+    normalized_target_version = normalize_version(target_version)
+    key = "|".join([cache_scope_key, normalized_target_engine, normalized_target_version])
     with RUNTIME_STATE_LOCK:
         cached = family_by_engine_version.get(key)
     if cached:
@@ -1971,8 +1997,8 @@ def resolve_elasticache_parameter_group_family(
 
     response = send_aws_call(
         lambda: client.describe_cache_engine_versions(
-            Engine=target_engine,
-            EngineVersion=target_version,
+            Engine=normalized_target_engine,
+            EngineVersion=normalized_target_version,
             MaxRecords=100,
         )
     )
@@ -1983,15 +2009,19 @@ def resolve_elasticache_parameter_group_family(
             version
             for version in versions
             if normalize_version(version.get("EngineVersion"))
-            == normalize_version(target_version)
+            == normalized_target_version
         ),
         versions[0] if versions else {},
     )
 
     family = normalize_version(selected.get("CacheParameterGroupFamily"))
     if not family:
-        major_version = extract_major_version(target_version)
-        family = f"{target_engine}{major_version}" if target_engine and major_version else ""
+        major_version = extract_major_version(normalized_target_version)
+        family = (
+            f"{normalized_target_engine}{major_version}"
+            if normalized_target_engine and major_version
+            else ""
+        )
 
     with RUNTIME_STATE_LOCK:
         family_by_engine_version[key] = family
@@ -2110,6 +2140,7 @@ def ensure_explicit_elasticache_parameter_group_for_target(
     target_version: str,
     adapter_options: Dict[str, Any],
 ) -> str:
+    cache_scope_key = build_elasticache_runtime_cache_scope(resource)
     normalized_explicit_parameter_group_name = normalize_version(explicit_parameter_group_name)
     if not normalized_explicit_parameter_group_name:
         return ""
@@ -2120,6 +2151,16 @@ def ensure_explicit_elasticache_parameter_group_for_target(
         return normalized_explicit_parameter_group_name
 
     source_parameter_group_name = normalize_version(resource.get("parameterGroupName"))
+    source_family = (
+        resolve_elasticache_source_parameter_group_family(
+            client=client,
+            source_parameter_group_name=source_parameter_group_name,
+            adapter_options=adapter_options,
+            cache_scope_key=cache_scope_key,
+        )
+        if source_parameter_group_name
+        else ""
+    )
     normalized_target_engine = normalize_engine(target_engine or resource.get("engine"))
     normalized_target_version = normalize_version(target_version)
 
@@ -2129,16 +2170,23 @@ def ensure_explicit_elasticache_parameter_group_for_target(
             target_engine=normalized_target_engine,
             target_version=normalized_target_version,
             adapter_options=adapter_options,
+            cache_scope_key=cache_scope_key,
         )
         if normalized_target_engine and normalized_target_version
         else ""
     )
-    if not target_family and source_parameter_group_name:
-        target_family = resolve_elasticache_source_parameter_group_family(
-            client=client,
-            source_parameter_group_name=source_parameter_group_name,
-            adapter_options=adapter_options,
-        )
+    if not target_family and source_family:
+        target_family = source_family
+
+    source_cluster_mode = resolve_elasticache_cluster_mode_for_resource(
+        resource=resource,
+        source_family=source_family,
+    )
+    target_family = align_elasticache_target_family_with_source(
+        target_family=target_family,
+        source_family=source_family,
+        source_cluster_mode=source_cluster_mode,
+    )
     if not target_family:
         raise ValueError(
             "Nao foi possivel criar CacheParameterGroup "
