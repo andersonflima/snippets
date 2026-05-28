@@ -26,7 +26,7 @@ Opcoes:
 
 Observacoes:
 - Nao usa curl/wget.
-- Download feito por codigo Node.js (fetch).
+- Download feito por codigo Python em venv dedicado.
 - Usa ZIP no formato /archive/refs/heads/<branch>.zip.
 USAGE
 }
@@ -74,7 +74,7 @@ while [ "$#" -gt 0 ]; do
   esac
 done
 
-command -v node >/dev/null 2>&1 || die "node nao encontrado"
+command -v python3 >/dev/null 2>&1 || die "python3 nao encontrado"
 
 [ -n "$NVIM_CONFIG_DIR" ] || die "--config-dir vazio"
 [ -n "$NVIM_DATA_DIR" ] || die "--data-dir vazio"
@@ -82,6 +82,8 @@ command -v node >/dev/null 2>&1 || die "node nao encontrado"
 
 STATE_ROOT="${HOME}/.local/share/nvim-zip-bootstrap"
 STATE_FILE="${STATE_ROOT}/state.env"
+VENV_DIR="${STATE_ROOT}/.venv"
+VENV_PYTHON="${VENV_DIR}/bin/python"
 TIMESTAMP="$(date +%Y%m%d_%H%M%S)"
 BACKUP_DIR="${STATE_ROOT}/backup_${TIMESTAMP}"
 TMP_DIR="$(mktemp -d)"
@@ -112,6 +114,17 @@ ensure_absent_or_force() {
   fi
 }
 
+ensure_python_runtime() {
+  if [ ! -x "$VENV_PYTHON" ]; then
+    log "criando venv em $VENV_DIR"
+    python3 -m venv "$VENV_DIR"
+  fi
+
+  log "instalando dependencias Python no venv"
+  "$VENV_PYTHON" -m pip install --upgrade pip >/dev/null
+  "$VENV_PYTHON" -m pip install --upgrade requests urllib3 certifi >/dev/null
+}
+
 download_and_extract_branch_zip() {
   local repo="$1"
   local branch="$2"
@@ -122,7 +135,7 @@ download_and_extract_branch_zip() {
 
   mkdir -p "$extract_root"
 
-  node "$(dirname "$0")/github_zip_download_extract.mjs" \
+  "$VENV_PYTHON" "$(dirname "$0")/github_zip_download_extract.py" \
     "$url" "$temp_zip" "$extract_root" "$destination_dir"
 }
 
@@ -236,6 +249,7 @@ MANIFEST
 ensure_absent_or_force "$NVIM_CONFIG_DIR"
 ensure_absent_or_force "${NVIM_DATA_DIR}/lazy"
 ensure_absent_or_force "${NVIM_CACHE_DIR}/mason-registry-main"
+ensure_python_runtime
 
 if [ "$FORCE" = "1" ]; then
   backup_if_exists "$NVIM_CONFIG_DIR" "nvim-config"
