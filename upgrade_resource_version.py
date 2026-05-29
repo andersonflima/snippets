@@ -2,49 +2,77 @@
 """
 upgrade_resource_version.py
 
-Exemplos de version-map por cenario:
+Exemplos de version-map por recurso (formato recomendado):
 
-1) ElastiCache (cluster/replication-group) com troca de tipo de instancia:
 {
-  "redis:7.0": {"engine": "redis", "version": "7.1", "instanceType": "cache.r7g.large"},
-  "valkey:7.2": {"engine": "valkey", "version": "8.0", "instanceType": "cache.r7g.large"}
+  "redis": {
+    "sourceVersion": "7.0",
+    "version": "7.1",
+    "sourceInstanceType": "cache.r6g.large",
+    "instanceType": "cache.r7g.large"
+  },
+  "valkey": {
+    "sourceVersion": "7.2",
+    "version": "8.0",
+    "sourceInstanceType": "cache.r6g.large",
+    "instanceType": "cache.r7g.large"
+  },
+  "mysql": {
+    "sourceVersion": "8.0",
+    "version": "8.4",
+    "sourceInstanceType": "db.r6g.large",
+    "instanceType": "db.r7g.large"
+  },
+  "postgres": {
+    "sourceVersion": "14",
+    "version": "16",
+    "sourceInstanceType": "db.r6g.large",
+    "instanceType": "db.r7g.large"
+  },
+  "docdb": {
+    "sourceVersion": "4.0",
+    "version": "5.0",
+    "sourceInstanceType": "db.r5.large",
+    "instanceType": "db.r6g.large"
+  },
+  "neptune": {
+    "sourceVersion": "1.2",
+    "version": "1.3",
+    "sourceInstanceType": "db.r5.large",
+    "instanceType": "db.r6g.large"
+  },
+  "redshift": {
+    "sourceVersion": "1.0",
+    "version": "1.0.70720",
+    "sourceInstanceType": "ra3.large",
+    "instanceType": "ra3.xlplus"
+  },
+  "kubernetes": {
+    "sourceVersion": "1.28",
+    "version": "1.29"
+  },
+  "opensearch": {
+    "sourceVersion": "2.11",
+    "version": "2.15"
+  },
+  "nodejs": {
+    "sourceVersion": "18",
+    "version": "20"
+  }
 }
-CLI:
-  --resource elasticache --instance-type cache.r7g.large
 
-2) RDS (resource_kind=db-instance) com DBInstanceClass:
-{
-  "mysql:8.0": {"engine": "mysql", "version": "8.4", "instanceType": "db.r7g.large"},
-  "postgres:14": {"engine": "postgres", "version": "16", "instanceType": "db.r7g.large"}
-}
-CLI:
-  --resource rds --instance-type db.r7g.large
-
-3) DocDB (resource_kind=db-instance):
-{
-  "docdb:4.0": {"engine": "docdb", "version": "5.0", "instanceType": "db.r6g.large"}
-}
-CLI:
-  --resource docdb --instance-type db.r6g.large
-
-4) Neptune (resource_kind=db-instance):
-{
-  "neptune:1.2": {"engine": "neptune", "version": "1.3", "instanceType": "db.r6g.large"}
-}
-CLI:
-  --resource neptune --instance-type db.r6g.large
-
-5) Redshift (resource_kind=cluster) com NodeType:
-{
-  "redshift:1.0": {"engine": "redshift", "version": "1.0.70720", "instanceType": "ra3.xlplus"}
-}
-CLI:
-  --resource redshift --instance-type ra3.xlplus
+Formato legado (ainda suportado para compatibilidade):
+- chave `engine:sourceVersion`, ex.: `"redis:7.0": {"version":"7.1"}`
 
 Notas:
-- O version-map e sempre JSON objeto "origem":"destino" ou "origem":{"engine","version"}.
-- O tipo de instancia pode ser informado no map via "instanceType".
-- Quando houver "instanceType" no map, ele tem prioridade sobre --instance-type.
+- No formato recomendado, a chave e o engine (`redis`, `valkey`, `mysql`, `postgres`, `docdb`, `neptune`, `redshift`, `kubernetes`, `opensearch`, `nodejs`, etc.).
+- `sourceVersion` define o recorte da versao de origem.
+- `version` define a versao alvo.
+- `sourceEngine` e opcional; quando informado, tem prioridade sobre a chave do map.
+- O tipo de instancia alvo pode ser informado via `instanceType`.
+- O tipo de instancia atual pode ser filtrado via `sourceInstanceType`.
+- Quando `sourceInstanceType` estiver no map, ele tem prioridade sobre `--source-instance-type`.
+- Quando houver `instanceType` no map, ele tem prioridade sobre `--instance-type`.
 - --instance-type requer execucao com um unico --resource por vez.
 - ElastiCache serverless-cache nao suporta --instance-type.
 - RDS/DocDB/Neptune resource_kind=db-cluster nao suporta --instance-type no fluxo atual.
@@ -267,6 +295,14 @@ def parse_args() -> argparse.Namespace:
             "(ex.: cache.r7g.large, db.r7g.large, ra3.xlplus)."
         ),
     )
+    parser.add_argument(
+        "--source-instance-type",
+        required=False,
+        help=(
+            "Tipo de instancia atual esperado para filtrar recursos no plano de update. "
+            "Somente recursos com instanceType exatamente igual serao atualizados."
+        ),
+    )
     parser.add_argument("--version-map", required=False, help="JSON de de/para inline")
     parser.add_argument(
         "--version-map-file",
@@ -359,6 +395,10 @@ def validate_args(args: argparse.Namespace) -> None:
     validate_positive_integer_arg(args.region_threads, "--region-threads")
     validate_instance_type_option(
         instance_type=args.instance_type,
+        resolved_resources=resolved_resources,
+    )
+    validate_instance_type_option(
+        instance_type=args.source_instance_type,
         resolved_resources=resolved_resources,
     )
 
@@ -529,16 +569,24 @@ def load_version_map(args: argparse.Namespace) -> Tuple[Dict[str, str], ...]:
     for source_raw, target_raw in parsed.items():
         source = parse_version_map_source(source_raw)
         target = parse_version_map_target(target_raw)
-        if not source.get("version") or not target.get("version"):
+        source_engine = normalize_engine(
+            target.get("source_engine") or source.get("engine")
+        )
+        source_version = normalize_version(
+            target.get("source_version") or source.get("version")
+        )
+        target_version = normalize_version(target.get("version"))
+        if not source_version or not target_version:
             continue
 
         entries.append(
             {
-                "source_engine": source.get("engine", ""),
-                "source_version": source.get("version", ""),
+                "source_engine": source_engine,
+                "source_version": source_version,
                 "target_engine": target.get("engine", ""),
-                "target_version": target.get("version", ""),
+                "target_version": target_version,
                 "target_instance_type": target.get("instance_type", ""),
+                "source_instance_type": target.get("source_instance_type", ""),
             }
         )
 
@@ -555,6 +603,9 @@ def parse_version_map_source(source_raw: Any) -> Dict[str, str]:
 
     separator_index = normalized_source.find(ENGINE_KEY_SEPARATOR)
     if separator_index <= 0:
+        source_engine = normalize_engine(normalized_source)
+        if source_engine and source_engine in KNOWN_ENGINE_KEYS:
+            return {"engine": source_engine, "version": ""}
         return {"engine": "", "version": normalized_source}
 
     source_engine = normalize_engine(normalized_source[:separator_index])
@@ -580,12 +631,29 @@ def parse_version_map_target(target_raw: Any) -> Dict[str, str]:
                 return {
                     "engine": parsed_engine,
                     "version": parsed_version,
+                    "source_engine": "",
+                    "source_version": "",
                     "instance_type": "",
+                    "source_instance_type": "",
                 }
-        return {"engine": "", "version": normalized_target, "instance_type": ""}
+        return {
+            "engine": "",
+            "version": normalized_target,
+            "source_engine": "",
+            "source_version": "",
+            "instance_type": "",
+            "source_instance_type": "",
+        }
 
     if not isinstance(target_raw, dict):
-        return {"engine": "", "version": "", "instance_type": ""}
+        return {
+            "engine": "",
+            "version": "",
+            "source_engine": "",
+            "source_version": "",
+            "instance_type": "",
+            "source_instance_type": "",
+        }
 
     target_engine = normalize_engine(
         target_raw.get("engine") or target_raw.get("targetEngine") or ""
@@ -598,6 +666,28 @@ def parse_version_map_target(target_raw: Any) -> Dict[str, str]:
         or target_raw.get("runtime")
         or ""
     )
+    source_engine = normalize_engine(
+        target_raw.get("sourceEngine")
+        or target_raw.get("currentEngine")
+        or target_raw.get("fromEngine")
+        or target_raw.get("oldEngine")
+        or target_raw.get("source_engine")
+        or target_raw.get("current_engine")
+        or target_raw.get("from_engine")
+        or target_raw.get("old_engine")
+        or ""
+    )
+    source_version = normalize_version(
+        target_raw.get("sourceVersion")
+        or target_raw.get("currentVersion")
+        or target_raw.get("fromVersion")
+        or target_raw.get("oldVersion")
+        or target_raw.get("source_version")
+        or target_raw.get("current_version")
+        or target_raw.get("from_version")
+        or target_raw.get("old_version")
+        or ""
+    )
     target_instance_type = normalize_version(
         target_raw.get("instanceType")
         or target_raw.get("targetInstanceType")
@@ -607,22 +697,37 @@ def parse_version_map_target(target_raw: Any) -> Dict[str, str]:
         or target_raw.get("nodeType")
         or ""
     )
+    source_instance_type = normalize_version(
+        target_raw.get("sourceInstanceType")
+        or target_raw.get("currentInstanceType")
+        or target_raw.get("fromInstanceType")
+        or target_raw.get("oldInstanceType")
+        or target_raw.get("source_instance_type")
+        or target_raw.get("current_instance_type")
+        or target_raw.get("from_instance_type")
+        or target_raw.get("old_instance_type")
+        or ""
+    )
 
     return {
         "engine": target_engine,
         "version": target_version,
+        "source_engine": source_engine,
+        "source_version": source_version,
         "instance_type": target_instance_type,
+        "source_instance_type": source_instance_type,
     }
 
 
 def build_update_plan(
     resources: Sequence[Dict[str, str]],
     version_map_entries: Sequence[Dict[str, str]],
+    adapter_options: Dict[str, Any],
 ) -> List[Dict[str, str]]:
     return [
         planned_resource
         for planned_resource in (
-            build_resource_update_plan_entry(resource, version_map_entries)
+            build_resource_update_plan_entry(resource, version_map_entries, adapter_options)
             for resource in resources
         )
         if planned_resource is not None
@@ -632,6 +737,7 @@ def build_update_plan(
 def build_resource_update_plan_entry(
     resource: Dict[str, str],
     version_map_entries: Sequence[Dict[str, str]],
+    adapter_options: Dict[str, Any],
 ) -> Optional[Dict[str, str]]:
     target = resolve_target_for_resource(resource, version_map_entries)
     if target is None:
@@ -643,6 +749,14 @@ def build_resource_update_plan_entry(
     target_engine = normalize_engine(target.get("target_engine") or current_engine)
     current_instance_type = normalize_version(resource.get("instanceType"))
     target_instance_type = normalize_version(target.get("target_instance_type"))
+    source_instance_type = normalize_version(
+        target.get("source_instance_type")
+        or safe_read(adapter_options, "source_instance_type", "")
+    )
+
+    if source_instance_type and current_instance_type != source_instance_type:
+        return None
+
     if target_instance_type:
         validate_instance_type_for_resource(
             instance_type=target_instance_type,
@@ -660,6 +774,7 @@ def build_resource_update_plan_entry(
         **resource,
         "targetVersion": target_version,
         "targetEngine": target_engine,
+        "sourceInstanceType": source_instance_type,
         "targetInstanceType": target_instance_type,
         "targetOptionGroupName": infer_planned_rds_target_option_group_name(
             resource=resource,
@@ -752,6 +867,7 @@ def resolve_target_for_resource(
     return {
         "target_version": normalize_version(selected.get("target_version")),
         "target_engine": normalize_engine(selected.get("target_engine") or current_engine),
+        "source_instance_type": normalize_version(selected.get("source_instance_type")),
         "target_instance_type": normalize_version(selected.get("target_instance_type")),
     }
 
@@ -6673,6 +6789,10 @@ def run_upgrade_for_resource_type(
         instance_type=safe_read(adapter_options, "instance_type", ""),
         resolved_resources=[resource_type],
     )
+    validate_instance_type_option(
+        instance_type=safe_read(adapter_options, "source_instance_type", ""),
+        resolved_resources=[resource_type],
+    )
 
     account_by_id = {account.get("accountId", ""): account for account in accounts}
     discovery_progress = create_progress_tracker(
@@ -6696,7 +6816,11 @@ def run_upgrade_for_resource_type(
     discovery_progress["finish"]()
 
     unique_discovered_resources = deduplicate_resources(discovery_result["resources"])
-    updates = build_update_plan(unique_discovered_resources, version_map)
+    updates = build_update_plan(
+        unique_discovered_resources,
+        version_map,
+        adapter_options,
+    )
 
     if discovery_result.get("skippedAccounts", 0) > 0:
         print(f"[skip] recurso={resource_type} contas_sem_recurso={discovery_result['skippedAccounts']}")
@@ -6771,6 +6895,7 @@ def main() -> None:
             args.instance_parameter_group_name
         ),
         "instance_type": normalize_version(args.instance_type),
+        "source_instance_type": normalize_version(args.source_instance_type),
     }
     csv_resource_label = (
         resource_types[0] if len(resource_types) == 1 else RESOURCE_TYPE_ALL
