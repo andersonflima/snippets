@@ -444,7 +444,6 @@ SH
 from __future__ import annotations
 
 import argparse
-import json
 import os
 import shutil
 import ssl
@@ -464,29 +463,6 @@ BACKOFF_SECONDS = 1.0
 def die(message: str) -> None:
     print(f"[lazy-zip-sync] erro: {message}", file=sys.stderr)
     raise SystemExit(1)
-
-
-def fetch_json(url: str, token: str) -> dict:
-    headers = {"User-Agent": "lazy-zip-sync/1.0", "Accept": "application/vnd.github+json"}
-    if token:
-        headers["Authorization"] = f"Bearer {token}"
-    request = Request(url=url, headers=headers, method="GET")
-    context = ssl._create_unverified_context()
-    last_error: Exception | None = None
-    for attempt in range(1, MAX_ATTEMPTS + 1):
-        try:
-            with urlopen(request, timeout=60, context=context) as response:
-                return json.loads(response.read().decode("utf-8"))
-        except HTTPError as error:
-            last_error = error
-            if error.code not in RETRYABLE_HTTP_STATUS or attempt == MAX_ATTEMPTS:
-                break
-        except (URLError, TimeoutError, ConnectionError) as error:
-            last_error = error
-            if attempt == MAX_ATTEMPTS:
-                break
-        time.sleep(BACKOFF_SECONDS * attempt)
-    raise RuntimeError(f"falha ao buscar JSON em {url}: {last_error}")
 
 
 def download_zip(url: str, zip_path: Path, token: str) -> None:
@@ -553,44 +529,19 @@ def parse_zip_source(path: Path) -> tuple[str, str]:
     return repo, branch
 
 
-def get_latest_branch_sha(repo: str, branch: str, token: str) -> str:
-    api_url = f"https://api.github.com/repos/{repo}/commits/{branch}"
-    payload = fetch_json(api_url, token)
-    sha = str(payload.get("sha", "")).strip()
-    if not sha:
-        raise RuntimeError(f"sha ausente para {repo}@{branch}")
-    return sha
-
-
 def sync_plugin(path: Path, action: str, token: str) -> tuple[bool, str]:
     repo, branch = parse_zip_source(path)
-    latest_sha = ""
-    latest_sha_error = ""
-    try:
-        latest_sha = get_latest_branch_sha(repo, branch, token)
-    except Exception as error:  # noqa: BLE001
-        latest_sha_error = str(error)
-    sha_file = path / ".zip-sha"
-    current_sha = sha_file.read_text(encoding="utf-8").strip() if sha_file.exists() else ""
-
-    if latest_sha and current_sha == latest_sha:
-        return False, f"{path.name}: sem alteracoes ({latest_sha[:10]})"
-
+    zip_source_file = path / ".zip-source"
     if action == "check":
-        if latest_sha:
-            return True, f"{path.name}: update disponivel {current_sha[:10] or 'none'} -> {latest_sha[:10]}"
-        return False, f"{path.name}: check indisponivel (API), erro={latest_sha_error}"
+        return False, f"{path.name}: check por ZIP nao determina delta remoto (modo offline)"
 
     zip_url = f"https://github.com/{repo}/archive/refs/heads/{branch}.zip"
     with tempfile.TemporaryDirectory(prefix="lazy-zip-sync-") as td:
         zip_path = Path(td) / f"{path.name}.zip"
         download_zip(zip_url, zip_path, token)
         extract_single_dir(zip_path, path)
-    (path / ".zip-source").write_text(f"{repo}@{branch}\n", encoding="utf-8")
-    if latest_sha:
-        sha_file.write_text(f"{latest_sha}\n", encoding="utf-8")
-        return True, f"{path.name}: atualizado para {latest_sha[:10]}"
-    return True, f"{path.name}: atualizado por ZIP (sem SHA da API: {latest_sha_error})"
+    zip_source_file.write_text(f"{repo}@{branch}\n", encoding="utf-8")
+    return True, f"{path.name}: atualizado por ZIP"
 
 
 def main() -> None:

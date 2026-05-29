@@ -61,6 +61,10 @@ lazy-check
 lazy-update
 ```
 
+Observacao:
+- `lazy-update` usa somente download por ZIP (`github.com/.../archive/refs/heads/...zip`), sem `api.github.com`.
+- `lazy-check` em modo offline nao calcula delta remoto; use `lazy-update` para aplicar refresh por ZIP.
+
 No popup do `:Lazy`, quando `--manage-config` for usado, as teclas ficam remapeadas para ZIP:
 - `U` -> `lazy-update`
 - `S` -> `lazy-update` (sync offline)
