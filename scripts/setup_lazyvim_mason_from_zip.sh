@@ -977,9 +977,18 @@ if [ "$MANAGE_CONFIG" = "1" ]; then
       die "diretorio de origem da config nao encontrado: $CONFIG_SOURCE_DIR"
     fi
     log "copiando config nvim de origem: $CONFIG_SOURCE_DIR -> $NVIM_CONFIG_DIR"
-    rm -rf "$NVIM_CONFIG_DIR"
-    mkdir -p "$NVIM_CONFIG_DIR"
-    cp -R "$CONFIG_SOURCE_DIR"/. "$NVIM_CONFIG_DIR"/
+    local_source_dir="$(cd "$CONFIG_SOURCE_DIR" && pwd)"
+    local_target_parent="$(dirname "$NVIM_CONFIG_DIR")"
+    mkdir -p "$local_target_parent"
+    local_target_dir="$(cd "$local_target_parent" && pwd)/$(basename "$NVIM_CONFIG_DIR")"
+
+    snapshot_dir="$TMP_DIR/config_source_snapshot"
+    mkdir -p "$snapshot_dir"
+    cp -R "$local_source_dir"/. "$snapshot_dir"/
+
+    rm -rf "$local_target_dir"
+    mkdir -p "$local_target_dir"
+    cp -R "$snapshot_dir"/. "$local_target_dir"/
   else
     log "instalando LazyVim starter"
     download_and_extract_branch_zip "LazyVim/starter" "main" "$NVIM_CONFIG_DIR"
