@@ -564,15 +564,22 @@ def get_latest_branch_sha(repo: str, branch: str, token: str) -> str:
 
 def sync_plugin(path: Path, action: str, token: str) -> tuple[bool, str]:
     repo, branch = parse_zip_source(path)
-    latest_sha = get_latest_branch_sha(repo, branch, token)
+    latest_sha = ""
+    latest_sha_error = ""
+    try:
+        latest_sha = get_latest_branch_sha(repo, branch, token)
+    except Exception as error:  # noqa: BLE001
+        latest_sha_error = str(error)
     sha_file = path / ".zip-sha"
     current_sha = sha_file.read_text(encoding="utf-8").strip() if sha_file.exists() else ""
 
-    if current_sha == latest_sha:
+    if latest_sha and current_sha == latest_sha:
         return False, f"{path.name}: sem alteracoes ({latest_sha[:10]})"
 
     if action == "check":
-        return True, f"{path.name}: update disponivel {current_sha[:10] or 'none'} -> {latest_sha[:10]}"
+        if latest_sha:
+            return True, f"{path.name}: update disponivel {current_sha[:10] or 'none'} -> {latest_sha[:10]}"
+        return False, f"{path.name}: check indisponivel (API), erro={latest_sha_error}"
 
     zip_url = f"https://github.com/{repo}/archive/refs/heads/{branch}.zip"
     with tempfile.TemporaryDirectory(prefix="lazy-zip-sync-") as td:
@@ -580,8 +587,10 @@ def sync_plugin(path: Path, action: str, token: str) -> tuple[bool, str]:
         download_zip(zip_url, zip_path, token)
         extract_single_dir(zip_path, path)
     (path / ".zip-source").write_text(f"{repo}@{branch}\n", encoding="utf-8")
-    sha_file.write_text(f"{latest_sha}\n", encoding="utf-8")
-    return True, f"{path.name}: atualizado para {latest_sha[:10]}"
+    if latest_sha:
+        sha_file.write_text(f"{latest_sha}\n", encoding="utf-8")
+        return True, f"{path.name}: atualizado para {latest_sha[:10]}"
+    return True, f"{path.name}: atualizado por ZIP (sem SHA da API: {latest_sha_error})"
 
 
 def main() -> None:
