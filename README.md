@@ -39,9 +39,9 @@ A pasta `scripts/` mantém dois scripts:
 - por padrão, preserva `~/.config/nvim` (não altera sua config da empresa);
 - instala plugins do manifesto em `~/.local/share/nvim/lazy`;
 - instala registry local do Mason em `~/.cache/nvim/mason-registry-main`;
-- com `--manage-config`, também altera `~/.config/nvim` (starter/overrides/patches) para forçar modo offline e ajustes de transporte.
+- com `--manage-config`, copia a config versionada em `nvim-config/` do repositório para `~/.config/nvim` e aplica os overrides.
 - instala comandos `lazy-check` e `lazy-update` (ZIP-only) para fluxo de verificação/atualização sem `git fetch/clone`.
-- com `--manage-config --config-source-dir <dir>`, copia sua config de origem para `~/.config/nvim` antes de aplicar os overrides.
+- com `--manage-config --config-source-dir <dir>`, sobrescreve a origem padrão e copia a config desse diretório para `~/.config/nvim`.
 
 ### Execução
 

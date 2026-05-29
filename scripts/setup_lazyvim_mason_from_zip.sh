@@ -41,6 +41,9 @@ NVIM_CONFIG_DIR="${XDG_CONFIG_HOME:-$HOME/.config}/nvim"
 NVIM_DATA_DIR="${XDG_DATA_HOME:-$HOME/.local/share}/nvim"
 NVIM_CACHE_DIR="${XDG_CACHE_HOME:-$HOME/.cache}/nvim"
 GITHUB_BASE_URL="https://github.com"
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+REPO_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
+REPO_DEFAULT_CONFIG_SOURCE_DIR="${REPO_ROOT}/nvim-config"
 
 while [ "$#" -gt 0 ]; do
   case "$1" in
@@ -1039,12 +1042,17 @@ if [ "$FORCE" = "1" ]; then
 fi
 
 if [ "$MANAGE_CONFIG" = "1" ]; then
-  if [ -n "$CONFIG_SOURCE_DIR" ]; then
-    if [ ! -d "$CONFIG_SOURCE_DIR" ]; then
-      die "diretorio de origem da config nao encontrado: $CONFIG_SOURCE_DIR"
+  source_config_dir="$CONFIG_SOURCE_DIR"
+  if [ -z "$source_config_dir" ]; then
+    source_config_dir="$REPO_DEFAULT_CONFIG_SOURCE_DIR"
+  fi
+
+  if [ -n "$source_config_dir" ]; then
+    if [ ! -d "$source_config_dir" ]; then
+      die "diretorio de origem da config nao encontrado: $source_config_dir"
     fi
-    log "copiando config nvim de origem: $CONFIG_SOURCE_DIR -> $NVIM_CONFIG_DIR"
-    local_source_dir="$(cd "$CONFIG_SOURCE_DIR" && pwd)"
+    log "copiando config nvim de origem: $source_config_dir -> $NVIM_CONFIG_DIR"
+    local_source_dir="$(cd "$source_config_dir" && pwd)"
     local_target_parent="$(dirname "$NVIM_CONFIG_DIR")"
     mkdir -p "$local_target_parent"
     local_target_dir="$(cd "$local_target_parent" && pwd)/$(basename "$NVIM_CONFIG_DIR")"
@@ -1056,9 +1064,6 @@ if [ "$MANAGE_CONFIG" = "1" ]; then
     rm -rf "$local_target_dir"
     mkdir -p "$local_target_dir"
     cp -R "$snapshot_dir"/. "$local_target_dir"/
-  else
-    log "instalando LazyVim starter"
-    download_and_extract_branch_zip "LazyVim/starter" "main" "$NVIM_CONFIG_DIR"
   fi
 else
   log "modo padrao: preservando ${NVIM_CONFIG_DIR} (sem alteracoes)"
