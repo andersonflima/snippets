@@ -332,13 +332,20 @@ write_http_wrapper_path_override() {
   local target_file="${plugin_dir}/http_wrappers_path.lua"
   mkdir -p "$plugin_dir"
   cat > "$target_file" <<LUA
-local wrapper_bin = "${WRAPPER_BIN_DIR}"
-if vim.fn.isdirectory(wrapper_bin) == 1 then
-  local current_path = vim.env.PATH or ""
-  if not string.find(current_path, wrapper_bin, 1, true) then
-    vim.env.PATH = wrapper_bin .. ":" .. current_path
+return {
+  {
+    "folke/lazy.nvim",
+    init = function()
+      local wrapper_bin = "${WRAPPER_BIN_DIR}"
+      if vim.fn.isdirectory(wrapper_bin) == 1 then
+        local current_path = vim.env.PATH or ""
+        if not string.find(current_path, wrapper_bin, 1, true) then
+          vim.env.PATH = wrapper_bin .. ":" .. current_path
+        end
+      end
+    end,
   end
-end
+}
 LUA
 }
 
