@@ -35,6 +35,7 @@ A pasta `scripts/` mantém dois scripts:
 - baixa dependências usando rota ZIP do GitHub (`/archive/refs/heads/<branch>.zip`);
 - não usa `curl` nem `wget` (download por helper Python com biblioteca padrão e retry);
 - instala wrappers locais de `curl`/`wget` em `~/.local/share/nvim/wrappers/bin` para runtime do LazyVim/Mason em ambientes bloqueados;
+- instala wrapper local de `git` para reescrever `https://github.com/...` como `git@github.com:...` no runtime do Neovim;
 - injeta esse diretório no `PATH` do Neovim no startup (via spec local do LazyVim);
 - instala configuração do `LazyVim/starter`;
 - instala plugins do manifesto em `~/.local/share/nvim/lazy`;

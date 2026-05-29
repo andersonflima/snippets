@@ -378,6 +378,44 @@ exec "$(dirname "$0")/http_fetch.py" "$@"
 SH
   chmod +x "${WRAPPER_BIN_DIR}/wget"
 
+  cat > "${WRAPPER_BIN_DIR}/git" <<'SH'
+#!/usr/bin/env bash
+set -euo pipefail
+
+wrapper_dir="$(cd "$(dirname "$0")" && pwd)"
+real_git=""
+while IFS= read -r candidate; do
+  candidate_dir="$(cd "$(dirname "$candidate")" && pwd)"
+  if [ "$candidate_dir" != "$wrapper_dir" ]; then
+    real_git="$candidate"
+    break
+  fi
+done < <(command -v -a git)
+
+if [ -z "$real_git" ]; then
+  echo "git wrapper: real git binary not found" >&2
+  exit 127
+fi
+
+rewrite_github_url() {
+  local value="$1"
+  if [[ "$value" == https://github.com/* ]]; then
+    local path="${value#https://github.com/}"
+    printf 'git@github.com:%s' "$path"
+    return 0
+  fi
+  printf '%s' "$value"
+}
+
+args=()
+for arg in "$@"; do
+  args+=("$(rewrite_github_url "$arg")")
+done
+
+exec "$real_git" "${args[@]}"
+SH
+  chmod +x "${WRAPPER_BIN_DIR}/git"
+
   append_wrapper_path_to_rc "${HOME}/.zshrc"
   append_wrapper_path_to_rc "${HOME}/.bashrc"
   append_wrapper_path_to_rc "${HOME}/.profile"
