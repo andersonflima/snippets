@@ -384,13 +384,21 @@ set -euo pipefail
 
 wrapper_dir="$(cd "$(dirname "$0")" && pwd)"
 real_git=""
-while IFS= read -r candidate; do
-  candidate_dir="$(cd "$(dirname "$candidate")" && pwd)"
-  if [ "$candidate_dir" != "$wrapper_dir" ]; then
-    real_git="$candidate"
-    break
-  fi
-done < <(command -v -a git)
+if command -v which >/dev/null 2>&1; then
+  while IFS= read -r candidate; do
+    [ -n "$candidate" ] || continue
+    [ -x "$candidate" ] || continue
+    candidate_dir="$(cd "$(dirname "$candidate")" && pwd)"
+    if [ "$candidate_dir" != "$wrapper_dir" ]; then
+      real_git="$candidate"
+      break
+    fi
+  done < <(which -a git 2>/dev/null || true)
+fi
+
+if [ -z "$real_git" ] && [ -x /usr/bin/git ]; then
+  real_git="/usr/bin/git"
+fi
 
 if [ -z "$real_git" ]; then
   echo "git wrapper: real git binary not found" >&2
