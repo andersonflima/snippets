@@ -111,6 +111,8 @@ Notas:
 - O tipo de instancia alvo pode ser informado via `instanceType`.
 - O tipo de instancia atual pode ser filtrado via `sourceInstanceType`.
 - `instancesIdentifier` (opcional) aceita lista de `resourceId`; quando presente, o discover/plano filtra para esses recursos.
+- `account_id` (opcional) restringe a regra para uma conta especifica.
+- quando todas as regras do map tiverem `account_id`, `--accounts-csv` deixa de ser obrigatorio.
 - O value do map pode ser objeto unico ou lista de objetos por engine (ex.: `"valkey": [ {...}, {...} ]`).
 - Quando `sourceInstanceType` estiver no map, ele tem prioridade sobre `--source-instance-type`.
 - Quando houver `instanceType` no map, ele tem prioridade sobre `--instance-type`.
@@ -299,7 +301,11 @@ def parse_args() -> argparse.Namespace:
             "(elasticache, rds, docdb, neptune, eks, opensearch/elasticsearch, redshift, lambda ou all)."
         ),
     )
-    parser.add_argument("--accounts-csv", required=True, help="CSV com as contas")
+    parser.add_argument(
+        "--accounts-csv",
+        required=False,
+        help="CSV com as contas (opcional quando o version-map informar account_id em todas as regras).",
+    )
     parser.add_argument(
         "--role-name",
         required=False,
@@ -413,12 +419,10 @@ def validate_args(args: argparse.Namespace) -> None:
     if not resolved_resources:
         raise ValueError("Parametro invalido: --resource sem tipos resolvidos.")
 
-    if not args.accounts_csv:
-        raise ValueError("Parametro obrigatorio ausente: --accounts-csv")
-
-    accounts_csv_path = os.path.abspath(args.accounts_csv)
-    if not os.path.exists(accounts_csv_path):
-        raise FileNotFoundError(f"Arquivo de contas nao encontrado: {accounts_csv_path}")
+    if args.accounts_csv:
+        accounts_csv_path = os.path.abspath(args.accounts_csv)
+        if not os.path.exists(accounts_csv_path):
+            raise FileNotFoundError(f"Arquivo de contas nao encontrado: {accounts_csv_path}")
 
     if not args.version_map and not args.version_map_file:
         raise ValueError("Informe --version-map ou --version-map-file")
@@ -630,6 +634,7 @@ def load_version_map(args: argparse.Namespace) -> Tuple[Dict[str, str], ...]:
                     "target_instance_type": target_instance_type,
                     "source_instance_type": target.get("source_instance_type", ""),
                     "instances_identifier": target.get("instances_identifier", ""),
+                    "account_id": target.get("account_id", ""),
                 }
             )
 
@@ -685,6 +690,7 @@ def parse_version_map_target(target_raw: Any) -> Dict[str, str]:
                     "instance_type": "",
                     "source_instance_type": "",
                     "instances_identifier": "",
+                    "account_id": "",
                 }
         return {
             "engine": "",
@@ -694,6 +700,7 @@ def parse_version_map_target(target_raw: Any) -> Dict[str, str]:
             "instance_type": "",
             "source_instance_type": "",
             "instances_identifier": "",
+            "account_id": "",
         }
 
     if not isinstance(target_raw, dict):
@@ -705,6 +712,7 @@ def parse_version_map_target(target_raw: Any) -> Dict[str, str]:
             "instance_type": "",
             "source_instance_type": "",
             "instances_identifier": "",
+            "account_id": "",
         }
 
     target_engine = normalize_engine(
@@ -769,6 +777,13 @@ def parse_version_map_target(target_raw: Any) -> Dict[str, str]:
         or target_raw.get("instance_identifiers")
         or []
     )
+    account_id = normalize_account_id(
+        target_raw.get("account_id")
+        or target_raw.get("accountId")
+        or target_raw.get("account")
+        or target_raw.get("id")
+        or ""
+    )
 
     return {
         "engine": target_engine,
@@ -778,6 +793,7 @@ def parse_version_map_target(target_raw: Any) -> Dict[str, str]:
         "instance_type": target_instance_type,
         "source_instance_type": source_instance_type,
         "instances_identifier": instances_identifier,
+        "account_id": account_id,
     }
 
 
@@ -791,6 +807,10 @@ def split_instance_identifiers(value: Any) -> List[str]:
 
 def join_instance_identifiers(value: Any) -> str:
     return ",".join(split_instance_identifiers(value))
+
+
+def normalize_account_id(value: Any) -> str:
+    return re.sub(r"\D", "", str(value or "").strip())
 
 
 def build_update_plan(
@@ -933,6 +953,7 @@ def resolve_target_for_resource(
                 current_version,
                 current_engine,
                 normalize_version(resource.get("resourceId")),
+                normalize_account_id(resource.get("accountId")),
             )
         ],
         key=cmp_to_key(compare_version_map_specificity),
@@ -956,16 +977,20 @@ def version_map_entry_matches_resource(
     current_version: str,
     current_engine: str,
     resource_id: str,
+    account_id: str,
 ) -> bool:
     source_version = normalize_version(entry.get("source_version"))
     target_version = normalize_version(entry.get("target_version"))
     source_engine = normalize_engine(entry.get("source_engine"))
     target_instance_type = normalize_version(entry.get("target_instance_type"))
+    target_account_id = normalize_account_id(entry.get("account_id"))
 
     if not target_version and not target_instance_type:
         return False
 
     if source_engine and source_engine != current_engine:
+        return False
+    if target_account_id and target_account_id != account_id:
         return False
 
     entry_identifiers = split_instance_identifiers(entry.get("instances_identifier", ""))
@@ -6977,6 +7002,24 @@ def collect_requested_instance_identifiers(
     return identifiers
 
 
+def collect_requested_account_ids(
+    version_map_entries: Sequence[Dict[str, str]],
+) -> set:
+    return {
+        normalize_account_id(entry.get("account_id", ""))
+        for entry in version_map_entries
+        if normalize_account_id(entry.get("account_id", ""))
+    }
+
+
+def build_accounts_from_account_ids(account_ids: Sequence[str]) -> List[Dict[str, str]]:
+    return [
+        {"accountId": account_id, "roleArn": "", "roleName": ""}
+        for account_id in account_ids
+        if account_id
+    ]
+
+
 def main() -> None:
     args = parse_args()
     validate_args(args)
@@ -6986,7 +7029,27 @@ def main() -> None:
     adapters = build_resource_adapters()
 
     version_map = load_version_map(args)
-    accounts = deduplicate_accounts_by_id(read_accounts_csv(os.path.abspath(args.accounts_csv)))
+    requested_account_ids = collect_requested_account_ids(version_map)
+    map_entries_without_account = [
+        entry for entry in version_map if not normalize_account_id(entry.get("account_id", ""))
+    ]
+
+    if args.accounts_csv:
+        accounts = deduplicate_accounts_by_id(read_accounts_csv(os.path.abspath(args.accounts_csv)))
+        if requested_account_ids:
+            accounts = [
+                account
+                for account in accounts
+                if normalize_account_id(account.get("accountId", "")) in requested_account_ids
+            ]
+    else:
+        if map_entries_without_account:
+            raise ValueError(
+                "Sem --accounts-csv, todas as regras do version-map devem informar account_id."
+            )
+        accounts = deduplicate_accounts_by_id(
+            build_accounts_from_account_ids(sorted(requested_account_ids))
+        )
 
     discovery_threads = args.threads if args.threads is not None else DEFAULT_DISCOVERY_THREADS
     update_threads = (
@@ -6998,7 +7061,9 @@ def main() -> None:
     forced_regions = [args.region] if args.region else []
 
     if not accounts:
-        raise ValueError("Nenhuma conta encontrada no CSV informado.")
+        if args.accounts_csv:
+            raise ValueError("Nenhuma conta encontrada no CSV informado.")
+        raise ValueError("Nenhuma conta resolvida no version-map (account_id).")
 
     adapter_options = {
         "parameter_group_name": normalize_version(args.parameter_group_name),
