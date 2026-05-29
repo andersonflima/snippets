@@ -818,6 +818,81 @@ return {
 LUA
 }
 
+write_lazy_command_override_after_plugin() {
+  local after_plugin_dir="${NVIM_CONFIG_DIR}/after/plugin"
+  local target_file="${after_plugin_dir}/lazy_zip_command_override.lua"
+  mkdir -p "$after_plugin_dir"
+  cat > "$target_file" <<LUA
+local wrapper_bin = "${WRAPPER_BIN_DIR}"
+
+local function run_zip_action(action)
+  local binary = wrapper_bin .. "/lazy-" .. action
+  if vim.fn.executable(binary) ~= 1 then
+    vim.notify("Comando nao encontrado: " .. binary, vim.log.levels.ERROR)
+    return
+  end
+  require("lazy.util").float_term({ binary }, {
+    cwd = vim.fn.stdpath("data") .. "/lazy",
+  })
+end
+
+local ok, commands = pcall(require, "lazy.view.commands")
+if not ok or not commands then
+  return
+end
+
+if commands.commands then
+  commands.commands.update = function()
+    run_zip_action("update")
+  end
+  commands.commands.sync = function()
+    run_zip_action("update")
+  end
+  commands.commands.check = function()
+    run_zip_action("check")
+  end
+end
+
+vim.api.nvim_create_user_command("Lazy", function(cmd)
+  local prefix, args = commands.parse(cmd.args)
+  if prefix == "update" or prefix == "sync" then
+    run_zip_action("update")
+    return
+  end
+  if prefix == "check" then
+    run_zip_action("check")
+    return
+  end
+
+  local opts = { wait = cmd.bang == true }
+  if #args == 1 and args[1] == "all" then
+    args = vim.tbl_keys(require("lazy.core.config").plugins)
+  end
+  if #args > 0 then
+    opts.plugins = vim.tbl_map(function(plugin)
+      return require("lazy.core.config").plugins[plugin]
+    end, args)
+  end
+  commands.cmd(prefix, opts)
+end, {
+  bar = true,
+  bang = true,
+  nargs = "?",
+  desc = "Lazy",
+  force = true,
+  complete = function(_, line)
+    local pfx, a = commands.parse(line)
+    if #a > 0 then
+      return commands.complete(pfx, a[#a])
+    end
+    return vim.tbl_filter(function(key)
+      return key:find(pfx, 1, true) == 1
+    end, vim.tbl_keys(commands.commands))
+  end,
+})
+LUA
+}
+
 patch_lazy_transport_to_ssh() {
   local lazy_config_file="${NVIM_CONFIG_DIR}/lua/config/lazy.lua"
   [ -f "$lazy_config_file" ] || return 0
@@ -1007,6 +1082,8 @@ if [ "$MANAGE_CONFIG" = "1" ]; then
   write_http_wrapper_path_override
   log "forcando modo offline do lazy.nvim (sem checker externo)"
   write_lazy_offline_mode_override
+  log "forcando override global de :Lazy update/sync/check para ZIP"
+  write_lazy_command_override_after_plugin
   log "forcando transporte SSH no bootstrap/update do lazy.nvim"
   patch_lazy_transport_to_ssh
 fi

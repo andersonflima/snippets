@@ -67,6 +67,7 @@ No popup do `:Lazy`, quando `--manage-config` for usado, as teclas ficam remapea
 - `C` -> `lazy-check`
 
 Além das teclas, os subcomandos `:Lazy update`, `:Lazy sync` e `:Lazy check` também são sobrescritos para usar o fluxo ZIP.
+Esse override também é escrito em `~/.config/nvim/after/plugin/` para garantir aplicação mesmo fora do popup.
 
 ## Como usar
 
