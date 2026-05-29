@@ -168,6 +168,8 @@ def parse_args(argv):
     tries = 5
     timeout = 180
     headers = []
+    method = "GET"
+    user_agent = ""
     url = None
     i = 1
     while i < len(argv):
@@ -180,6 +182,16 @@ def parse_args(argv):
             silent = True
         elif a in ("-S", "--show-error"):
             show_error = True
+        elif a.startswith("-") and not a.startswith("--") and len(a) > 2:
+            # suporta flags curtas combinadas como -fsSL
+            combined_ok = {"f", "s", "S", "L"}
+            unknown = [flag for flag in a[1:] if flag not in combined_ok]
+            if unknown:
+                die(f"{mode}: unsupported option {a}")
+            fail = fail or ("f" in a)
+            silent = silent or ("s" in a)
+            show_error = show_error or ("S" in a)
+            follow = follow or ("L" in a)
         elif a in ("-o", "--output", "-O"):
             if a == "-O":
                 output = "__remote__"
@@ -198,15 +210,40 @@ def parse_args(argv):
         elif a in ("--max-time", "--timeout"):
             i += 1
             timeout = int(argv[i])
+        elif a in ("--connect-timeout",):
+            i += 1
+            timeout = int(argv[i])
         elif a.startswith("--max-time="):
             timeout = int(a.split("=", 1)[1])
         elif a.startswith("--timeout="):
+            timeout = int(a.split("=", 1)[1])
+        elif a.startswith("--connect-timeout="):
             timeout = int(a.split("=", 1)[1])
         elif a in ("-H", "--header"):
             i += 1
             headers.append(argv[i])
         elif a.startswith("--header="):
             headers.append(a.split("=", 1)[1])
+        elif a in ("-X", "--request", "--method"):
+            i += 1
+            method = (argv[i] or "GET").upper()
+        elif a.startswith("--request="):
+            method = (a.split("=", 1)[1] or "GET").upper()
+        elif a.startswith("--method="):
+            method = (a.split("=", 1)[1] or "GET").upper()
+        elif a in ("-A", "--user-agent"):
+            i += 1
+            user_agent = argv[i]
+        elif a.startswith("--user-agent="):
+            user_agent = a.split("=", 1)[1]
+        elif a in ("--compressed", "--progress-bar", "-#", "-nv", "--no-verbose"):
+            pass
+        elif a in ("-w", "--write-out", "--proxy", "--noproxy"):
+            i += 1
+            # opcao ignorada por compatibilidade
+            _ = argv[i]
+        elif a.startswith("--write-out=") or a.startswith("--proxy=") or a.startswith("--noproxy="):
+            pass
         elif a.startswith("-"):
             die(f"{mode}: unsupported option {a}")
         else:
@@ -226,11 +263,15 @@ def parse_args(argv):
         "tries": max(1, tries),
         "timeout": max(1, timeout),
         "headers": headers,
+        "method": method,
+        "user_agent": user_agent,
         "url": url,
     }
 
 def do_fetch(cfg):
     req_headers = {"User-Agent": "nvim-http-wrapper/1.0"}
+    if cfg["user_agent"]:
+        req_headers["User-Agent"] = cfg["user_agent"]
     token = os.environ.get("GITHUB_TOKEN", "").strip()
     if token and "github.com" in cfg["url"]:
         req_headers["Authorization"] = f"Bearer {token}"
@@ -241,7 +282,7 @@ def do_fetch(cfg):
     context = ssl._create_unverified_context()
     last = None
     for attempt in range(1, cfg["tries"] + 1):
-        req = Request(cfg["url"], headers=req_headers, method="GET")
+        req = Request(cfg["url"], headers=req_headers, method=cfg["method"])
         try:
             with urlopen(req, timeout=cfg["timeout"], context=context) as resp:
                 status = getattr(resp, "status", 200)
