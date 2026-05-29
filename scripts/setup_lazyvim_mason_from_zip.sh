@@ -516,6 +516,27 @@ patch_lazy_transport_to_ssh() {
     ' "$lazy_config_file" > "$tmp_file"
     mv "$tmp_file" "$lazy_config_file"
   fi
+
+  # Em ambiente bloqueado para git externo, evita checks automáticos via git fetch.
+  sed -i '' \
+    's/checker = { enabled = true }/checker = { enabled = false }/g' \
+    "$lazy_config_file"
+
+  if ! grep -Fq 'change_detection = { enabled = false' "$lazy_config_file"; then
+    local tmp_file_2
+    tmp_file_2="$(mktemp)"
+    awk '
+      BEGIN { inserted=0 }
+      {
+        print
+        if (!inserted && $0 ~ /checker = \{ enabled = false \}/) {
+          print "\tchange_detection = { enabled = false, notify = false },"
+          inserted=1
+        }
+      }
+    ' "$lazy_config_file" > "$tmp_file_2"
+    mv "$tmp_file_2" "$lazy_config_file"
+  fi
 }
 
 install_plugins_from_manifest() {

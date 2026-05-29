@@ -38,6 +38,7 @@ A pasta `scripts/` mantém dois scripts:
 - instala wrapper local de `git` para reescrever `https://github.com/...` como `git@github.com:...` no runtime do Neovim;
 - injeta esse diretório no `PATH` do Neovim no startup (via spec local do LazyVim);
 - aplica patch em `lua/config/lazy.lua` para forçar bootstrap e `git.url_format` do `lazy.nvim` via SSH;
+- em ambientes sem acesso a `git fetch/clone` externo, desativa `checker` e `change_detection` do `lazy.nvim` para evitar tentativas automáticas de update via git;
 - instala configuração do `LazyVim/starter`;
 - instala plugins do manifesto em `~/.local/share/nvim/lazy`;
 - instala registry local do Mason em `~/.cache/nvim/mason-registry-main`;
