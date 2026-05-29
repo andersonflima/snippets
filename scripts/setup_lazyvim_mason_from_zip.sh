@@ -482,7 +482,9 @@ return {
         end
       end
     end,
-  end
+  },
+}
+LUA
 }
 
 patch_lazy_transport_to_ssh() {
@@ -514,8 +516,6 @@ patch_lazy_transport_to_ssh() {
     ' "$lazy_config_file" > "$tmp_file"
     mv "$tmp_file" "$lazy_config_file"
   fi
-}
-LUA
 }
 
 install_plugins_from_manifest() {
