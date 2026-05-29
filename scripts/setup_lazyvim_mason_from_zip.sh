@@ -19,6 +19,7 @@ Opcoes:
   --force                Sobrescreve instalacao atual (com backup automatico).
   --skip-plugins         Nao instala plugins em ~/.local/share/nvim/lazy.
   --manage-config        Permite alterar ~/.config/nvim (opt-in).
+  --config-source-dir    Copia config nvim de origem para --config-dir (requer --manage-config).
   --config-dir <dir>     Default: ${XDG_CONFIG_HOME:-$HOME/.config}/nvim
   --data-dir <dir>       Default: ${XDG_DATA_HOME:-$HOME/.local/share}/nvim
   --cache-dir <dir>      Default: ${XDG_CACHE_HOME:-$HOME/.cache}/nvim
@@ -35,6 +36,7 @@ USAGE
 FORCE=0
 SKIP_PLUGINS=0
 MANAGE_CONFIG=0
+CONFIG_SOURCE_DIR=""
 NVIM_CONFIG_DIR="${XDG_CONFIG_HOME:-$HOME/.config}/nvim"
 NVIM_DATA_DIR="${XDG_DATA_HOME:-$HOME/.local/share}/nvim"
 NVIM_CACHE_DIR="${XDG_CACHE_HOME:-$HOME/.cache}/nvim"
@@ -53,6 +55,10 @@ while [ "$#" -gt 0 ]; do
     --manage-config)
       MANAGE_CONFIG=1
       shift
+      ;;
+    --config-source-dir)
+      CONFIG_SOURCE_DIR="${2:-}"
+      shift 2
       ;;
     --config-dir)
       NVIM_CONFIG_DIR="${2:-}"
@@ -85,6 +91,9 @@ command -v python3 >/dev/null 2>&1 || die "python3 nao encontrado"
 [ -n "$NVIM_CONFIG_DIR" ] || die "--config-dir vazio"
 [ -n "$NVIM_DATA_DIR" ] || die "--data-dir vazio"
 [ -n "$NVIM_CACHE_DIR" ] || die "--cache-dir vazio"
+if [ -n "$CONFIG_SOURCE_DIR" ] && [ "$MANAGE_CONFIG" != "1" ]; then
+  die "--config-source-dir requer --manage-config"
+fi
 
 STATE_ROOT="${HOME}/.local/share/nvim-zip-bootstrap"
 STATE_FILE="${STATE_ROOT}/state.env"
@@ -697,6 +706,59 @@ write_lazy_offline_mode_override() {
 return {
   {
     "folke/lazy.nvim",
+    init = function()
+      local function run_zip_action(action)
+        local wrapper_bin = "${WRAPPER_BIN_DIR}"
+        local binary = wrapper_bin .. "/lazy-" .. action
+        if vim.fn.executable(binary) ~= 1 then
+          vim.notify("Comando nao encontrado: " .. binary, vim.log.levels.ERROR)
+          return
+        end
+        require("lazy.util").float_term({ binary }, {
+          cwd = vim.fn.stdpath("data") .. "/lazy",
+        })
+      end
+
+      vim.api.nvim_create_user_command("Lazy", function(cmd)
+        local commands = require("lazy.view.commands")
+        local prefix, args = commands.parse(cmd.args)
+        if prefix == "update" or prefix == "sync" then
+          run_zip_action("update")
+          return
+        end
+        if prefix == "check" then
+          run_zip_action("check")
+          return
+        end
+
+        local opts = { wait = cmd.bang == true }
+        if #args == 1 and args[1] == "all" then
+          args = vim.tbl_keys(require("lazy.core.config").plugins)
+        end
+        if #args > 0 then
+          opts.plugins = vim.tbl_map(function(plugin)
+            return require("lazy.core.config").plugins[plugin]
+          end, args)
+        end
+        commands.cmd(prefix, opts)
+      end, {
+        bar = true,
+        bang = true,
+        nargs = "?",
+        desc = "Lazy",
+        force = true,
+        complete = function(_, line)
+          local commands = require("lazy.view.commands")
+          local prefix, args = commands.parse(line)
+          if #args > 0 then
+            return commands.complete(prefix, args[#args])
+          end
+          return vim.tbl_filter(function(key)
+            return key:find(prefix, 1, true) == 1
+          end, vim.tbl_keys(commands.commands))
+        end,
+      })
+    end,
     opts = function(_, opts)
       opts = opts or {}
       local wrapper_bin = "${WRAPPER_BIN_DIR}"
@@ -910,8 +972,18 @@ if [ "$FORCE" = "1" ]; then
 fi
 
 if [ "$MANAGE_CONFIG" = "1" ]; then
-  log "instalando LazyVim starter"
-  download_and_extract_branch_zip "LazyVim/starter" "main" "$NVIM_CONFIG_DIR"
+  if [ -n "$CONFIG_SOURCE_DIR" ]; then
+    if [ ! -d "$CONFIG_SOURCE_DIR" ]; then
+      die "diretorio de origem da config nao encontrado: $CONFIG_SOURCE_DIR"
+    fi
+    log "copiando config nvim de origem: $CONFIG_SOURCE_DIR -> $NVIM_CONFIG_DIR"
+    rm -rf "$NVIM_CONFIG_DIR"
+    mkdir -p "$NVIM_CONFIG_DIR"
+    cp -R "$CONFIG_SOURCE_DIR"/. "$NVIM_CONFIG_DIR"/
+  else
+    log "instalando LazyVim starter"
+    download_and_extract_branch_zip "LazyVim/starter" "main" "$NVIM_CONFIG_DIR"
+  fi
 else
   log "modo padrao: preservando ${NVIM_CONFIG_DIR} (sem alteracoes)"
 fi
@@ -942,6 +1014,7 @@ NVIM_CACHE_DIR='${NVIM_CACHE_DIR}'
 BACKUP_DIR='${BACKUP_DIR}'
 SETUP_TIMESTAMP='${TIMESTAMP}'
 MANAGE_CONFIG='${MANAGE_CONFIG}'
+CONFIG_SOURCE_DIR='${CONFIG_SOURCE_DIR}'
 EOFSTATE
 
 log "concluido"

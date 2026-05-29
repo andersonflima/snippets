@@ -41,12 +41,14 @@ A pasta `scripts/` mantém dois scripts:
 - instala registry local do Mason em `~/.cache/nvim/mason-registry-main`;
 - com `--manage-config`, também altera `~/.config/nvim` (starter/overrides/patches) para forçar modo offline e ajustes de transporte.
 - instala comandos `lazy-check` e `lazy-update` (ZIP-only) para fluxo de verificação/atualização sem `git fetch/clone`.
+- com `--manage-config --config-source-dir <dir>`, copia sua config de origem para `~/.config/nvim` antes de aplicar os overrides.
 
 ### Execução
 
 ```bash
 bash scripts/setup_lazyvim_mason_from_zip.sh --force
 bash scripts/setup_lazyvim_mason_from_zip.sh --force --manage-config
+bash scripts/setup_lazyvim_mason_from_zip.sh --force --manage-config --config-source-dir ~/.config/nvim
 bash scripts/undo_lazyvim_mason_from_zip.sh
 ```
 
