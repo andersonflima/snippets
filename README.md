@@ -36,19 +36,16 @@ A pasta `scripts/` mantém dois scripts:
 - não usa `curl` nem `wget` (download por helper Python com biblioteca padrão e retry);
 - instala wrappers locais de `curl`/`wget` em `~/.local/share/nvim/wrappers/bin` para runtime do LazyVim/Mason em ambientes bloqueados;
 - instala wrapper local de `git` para reescrever `https://github.com/...` como `git@github.com:...` no runtime do Neovim;
-- injeta esse diretório no `PATH` do Neovim no startup (via spec local do LazyVim);
-- aplica patch em `lua/config/lazy.lua` para forçar bootstrap e `git.url_format` do `lazy.nvim` via SSH;
-- em ambientes sem acesso a `git fetch/clone` externo, desativa `checker` e `change_detection` do `lazy.nvim` para evitar tentativas automáticas de update via git;
-- cria `lua/plugins/lazy_offline_mode.lua` para garantir em runtime que `lazy.nvim` não execute checks externos;
-- instala configuração do `LazyVim/starter`;
+- por padrão, preserva `~/.config/nvim` (não altera sua config da empresa);
 - instala plugins do manifesto em `~/.local/share/nvim/lazy`;
 - instala registry local do Mason em `~/.cache/nvim/mason-registry-main`;
-- cria override para Mason priorizar registry local `file:`.
+- com `--manage-config`, também altera `~/.config/nvim` (starter/overrides/patches) para forçar modo offline e ajustes de transporte.
 
 ### Execução
 
 ```bash
 bash scripts/setup_lazyvim_mason_from_zip.sh --force
+bash scripts/setup_lazyvim_mason_from_zip.sh --force --manage-config
 bash scripts/undo_lazyvim_mason_from_zip.sh
 ```
 

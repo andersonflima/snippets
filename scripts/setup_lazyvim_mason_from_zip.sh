@@ -17,7 +17,8 @@ Uso:
 
 Opcoes:
   --force                Sobrescreve instalacao atual (com backup automatico).
-  --skip-plugins         Instala somente configuracao do LazyVim e registry do Mason.
+  --skip-plugins         Nao instala plugins em ~/.local/share/nvim/lazy.
+  --manage-config        Permite alterar ~/.config/nvim (opt-in).
   --config-dir <dir>     Default: ${XDG_CONFIG_HOME:-$HOME/.config}/nvim
   --data-dir <dir>       Default: ${XDG_DATA_HOME:-$HOME/.local/share}/nvim
   --cache-dir <dir>      Default: ${XDG_CACHE_HOME:-$HOME/.cache}/nvim
@@ -33,6 +34,7 @@ USAGE
 
 FORCE=0
 SKIP_PLUGINS=0
+MANAGE_CONFIG=0
 NVIM_CONFIG_DIR="${XDG_CONFIG_HOME:-$HOME/.config}/nvim"
 NVIM_DATA_DIR="${XDG_DATA_HOME:-$HOME/.local/share}/nvim"
 NVIM_CACHE_DIR="${XDG_CACHE_HOME:-$HOME/.cache}/nvim"
@@ -46,6 +48,10 @@ while [ "$#" -gt 0 ]; do
       ;;
     --skip-plugins)
       SKIP_PLUGINS=1
+      shift
+      ;;
+    --manage-config)
+      MANAGE_CONFIG=1
       shift
       ;;
     --config-dir)
@@ -646,32 +652,42 @@ zen-mode.nvim|folke/zen-mode.nvim|main
 MANIFEST
 }
 
-ensure_absent_or_force "$NVIM_CONFIG_DIR"
 ensure_absent_or_force "${NVIM_DATA_DIR}/lazy"
 ensure_absent_or_force "${NVIM_CACHE_DIR}/mason-registry-main"
+if [ "$MANAGE_CONFIG" = "1" ]; then
+  ensure_absent_or_force "$NVIM_CONFIG_DIR"
+fi
 ensure_python_runtime
 install_http_wrappers
 
 if [ "$FORCE" = "1" ]; then
-  backup_if_exists "$NVIM_CONFIG_DIR" "nvim-config"
+  if [ "$MANAGE_CONFIG" = "1" ]; then
+    backup_if_exists "$NVIM_CONFIG_DIR" "nvim-config"
+  fi
   backup_if_exists "${NVIM_DATA_DIR}/lazy" "nvim-lazy"
   backup_if_exists "${NVIM_CACHE_DIR}/mason-registry-main" "mason-registry-main"
 fi
 
-log "instalando LazyVim starter"
-download_and_extract_branch_zip "LazyVim/starter" "main" "$NVIM_CONFIG_DIR"
+if [ "$MANAGE_CONFIG" = "1" ]; then
+  log "instalando LazyVim starter"
+  download_and_extract_branch_zip "LazyVim/starter" "main" "$NVIM_CONFIG_DIR"
+else
+  log "modo padrao: preservando ${NVIM_CONFIG_DIR} (sem alteracoes)"
+fi
 
 log "instalando registry local do Mason"
 download_and_extract_branch_zip "mason-org/mason-registry" "main" "${NVIM_CACHE_DIR}/mason-registry-main"
 
-log "configurando Mason para usar registry local"
-write_mason_local_registry_override
-log "configurando PATH interno de wrappers HTTP no Neovim"
-write_http_wrapper_path_override
-log "forcando modo offline do lazy.nvim (sem checker externo)"
-write_lazy_offline_mode_override
-log "forcando transporte SSH no bootstrap/update do lazy.nvim"
-patch_lazy_transport_to_ssh
+if [ "$MANAGE_CONFIG" = "1" ]; then
+  log "configurando Mason para usar registry local"
+  write_mason_local_registry_override
+  log "configurando PATH interno de wrappers HTTP no Neovim"
+  write_http_wrapper_path_override
+  log "forcando modo offline do lazy.nvim (sem checker externo)"
+  write_lazy_offline_mode_override
+  log "forcando transporte SSH no bootstrap/update do lazy.nvim"
+  patch_lazy_transport_to_ssh
+fi
 
 if [ "$SKIP_PLUGINS" != "1" ]; then
   log "instalando plugins do LazyVim por ZIP"
@@ -684,6 +700,7 @@ NVIM_DATA_DIR='${NVIM_DATA_DIR}'
 NVIM_CACHE_DIR='${NVIM_CACHE_DIR}'
 BACKUP_DIR='${BACKUP_DIR}'
 SETUP_TIMESTAMP='${TIMESTAMP}'
+MANAGE_CONFIG='${MANAGE_CONFIG}'
 EOFSTATE
 
 log "concluido"

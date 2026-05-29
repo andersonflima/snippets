@@ -35,6 +35,7 @@ NVIM_DATA_DIR="${XDG_DATA_HOME:-$HOME/.local/share}/nvim"
 NVIM_CACHE_DIR="${XDG_CACHE_HOME:-$HOME/.cache}/nvim"
 NVIM_STATE_DIR="${XDG_STATE_HOME:-$HOME/.local/state}/nvim"
 BACKUP_DIR=""
+MANAGE_CONFIG="0"
 
 if [ -f "$STATE_FILE" ]; then
   # shellcheck source=/dev/null
@@ -104,15 +105,20 @@ cleanup_legacy_mason_state() {
   rm_path "${NVIM_STATE_DIR}/mason"
 }
 
-rm_path "$NVIM_CONFIG_DIR"
+if [ "${MANAGE_CONFIG:-0}" = "1" ]; then
+  rm_path "$NVIM_CONFIG_DIR"
+else
+  log "preservando config em $NVIM_CONFIG_DIR (MANAGE_CONFIG=0)"
+fi
 rm_path "${NVIM_DATA_DIR}/lazy"
 rm_path "${NVIM_CACHE_DIR}/mason-registry-main"
-rm_path "${NVIM_CONFIG_DIR}/lua/plugins/http_wrappers_path.lua"
 cleanup_legacy_mason_state
 cleanup_legacy_wrappers
 
 if [ -n "${BACKUP_DIR:-}" ] && [ -d "$BACKUP_DIR" ]; then
-  restore_backup "$BACKUP_DIR/nvim-config" "$NVIM_CONFIG_DIR"
+  if [ "${MANAGE_CONFIG:-0}" = "1" ]; then
+    restore_backup "$BACKUP_DIR/nvim-config" "$NVIM_CONFIG_DIR"
+  fi
   restore_backup "$BACKUP_DIR/nvim-lazy" "${NVIM_DATA_DIR}/lazy"
   restore_backup "$BACKUP_DIR/mason-registry-main" "${NVIM_CACHE_DIR}/mason-registry-main"
 fi
