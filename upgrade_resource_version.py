@@ -840,7 +840,8 @@ def build_resource_update_plan_entry(
     current_version = normalize_version(resource.get("currentVersion"))
     current_engine = normalize_engine(resource.get("engine"))
     requested_target_version = normalize_version(target.get("target_version"))
-    target_version = requested_target_version or current_version
+    is_version_update_requested = bool(requested_target_version)
+    target_version = requested_target_version
     target_engine = normalize_engine(target.get("target_engine") or current_engine)
     current_instance_type = normalize_version(resource.get("instanceType"))
     target_instance_type = normalize_version(target.get("target_instance_type"))
@@ -858,10 +859,16 @@ def build_resource_update_plan_entry(
             resource_type=resource.get("resourceType", ""),
         )
 
+    version_already_matches = (
+        current_version == target_version if is_version_update_requested else True
+    )
+    instance_type_already_matches = (
+        not target_instance_type or current_instance_type == target_instance_type
+    )
     if (
-        current_version == target_version
+        version_already_matches
         and current_engine == target_engine
-        and (not target_instance_type or current_instance_type == target_instance_type)
+        and instance_type_already_matches
     ):
         return None
 
@@ -1918,6 +1925,8 @@ def submit_elasticache_update(
 
     normalized_target_engine = normalize_engine(target_engine)
     normalized_current_engine = normalize_engine(resource.get("engine"))
+    normalized_target_version = normalize_version(target_version)
+    is_version_update_requested = bool(normalized_target_version)
     is_engine_switch = bool(
         normalized_target_engine and normalized_target_engine != normalized_current_engine
     )
@@ -1933,11 +1942,14 @@ def submit_elasticache_update(
             client=client,
             resource=resource,
             target_engine=normalized_target_engine or normalized_current_engine,
-            target_version=target_version,
+            target_version=normalized_target_version,
             explicit_cache_parameter_group_name=explicit_group_name,
             adapter_options=adapter_options,
         )
-        if resource.get("resourceKind") in ("replication-group", "cluster")
+        if (
+            resource.get("resourceKind") in ("replication-group", "cluster")
+            and (is_version_update_requested or bool(explicit_group_name))
+        )
         else ""
     )
 
@@ -1945,9 +1957,10 @@ def submit_elasticache_update(
     if resource_kind == "replication-group":
         modify_input: Dict[str, Any] = {
             "ReplicationGroupId": resource.get("resourceId"),
-            "EngineVersion": target_version,
             "ApplyImmediately": True,
         }
+        if is_version_update_requested:
+            modify_input["EngineVersion"] = normalized_target_version
         if is_engine_switch:
             modify_input["Engine"] = normalized_target_engine
         if resolved_target_parameter_group_name:
@@ -1959,9 +1972,15 @@ def submit_elasticache_update(
         return {
             "status": safe_read(response, "ReplicationGroup.Status", "modifying"),
             "message": build_message(
-                "Engine alterada para "
-                f"{normalized_target_engine or normalized_current_engine or 'default'} "
-                f"e versao para {target_version}",
+                (
+                    "Engine alterada para "
+                    f"{normalized_target_engine or normalized_current_engine or 'default'}"
+                ),
+                (
+                    f"EngineVersion alterada para {normalized_target_version}."
+                    if is_version_update_requested
+                    else ""
+                ),
                 (
                     f"Tipo de instancia alterado para {explicit_instance_type}."
                     if explicit_instance_type
@@ -1974,9 +1993,10 @@ def submit_elasticache_update(
     if resource_kind == "cluster":
         modify_input = {
             "CacheClusterId": resource.get("resourceId"),
-            "EngineVersion": target_version,
             "ApplyImmediately": True,
         }
+        if is_version_update_requested:
+            modify_input["EngineVersion"] = normalized_target_version
         if is_engine_switch:
             modify_input["Engine"] = normalized_target_engine
         if resolved_target_parameter_group_name:
@@ -1988,9 +2008,15 @@ def submit_elasticache_update(
         return {
             "status": safe_read(response, "CacheCluster.CacheClusterStatus", "modifying"),
             "message": build_message(
-                "Engine alterada para "
-                f"{normalized_target_engine or normalized_current_engine or 'default'} "
-                f"e versao para {target_version}",
+                (
+                    "Engine alterada para "
+                    f"{normalized_target_engine or normalized_current_engine or 'default'}"
+                ),
+                (
+                    f"EngineVersion alterada para {normalized_target_version}."
+                    if is_version_update_requested
+                    else ""
+                ),
                 (
                     f"Tipo de instancia alterado para {explicit_instance_type}."
                     if explicit_instance_type
@@ -3406,6 +3432,8 @@ def submit_rds_instance_update(
         resource=resource,
         adapter_options=adapter_options,
     )
+    normalized_target_version = normalize_version(target_version)
+    is_version_update_requested = bool(normalized_target_version)
     normalized_target_engine = normalize_engine(target_engine or resource.get("engine"))
     normalized_current_engine = normalize_engine(resource.get("engine"))
     if (
@@ -3425,34 +3453,46 @@ def submit_rds_instance_update(
         ),
         resource_label=f"DB instance {db_instance_identifier}",
     )
-    resolved_target_parameter_group_name = resolve_rds_target_parameter_group(
-        client=client,
-        resource=resource,
-        target_engine=normalized_target_engine,
-        target_version=target_version,
-        explicit_parameter_group_name=explicit_parameter_group_name,
-        adapter_options=adapter_options,
+    resolved_target_parameter_group_name = (
+        resolve_rds_target_parameter_group(
+            client=client,
+            resource=resource,
+            target_engine=normalized_target_engine,
+            target_version=normalized_target_version,
+            explicit_parameter_group_name=explicit_parameter_group_name,
+            adapter_options=adapter_options,
+        )
+        if is_version_update_requested or bool(explicit_parameter_group_name)
+        else ""
     )
 
-    major_version_changed = resolve_rds_major_version_change(
-        client=client,
-        current_engine=resource.get("engine", ""),
-        current_version=resource.get("currentVersion", ""),
-        target_engine=normalized_target_engine,
-        target_version=target_version,
-        adapter_options=adapter_options,
+    major_version_changed = (
+        resolve_rds_major_version_change(
+            client=client,
+            current_engine=resource.get("engine", ""),
+            current_version=resource.get("currentVersion", ""),
+            target_engine=normalized_target_engine,
+            target_version=normalized_target_version,
+            adapter_options=adapter_options,
+        )
+        if is_version_update_requested
+        else False
     )
-    resolved_target_option_group_name = resolve_rds_target_option_group(
-        client=client,
-        resource=resource,
-        target_engine=normalized_target_engine,
-        target_version=target_version,
-        requires_option_group_migration=major_version_changed,
-        adapter_options=adapter_options,
+    resolved_target_option_group_name = (
+        resolve_rds_target_option_group(
+            client=client,
+            resource=resource,
+            target_engine=normalized_target_engine,
+            target_version=normalized_target_version,
+            requires_option_group_migration=major_version_changed,
+            adapter_options=adapter_options,
+        )
+        if is_version_update_requested
+        else ""
     )
     modify_input = build_rds_instance_modify_input(
         db_instance_identifier=resource.get("resourceId", ""),
-        target_version=target_version,
+        target_version=normalized_target_version,
         major_version_changed=major_version_changed,
         target_parameter_group_name=resolved_target_parameter_group_name,
         target_option_group_name=resolved_target_option_group_name,
@@ -3485,7 +3525,11 @@ def submit_rds_instance_update(
                 resource_label=f"DB instance {db_instance_identifier}",
                 readiness=readiness,
             ),
-            f"EngineVersion alterada para {target_version}.",
+            (
+                f"EngineVersion alterada para {normalized_target_version}."
+                if is_version_update_requested
+                else ""
+            ),
             (
                 f"DBInstanceClass alterada para {explicit_instance_type}."
                 if explicit_instance_type
@@ -3525,6 +3569,8 @@ def submit_rds_cluster_update(
             "--instance-type para rds/docdb/neptune e suportado apenas em recursos "
             "resource_kind=db-instance no fluxo atual."
         )
+    normalized_target_version = normalize_version(target_version)
+    is_version_update_requested = bool(normalized_target_version)
     normalized_target_engine = normalize_engine(target_engine or resource.get("engine"))
     normalized_current_engine = normalize_engine(resource.get("engine"))
     if (
@@ -3548,42 +3594,51 @@ def submit_rds_cluster_update(
         ),
         resource_label=f"DB cluster {db_cluster_identifier}",
     )
-    major_version_changed = resolve_rds_major_version_change(
-        client=client,
-        current_engine=resource.get("engine", ""),
-        current_version=resource.get("currentVersion", ""),
-        target_engine=normalized_target_engine,
-        target_version=target_version,
-        adapter_options=adapter_options,
+    major_version_changed = (
+        resolve_rds_major_version_change(
+            client=client,
+            current_engine=resource.get("engine", ""),
+            current_version=resource.get("currentVersion", ""),
+            target_engine=normalized_target_engine,
+            target_version=normalized_target_version,
+            adapter_options=adapter_options,
+        )
+        if is_version_update_requested
+        else False
     )
     resolved_target_cluster_parameter_group_name = (
         resolve_rds_target_cluster_parameter_group(
             client=client,
             resource=resource,
             target_engine=normalized_target_engine,
-            target_version=target_version,
+            target_version=normalized_target_version,
             explicit_parameter_group_name=explicit_cluster_parameter_group_name,
             requires_parameter_group_migration=major_version_changed,
             adapter_options=adapter_options,
         )
+        if is_version_update_requested or bool(explicit_cluster_parameter_group_name)
+        else ""
     )
     resolved_target_instance_parameter_group_name = (
         resolve_rds_target_cluster_instance_parameter_group(
             client=client,
             resource=resource,
             target_engine=normalized_target_engine,
-            target_version=target_version,
+            target_version=normalized_target_version,
             explicit_parameter_group_name=explicit_instance_parameter_group_name,
             requires_parameter_group_migration=major_version_changed,
             adapter_options=adapter_options,
         )
+        if is_version_update_requested or bool(explicit_instance_parameter_group_name)
+        else ""
     )
 
     modify_input: Dict[str, Any] = {
         "DBClusterIdentifier": resource.get("resourceId"),
-        "EngineVersion": target_version,
         "ApplyImmediately": True,
     }
+    if is_version_update_requested:
+        modify_input["EngineVersion"] = normalized_target_version
     if major_version_changed:
         modify_input["AllowMajorVersionUpgrade"] = True
     if resolved_target_cluster_parameter_group_name:
@@ -3618,7 +3673,11 @@ def submit_rds_cluster_update(
                 resource_label=f"DB cluster {db_cluster_identifier}",
                 readiness=readiness,
             ),
-            f"EngineVersion alterada para {target_version}",
+            (
+                f"EngineVersion alterada para {normalized_target_version}"
+                if is_version_update_requested
+                else ""
+            ),
             post_update_action.get("message", ""),
         ),
         "targetParameterGroupName": resolved_target_cluster_parameter_group_name,
@@ -6454,8 +6513,8 @@ def build_rds_instance_modify_input(
 ) -> Dict[str, Any]:
     return {
         "DBInstanceIdentifier": db_instance_identifier,
-        "EngineVersion": target_version,
         "ApplyImmediately": True,
+        **({"EngineVersion": target_version} if target_version else {}),
         **({"AllowMajorVersionUpgrade": True} if major_version_changed else {}),
         **(
             {"DBParameterGroupName": target_parameter_group_name}
