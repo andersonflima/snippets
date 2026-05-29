@@ -119,10 +119,6 @@ ensure_python_runtime() {
     log "criando venv em $VENV_DIR"
     python3 -m venv "$VENV_DIR"
   fi
-
-  log "instalando dependencias Python no venv"
-  "$VENV_PYTHON" -m pip install --upgrade pip >/dev/null
-  "$VENV_PYTHON" -m pip install --upgrade requests urllib3 certifi >/dev/null
 }
 
 download_and_extract_branch_zip() {

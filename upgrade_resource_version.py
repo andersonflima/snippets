@@ -5,60 +5,97 @@ upgrade_resource_version.py
 Exemplos de version-map por recurso (formato recomendado):
 
 {
-  "redis": {
-    "sourceVersion": "7.0",
-    "version": "7.1",
-    "sourceInstanceType": "cache.r6g.large",
-    "instanceType": "cache.r7g.large"
-  },
-  "valkey": {
-    "sourceVersion": "7.2",
-    "version": "8.0",
-    "sourceInstanceType": "cache.r6g.large",
-    "instanceType": "cache.r7g.large"
-  },
-  "mysql": {
-    "sourceVersion": "8.0",
-    "version": "8.4",
-    "sourceInstanceType": "db.r6g.large",
-    "instanceType": "db.r7g.large"
-  },
-  "postgres": {
-    "sourceVersion": "14",
-    "version": "16",
-    "sourceInstanceType": "db.r6g.large",
-    "instanceType": "db.r7g.large"
-  },
-  "docdb": {
-    "sourceVersion": "4.0",
-    "version": "5.0",
-    "sourceInstanceType": "db.r5.large",
-    "instanceType": "db.r6g.large"
-  },
-  "neptune": {
-    "sourceVersion": "1.2",
-    "version": "1.3",
-    "sourceInstanceType": "db.r5.large",
-    "instanceType": "db.r6g.large"
-  },
-  "redshift": {
-    "sourceVersion": "1.0",
-    "version": "1.0.70720",
-    "sourceInstanceType": "ra3.large",
-    "instanceType": "ra3.xlplus"
-  },
-  "kubernetes": {
-    "sourceVersion": "1.28",
-    "version": "1.29"
-  },
-  "opensearch": {
-    "sourceVersion": "2.11",
-    "version": "2.15"
-  },
-  "nodejs": {
-    "sourceVersion": "18",
-    "version": "20"
-  }
+  "redis": [
+    {
+      "sourceVersion": "7.0",
+      "version": "7.1",
+      "instancesIdentifier": ["rg-app-redis-a", "rg-app-redis-b"],
+      "sourceInstanceType": "cache.r6g.large",
+      "instanceType": "cache.r7g.large"
+    }
+  ],
+  "valkey": [
+    {
+      "sourceVersion": "7.2",
+      "version": "8.0",
+      "instancesIdentifier": ["rg-core-valkey-a"],
+      "sourceInstanceType": "cache.r6g.large",
+      "instanceType": "cache.r7g.large"
+    },
+    {
+      "sourceVersion": "8.0",
+      "version": "8.1",
+      "instancesIdentifier": ["rg-core-valkey-b"],
+      "sourceInstanceType": "cache.r7g.large",
+      "instanceType": "cache.r8g.large"
+    }
+  ],
+  "mysql": [
+    {
+      "sourceVersion": "8.0",
+      "version": "8.4",
+      "instancesIdentifier": ["db-app-mysql-01"],
+      "sourceInstanceType": "db.r6g.large",
+      "instanceType": "db.r7g.large"
+    }
+  ],
+  "postgres": [
+    {
+      "sourceVersion": "14",
+      "version": "16",
+      "instancesIdentifier": ["db-app-postgres-01", "db-app-postgres-02"],
+      "sourceInstanceType": "db.r6g.large",
+      "instanceType": "db.r7g.large"
+    }
+  ],
+  "docdb": [
+    {
+      "sourceVersion": "4.0",
+      "version": "5.0",
+      "instancesIdentifier": ["docdb-cluster-prod-01"],
+      "sourceInstanceType": "db.r5.large",
+      "instanceType": "db.r6g.large"
+    }
+  ],
+  "neptune": [
+    {
+      "sourceVersion": "1.2",
+      "version": "1.3",
+      "instancesIdentifier": ["neptune-prod-01"],
+      "sourceInstanceType": "db.r5.large",
+      "instanceType": "db.r6g.large"
+    }
+  ],
+  "redshift": [
+    {
+      "sourceVersion": "1.0",
+      "version": "1.0.70720",
+      "instancesIdentifier": ["redshift-dw-prod"],
+      "sourceInstanceType": "ra3.large",
+      "instanceType": "ra3.xlplus"
+    }
+  ],
+  "kubernetes": [
+    {
+      "sourceVersion": "1.28",
+      "version": "1.29",
+      "instancesIdentifier": ["eks-main-prod"]
+    }
+  ],
+  "opensearch": [
+    {
+      "sourceVersion": "2.11",
+      "version": "2.15",
+      "instancesIdentifier": ["opensearch-main-prod"]
+    }
+  ],
+  "nodejs": [
+    {
+      "sourceVersion": "18",
+      "version": "20",
+      "instancesIdentifier": ["lambda-billing-worker", "lambda-notifier"]
+    }
+  ]
 }
 
 Formato legado (ainda suportado para compatibilidade):
@@ -71,6 +108,8 @@ Notas:
 - `sourceEngine` e opcional; quando informado, tem prioridade sobre a chave do map.
 - O tipo de instancia alvo pode ser informado via `instanceType`.
 - O tipo de instancia atual pode ser filtrado via `sourceInstanceType`.
+- `instancesIdentifier` (opcional) aceita lista de `resourceId`; quando presente, o discover/plano filtra para esses recursos.
+- O value do map pode ser objeto unico ou lista de objetos por engine (ex.: `"valkey": [ {...}, {...} ]`).
 - Quando `sourceInstanceType` estiver no map, ele tem prioridade sobre `--source-instance-type`.
 - Quando houver `instanceType` no map, ele tem prioridade sobre `--instance-type`.
 - --instance-type requer execucao com um unico --resource por vez.
@@ -568,32 +607,39 @@ def load_version_map(args: argparse.Namespace) -> Tuple[Dict[str, str], ...]:
     entries: List[Dict[str, str]] = []
     for source_raw, target_raw in parsed.items():
         source = parse_version_map_source(source_raw)
-        target = parse_version_map_target(target_raw)
-        source_engine = normalize_engine(
-            target.get("source_engine") or source.get("engine")
-        )
-        source_version = normalize_version(
-            target.get("source_version") or source.get("version")
-        )
-        target_version = normalize_version(target.get("version"))
-        if not source_version or not target_version:
-            continue
+        for target in parse_version_map_targets(target_raw):
+            source_engine = normalize_engine(
+                target.get("source_engine") or source.get("engine")
+            )
+            source_version = normalize_version(
+                target.get("source_version") or source.get("version")
+            )
+            target_version = normalize_version(target.get("version"))
+            if not source_version or not target_version:
+                continue
 
-        entries.append(
-            {
-                "source_engine": source_engine,
-                "source_version": source_version,
-                "target_engine": target.get("engine", ""),
-                "target_version": target_version,
-                "target_instance_type": target.get("instance_type", ""),
-                "source_instance_type": target.get("source_instance_type", ""),
-            }
-        )
+            entries.append(
+                {
+                    "source_engine": source_engine,
+                    "source_version": source_version,
+                    "target_engine": target.get("engine", ""),
+                    "target_version": target_version,
+                    "target_instance_type": target.get("instance_type", ""),
+                    "source_instance_type": target.get("source_instance_type", ""),
+                    "instances_identifier": target.get("instances_identifier", ""),
+                }
+            )
 
     if not entries:
         raise ValueError("JSON de de/para vazio apos normalizacao.")
 
     return tuple(entries)
+
+
+def parse_version_map_targets(target_raw: Any) -> List[Dict[str, str]]:
+    if isinstance(target_raw, list):
+        return [parse_version_map_target(item) for item in target_raw]
+    return [parse_version_map_target(target_raw)]
 
 
 def parse_version_map_source(source_raw: Any) -> Dict[str, str]:
@@ -635,6 +681,7 @@ def parse_version_map_target(target_raw: Any) -> Dict[str, str]:
                     "source_version": "",
                     "instance_type": "",
                     "source_instance_type": "",
+                    "instances_identifier": "",
                 }
         return {
             "engine": "",
@@ -643,6 +690,7 @@ def parse_version_map_target(target_raw: Any) -> Dict[str, str]:
             "source_version": "",
             "instance_type": "",
             "source_instance_type": "",
+            "instances_identifier": "",
         }
 
     if not isinstance(target_raw, dict):
@@ -653,6 +701,7 @@ def parse_version_map_target(target_raw: Any) -> Dict[str, str]:
             "source_version": "",
             "instance_type": "",
             "source_instance_type": "",
+            "instances_identifier": "",
         }
 
     target_engine = normalize_engine(
@@ -708,6 +757,15 @@ def parse_version_map_target(target_raw: Any) -> Dict[str, str]:
         or target_raw.get("old_instance_type")
         or ""
     )
+    instances_identifier = join_instance_identifiers(
+        target_raw.get("instancesIdentifier")
+        or target_raw.get("instanceIdentifier")
+        or target_raw.get("instanceIdentifiers")
+        or target_raw.get("instances_identifier")
+        or target_raw.get("instance_identifier")
+        or target_raw.get("instance_identifiers")
+        or []
+    )
 
     return {
         "engine": target_engine,
@@ -716,7 +774,20 @@ def parse_version_map_target(target_raw: Any) -> Dict[str, str]:
         "source_version": source_version,
         "instance_type": target_instance_type,
         "source_instance_type": source_instance_type,
+        "instances_identifier": instances_identifier,
     }
+
+
+def split_instance_identifiers(value: Any) -> List[str]:
+    if isinstance(value, (list, tuple, set)):
+        candidates = value
+    else:
+        candidates = str(value or "").split(",")
+    return [str(candidate).strip() for candidate in candidates if str(candidate or "").strip()]
+
+
+def join_instance_identifiers(value: Any) -> str:
+    return ",".join(split_instance_identifiers(value))
 
 
 def build_update_plan(
@@ -855,7 +926,12 @@ def resolve_target_for_resource(
         [
             entry
             for entry in version_map_entries
-            if version_map_entry_matches_resource(entry, current_version, current_engine)
+            if version_map_entry_matches_resource(
+                entry,
+                current_version,
+                current_engine,
+                normalize_version(resource.get("resourceId")),
+            )
         ],
         key=cmp_to_key(compare_version_map_specificity),
     )
@@ -869,6 +945,7 @@ def resolve_target_for_resource(
         "target_engine": normalize_engine(selected.get("target_engine") or current_engine),
         "source_instance_type": normalize_version(selected.get("source_instance_type")),
         "target_instance_type": normalize_version(selected.get("target_instance_type")),
+        "instances_identifier": normalize_version(selected.get("instances_identifier")),
     }
 
 
@@ -876,6 +953,7 @@ def version_map_entry_matches_resource(
     entry: Dict[str, str],
     current_version: str,
     current_engine: str,
+    resource_id: str,
 ) -> bool:
     source_version = normalize_version(entry.get("source_version"))
     target_version = normalize_version(entry.get("target_version"))
@@ -885,6 +963,10 @@ def version_map_entry_matches_resource(
         return False
 
     if source_engine and source_engine != current_engine:
+        return False
+
+    entry_identifiers = split_instance_identifiers(entry.get("instances_identifier", ""))
+    if entry_identifiers and resource_id not in entry_identifiers:
         return False
 
     return version_matches_source(current_version, source_version)
@@ -897,6 +979,11 @@ def version_matches_source(current_version: str, source_version: str) -> bool:
 
 
 def compare_version_map_specificity(left: Dict[str, str], right: Dict[str, str]) -> int:
+    left_identifier_weight = 1 if normalize_version(left.get("instances_identifier")) else 0
+    right_identifier_weight = 1 if normalize_version(right.get("instances_identifier")) else 0
+    if left_identifier_weight != right_identifier_weight:
+        return right_identifier_weight - left_identifier_weight
+
     left_engine_weight = 1 if left.get("source_engine") else 0
     right_engine_weight = 1 if right.get("source_engine") else 0
     if left_engine_weight != right_engine_weight:
@@ -6816,6 +6903,13 @@ def run_upgrade_for_resource_type(
     discovery_progress["finish"]()
 
     unique_discovered_resources = deduplicate_resources(discovery_result["resources"])
+    requested_identifiers = collect_requested_instance_identifiers(version_map)
+    if requested_identifiers:
+        unique_discovered_resources = [
+            resource
+            for resource in unique_discovered_resources
+            if normalize_version(resource.get("resourceId")) in requested_identifiers
+        ]
     updates = build_update_plan(
         unique_discovered_resources,
         version_map,
@@ -6861,6 +6955,15 @@ def run_upgrade_for_resource_type(
             key=cmp_to_key(compare_rows),
         ),
     }
+
+
+def collect_requested_instance_identifiers(
+    version_map_entries: Sequence[Dict[str, str]],
+) -> set:
+    identifiers: set = set()
+    for entry in version_map_entries:
+        identifiers.update(split_instance_identifiers(entry.get("instances_identifier", "")))
+    return identifiers
 
 
 def main() -> None:

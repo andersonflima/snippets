@@ -33,7 +33,7 @@ A pasta `scripts/` mantém dois scripts:
 ### O que o setup faz
 
 - baixa dependências usando rota ZIP do GitHub (`/archive/refs/heads/<branch>.zip`);
-- não usa `curl` nem `wget` (download por helper Python em `venv` automático);
+- não usa `curl` nem `wget` (download por helper Python com biblioteca padrão e retry);
 - instala configuração do `LazyVim/starter`;
 - instala plugins do manifesto em `~/.local/share/nvim/lazy`;
 - instala registry local do Mason em `~/.cache/nvim/mason-registry-main`;

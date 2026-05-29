@@ -7,11 +7,11 @@ import shutil
 import sys
 import zipfile
 import os
+import socket
+import time
 from pathlib import Path
-
-import requests
-from requests.adapters import HTTPAdapter
-from urllib3.util.retry import Retry
+from urllib.error import HTTPError, URLError
+from urllib.request import Request, build_opener
 
 
 def die(message: str) -> None:
@@ -19,21 +19,9 @@ def die(message: str) -> None:
     raise SystemExit(1)
 
 
-def build_session() -> requests.Session:
-    session = requests.Session()
-    retry = Retry(
-        total=4,
-        connect=4,
-        read=4,
-        backoff_factor=1.0,
-        status_forcelist=(429, 500, 502, 503, 504),
-        allowed_methods=frozenset({"GET"}),
-        raise_on_status=False,
-    )
-    adapter = HTTPAdapter(max_retries=retry)
-    session.mount("https://", adapter)
-    session.mount("http://", adapter)
-    return session
+RETRYABLE_HTTP_STATUS = {429, 500, 502, 503, 504}
+MAX_ATTEMPTS = 5
+BACKOFF_SECONDS = 1.0
 
 
 def download_zip(url: str, zip_path: Path, token: str) -> None:
@@ -41,29 +29,32 @@ def download_zip(url: str, zip_path: Path, token: str) -> None:
     if token:
         headers["Authorization"] = f"Bearer {token}"
 
-    session = build_session()
-    try:
-        response = session.get(
-            url,
-            headers=headers,
-            allow_redirects=True,
-            timeout=(15, 180),
-            stream=True,
-        )
-        if response.status_code < 200 or response.status_code >= 300:
-            die(f"falha no download ({response.status_code}) para {url}")
+    opener = build_opener()
+    last_error: Exception | None = None
+    for attempt in range(1, MAX_ATTEMPTS + 1):
+        request = Request(url=url, headers=headers, method="GET")
+        try:
+            with opener.open(request, timeout=180) as response:
+                status = getattr(response, "status", 200)
+                if status < 200 or status >= 300:
+                    raise HTTPError(url, status, f"status {status}", response.headers, None)
+                with zip_path.open("wb") as handle:
+                    shutil.copyfileobj(response, handle, length=1024 * 64)
+                return
+        except HTTPError as error:
+            last_error = error
+            if error.code not in RETRYABLE_HTTP_STATUS or attempt == MAX_ATTEMPTS:
+                break
+        except (URLError, TimeoutError, socket.timeout, ConnectionError) as error:
+            last_error = error
+            if attempt == MAX_ATTEMPTS:
+                break
+        time.sleep(BACKOFF_SECONDS * attempt)
 
-        with zip_path.open("wb") as handle:
-            for chunk in response.iter_content(chunk_size=1024 * 64):
-                if chunk:
-                    handle.write(chunk)
-    except requests.RequestException as error:
-        die(
-            "falha no download por ZIP: "
-            f"{error}. Verifique HTTPS_PROXY/HTTP_PROXY/NO_PROXY e o host em --github-base."
-        )
-    finally:
-        session.close()
+    die(
+        "falha no download por ZIP: "
+        f"{last_error}. Verifique HTTPS_PROXY/HTTP_PROXY/NO_PROXY, certificados e o host em --github-base."
+    )
 
 
 def extract_and_move(zip_path: Path, extract_root: Path, destination: Path, url: str) -> None:
