@@ -487,6 +487,28 @@ return {
 LUA
 }
 
+write_lazy_offline_mode_override() {
+  local plugin_dir="${NVIM_CONFIG_DIR}/lua/plugins"
+  local target_file="${plugin_dir}/lazy_offline_mode.lua"
+  mkdir -p "$plugin_dir"
+  cat > "$target_file" <<'LUA'
+return {
+  {
+    "folke/lazy.nvim",
+    opts = function(_, opts)
+      opts = opts or {}
+      opts.checker = vim.tbl_deep_extend("force", opts.checker or {}, { enabled = false })
+      opts.change_detection = vim.tbl_deep_extend("force", opts.change_detection or {}, {
+        enabled = false,
+        notify = false,
+      })
+      return opts
+    end,
+  },
+}
+LUA
+}
+
 patch_lazy_transport_to_ssh() {
   local lazy_config_file="${NVIM_CONFIG_DIR}/lua/config/lazy.lua"
   [ -f "$lazy_config_file" ] || return 0
@@ -646,6 +668,8 @@ log "configurando Mason para usar registry local"
 write_mason_local_registry_override
 log "configurando PATH interno de wrappers HTTP no Neovim"
 write_http_wrapper_path_override
+log "forcando modo offline do lazy.nvim (sem checker externo)"
+write_lazy_offline_mode_override
 log "forcando transporte SSH no bootstrap/update do lazy.nvim"
 patch_lazy_transport_to_ssh
 
