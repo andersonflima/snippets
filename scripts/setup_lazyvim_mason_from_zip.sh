@@ -170,7 +170,10 @@ def parse_args(argv):
     headers = []
     method = "GET"
     user_agent = ""
+    data = None
     url = None
+    wants_version = False
+    wants_help = False
     i = 1
     while i < len(argv):
         a = argv[i]
@@ -193,7 +196,19 @@ def parse_args(argv):
             show_error = show_error or ("S" in a)
             follow = follow or ("L" in a)
         elif a in ("-o", "--output", "-O"):
-            if a == "-O":
+            if mode == "wget":
+                if a == "-o":
+                    i += 1
+                    if i >= len(argv):
+                        die(f"{mode}: option {a} requires an argument")
+                    # wget: -o define arquivo de log; ignorado no wrapper
+                    _ = argv[i]
+                else:
+                    i += 1
+                    if i >= len(argv):
+                        die(f"{mode}: option {a} requires an argument")
+                    output = argv[i]
+            elif a == "-O":
                 output = "__remote__"
             else:
                 i += 1
@@ -208,6 +223,9 @@ def parse_args(argv):
         elif a.startswith("--tries="):
             tries = int(a.split("=", 1)[1])
         elif a in ("--max-time", "--timeout"):
+            i += 1
+            timeout = int(argv[i])
+        elif a in ("-T",):
             i += 1
             timeout = int(argv[i])
         elif a in ("--connect-timeout",):
@@ -236,6 +254,21 @@ def parse_args(argv):
             user_agent = argv[i]
         elif a.startswith("--user-agent="):
             user_agent = a.split("=", 1)[1]
+        elif a in ("-d", "--data", "--data-raw", "--data-binary", "--post-data"):
+            i += 1
+            if i >= len(argv):
+                die(f"{mode}: option {a} requires an argument")
+            data = argv[i]
+            if method == "GET":
+                method = "POST"
+        elif a.startswith("--data=") or a.startswith("--data-raw=") or a.startswith("--data-binary="):
+            data = a.split("=", 1)[1]
+            if method == "GET":
+                method = "POST"
+        elif a in ("--version", "-V"):
+            wants_version = True
+        elif a in ("--help", "-h"):
+            wants_help = True
         elif a in ("--compressed", "--progress-bar", "-#", "-nv", "--no-verbose"):
             pass
         elif a in ("-w", "--write-out", "--proxy", "--noproxy"):
@@ -249,6 +282,10 @@ def parse_args(argv):
         else:
             url = a
         i += 1
+    if wants_version:
+        return {"meta_only": "version", "mode": mode}
+    if wants_help:
+        return {"meta_only": "help", "mode": mode}
     if not url:
         die(f"{mode}: missing URL")
     if output == "__remote__":
@@ -265,10 +302,18 @@ def parse_args(argv):
         "headers": headers,
         "method": method,
         "user_agent": user_agent,
+        "data": data,
         "url": url,
     }
 
 def do_fetch(cfg):
+    if cfg.get("meta_only") == "version":
+        sys.stdout.write(f"{cfg.get('mode', 'http-fetch')} wrapper 1.0\n")
+        return 0
+    if cfg.get("meta_only") == "help":
+        sys.stdout.write(f"{cfg.get('mode', 'http-fetch')} wrapper (curl/wget compatible subset)\n")
+        return 0
+
     req_headers = {"User-Agent": "nvim-http-wrapper/1.0"}
     if cfg["user_agent"]:
         req_headers["User-Agent"] = cfg["user_agent"]
@@ -282,7 +327,13 @@ def do_fetch(cfg):
     context = ssl._create_unverified_context()
     last = None
     for attempt in range(1, cfg["tries"] + 1):
-        req = Request(cfg["url"], headers=req_headers, method=cfg["method"])
+        payload = None
+        if cfg.get("data"):
+            if cfg["data"] == "@-":
+                payload = sys.stdin.buffer.read()
+            else:
+                payload = cfg["data"].encode("utf-8")
+        req = Request(cfg["url"], headers=req_headers, method=cfg["method"], data=payload)
         try:
             with urlopen(req, timeout=cfg["timeout"], context=context) as resp:
                 status = getattr(resp, "status", 200)
