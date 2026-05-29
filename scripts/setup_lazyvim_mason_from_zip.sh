@@ -84,6 +84,8 @@ STATE_ROOT="${HOME}/.local/share/nvim-zip-bootstrap"
 STATE_FILE="${STATE_ROOT}/state.env"
 VENV_DIR="${STATE_ROOT}/.venv"
 VENV_PYTHON="${VENV_DIR}/bin/python"
+WRAPPER_ROOT="${HOME}/.local/share/nvim/wrappers"
+WRAPPER_BIN_DIR="${WRAPPER_ROOT}/bin"
 TIMESTAMP="$(date +%Y%m%d_%H%M%S)"
 BACKUP_DIR="${STATE_ROOT}/backup_${TIMESTAMP}"
 TMP_DIR="$(mktemp -d)"
@@ -121,6 +123,174 @@ ensure_python_runtime() {
   fi
 }
 
+append_wrapper_path_to_rc() {
+  local rc_file="$1"
+  local marker_begin="# >>> nvim-wrappers PATH >>>"
+  local marker_end="# <<< nvim-wrappers PATH <<<"
+  local export_line="export PATH=\"${WRAPPER_BIN_DIR}:\$PATH\""
+  [ -f "$rc_file" ] || touch "$rc_file"
+  if grep -Fq "$marker_begin" "$rc_file"; then
+    return 0
+  fi
+  {
+    printf '\n%s\n' "$marker_begin"
+    printf '%s\n' "$export_line"
+    printf '%s\n' "$marker_end"
+  } >> "$rc_file"
+}
+
+install_http_wrappers() {
+  mkdir -p "$WRAPPER_BIN_DIR"
+
+  cat > "${WRAPPER_BIN_DIR}/http_fetch.py" <<'PY'
+#!/usr/bin/env python3
+import os
+import ssl
+import sys
+import socket
+from urllib.error import HTTPError, URLError
+from urllib.parse import urlparse
+from urllib.request import Request, urlopen
+
+RETRYABLE = {429, 500, 502, 503, 504}
+
+def die(msg: str, code: int = 2):
+    print(msg, file=sys.stderr)
+    raise SystemExit(code)
+
+def parse_args(argv):
+    mode = os.path.basename(argv[0])
+    follow = False
+    fail = False
+    silent = False
+    show_error = False
+    output = None
+    tries = 5
+    timeout = 180
+    headers = []
+    url = None
+    i = 1
+    while i < len(argv):
+        a = argv[i]
+        if a in ("-L", "--location"):
+            follow = True
+        elif a in ("-f", "--fail"):
+            fail = True
+        elif a in ("-s", "--silent", "-q"):
+            silent = True
+        elif a in ("-S", "--show-error"):
+            show_error = True
+        elif a in ("-o", "--output", "-O"):
+            if a == "-O":
+                output = "__remote__"
+            else:
+                i += 1
+                if i >= len(argv):
+                    die(f"{mode}: option {a} requires an argument")
+                output = argv[i]
+        elif a in ("--retry", "--tries"):
+            i += 1
+            tries = int(argv[i])
+        elif a.startswith("--retry="):
+            tries = int(a.split("=", 1)[1])
+        elif a.startswith("--tries="):
+            tries = int(a.split("=", 1)[1])
+        elif a in ("--max-time", "--timeout"):
+            i += 1
+            timeout = int(argv[i])
+        elif a.startswith("--max-time="):
+            timeout = int(a.split("=", 1)[1])
+        elif a.startswith("--timeout="):
+            timeout = int(a.split("=", 1)[1])
+        elif a in ("-H", "--header"):
+            i += 1
+            headers.append(argv[i])
+        elif a.startswith("--header="):
+            headers.append(a.split("=", 1)[1])
+        elif a.startswith("-"):
+            die(f"{mode}: unsupported option {a}")
+        else:
+            url = a
+        i += 1
+    if not url:
+        die(f"{mode}: missing URL")
+    if output == "__remote__":
+        output = os.path.basename(urlparse(url).path) or "download.bin"
+    return {
+        "mode": mode,
+        "follow": follow,
+        "fail": fail,
+        "silent": silent,
+        "show_error": show_error,
+        "output": output,
+        "tries": max(1, tries),
+        "timeout": max(1, timeout),
+        "headers": headers,
+        "url": url,
+    }
+
+def do_fetch(cfg):
+    req_headers = {"User-Agent": "nvim-http-wrapper/1.0"}
+    token = os.environ.get("GITHUB_TOKEN", "").strip()
+    if token and "github.com" in cfg["url"]:
+        req_headers["Authorization"] = f"Bearer {token}"
+    for header in cfg["headers"]:
+        if ":" in header:
+            k, v = header.split(":", 1)
+            req_headers[k.strip()] = v.strip()
+    context = ssl._create_unverified_context()
+    last = None
+    for attempt in range(1, cfg["tries"] + 1):
+        req = Request(cfg["url"], headers=req_headers, method="GET")
+        try:
+            with urlopen(req, timeout=cfg["timeout"], context=context) as resp:
+                status = getattr(resp, "status", 200)
+                if cfg["fail"] and (status < 200 or status >= 300):
+                    raise HTTPError(cfg["url"], status, f"status {status}", resp.headers, None)
+                data = resp.read()
+                if cfg["output"]:
+                    with open(cfg["output"], "wb") as f:
+                        f.write(data)
+                else:
+                    sys.stdout.buffer.write(data)
+                return 0
+        except HTTPError as e:
+            last = e
+            if e.code not in RETRYABLE:
+                break
+        except (URLError, TimeoutError, socket.timeout, ConnectionError) as e:
+            last = e
+        if attempt == cfg["tries"]:
+            break
+    if not cfg["silent"] or cfg["show_error"]:
+        die(f"{cfg['mode']}: request failed: {last}", 22)
+    return 22
+
+if __name__ == "__main__":
+    cfg = parse_args(sys.argv)
+    raise SystemExit(do_fetch(cfg))
+PY
+  chmod +x "${WRAPPER_BIN_DIR}/http_fetch.py"
+
+  cat > "${WRAPPER_BIN_DIR}/curl" <<'SH'
+#!/usr/bin/env bash
+set -euo pipefail
+exec "$(dirname "$0")/http_fetch.py" "$@"
+SH
+  chmod +x "${WRAPPER_BIN_DIR}/curl"
+
+  cat > "${WRAPPER_BIN_DIR}/wget" <<'SH'
+#!/usr/bin/env bash
+set -euo pipefail
+exec "$(dirname "$0")/http_fetch.py" "$@"
+SH
+  chmod +x "${WRAPPER_BIN_DIR}/wget"
+
+  append_wrapper_path_to_rc "${HOME}/.zshrc"
+  append_wrapper_path_to_rc "${HOME}/.bashrc"
+  append_wrapper_path_to_rc "${HOME}/.profile"
+}
+
 download_and_extract_branch_zip() {
   local repo="$1"
   local branch="$2"
@@ -154,6 +324,21 @@ return {
     end,
   },
 }
+LUA
+}
+
+write_http_wrapper_path_override() {
+  local plugin_dir="${NVIM_CONFIG_DIR}/lua/plugins"
+  local target_file="${plugin_dir}/http_wrappers_path.lua"
+  mkdir -p "$plugin_dir"
+  cat > "$target_file" <<LUA
+local wrapper_bin = "${WRAPPER_BIN_DIR}"
+if vim.fn.isdirectory(wrapper_bin) == 1 then
+  local current_path = vim.env.PATH or ""
+  if not string.find(current_path, wrapper_bin, 1, true) then
+    vim.env.PATH = wrapper_bin .. ":" .. current_path
+  end
+end
 LUA
 }
 
@@ -246,6 +431,7 @@ ensure_absent_or_force "$NVIM_CONFIG_DIR"
 ensure_absent_or_force "${NVIM_DATA_DIR}/lazy"
 ensure_absent_or_force "${NVIM_CACHE_DIR}/mason-registry-main"
 ensure_python_runtime
+install_http_wrappers
 
 if [ "$FORCE" = "1" ]; then
   backup_if_exists "$NVIM_CONFIG_DIR" "nvim-config"
@@ -261,6 +447,8 @@ download_and_extract_branch_zip "mason-org/mason-registry" "main" "${NVIM_CACHE_
 
 log "configurando Mason para usar registry local"
 write_mason_local_registry_override
+log "configurando PATH interno de wrappers HTTP no Neovim"
+write_http_wrapper_path_override
 
 if [ "$SKIP_PLUGINS" != "1" ]; then
   log "instalando plugins do LazyVim por ZIP"

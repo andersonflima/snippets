@@ -86,6 +86,8 @@ cleanup_legacy_wrappers() {
   local wrapper_bin_dir="${HOME}/.local/share/nvim/wrappers/bin"
   rm_path "${wrapper_bin_dir}/git"
   rm_path "${wrapper_bin_dir}/curl"
+  rm_path "${wrapper_bin_dir}/wget"
+  rm_path "${wrapper_bin_dir}/http_fetch.py"
   if [ -d "$wrapper_bin_dir" ] && [ -z "$(find "$wrapper_bin_dir" -mindepth 1 -print -quit 2>/dev/null)" ]; then
     rmdir "$wrapper_bin_dir" 2>/dev/null || true
     log "removido diretorio vazio: $wrapper_bin_dir"
@@ -105,6 +107,7 @@ cleanup_legacy_mason_state() {
 rm_path "$NVIM_CONFIG_DIR"
 rm_path "${NVIM_DATA_DIR}/lazy"
 rm_path "${NVIM_CACHE_DIR}/mason-registry-main"
+rm_path "${NVIM_CONFIG_DIR}/lua/plugins/http_wrappers_path.lua"
 cleanup_legacy_mason_state
 cleanup_legacy_wrappers
 

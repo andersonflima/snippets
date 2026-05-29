@@ -9,9 +9,10 @@ import zipfile
 import os
 import socket
 import time
+import ssl
 from pathlib import Path
 from urllib.error import HTTPError, URLError
-from urllib.request import Request, build_opener
+from urllib.request import Request, urlopen
 
 
 def die(message: str) -> None:
@@ -29,12 +30,12 @@ def download_zip(url: str, zip_path: Path, token: str) -> None:
     if token:
         headers["Authorization"] = f"Bearer {token}"
 
-    opener = build_opener()
+    ssl_context = ssl._create_unverified_context()
     last_error: Exception | None = None
     for attempt in range(1, MAX_ATTEMPTS + 1):
         request = Request(url=url, headers=headers, method="GET")
         try:
-            with opener.open(request, timeout=180) as response:
+            with urlopen(request, timeout=180, context=ssl_context) as response:
                 status = getattr(response, "status", 200)
                 if status < 200 or status >= 300:
                     raise HTTPError(url, status, f"status {status}", response.headers, None)
