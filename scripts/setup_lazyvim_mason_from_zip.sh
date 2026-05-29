@@ -693,17 +693,49 @@ write_lazy_offline_mode_override() {
   local plugin_dir="${NVIM_CONFIG_DIR}/lua/plugins"
   local target_file="${plugin_dir}/lazy_offline_mode.lua"
   mkdir -p "$plugin_dir"
-  cat > "$target_file" <<'LUA'
+  cat > "$target_file" <<LUA
 return {
   {
     "folke/lazy.nvim",
     opts = function(_, opts)
       opts = opts or {}
+      local wrapper_bin = "${WRAPPER_BIN_DIR}"
+      local function run_zip_action(action)
+        local binary = wrapper_bin .. "/lazy-" .. action
+        if vim.fn.executable(binary) ~= 1 then
+          vim.notify("Comando nao encontrado: " .. binary, vim.log.levels.ERROR)
+          return
+        end
+        require("lazy.util").float_term({ binary }, {
+          cwd = vim.fn.stdpath("data") .. "/lazy",
+        })
+      end
+
       opts.checker = vim.tbl_deep_extend("force", opts.checker or {}, { enabled = false })
       opts.change_detection = vim.tbl_deep_extend("force", opts.change_detection or {}, {
         enabled = false,
         notify = false,
       })
+      opts.ui = opts.ui or {}
+      opts.ui.custom_keys = opts.ui.custom_keys or {}
+      opts.ui.custom_keys["U"] = {
+        function()
+          run_zip_action("update")
+        end,
+        desc = "ZIP update (offline)",
+      }
+      opts.ui.custom_keys["S"] = {
+        function()
+          run_zip_action("update")
+        end,
+        desc = "ZIP sync (offline)",
+      }
+      opts.ui.custom_keys["C"] = {
+        function()
+          run_zip_action("check")
+        end,
+        desc = "ZIP check (offline)",
+      }
       return opts
     end,
   },

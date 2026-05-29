@@ -59,6 +59,11 @@ lazy-check
 lazy-update
 ```
 
+No popup do `:Lazy`, quando `--manage-config` for usado, as teclas ficam remapeadas para ZIP:
+- `U` -> `lazy-update`
+- `S` -> `lazy-update` (sync offline)
+- `C` -> `lazy-check`
+
 ## Como usar
 
 1. Entre no repositório.
