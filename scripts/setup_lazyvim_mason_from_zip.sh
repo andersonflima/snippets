@@ -711,6 +711,19 @@ return {
         })
       end
 
+      local ok_cmd, lazy_commands = pcall(require, "lazy.view.commands")
+      if ok_cmd and lazy_commands and lazy_commands.commands then
+        lazy_commands.commands.update = function()
+          run_zip_action("update")
+        end
+        lazy_commands.commands.sync = function()
+          run_zip_action("update")
+        end
+        lazy_commands.commands.check = function()
+          run_zip_action("check")
+        end
+      end
+
       opts.checker = vim.tbl_deep_extend("force", opts.checker or {}, { enabled = false })
       opts.change_detection = vim.tbl_deep_extend("force", opts.change_detection or {}, {
         enabled = false,
