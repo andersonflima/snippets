@@ -105,6 +105,8 @@ Notas:
 - No formato recomendado, a chave e o engine (`redis`, `valkey`, `mysql`, `postgres`, `docdb`, `neptune`, `redshift`, `kubernetes`, `opensearch`, `nodejs`, etc.).
 - `sourceVersion` define o recorte da versao de origem.
 - `version` define a versao alvo.
+- `version` e `sourceVersion` sao opcionais quando a regra for somente de `instanceType`.
+- `instanceType` e `sourceInstanceType` sao opcionais quando a regra for somente de versao.
 - `sourceEngine` e opcional; quando informado, tem prioridade sobre a chave do map.
 - O tipo de instancia alvo pode ser informado via `instanceType`.
 - O tipo de instancia atual pode ser filtrado via `sourceInstanceType`.
@@ -615,7 +617,8 @@ def load_version_map(args: argparse.Namespace) -> Tuple[Dict[str, str], ...]:
                 target.get("source_version") or source.get("version")
             )
             target_version = normalize_version(target.get("version"))
-            if not source_version or not target_version:
+            target_instance_type = normalize_version(target.get("instance_type"))
+            if not target_version and not target_instance_type:
                 continue
 
             entries.append(
@@ -624,7 +627,7 @@ def load_version_map(args: argparse.Namespace) -> Tuple[Dict[str, str], ...]:
                     "source_version": source_version,
                     "target_engine": target.get("engine", ""),
                     "target_version": target_version,
-                    "target_instance_type": target.get("instance_type", ""),
+                    "target_instance_type": target_instance_type,
                     "source_instance_type": target.get("source_instance_type", ""),
                     "instances_identifier": target.get("instances_identifier", ""),
                 }
@@ -816,7 +819,8 @@ def build_resource_update_plan_entry(
 
     current_version = normalize_version(resource.get("currentVersion"))
     current_engine = normalize_engine(resource.get("engine"))
-    target_version = normalize_version(target.get("target_version"))
+    requested_target_version = normalize_version(target.get("target_version"))
+    target_version = requested_target_version or current_version
     target_engine = normalize_engine(target.get("target_engine") or current_engine)
     current_instance_type = normalize_version(resource.get("instanceType"))
     target_instance_type = normalize_version(target.get("target_instance_type"))
@@ -919,8 +923,6 @@ def resolve_target_for_resource(
 ) -> Optional[Dict[str, str]]:
     current_version = normalize_version(resource.get("currentVersion"))
     current_engine = normalize_engine(resource.get("engine"))
-    if not current_version:
-        return None
 
     matching_entries = sorted(
         [
@@ -958,8 +960,9 @@ def version_map_entry_matches_resource(
     source_version = normalize_version(entry.get("source_version"))
     target_version = normalize_version(entry.get("target_version"))
     source_engine = normalize_engine(entry.get("source_engine"))
+    target_instance_type = normalize_version(entry.get("target_instance_type"))
 
-    if not source_version or not target_version:
+    if not target_version and not target_instance_type:
         return False
 
     if source_engine and source_engine != current_engine:
@@ -968,6 +971,9 @@ def version_map_entry_matches_resource(
     entry_identifiers = split_instance_identifiers(entry.get("instances_identifier", ""))
     if entry_identifiers and resource_id not in entry_identifiers:
         return False
+
+    if not source_version:
+        return True
 
     return version_matches_source(current_version, source_version)
 
@@ -988,6 +994,11 @@ def compare_version_map_specificity(left: Dict[str, str], right: Dict[str, str])
     right_engine_weight = 1 if right.get("source_engine") else 0
     if left_engine_weight != right_engine_weight:
         return right_engine_weight - left_engine_weight
+
+    left_source_instance_type_weight = 1 if normalize_version(left.get("source_instance_type")) else 0
+    right_source_instance_type_weight = 1 if normalize_version(right.get("source_instance_type")) else 0
+    if left_source_instance_type_weight != right_source_instance_type_weight:
+        return right_source_instance_type_weight - left_source_instance_type_weight
 
     left_exact_weight = 1 if "." in normalize_version(left.get("source_version")) else 0
     right_exact_weight = 1 if "." in normalize_version(right.get("source_version")) else 0
