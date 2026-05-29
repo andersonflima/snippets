@@ -484,6 +484,37 @@ return {
     end,
   end
 }
+
+patch_lazy_transport_to_ssh() {
+  local lazy_config_file="${NVIM_CONFIG_DIR}/lua/config/lazy.lua"
+  [ -f "$lazy_config_file" ] || return 0
+
+  # Ajusta bootstrap manual de lazy.nvim para SSH.
+  if grep -Fq "https://github.com/folke/lazy.nvim.git" "$lazy_config_file"; then
+    sed -i '' \
+      's#https://github.com/folke/lazy.nvim.git#git@github.com:folke/lazy.nvim.git#g' \
+      "$lazy_config_file"
+  fi
+
+  # Garante url_format SSH no setup do lazy.nvim.
+  if ! grep -Fq 'url_format = "git@github.com:%s.git"' "$lazy_config_file"; then
+    local tmp_file
+    tmp_file="$(mktemp)"
+    awk '
+      BEGIN { inserted=0 }
+      {
+        print
+        if (!inserted && $0 ~ /require\("lazy"\)\.setup\(\{/) {
+          print "\tgit = {"
+          print "\t\turl_format = \"git@github.com:%s.git\","
+          print "\t},"
+          inserted=1
+        }
+      }
+    ' "$lazy_config_file" > "$tmp_file"
+    mv "$tmp_file" "$lazy_config_file"
+  fi
+}
 LUA
 }
 
@@ -594,6 +625,8 @@ log "configurando Mason para usar registry local"
 write_mason_local_registry_override
 log "configurando PATH interno de wrappers HTTP no Neovim"
 write_http_wrapper_path_override
+log "forcando transporte SSH no bootstrap/update do lazy.nvim"
+patch_lazy_transport_to_ssh
 
 if [ "$SKIP_PLUGINS" != "1" ]; then
   log "instalando plugins do LazyVim por ZIP"
