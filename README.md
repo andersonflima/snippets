@@ -40,6 +40,7 @@ A pasta `scripts/` mantém dois scripts:
 - instala plugins do manifesto em `~/.local/share/nvim/lazy`;
 - instala registry local do Mason em `~/.cache/nvim/mason-registry-main`;
 - com `--manage-config`, também altera `~/.config/nvim` (starter/overrides/patches) para forçar modo offline e ajustes de transporte.
+- instala comandos `lazy-check` e `lazy-update` (ZIP-only) para fluxo de verificação/atualização sem `git fetch/clone`.
 
 ### Execução
 
@@ -50,6 +51,13 @@ bash scripts/undo_lazyvim_mason_from_zip.sh
 ```
 
 Depois do setup, abra um novo terminal (ou rode `source ~/.zshrc`) para refletir o `PATH` também no shell.
+
+Para verificar e atualizar plugins sem `:Lazy check/update` (sem git externo):
+
+```bash
+lazy-check
+lazy-update
+```
 
 ## Como usar
 

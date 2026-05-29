@@ -89,6 +89,9 @@ cleanup_legacy_wrappers() {
   rm_path "${wrapper_bin_dir}/curl"
   rm_path "${wrapper_bin_dir}/wget"
   rm_path "${wrapper_bin_dir}/http_fetch.py"
+  rm_path "${wrapper_bin_dir}/lazy_zip_sync.py"
+  rm_path "${wrapper_bin_dir}/lazy-check"
+  rm_path "${wrapper_bin_dir}/lazy-update"
   if [ -d "$wrapper_bin_dir" ] && [ -z "$(find "$wrapper_bin_dir" -mindepth 1 -print -quit 2>/dev/null)" ]; then
     rmdir "$wrapper_bin_dir" 2>/dev/null || true
     log "removido diretorio vazio: $wrapper_bin_dir"

@@ -430,6 +430,202 @@ exec "$real_git" "${args[@]}"
 SH
   chmod +x "${WRAPPER_BIN_DIR}/git"
 
+  cat > "${WRAPPER_BIN_DIR}/lazy_zip_sync.py" <<'PY'
+#!/usr/bin/env python3
+from __future__ import annotations
+
+import argparse
+import json
+import os
+import shutil
+import ssl
+import sys
+import tempfile
+import time
+import zipfile
+from pathlib import Path
+from urllib.error import HTTPError, URLError
+from urllib.request import Request, urlopen
+
+RETRYABLE_HTTP_STATUS = {429, 500, 502, 503, 504}
+MAX_ATTEMPTS = 5
+BACKOFF_SECONDS = 1.0
+
+
+def die(message: str) -> None:
+    print(f"[lazy-zip-sync] erro: {message}", file=sys.stderr)
+    raise SystemExit(1)
+
+
+def fetch_json(url: str, token: str) -> dict:
+    headers = {"User-Agent": "lazy-zip-sync/1.0", "Accept": "application/vnd.github+json"}
+    if token:
+        headers["Authorization"] = f"Bearer {token}"
+    request = Request(url=url, headers=headers, method="GET")
+    context = ssl._create_unverified_context()
+    last_error: Exception | None = None
+    for attempt in range(1, MAX_ATTEMPTS + 1):
+        try:
+            with urlopen(request, timeout=60, context=context) as response:
+                return json.loads(response.read().decode("utf-8"))
+        except HTTPError as error:
+            last_error = error
+            if error.code not in RETRYABLE_HTTP_STATUS or attempt == MAX_ATTEMPTS:
+                break
+        except (URLError, TimeoutError, ConnectionError) as error:
+            last_error = error
+            if attempt == MAX_ATTEMPTS:
+                break
+        time.sleep(BACKOFF_SECONDS * attempt)
+    raise RuntimeError(f"falha ao buscar JSON em {url}: {last_error}")
+
+
+def download_zip(url: str, zip_path: Path, token: str) -> None:
+    headers = {"User-Agent": "lazy-zip-sync/1.0"}
+    if token:
+        headers["Authorization"] = f"Bearer {token}"
+    request = Request(url=url, headers=headers, method="GET")
+    context = ssl._create_unverified_context()
+    last_error: Exception | None = None
+    for attempt in range(1, MAX_ATTEMPTS + 1):
+        try:
+            with urlopen(request, timeout=180, context=context) as response:
+                status = getattr(response, "status", 200)
+                if status < 200 or status >= 300:
+                    raise HTTPError(url, status, f"status {status}", response.headers, None)
+                with zip_path.open("wb") as handle:
+                    shutil.copyfileobj(response, handle, length=1024 * 64)
+                return
+        except HTTPError as error:
+            last_error = error
+            if error.code not in RETRYABLE_HTTP_STATUS or attempt == MAX_ATTEMPTS:
+                break
+        except (URLError, TimeoutError, ConnectionError) as error:
+            last_error = error
+            if attempt == MAX_ATTEMPTS:
+                break
+        time.sleep(BACKOFF_SECONDS * attempt)
+    raise RuntimeError(f"falha no download ZIP {url}: {last_error}")
+
+
+def extract_single_dir(zip_path: Path, destination: Path) -> None:
+    with tempfile.TemporaryDirectory(prefix="lazy-zip-sync-") as td:
+        extract_root = Path(td) / "extract"
+        extract_root.mkdir(parents=True, exist_ok=True)
+        with zipfile.ZipFile(zip_path, "r") as zipped:
+            zipped.extractall(extract_root)
+        dirs = [entry for entry in extract_root.iterdir() if entry.is_dir()]
+        if len(dirs) != 1:
+            raise RuntimeError(f"arquivo zip com formato inesperado: {zip_path}")
+        src = dirs[0]
+        tmp_dest = Path(td) / "new_plugin"
+        shutil.move(str(src), str(tmp_dest))
+        if destination.exists() or destination.is_symlink():
+            if destination.is_dir() and not destination.is_symlink():
+                shutil.rmtree(destination)
+            else:
+                destination.unlink()
+        destination.parent.mkdir(parents=True, exist_ok=True)
+        shutil.move(str(tmp_dest), str(destination))
+
+
+def parse_zip_source(path: Path) -> tuple[str, str]:
+    source_file = path / ".zip-source"
+    if not source_file.exists():
+        raise RuntimeError("arquivo .zip-source ausente")
+    content = source_file.read_text(encoding="utf-8").strip()
+    if "@" not in content:
+        raise RuntimeError(f".zip-source invalido: {content}")
+    repo, branch = content.split("@", 1)
+    repo = repo.strip()
+    branch = branch.strip()
+    if not repo or not branch:
+        raise RuntimeError(f".zip-source invalido: {content}")
+    return repo, branch
+
+
+def get_latest_branch_sha(repo: str, branch: str, token: str) -> str:
+    api_url = f"https://api.github.com/repos/{repo}/commits/{branch}"
+    payload = fetch_json(api_url, token)
+    sha = str(payload.get("sha", "")).strip()
+    if not sha:
+        raise RuntimeError(f"sha ausente para {repo}@{branch}")
+    return sha
+
+
+def sync_plugin(path: Path, action: str, token: str) -> tuple[bool, str]:
+    repo, branch = parse_zip_source(path)
+    latest_sha = get_latest_branch_sha(repo, branch, token)
+    sha_file = path / ".zip-sha"
+    current_sha = sha_file.read_text(encoding="utf-8").strip() if sha_file.exists() else ""
+
+    if current_sha == latest_sha:
+        return False, f"{path.name}: sem alteracoes ({latest_sha[:10]})"
+
+    if action == "check":
+        return True, f"{path.name}: update disponivel {current_sha[:10] or 'none'} -> {latest_sha[:10]}"
+
+    zip_url = f"https://github.com/{repo}/archive/refs/heads/{branch}.zip"
+    with tempfile.TemporaryDirectory(prefix="lazy-zip-sync-") as td:
+        zip_path = Path(td) / f"{path.name}.zip"
+        download_zip(zip_url, zip_path, token)
+        extract_single_dir(zip_path, path)
+    (path / ".zip-source").write_text(f"{repo}@{branch}\n", encoding="utf-8")
+    sha_file.write_text(f"{latest_sha}\n", encoding="utf-8")
+    return True, f"{path.name}: atualizado para {latest_sha[:10]}"
+
+
+def main() -> None:
+    parser = argparse.ArgumentParser(description="Lazy plugin sync over GitHub ZIP archives")
+    parser.add_argument("action", choices=["check", "update"], help="check updates or apply updates")
+    parser.add_argument(
+        "--lazy-root",
+        default=str(Path(os.environ.get("XDG_DATA_HOME", str(Path.home() / ".local" / "share"))) / "nvim" / "lazy"),
+        help="lazy plugins root directory",
+    )
+    args = parser.parse_args()
+
+    lazy_root = Path(args.lazy_root)
+    if not lazy_root.exists():
+        die(f"diretorio nao encontrado: {lazy_root}")
+
+    token = os.environ.get("GITHUB_TOKEN", "").strip()
+    plugin_dirs = sorted([p for p in lazy_root.iterdir() if p.is_dir() and (p / ".zip-source").exists()])
+    if not plugin_dirs:
+        die(f"nenhum plugin com .zip-source encontrado em {lazy_root}")
+
+    changed = 0
+    for plugin_dir in plugin_dirs:
+        try:
+            did_change, msg = sync_plugin(plugin_dir, args.action, token)
+            print(msg)
+            if did_change:
+                changed += 1
+        except Exception as error:  # noqa: BLE001
+            print(f"{plugin_dir.name}: erro: {error}", file=sys.stderr)
+
+    print(f"[lazy-zip-sync] acao={args.action} alteracoes={changed} total={len(plugin_dirs)}")
+
+
+if __name__ == "__main__":
+    main()
+PY
+  chmod +x "${WRAPPER_BIN_DIR}/lazy_zip_sync.py"
+
+  cat > "${WRAPPER_BIN_DIR}/lazy-check" <<'SH'
+#!/usr/bin/env bash
+set -euo pipefail
+exec "$(dirname "$0")/lazy_zip_sync.py" check "$@"
+SH
+  chmod +x "${WRAPPER_BIN_DIR}/lazy-check"
+
+  cat > "${WRAPPER_BIN_DIR}/lazy-update" <<'SH'
+#!/usr/bin/env bash
+set -euo pipefail
+exec "$(dirname "$0")/lazy_zip_sync.py" update "$@"
+SH
+  chmod +x "${WRAPPER_BIN_DIR}/lazy-update"
+
   append_wrapper_path_to_rc "${HOME}/.zshrc"
   append_wrapper_path_to_rc "${HOME}/.bashrc"
   append_wrapper_path_to_rc "${HOME}/.profile"
