@@ -157,8 +157,93 @@ append_wrapper_path_to_rc() {
   } >> "$rc_file"
 }
 
+emit_lazy_plugin_manifest() {
+  cat <<'MANIFEST'
+LazyVim|LazyVim/LazyVim|main
+SchemaStore.nvim|b0o/SchemaStore.nvim|main
+LuaSnip|L3MON4D3/LuaSnip|master
+blink.cmp|saghen/blink.cmp|main
+bufferline.nvim|akinsho/bufferline.nvim|main
+catppuccin|catppuccin/nvim|main
+cmp-buffer|hrsh7th/cmp-buffer|main
+cmp-cmdline|hrsh7th/cmp-cmdline|main
+cmp-nvim-lsp|hrsh7th/cmp-nvim-lsp|main
+cmp-path|hrsh7th/cmp-path|main
+codex.nvim|kkrampis/codex.nvim|main
+conform.nvim|stevearc/conform.nvim|master
+copilot.lua|zbirenbaum/copilot.lua|master
+crates.nvim|Saecki/crates.nvim|main
+dial.nvim|monaqa/dial.nvim|master
+friendly-snippets|rafamadriz/friendly-snippets|main
+flash.nvim|folke/flash.nvim|main
+fzf-lua|ibhagwan/fzf-lua|main
+git.nvim|dinhhuy258/git.nvim|main
+gitsigns.nvim|lewis6991/gitsigns.nvim|main
+grug-far.nvim|MagicDuck/grug-far.nvim|main
+inc-rename.nvim|smjonas/inc-rename.nvim|main
+incline.nvim|b0o/incline.nvim|main
+lazy.nvim|folke/lazy.nvim|main
+lazydev.nvim|folke/lazydev.nvim|main
+lspsaga.nvim|glepnir/lspsaga.nvim|main
+lualine.nvim|nvim-lualine/lualine.nvim|master
+luarocks.nvim|vhyrro/luarocks.nvim|main
+markdown-preview.nvim|iamcco/markdown-preview.nvim|master
+mason-lspconfig.nvim|mason-org/mason-lspconfig.nvim|main
+mason-nvim-dap.nvim|jay-babu/mason-nvim-dap.nvim|main
+mason.nvim|mason-org/mason.nvim|main
+mini.ai|nvim-mini/mini.ai|main
+mini.animate|nvim-mini/mini.animate|main
+mini.bracketed|nvim-mini/mini.bracketed|main
+mini.hipatterns|nvim-mini/mini.hipatterns|main
+mini.icons|nvim-mini/mini.icons|main
+mini.pairs|nvim-mini/mini.pairs|main
+neogen|danymat/neogen|main
+neo-tree.nvim|nvim-neo-tree/neo-tree.nvim|main
+neon-theme-neovim|andersonflima/neon-theme-neovim|main
+noice.nvim|folke/noice.nvim|main
+nui.nvim|MunifTanjim/nui.nvim|main
+nvim-cmp|hrsh7th/nvim-cmp|main
+nvim-dap|mfussenegger/nvim-dap|master
+nvim-dap-go|leoluz/nvim-dap-go|main
+nvim-dap-python|mfussenegger/nvim-dap-python|master
+nvim-dap-ui|rcarriga/nvim-dap-ui|master
+nvim-dap-virtual-text|theHamsta/nvim-dap-virtual-text|master
+nvim-jdtls|mfussenegger/nvim-jdtls|master
+nvim-lint|mfussenegger/nvim-lint|master
+nvim-lspconfig|neovim/nvim-lspconfig|master
+nvim-nio|nvim-neotest/nvim-nio|master
+nvim-notify|rcarriga/nvim-notify|master
+nvim-treesitter|nvim-treesitter/nvim-treesitter|main
+nvim-treesitter-textobjects|nvim-treesitter/nvim-treesitter-textobjects|main
+nvim-ts-autotag|windwp/nvim-ts-autotag|main
+nvim-web-devicons|nvim-tree/nvim-web-devicons|master
+persistence.nvim|folke/persistence.nvim|main
+pingu_ai_codding_pair_programming|andersonflima/pingu_ai_codding_pair_programming|main
+playground|nvim-treesitter/playground|master
+plenary.nvim|nvim-lua/plenary.nvim|master
+render-markdown.nvim|MeanderingProgrammer/render-markdown.nvim|main
+rest.nvim|rest-nvim/rest.nvim|main
+rustaceanvim|mrcjkb/rustaceanvim|main
+snacks.nvim|folke/snacks.nvim|main
+solarized-osaka.nvim|craftzdog/solarized-osaka.nvim|main
+symbols-outline.nvim|simrat39/symbols-outline.nvim|master
+telescope-file-browser.nvim|nvim-telescope/telescope-file-browser.nvim|master
+telescope-fzf-native.nvim|nvim-telescope/telescope-fzf-native.nvim|main
+telescope.nvim|nvim-telescope/telescope.nvim|master
+todo-comments.nvim|folke/todo-comments.nvim|main
+toggleterm.nvim|akinsho/toggleterm.nvim|main
+tokyonight.nvim|folke/tokyonight.nvim|main
+trouble.nvim|folke/trouble.nvim|main
+ts-comments.nvim|folke/ts-comments.nvim|main
+venv-selector.nvim|linux-cultist/venv-selector.nvim|main
+which-key.nvim|folke/which-key.nvim|main
+zen-mode.nvim|folke/zen-mode.nvim|main
+MANIFEST
+}
+
 install_http_wrappers() {
   mkdir -p "$WRAPPER_BIN_DIR"
+  emit_lazy_plugin_manifest > "${WRAPPER_ROOT}/lazy-plugins.manifest"
 
   cat > "${WRAPPER_BIN_DIR}/http_fetch.py" <<'PY'
 #!/usr/bin/env python3
@@ -517,6 +602,29 @@ def extract_single_dir(zip_path: Path, destination: Path) -> None:
         shutil.move(str(tmp_dest), str(destination))
 
 
+def parse_manifest_line(line: str) -> tuple[str, str, str] | None:
+    stripped = line.strip()
+    if not stripped or stripped.startswith("#"):
+        return None
+    parts = [part.strip() for part in stripped.split("|")]
+    if len(parts) != 3 or not all(parts):
+        raise RuntimeError(f"linha de manifesto invalida: {line.rstrip()}")
+    return parts[0], parts[1], parts[2]
+
+
+def read_manifest(manifest_path: Path) -> dict[str, tuple[str, str]]:
+    entries: dict[str, tuple[str, str]] = {}
+    if not manifest_path.exists():
+        return entries
+    for line in manifest_path.read_text(encoding="utf-8").splitlines():
+        parsed = parse_manifest_line(line)
+        if parsed is None:
+            continue
+        name, repo, branch = parsed
+        entries[name] = (repo, branch)
+    return entries
+
+
 def parse_zip_source(path: Path) -> tuple[str, str]:
     source_file = path / ".zip-source"
     if not source_file.exists():
@@ -532,11 +640,20 @@ def parse_zip_source(path: Path) -> tuple[str, str]:
     return repo, branch
 
 
-def sync_plugin(path: Path, action: str, token: str) -> tuple[bool, str]:
-    repo, branch = parse_zip_source(path)
+def sync_plugin(
+    *,
+    lazy_root: Path,
+    name: str,
+    repo: str,
+    branch: str,
+    action: str,
+    token: str,
+) -> tuple[bool, str]:
+    path = lazy_root / name
     zip_source_file = path / ".zip-source"
     if action == "check":
-        return False, f"{path.name}: check por ZIP nao determina delta remoto (modo offline)"
+        status = "instalado" if path.exists() else "ausente"
+        return False, f"{name}: {status}; check remoto desabilitado no modo ZIP-only"
 
     zip_url = f"https://github.com/{repo}/archive/refs/heads/{branch}.zip"
     with tempfile.TemporaryDirectory(prefix="lazy-zip-sync-") as td:
@@ -544,16 +661,21 @@ def sync_plugin(path: Path, action: str, token: str) -> tuple[bool, str]:
         download_zip(zip_url, zip_path, token)
         extract_single_dir(zip_path, path)
     zip_source_file.write_text(f"{repo}@{branch}\n", encoding="utf-8")
-    return True, f"{path.name}: atualizado por ZIP"
+    return True, f"{name}: instalado/atualizado por ZIP"
 
 
 def main() -> None:
     parser = argparse.ArgumentParser(description="Lazy plugin sync over GitHub ZIP archives")
-    parser.add_argument("action", choices=["check", "update"], help="check updates or apply updates")
+    parser.add_argument("action", choices=["check", "install", "update"], help="check, install or update plugins")
     parser.add_argument(
         "--lazy-root",
         default=str(Path(os.environ.get("XDG_DATA_HOME", str(Path.home() / ".local" / "share"))) / "nvim" / "lazy"),
         help="lazy plugins root directory",
+    )
+    parser.add_argument(
+        "--manifest",
+        default=str(Path(__file__).resolve().parents[1] / "lazy-plugins.manifest"),
+        help="ZIP plugin manifest path",
     )
     args = parser.parse_args()
 
@@ -562,21 +684,32 @@ def main() -> None:
         die(f"diretorio nao encontrado: {lazy_root}")
 
     token = os.environ.get("GITHUB_TOKEN", "").strip()
-    plugin_dirs = sorted([p for p in lazy_root.iterdir() if p.is_dir() and (p / ".zip-source").exists()])
-    if not plugin_dirs:
-        die(f"nenhum plugin com .zip-source encontrado em {lazy_root}")
+    entries = read_manifest(Path(args.manifest))
+    for plugin_dir in sorted([p for p in lazy_root.iterdir() if p.is_dir() and (p / ".zip-source").exists()]):
+        if plugin_dir.name not in entries:
+            repo, branch = parse_zip_source(plugin_dir)
+            entries[plugin_dir.name] = (repo, branch)
+    if not entries:
+        die(f"nenhum plugin encontrado em manifesto ou .zip-source: {lazy_root}")
 
     changed = 0
-    for plugin_dir in plugin_dirs:
+    for name, (repo, branch) in sorted(entries.items()):
         try:
-            did_change, msg = sync_plugin(plugin_dir, args.action, token)
+            did_change, msg = sync_plugin(
+                lazy_root=lazy_root,
+                name=name,
+                repo=repo,
+                branch=branch,
+                action=args.action,
+                token=token,
+            )
             print(msg)
             if did_change:
                 changed += 1
         except Exception as error:  # noqa: BLE001
-            print(f"{plugin_dir.name}: erro: {error}", file=sys.stderr)
+            print(f"{name}: erro: {error}", file=sys.stderr)
 
-    print(f"[lazy-zip-sync] acao={args.action} alteracoes={changed} total={len(plugin_dirs)}")
+    print(f"[lazy-zip-sync] acao={args.action} alteracoes={changed} total={len(entries)}")
 
 
 if __name__ == "__main__":
@@ -590,6 +723,13 @@ set -euo pipefail
 exec "$(dirname "$0")/lazy_zip_sync.py" check "$@"
 SH
   chmod +x "${WRAPPER_BIN_DIR}/lazy-check"
+
+  cat > "${WRAPPER_BIN_DIR}/lazy-install" <<'SH'
+#!/usr/bin/env bash
+set -euo pipefail
+exec "$(dirname "$0")/lazy_zip_sync.py" install "$@"
+SH
+  chmod +x "${WRAPPER_BIN_DIR}/lazy-install"
 
   cat > "${WRAPPER_BIN_DIR}/lazy-update" <<'SH'
 #!/usr/bin/env bash
@@ -685,6 +825,10 @@ return {
       vim.api.nvim_create_user_command("Lazy", function(cmd)
         local commands = require("lazy.view.commands")
         local prefix, args = commands.parse(cmd.args)
+        if prefix == "install" then
+          run_zip_action("install")
+          return
+        end
         if prefix == "update" or prefix == "sync" then
           run_zip_action("update")
           return
@@ -754,6 +898,9 @@ return {
 
       local ok_cmd, lazy_commands = pcall(require, "lazy.view.commands")
       if ok_cmd and lazy_commands and lazy_commands.commands then
+        lazy_commands.commands.install = function()
+          run_zip_action("install")
+        end
         lazy_commands.commands.update = function()
           run_zip_action("update")
         end
@@ -772,6 +919,12 @@ return {
       })
       opts.ui = opts.ui or {}
       opts.ui.custom_keys = opts.ui.custom_keys or {}
+      opts.ui.custom_keys["I"] = {
+        function()
+          run_zip_action("install")
+        end,
+        desc = "ZIP install (offline)",
+      }
       opts.ui.custom_keys["U"] = {
         function()
           run_zip_action("update")
@@ -837,6 +990,9 @@ if not ok or not commands then
 end
 
 if commands.commands then
+  commands.commands.install = function()
+    run_zip_action("install")
+  end
   commands.commands.update = function()
     run_zip_action("update")
   end
@@ -850,6 +1006,10 @@ end
 
 vim.api.nvim_create_user_command("Lazy", function(cmd)
   local prefix, args = commands.parse(cmd.args)
+  if prefix == "install" then
+    run_zip_action("install")
+    return
+  end
   if prefix == "update" or prefix == "sync" then
     run_zip_action("update")
     return
@@ -951,78 +1111,7 @@ install_plugins_from_manifest() {
     log "plugin: $plugin_name (${repo}@${branch})"
     download_and_extract_branch_zip "$repo" "$branch" "${lazy_dir}/${plugin_name}"
     printf '%s\n' "${repo}@${branch}" > "${lazy_dir}/${plugin_name}/.zip-source"
-  done <<'MANIFEST'
-LazyVim|LazyVim/LazyVim|main
-SchemaStore.nvim|b0o/SchemaStore.nvim|main
-blink.cmp|saghen/blink.cmp|main
-bufferline.nvim|akinsho/bufferline.nvim|main
-catppuccin|catppuccin/nvim|main
-codex.nvim|kkrampis/codex.nvim|main
-conform.nvim|stevearc/conform.nvim|master
-copilot.lua|zbirenbaum/copilot.lua|master
-crates.nvim|Saecki/crates.nvim|main
-dial.nvim|monaqa/dial.nvim|master
-friendly-snippets|rafamadriz/friendly-snippets|main
-flash.nvim|folke/flash.nvim|main
-fzf-lua|ibhagwan/fzf-lua|main
-git.nvim|dinhhuy258/git.nvim|main
-gitsigns.nvim|lewis6991/gitsigns.nvim|main
-grug-far.nvim|MagicDuck/grug-far.nvim|main
-inc-rename.nvim|smjonas/inc-rename.nvim|main
-incline.nvim|b0o/incline.nvim|main
-lazy.nvim|folke/lazy.nvim|main
-lazydev.nvim|folke/lazydev.nvim|main
-lspsaga.nvim|glepnir/lspsaga.nvim|main
-lualine.nvim|nvim-lualine/lualine.nvim|master
-luarocks.nvim|vhyrro/luarocks.nvim|main
-markdown-preview.nvim|iamcco/markdown-preview.nvim|master
-mason-lspconfig.nvim|mason-org/mason-lspconfig.nvim|main
-mason-nvim-dap.nvim|jay-babu/mason-nvim-dap.nvim|main
-mason.nvim|mason-org/mason.nvim|main
-mini.ai|nvim-mini/mini.ai|main
-mini.animate|nvim-mini/mini.animate|main
-mini.bracketed|nvim-mini/mini.bracketed|main
-mini.hipatterns|nvim-mini/mini.hipatterns|main
-mini.icons|nvim-mini/mini.icons|main
-mini.pairs|nvim-mini/mini.pairs|main
-neogen|danymat/neogen|main
-noice.nvim|folke/noice.nvim|main
-nui.nvim|MunifTanjim/nui.nvim|main
-nvim-dap|mfussenegger/nvim-dap|master
-nvim-dap-go|leoluz/nvim-dap-go|main
-nvim-dap-python|mfussenegger/nvim-dap-python|master
-nvim-dap-ui|rcarriga/nvim-dap-ui|master
-nvim-dap-virtual-text|theHamsta/nvim-dap-virtual-text|master
-nvim-jdtls|mfussenegger/nvim-jdtls|master
-nvim-lint|mfussenegger/nvim-lint|master
-nvim-lspconfig|neovim/nvim-lspconfig|master
-nvim-nio|nvim-neotest/nvim-nio|master
-nvim-notify|rcarriga/nvim-notify|master
-nvim-treesitter|nvim-treesitter/nvim-treesitter|main
-nvim-treesitter-textobjects|nvim-treesitter/nvim-treesitter-textobjects|main
-nvim-ts-autotag|windwp/nvim-ts-autotag|main
-persistence.nvim|folke/persistence.nvim|main
-pingu_ai_codding_pair_programming|andersonflima/pingu_ai_codding_pair_programming|main
-playground|nvim-treesitter/playground|master
-plenary.nvim|nvim-lua/plenary.nvim|master
-render-markdown.nvim|MeanderingProgrammer/render-markdown.nvim|main
-rest.nvim|rest-nvim/rest.nvim|main
-rustaceanvim|mrcjkb/rustaceanvim|main
-snacks.nvim|folke/snacks.nvim|main
-solarized-osaka.nvim|craftzdog/solarized-osaka.nvim|main
-symbols-outline.nvim|simrat39/symbols-outline.nvim|master
-telescope-file-browser.nvim|nvim-telescope/telescope-file-browser.nvim|master
-telescope-fzf-native.nvim|nvim-telescope/telescope-fzf-native.nvim|main
-telescope.nvim|nvim-telescope/telescope.nvim|master
-todo-comments.nvim|folke/todo-comments.nvim|main
-toggleterm.nvim|akinsho/toggleterm.nvim|main
-tokyonight.nvim|folke/tokyonight.nvim|main
-trouble.nvim|folke/trouble.nvim|main
-ts-comments.nvim|folke/ts-comments.nvim|main
-venv-selector.nvim|linux-cultist/venv-selector.nvim|main
-which-key.nvim|folke/which-key.nvim|main
-zen-mode.nvim|folke/zen-mode.nvim|main
-MANIFEST
+  done < <(emit_lazy_plugin_manifest)
 }
 
 ensure_absent_or_force "${NVIM_DATA_DIR}/lazy"

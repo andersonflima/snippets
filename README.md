@@ -40,7 +40,7 @@ A pasta `scripts/` mantém dois scripts:
 - instala plugins do manifesto em `~/.local/share/nvim/lazy`;
 - instala registry local do Mason em `~/.cache/nvim/mason-registry-main`;
 - com `--manage-config`, copia a config versionada em `nvim-config/` do repositório para `~/.config/nvim` e aplica os overrides.
-- instala comandos `lazy-check` e `lazy-update` (ZIP-only) para fluxo de verificação/atualização sem `git fetch/clone`.
+- instala comandos `lazy-check`, `lazy-install` e `lazy-update` (ZIP-only) para fluxo de instalação/verificação/atualização sem `git fetch/clone`.
 - com `--manage-config --config-source-dir <dir>`, sobrescreve a origem padrão e copia a config desse diretório para `~/.config/nvim`.
 
 ### Execução
@@ -54,10 +54,11 @@ bash scripts/undo_lazyvim_mason_from_zip.sh
 
 Depois do setup, abra um novo terminal (ou rode `source ~/.zshrc`) para refletir o `PATH` também no shell.
 
-Para verificar e atualizar plugins sem `:Lazy check/update` (sem git externo):
+Para instalar, verificar e atualizar plugins sem `:Lazy install/check/update` (sem git externo):
 
 ```bash
 lazy-check
+lazy-install
 lazy-update
 ```
 
@@ -66,11 +67,12 @@ Observacao:
 - `lazy-check` em modo offline nao calcula delta remoto; use `lazy-update` para aplicar refresh por ZIP.
 
 No popup do `:Lazy`, quando `--manage-config` for usado, as teclas ficam remapeadas para ZIP:
+- `I` -> `lazy-install`
 - `U` -> `lazy-update`
 - `S` -> `lazy-update` (sync offline)
 - `C` -> `lazy-check`
 
-Além das teclas, os subcomandos `:Lazy update`, `:Lazy sync` e `:Lazy check` também são sobrescritos para usar o fluxo ZIP.
+Além das teclas, os subcomandos `:Lazy install`, `:Lazy update`, `:Lazy sync` e `:Lazy check` também são sobrescritos para usar o fluxo ZIP.
 Esse override também é escrito em `~/.config/nvim/after/plugin/` para garantir aplicação mesmo fora do popup.
 
 ## Como usar
