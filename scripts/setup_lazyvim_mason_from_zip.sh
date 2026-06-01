@@ -888,24 +888,9 @@ return {
           vim.notify("Comando nao encontrado: " .. binary, vim.log.levels.ERROR)
           return false
         end
-        local proc = vim.system({ binary }, {
+        require("lazy.util").float_term({ binary }, {
           cwd = vim.fn.stdpath("data") .. "/lazy",
-          text = true,
-        }):wait()
-        if proc.code ~= 0 then
-          vim.notify(
-            ("lazy-%s falhou (code=%s): %s"):format(action, tostring(proc.code), proc.stderr or ""),
-            vim.log.levels.ERROR
-          )
-          return false
-        end
-        pcall(function()
-          require("lazy.manage").clear()
-        end)
-        pcall(function()
-          require("lazy.view").show("home")
-        end)
-        vim.notify(("lazy-%s executado via ZIP"):format(action), vim.log.levels.INFO)
+        })
         return true
       end
 
@@ -976,24 +961,9 @@ local function run_zip_action(action)
     vim.notify("Comando nao encontrado: " .. binary, vim.log.levels.ERROR)
     return false
   end
-  local proc = vim.system({ binary }, {
+  require("lazy.util").float_term({ binary }, {
     cwd = vim.fn.stdpath("data") .. "/lazy",
-    text = true,
-  }):wait()
-  if proc.code ~= 0 then
-    vim.notify(
-      ("lazy-%s falhou (code=%s): %s"):format(action, tostring(proc.code), proc.stderr or ""),
-      vim.log.levels.ERROR
-    )
-    return false
-  end
-  pcall(function()
-    require("lazy.manage").clear()
-  end)
-  pcall(function()
-    require("lazy.view").show("home")
-  end)
-  vim.notify(("lazy-%s executado via ZIP"):format(action), vim.log.levels.INFO)
+  })
   return true
 end
 

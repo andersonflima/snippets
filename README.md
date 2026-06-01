@@ -76,6 +76,7 @@ No popup do `:Lazy`, quando `--manage-config` for usado, as teclas ficam remapea
 
 Além das teclas, os subcomandos `:Lazy install`, `:Lazy update`, `:Lazy sync` e `:Lazy check` também são sobrescritos para usar o fluxo ZIP.
 Esse override também é escrito em `~/.config/nvim/after/plugin/` para garantir aplicação mesmo fora do popup.
+As ações ZIP abrem um terminal flutuante para exibir progresso e evitar timeout do comando dentro do Neovim.
 
 ## Como usar
 
