@@ -65,6 +65,7 @@ lazy-update
 Observacao:
 - `lazy-update` usa somente download por ZIP (`github.com/.../archive/refs/heads/...zip`), sem `api.github.com`.
 - `lazy-check` em modo offline nao calcula delta remoto; use `lazy-update` para aplicar refresh por ZIP.
+- Se o download retornar HTML no lugar de ZIP, o setup falha com a URL e o inicio da resposta. Isso normalmente indica proxy, bloqueio, pagina de login, rate limit ou URL base incorreta em `--github-base`.
 
 No popup do `:Lazy`, quando `--manage-config` for usado, as teclas ficam remapeadas para ZIP:
 - `I` -> `lazy-install`

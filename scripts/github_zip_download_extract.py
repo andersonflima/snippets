@@ -25,6 +25,18 @@ MAX_ATTEMPTS = 5
 BACKOFF_SECONDS = 1.0
 
 
+def assert_zip_file(zip_path: Path, url: str) -> None:
+    if zipfile.is_zipfile(zip_path):
+        return
+
+    preview = zip_path.read_bytes()[:200]
+    text_preview = preview.decode("utf-8", errors="replace").replace("\n", "\\n")
+    die(
+        "download nao retornou um ZIP valido: "
+        f"{url}. Inicio da resposta: {text_preview!r}"
+    )
+
+
 def download_zip(url: str, zip_path: Path, token: str) -> None:
     headers = {"User-Agent": "nvim-zip-bootstrap/1.0"}
     if token:
@@ -41,6 +53,7 @@ def download_zip(url: str, zip_path: Path, token: str) -> None:
                     raise HTTPError(url, status, f"status {status}", response.headers, None)
                 with zip_path.open("wb") as handle:
                     shutil.copyfileobj(response, handle, length=1024 * 64)
+                assert_zip_file(zip_path, url)
                 return
         except HTTPError as error:
             last_error = error
