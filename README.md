@@ -53,6 +53,7 @@ bash scripts/undo_lazyvim_mason_from_zip.sh
 ```
 
 Depois do setup, abra um novo terminal (ou rode `source ~/.zshrc`) para refletir o `PATH` também no shell.
+A config do Neovim usa o shell definido em `$SHELL`; em máquinas com zsh, não é necessário instalar fish.
 
 Para instalar, verificar e atualizar plugins sem `:Lazy install/check/update` (sem git externo):
 

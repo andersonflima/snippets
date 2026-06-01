@@ -17,7 +17,16 @@ vim.opt.cmdheight = 1
 vim.opt.laststatus = 2
 vim.opt.expandtab = true
 vim.opt.scrolloff = 10
-vim.opt.shell = "fish"
+
+local preferred_shell = vim.env.SHELL
+if preferred_shell and preferred_shell ~= "" and vim.fn.executable(preferred_shell) == 1 then
+	vim.opt.shell = preferred_shell
+elseif vim.fn.executable("zsh") == 1 then
+	vim.opt.shell = "zsh"
+elseif vim.fn.executable("bash") == 1 then
+	vim.opt.shell = "bash"
+end
+
 vim.opt.backupskip = { "/tmp/*", "/private/tmp/*" }
 vim.opt.inccommand = "split"
 vim.opt.ignorecase = true -- Case insensitive searching UNLESS /C or capital in search
