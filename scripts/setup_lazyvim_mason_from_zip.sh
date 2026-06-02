@@ -668,13 +668,26 @@ def sync_plugin(
         status = "instalado" if path.exists() else "ausente"
         return False, f"{name}: {status}; check remoto desabilitado no modo ZIP-only"
 
-    zip_url = f"https://github.com/{repo}/archive/refs/heads/{branch}.zip"
-    with tempfile.TemporaryDirectory(prefix="lazy-zip-sync-") as td:
-        zip_path = Path(td) / f"{path.name}.zip"
-        download_zip(zip_url, zip_path, token)
-        extract_single_dir(zip_path, path)
-    zip_source_file.write_text(f"{repo}@{branch}\n", encoding="utf-8")
-    return True, f"{name}: instalado/atualizado por ZIP"
+    branches = [branch]
+    if branch == "main":
+        branches.append("master")
+    elif branch == "master":
+        branches.append("main")
+
+    last_error: Exception | None = None
+    for candidate_branch in branches:
+        zip_url = f"https://github.com/{repo}/archive/refs/heads/{candidate_branch}.zip"
+        try:
+            with tempfile.TemporaryDirectory(prefix="lazy-zip-sync-") as td:
+                zip_path = Path(td) / f"{path.name}.zip"
+                download_zip(zip_url, zip_path, token)
+                extract_single_dir(zip_path, path)
+            zip_source_file.write_text(f"{repo}@{candidate_branch}\n", encoding="utf-8")
+            return True, f"{name}: instalado/atualizado por ZIP ({candidate_branch})"
+        except Exception as error:  # noqa: BLE001
+            last_error = error
+
+    raise RuntimeError(f"falha ao instalar {repo}@{branch}: {last_error}")
 
 
 def main() -> None:
@@ -882,12 +895,69 @@ return {
     opts = function(_, opts)
       opts = opts or {}
       local wrapper_bin = "${WRAPPER_BIN_DIR}"
+      local manifest_path = wrapper_bin .. "/../lazy-plugins.manifest"
+      local function normalize_github_repo(url)
+        if not url or url == "" then
+          return nil
+        end
+        url = url:gsub("%.git$", "")
+        url = url:gsub("^git@github%.com:", "")
+        url = url:gsub("^ssh://git@github%.com/", "")
+        url = url:gsub("^https://github%.com/", "")
+        url = url:gsub("^http://github%.com/", "")
+        local owner, repo = url:match("^([^/]+)/([^/]+)$")
+        if owner and repo then
+          return owner .. "/" .. repo
+        end
+        return nil
+      end
+      local function refresh_zip_manifest()
+        local entries = {}
+        local order = {}
+        local function put(name, repo, branch)
+          if not name or not repo or not branch then
+            return
+          end
+          if not entries[name] then
+            table.insert(order, name)
+          end
+          entries[name] = { repo = repo, branch = branch }
+        end
+        local existing = io.open(manifest_path, "r")
+        if existing then
+          for line in existing:lines() do
+            local name, repo, branch = line:match("^([^|]+)|([^|]+)|([^|]+)$")
+            put(name, repo, branch)
+          end
+          existing:close()
+        end
+        local ok_config, lazy_config = pcall(require, "lazy.core.config")
+        if ok_config and lazy_config.plugins then
+          for name, plugin in pairs(lazy_config.plugins) do
+            local plugin_name = plugin.name or name
+            local repo = normalize_github_repo(plugin.url)
+            local current = entries[plugin_name]
+            local branch = plugin.branch or (current and current.branch) or "main"
+            if repo then
+              put(plugin_name, repo, branch)
+            end
+          end
+        end
+        table.sort(order)
+        local manifest = assert(io.open(manifest_path, "w"))
+        for _, name in ipairs(order) do
+          local entry = entries[name]
+          manifest:write(("%s|%s|%s\n"):format(name, entry.repo, entry.branch))
+        end
+        manifest:close()
+      end
       local function run_zip_action(action)
         local binary = wrapper_bin .. "/lazy-" .. action
         if vim.fn.executable(binary) ~= 1 then
           vim.notify("Comando nao encontrado: " .. binary, vim.log.levels.ERROR)
           return false
         end
+        refresh_zip_manifest()
         require("lazy.util").float_term({ binary }, {
           cwd = vim.fn.stdpath("data") .. "/lazy",
         })
@@ -954,6 +1024,64 @@ write_lazy_command_override_after_plugin() {
   mkdir -p "$after_plugin_dir"
   cat > "$target_file" <<LUA
 local wrapper_bin = "${WRAPPER_BIN_DIR}"
+local manifest_path = wrapper_bin .. "/../lazy-plugins.manifest"
+
+local function normalize_github_repo(url)
+  if not url or url == "" then
+    return nil
+  end
+  url = url:gsub("%.git$", "")
+  url = url:gsub("^git@github%.com:", "")
+  url = url:gsub("^ssh://git@github%.com/", "")
+  url = url:gsub("^https://github%.com/", "")
+  url = url:gsub("^http://github%.com/", "")
+  local owner, repo = url:match("^([^/]+)/([^/]+)$")
+  if owner and repo then
+    return owner .. "/" .. repo
+  end
+  return nil
+end
+
+local function refresh_zip_manifest()
+  local entries = {}
+  local order = {}
+  local function put(name, repo, branch)
+    if not name or not repo or not branch then
+      return
+    end
+    if not entries[name] then
+      table.insert(order, name)
+    end
+    entries[name] = { repo = repo, branch = branch }
+  end
+  local existing = io.open(manifest_path, "r")
+  if existing then
+    for line in existing:lines() do
+      local name, repo, branch = line:match("^([^|]+)|([^|]+)|([^|]+)$")
+      put(name, repo, branch)
+    end
+    existing:close()
+  end
+  local ok_config, lazy_config = pcall(require, "lazy.core.config")
+  if ok_config and lazy_config.plugins then
+    for name, plugin in pairs(lazy_config.plugins) do
+      local plugin_name = plugin.name or name
+      local repo = normalize_github_repo(plugin.url)
+      local current = entries[plugin_name]
+      local branch = plugin.branch or (current and current.branch) or "main"
+      if repo then
+        put(plugin_name, repo, branch)
+      end
+    end
+  end
+  table.sort(order)
+  local manifest = assert(io.open(manifest_path, "w"))
+  for _, name in ipairs(order) do
+    local entry = entries[name]
+    manifest:write(("%s|%s|%s\n"):format(name, entry.repo, entry.branch))
+  end
+  manifest:close()
+end
 
 local function run_zip_action(action)
   local binary = wrapper_bin .. "/lazy-" .. action
@@ -961,6 +1089,7 @@ local function run_zip_action(action)
     vim.notify("Comando nao encontrado: " .. binary, vim.log.levels.ERROR)
     return false
   end
+  refresh_zip_manifest()
   require("lazy.util").float_term({ binary }, {
     cwd = vim.fn.stdpath("data") .. "/lazy",
   })

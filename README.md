@@ -66,7 +66,9 @@ lazy-update
 Observacao:
 - `lazy-update` usa somente download por ZIP (`github.com/.../archive/refs/heads/...zip`), sem `api.github.com`.
 - `lazy-check` em modo offline nao calcula delta remoto; use `lazy-update` para aplicar refresh por ZIP.
+- Antes de `lazy-install`, `lazy-update` e `lazy-sync`, o Neovim atualiza o manifesto ZIP com os plugins carregados pelo Lazy. Plugins novos declarados na config passam a entrar no fluxo ZIP.
 - Se o download retornar HTML no lugar de ZIP, o setup falha com a URL e o inicio da resposta. Isso normalmente indica proxy, bloqueio, pagina de login, rate limit ou URL base incorreta em `--github-base`.
+- O Mason ainda depende das receitas do registry e pode baixar assets de GitHub Releases, npm, pip, cargo ou outros canais. Se a rede bloquear o media type do pacote, o wrapper local de `curl`/`wget` nao consegue contornar a politica do proxy.
 
 No popup do `:Lazy`, quando `--manage-config` for usado, as teclas ficam remapeadas para ZIP:
 - `I` -> `lazy-install`
