@@ -60,7 +60,7 @@ keymap.set("n", "ga", vim.lsp.buf.code_action, opts)
 
 keymap.set("n", "<Leader>r", "<Cmd>Rest run<CR>", opts)
 
-keymap.set("n", "<Leader>p", function()
+keymap.set("n", "<Leader>ls", function()
 	return vim.fn.jobstart("live-server", opts)
 end, opts)
 
