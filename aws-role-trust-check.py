@@ -96,7 +96,11 @@ def parse_args() -> argparse.Namespace:
     return parser.parse_args()
 
 
-def _load_accounts_from_csv(accounts_csv: Path) -> List[str]:
+def _account_record(account_id: str, account_name: str = "") -> dict:
+    return {"account": account_id, "account_name": account_name}
+
+
+def _load_accounts_from_csv(accounts_csv: Path) -> List[dict]:
     with accounts_csv.open(encoding="utf-8-sig", newline="") as handler:
         rows = list(csv.reader(handler))
     if not rows:
@@ -114,11 +118,22 @@ def _load_accounts_from_csv(accounts_csv: Path) -> List[str]:
             for i, header in enumerate(headers)
             if header in {"account_id", "accountid", "account"}
         )
-        values = [row[account_index].strip() for row in rows[1:] if len(row) > account_index]
+        name_index = next(
+            (i for i, header in enumerate(headers) if header in {"account_name", "accountname", "name"}),
+            None,
+        )
+        values = [
+            _account_record(
+                row[account_index].strip(),
+                row[name_index].strip() if name_index is not None and len(row) > name_index else "",
+            )
+            for row in rows[1:]
+            if len(row) > account_index and row[account_index].strip()
+        ]
     else:
-        values = [first_row[0].strip()] if first_row and first_row[0] else []
+        values = [_account_record(first_row[0].strip())] if first_row and first_row[0] else []
         values.extend(
-            row[0].strip()
+            _account_record(row[0].strip())
             for row in rows[1:]
             if row and len(row) > 0 and row[0].strip()
         )
@@ -126,14 +141,15 @@ def _load_accounts_from_csv(accounts_csv: Path) -> List[str]:
     return values
 
 
-def _dedupe_accounts(values: List[str]) -> List[str]:
+def _dedupe_accounts(values: List[dict]) -> List[dict]:
     seen: Set[str] = set()
-    deduped: List[str] = []
+    deduped: List[dict] = []
     for value in values:
-        if not value:
+        account_id = value["account"]
+        if not account_id:
             continue
-        if value not in seen:
-            seen.add(value)
+        if account_id not in seen:
+            seen.add(account_id)
             deduped.append(value)
     return deduped
 
@@ -142,19 +158,19 @@ def load_accounts(
     accounts_csv: Optional[str],
     accounts_file: Optional[Path],
     accounts_csv_file: Optional[Path],
-) -> List[str]:
+) -> List[dict]:
     if accounts_csv:
-        values = [acc.strip() for acc in accounts_csv.split(",")]
+        values = [_account_record(acc.strip()) for acc in accounts_csv.split(",")]
     elif accounts_file:
-        values = [line.strip() for line in accounts_file.read_text().splitlines()]
+        values = [_account_record(line.strip()) for line in accounts_file.read_text().splitlines()]
     elif accounts_csv_file:
         values = _load_accounts_from_csv(accounts_csv_file)
     else:
         raise ValueError("Informe --accounts, --accounts-file ou --accounts-csv.")
 
-    accounts: List[str] = []
+    accounts: List[dict] = []
     for value in values:
-        if value:
+        if value["account"]:
             accounts.append(value)
     accounts = _dedupe_accounts(accounts)
     if not accounts:
@@ -415,12 +431,15 @@ def log_step(message: str) -> None:
 
 def check_account(
     index: int,
-    account_id: str,
+    account: dict,
     args: argparse.Namespace,
     source_session: boto3.Session,
 ) -> tuple[int, dict]:
+    account_id = account["account"]
+    account_name = account["account_name"]
     result = {
         "account": account_id,
+        "account_name": account_name,
         "has_role": False,
         "ok": False,
         "error": None,
@@ -490,11 +509,11 @@ def run_check(args: argparse.Namespace) -> int:
     had_error = False
 
     with ThreadPoolExecutor(max_workers=workers) as executor:
-        for index, account_id in enumerate(accounts):
+        for index, account in enumerate(accounts):
             future = executor.submit(
                 check_account,
                 index=index,
-                account_id=account_id,
+                account=account,
                 args=args,
                 source_session=source_session,
             )
@@ -524,13 +543,19 @@ def run_check(args: argparse.Namespace) -> int:
     report_path = args.report_csv or f"trust-check-report-{datetime.utcnow().strftime('%Y%m%dT%H%M%SZ')}.csv"
     with open(report_path, "w", encoding="utf-8", newline="") as handler:
         writer = csv.writer(handler)
-        writer.writerow(["account", "has_role_in_trust", "roles_in_trust", "error"])
+        writer.writerow(["account", "account_name", "has_role_in_trust", "roles_in_trust", "error"])
         for item in results:
             if item["error"]:
                 confirmation = "erro"
             else:
                 confirmation = "sim" if item["has_role"] else "nao"
-            writer.writerow([item["account"], confirmation, ";".join(item["trust_roles"]), item["error"] or ""])
+            writer.writerow([
+                item["account"],
+                item["account_name"],
+                confirmation,
+                ";".join(item["trust_roles"]),
+                item["error"] or "",
+            ])
     log_step(f"Relatorio gerado: {report_path}")
 
     if had_error:
