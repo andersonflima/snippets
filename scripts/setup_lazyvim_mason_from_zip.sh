@@ -30,6 +30,7 @@ Observacoes:
 - Nao usa curl/wget.
 - Download feito por codigo Python em venv dedicado.
 - Usa ZIP no formato /archive/refs/heads/<branch>.zip.
+- A branch "default" resolve dinamicamente a branch padrao do repositorio.
 USAGE
 }
 
@@ -159,85 +160,85 @@ append_wrapper_path_to_rc() {
 
 emit_lazy_plugin_manifest() {
   cat <<'MANIFEST'
-LazyVim|LazyVim/LazyVim|main
-SchemaStore.nvim|b0o/SchemaStore.nvim|main
-LuaSnip|L3MON4D3/LuaSnip|master
-blink.cmp|saghen/blink.cmp|main
-bufferline.nvim|akinsho/bufferline.nvim|main
-catppuccin|catppuccin/nvim|main
-cmp-buffer|hrsh7th/cmp-buffer|main
-cmp-cmdline|hrsh7th/cmp-cmdline|main
-cmp-nvim-lsp|hrsh7th/cmp-nvim-lsp|main
-cmp-path|hrsh7th/cmp-path|main
-codex.nvim|kkrampis/codex.nvim|main
-conform.nvim|stevearc/conform.nvim|master
-copilot.lua|zbirenbaum/copilot.lua|master
-crates.nvim|Saecki/crates.nvim|main
-dial.nvim|monaqa/dial.nvim|master
-friendly-snippets|rafamadriz/friendly-snippets|main
-flash.nvim|folke/flash.nvim|main
-fzf-lua|ibhagwan/fzf-lua|main
-git.nvim|dinhhuy258/git.nvim|main
-gitsigns.nvim|lewis6991/gitsigns.nvim|main
-grug-far.nvim|MagicDuck/grug-far.nvim|main
-inc-rename.nvim|smjonas/inc-rename.nvim|main
-incline.nvim|b0o/incline.nvim|main
-lazy.nvim|folke/lazy.nvim|main
-lazydev.nvim|folke/lazydev.nvim|main
-lspsaga.nvim|glepnir/lspsaga.nvim|main
-lualine.nvim|nvim-lualine/lualine.nvim|master
-luarocks.nvim|vhyrro/luarocks.nvim|main
-markdown-preview.nvim|iamcco/markdown-preview.nvim|master
-mason-lspconfig.nvim|mason-org/mason-lspconfig.nvim|main
-mason-nvim-dap.nvim|jay-babu/mason-nvim-dap.nvim|main
-mason.nvim|mason-org/mason.nvim|main
-mini.ai|nvim-mini/mini.ai|main
-mini.animate|nvim-mini/mini.animate|main
-mini.bracketed|nvim-mini/mini.bracketed|main
-mini.hipatterns|nvim-mini/mini.hipatterns|main
-mini.icons|nvim-mini/mini.icons|main
-mini.pairs|nvim-mini/mini.pairs|main
-neogen|danymat/neogen|main
-neo-tree.nvim|nvim-neo-tree/neo-tree.nvim|main
-neon-theme-neovim|andersonflima/neon-theme-neovim|main
-noice.nvim|folke/noice.nvim|main
-nui.nvim|MunifTanjim/nui.nvim|main
-nvim-cmp|hrsh7th/nvim-cmp|main
-nvim-dap|mfussenegger/nvim-dap|master
-nvim-dap-go|leoluz/nvim-dap-go|main
-nvim-dap-python|mfussenegger/nvim-dap-python|master
-nvim-dap-ui|rcarriga/nvim-dap-ui|master
-nvim-dap-virtual-text|theHamsta/nvim-dap-virtual-text|master
-nvim-jdtls|mfussenegger/nvim-jdtls|master
-nvim-lint|mfussenegger/nvim-lint|master
-nvim-lspconfig|neovim/nvim-lspconfig|master
-nvim-nio|nvim-neotest/nvim-nio|master
-nvim-notify|rcarriga/nvim-notify|master
-nvim-treesitter|nvim-treesitter/nvim-treesitter|main
-nvim-treesitter-textobjects|nvim-treesitter/nvim-treesitter-textobjects|main
-nvim-ts-autotag|windwp/nvim-ts-autotag|main
-nvim-web-devicons|nvim-tree/nvim-web-devicons|master
-persistence.nvim|folke/persistence.nvim|main
-pingu_ai_codding_pair_programming|andersonflima/pingu_ai_codding_pair_programming|main
-playground|nvim-treesitter/playground|master
-plenary.nvim|nvim-lua/plenary.nvim|master
-render-markdown.nvim|MeanderingProgrammer/render-markdown.nvim|main
-rest.nvim|rest-nvim/rest.nvim|main
-rustaceanvim|mrcjkb/rustaceanvim|main
-snacks.nvim|folke/snacks.nvim|main
-solarized-osaka.nvim|craftzdog/solarized-osaka.nvim|main
-symbols-outline.nvim|simrat39/symbols-outline.nvim|master
-telescope-file-browser.nvim|nvim-telescope/telescope-file-browser.nvim|master
-telescope-fzf-native.nvim|nvim-telescope/telescope-fzf-native.nvim|main
-telescope.nvim|nvim-telescope/telescope.nvim|master
-todo-comments.nvim|folke/todo-comments.nvim|main
-toggleterm.nvim|akinsho/toggleterm.nvim|main
-tokyonight.nvim|folke/tokyonight.nvim|main
-trouble.nvim|folke/trouble.nvim|main
-ts-comments.nvim|folke/ts-comments.nvim|main
-venv-selector.nvim|linux-cultist/venv-selector.nvim|main
-which-key.nvim|folke/which-key.nvim|main
-zen-mode.nvim|folke/zen-mode.nvim|main
+LazyVim|LazyVim/LazyVim|default
+SchemaStore.nvim|b0o/SchemaStore.nvim|default
+LuaSnip|L3MON4D3/LuaSnip|default
+blink.cmp|saghen/blink.cmp|default
+bufferline.nvim|akinsho/bufferline.nvim|default
+catppuccin|catppuccin/nvim|default
+cmp-buffer|hrsh7th/cmp-buffer|default
+cmp-cmdline|hrsh7th/cmp-cmdline|default
+cmp-nvim-lsp|hrsh7th/cmp-nvim-lsp|default
+cmp-path|hrsh7th/cmp-path|default
+codex.nvim|kkrampis/codex.nvim|default
+conform.nvim|stevearc/conform.nvim|default
+copilot.lua|zbirenbaum/copilot.lua|default
+crates.nvim|Saecki/crates.nvim|default
+dial.nvim|monaqa/dial.nvim|default
+friendly-snippets|rafamadriz/friendly-snippets|default
+flash.nvim|folke/flash.nvim|default
+fzf-lua|ibhagwan/fzf-lua|default
+git.nvim|dinhhuy258/git.nvim|default
+gitsigns.nvim|lewis6991/gitsigns.nvim|default
+grug-far.nvim|MagicDuck/grug-far.nvim|default
+inc-rename.nvim|smjonas/inc-rename.nvim|default
+incline.nvim|b0o/incline.nvim|default
+lazy.nvim|folke/lazy.nvim|default
+lazydev.nvim|folke/lazydev.nvim|default
+lspsaga.nvim|glepnir/lspsaga.nvim|default
+lualine.nvim|nvim-lualine/lualine.nvim|default
+luarocks.nvim|vhyrro/luarocks.nvim|default
+markdown-preview.nvim|iamcco/markdown-preview.nvim|default
+mason-lspconfig.nvim|mason-org/mason-lspconfig.nvim|default
+mason-nvim-dap.nvim|jay-babu/mason-nvim-dap.nvim|default
+mason.nvim|mason-org/mason.nvim|default
+mini.ai|nvim-mini/mini.ai|default
+mini.animate|nvim-mini/mini.animate|default
+mini.bracketed|nvim-mini/mini.bracketed|default
+mini.hipatterns|nvim-mini/mini.hipatterns|default
+mini.icons|nvim-mini/mini.icons|default
+mini.pairs|nvim-mini/mini.pairs|default
+neogen|danymat/neogen|default
+neo-tree.nvim|nvim-neo-tree/neo-tree.nvim|default
+neon-theme-neovim|andersonflima/neon-theme-neovim|default
+noice.nvim|folke/noice.nvim|default
+nui.nvim|MunifTanjim/nui.nvim|default
+nvim-cmp|hrsh7th/nvim-cmp|default
+nvim-dap|mfussenegger/nvim-dap|default
+nvim-dap-go|leoluz/nvim-dap-go|default
+nvim-dap-python|mfussenegger/nvim-dap-python|default
+nvim-dap-ui|rcarriga/nvim-dap-ui|default
+nvim-dap-virtual-text|theHamsta/nvim-dap-virtual-text|default
+nvim-jdtls|mfussenegger/nvim-jdtls|default
+nvim-lint|mfussenegger/nvim-lint|default
+nvim-lspconfig|neovim/nvim-lspconfig|default
+nvim-nio|nvim-neotest/nvim-nio|default
+nvim-notify|rcarriga/nvim-notify|default
+nvim-treesitter|nvim-treesitter/nvim-treesitter|default
+nvim-treesitter-textobjects|nvim-treesitter/nvim-treesitter-textobjects|default
+nvim-ts-autotag|windwp/nvim-ts-autotag|default
+nvim-web-devicons|nvim-tree/nvim-web-devicons|default
+persistence.nvim|folke/persistence.nvim|default
+pingu_ai_codding_pair_programming|andersonflima/pingu_ai_codding_pair_programming|default
+playground|nvim-treesitter/playground|default
+plenary.nvim|nvim-lua/plenary.nvim|default
+render-markdown.nvim|MeanderingProgrammer/render-markdown.nvim|default
+rest.nvim|rest-nvim/rest.nvim|default
+rustaceanvim|mrcjkb/rustaceanvim|default
+snacks.nvim|folke/snacks.nvim|default
+solarized-osaka.nvim|craftzdog/solarized-osaka.nvim|default
+symbols-outline.nvim|simrat39/symbols-outline.nvim|default
+telescope-file-browser.nvim|nvim-telescope/telescope-file-browser.nvim|default
+telescope-fzf-native.nvim|nvim-telescope/telescope-fzf-native.nvim|default
+telescope.nvim|nvim-telescope/telescope.nvim|default
+todo-comments.nvim|folke/todo-comments.nvim|default
+toggleterm.nvim|akinsho/toggleterm.nvim|default
+tokyonight.nvim|folke/tokyonight.nvim|default
+trouble.nvim|folke/trouble.nvim|default
+ts-comments.nvim|folke/ts-comments.nvim|default
+venv-selector.nvim|linux-cultist/venv-selector.nvim|default
+which-key.nvim|folke/which-key.nvim|default
+zen-mode.nvim|folke/zen-mode.nvim|default
 MANIFEST
 }
 
@@ -532,6 +533,7 @@ SH
 from __future__ import annotations
 
 import argparse
+import json
 import os
 import shutil
 import ssl
@@ -592,6 +594,52 @@ def download_zip(url: str, zip_path: Path, token: str) -> None:
                 break
         time.sleep(BACKOFF_SECONDS * attempt)
     raise RuntimeError(f"falha no download ZIP {url}: {last_error}")
+
+
+def fetch_json(url: str, token: str) -> dict[str, object]:
+    headers = {
+        "Accept": "application/vnd.github+json",
+        "User-Agent": "lazy-zip-sync/1.0",
+    }
+    if token:
+        headers["Authorization"] = f"Bearer {token}"
+    request = Request(url=url, headers=headers, method="GET")
+    context = ssl._create_unverified_context()
+    with urlopen(request, timeout=60, context=context) as response:
+        status = getattr(response, "status", 200)
+        if status < 200 or status >= 300:
+            raise HTTPError(url, status, f"status {status}", response.headers, None)
+        return json.loads(response.read().decode("utf-8"))
+
+
+def resolve_default_branch(repo: str, token: str) -> str:
+    metadata = fetch_json(f"https://api.github.com/repos/{repo}", token)
+    default_branch = metadata.get("default_branch")
+    if not isinstance(default_branch, str) or not default_branch.strip():
+        raise RuntimeError(f"resposta sem default_branch para {repo}")
+    return default_branch.strip()
+
+
+def candidate_branches(repo: str, branch: str, token: str) -> list[str]:
+    if branch != "default":
+        branches = [branch]
+    else:
+        branches = []
+        try:
+            branches.append(resolve_default_branch(repo, token))
+        except Exception as error:  # noqa: BLE001
+            print(f"[lazy-zip-sync] aviso: falha ao resolver branch padrao de {repo}: {error}", file=sys.stderr)
+        branches.extend(["main", "master"])
+
+    result: list[str] = []
+    for candidate in branches:
+        if candidate and candidate not in result:
+            result.append(candidate)
+    if branch == "main" and "master" not in result:
+        result.append("master")
+    elif branch == "master" and "main" not in result:
+        result.append("main")
+    return result
 
 
 def extract_single_dir(zip_path: Path, destination: Path) -> None:
@@ -668,14 +716,8 @@ def sync_plugin(
         status = "instalado" if path.exists() else "ausente"
         return False, f"{name}: {status}; check remoto desabilitado no modo ZIP-only"
 
-    branches = [branch]
-    if branch == "main":
-        branches.append("master")
-    elif branch == "master":
-        branches.append("main")
-
     last_error: Exception | None = None
-    for candidate_branch in branches:
+    for candidate_branch in candidate_branches(repo, branch, token):
         zip_url = f"https://github.com/{repo}/archive/refs/heads/{candidate_branch}.zip"
         try:
             with tempfile.TemporaryDirectory(prefix="lazy-zip-sync-") as td:
@@ -769,18 +811,84 @@ SH
   append_wrapper_path_to_rc "${HOME}/.profile"
 }
 
+resolve_github_default_branch() {
+  local repo="$1"
+  "$VENV_PYTHON" - "$repo" <<'PY'
+from __future__ import annotations
+
+import json
+import os
+import ssl
+import sys
+from urllib.request import Request, urlopen
+
+repo = sys.argv[1]
+headers = {
+    "Accept": "application/vnd.github+json",
+    "User-Agent": "nvim-zip-bootstrap/1.0",
+}
+token = os.environ.get("GITHUB_TOKEN", "").strip()
+if token:
+    headers["Authorization"] = f"Bearer {token}"
+
+request = Request(f"https://api.github.com/repos/{repo}", headers=headers, method="GET")
+with urlopen(request, timeout=60, context=ssl._create_unverified_context()) as response:
+    metadata = json.loads(response.read().decode("utf-8"))
+
+default_branch = metadata.get("default_branch")
+if not isinstance(default_branch, str) or not default_branch.strip():
+    raise SystemExit(f"resposta sem default_branch para {repo}")
+print(default_branch.strip())
+PY
+}
+
+emit_candidate_branches() {
+  local repo="$1"
+  local branch="$2"
+
+  if [ "$branch" = "default" ]; then
+    resolve_github_default_branch "$repo" 2>/dev/null || true
+    printf '%s\n' main master
+  elif [ "$branch" = "main" ]; then
+    printf '%s\n' main master
+  elif [ "$branch" = "master" ]; then
+    printf '%s\n' master main
+  else
+    printf '%s\n' "$branch"
+  fi
+}
+
 download_and_extract_branch_zip() {
   local repo="$1"
   local branch="$2"
   local destination_dir="$3"
-  local temp_zip="$TMP_DIR/${repo##*/}_${branch}.zip"
-  local extract_root="$TMP_DIR/extract_${repo##*/}_${branch}"
-  local url="${GITHUB_BASE_URL}/${repo}/archive/refs/heads/${branch}.zip"
+  local resolved_branch=""
+  local attempted=" "
+  local last_status=0
 
-  mkdir -p "$extract_root"
+  while IFS= read -r candidate_branch; do
+    [ -n "$candidate_branch" ] || continue
+    case "$attempted" in
+      *" ${candidate_branch} "*) continue ;;
+    esac
+    attempted="${attempted}${candidate_branch} "
 
-  "$VENV_PYTHON" "$(dirname "$0")/github_zip_download_extract.py" \
-    "$url" "$temp_zip" "$extract_root" "$destination_dir"
+    local temp_zip="$TMP_DIR/${repo##*/}_${candidate_branch}.zip"
+    local extract_root="$TMP_DIR/extract_${repo##*/}_${candidate_branch}"
+    local url="${GITHUB_BASE_URL}/${repo}/archive/refs/heads/${candidate_branch}.zip"
+
+    mkdir -p "$extract_root"
+    if "$VENV_PYTHON" "$(dirname "$0")/github_zip_download_extract.py" \
+      "$url" "$temp_zip" "$extract_root" "$destination_dir"; then
+      resolved_branch="$candidate_branch"
+      break
+    fi
+    last_status=$?
+  done < <(emit_candidate_branches "$repo" "$branch")
+
+  if [ -z "$resolved_branch" ]; then
+    return "$last_status"
+  fi
 }
 
 write_mason_local_registry_override() {
@@ -936,8 +1044,7 @@ return {
           for name, plugin in pairs(lazy_config.plugins) do
             local plugin_name = plugin.name or name
             local repo = normalize_github_repo(plugin.url)
-            local current = entries[plugin_name]
-            local branch = plugin.branch or (current and current.branch) or "main"
+            local branch = plugin.branch or "default"
             if repo then
               put(plugin_name, repo, branch)
             end
@@ -1067,8 +1174,7 @@ local function refresh_zip_manifest()
     for name, plugin in pairs(lazy_config.plugins) do
       local plugin_name = plugin.name or name
       local repo = normalize_github_repo(plugin.url)
-      local current = entries[plugin_name]
-      local branch = plugin.branch or (current and current.branch) or "main"
+      local branch = plugin.branch or "default"
       if repo then
         put(plugin_name, repo, branch)
       end
@@ -1271,7 +1377,7 @@ else
 fi
 
 log "instalando registry local do Mason"
-download_and_extract_branch_zip "mason-org/mason-registry" "main" "${NVIM_CACHE_DIR}/mason-registry-main"
+download_and_extract_branch_zip "mason-org/mason-registry" "default" "${NVIM_CACHE_DIR}/mason-registry-main"
 
 if [ "$MANAGE_CONFIG" = "1" ]; then
   log "configurando Mason para usar registry local"

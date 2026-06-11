@@ -33,6 +33,7 @@ A pasta `scripts/` mantém dois scripts:
 ### O que o setup faz
 
 - baixa dependências usando rota ZIP do GitHub (`/archive/refs/heads/<branch>.zip`);
+- resolve dinamicamente a branch padrão quando o manifesto usa `default`;
 - não usa `curl` nem `wget` (download por helper Python com biblioteca padrão e retry);
 - instala wrappers locais de `curl`/`wget` em `~/.local/share/nvim/wrappers/bin` para runtime do LazyVim/Mason em ambientes bloqueados;
 - instala wrapper local de `git` para reescrever `https://github.com/...` como `git@github.com:...` no runtime do Neovim;
@@ -64,7 +65,8 @@ lazy-update
 ```
 
 Observacao:
-- `lazy-update` usa somente download por ZIP (`github.com/.../archive/refs/heads/...zip`), sem `api.github.com`.
+- `lazy-update` usa download por ZIP (`github.com/.../archive/refs/heads/...zip`) e consulta `api.github.com` apenas para resolver a branch padrão quando o manifesto usa `default`.
+- Se a API do GitHub estiver bloqueada, o fluxo tenta `main` e `master` como fallback.
 - `lazy-check` em modo offline nao calcula delta remoto; use `lazy-update` para aplicar refresh por ZIP.
 - Antes de `lazy-install`, `lazy-update` e `lazy-sync`, o Neovim atualiza o manifesto ZIP com os plugins carregados pelo Lazy. Plugins novos declarados na config passam a entrar no fluxo ZIP.
 - Se o download retornar HTML no lugar de ZIP, o setup falha com a URL e o inicio da resposta. Isso normalmente indica proxy, bloqueio, pagina de login, rate limit ou URL base incorreta em `--github-base`.
