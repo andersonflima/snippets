@@ -318,6 +318,24 @@ def has_required_principal(statement: dict, account_id: str, required_role_arn: 
     return False
 
 
+def extract_aws_principals(statement: dict) -> List[str]:
+    principal_entry = statement.get("Principal", {})
+    if not isinstance(principal_entry, dict):
+        return []
+
+    return [principal for principal in as_list(principal_entry.get("AWS")) if principal]
+
+
+def dedupe_values(values: List[str]) -> List[str]:
+    seen: Set[str] = set()
+    deduped: List[str] = []
+    for value in values:
+        if value not in seen:
+            seen.add(value)
+            deduped.append(value)
+    return deduped
+
+
 def statement_allows_assume_role(statement: dict) -> bool:
     if statement.get("Effect") != "Allow":
         return False
@@ -332,7 +350,7 @@ def statement_allows_assume_role(statement: dict) -> bool:
     return False
 
 
-def trust_contains_required_role(iam_session: boto3.Session, trust_role: str, account_id: str, required_role_ref: str) -> bool:
+def check_trust_policy(iam_session: boto3.Session, trust_role: str, account_id: str, required_role_ref: str) -> dict:
     iam = iam_session.client("iam")
     trust = iam.get_role(RoleName=trust_role)["Role"]
     policy = trust["AssumeRolePolicyDocument"]
@@ -350,11 +368,14 @@ def trust_contains_required_role(iam_session: boto3.Session, trust_role: str, ac
     if not required_role_name:
         raise ValueError("required-role inválida. Use ARN completo ou nome de role.")
 
+    trust_roles: List[str] = []
+    has_role = False
     for statement in as_list(statements):
         if statement_allows_assume_role(statement):
+            trust_roles.extend(extract_aws_principals(statement))
             if has_required_principal(statement, account_id, required_role_arn, required_role_name):
-                return True
-    return False
+                has_role = True
+    return {"has_role": has_role, "trust_roles": dedupe_values(trust_roles)}
 
 
 def _is_access_denied_get_role(error: Exception) -> bool:
@@ -398,7 +419,14 @@ def check_account(
     args: argparse.Namespace,
     source_session: boto3.Session,
 ) -> tuple[int, dict]:
-    result = {"account": account_id, "has_role": False, "ok": False, "error": None, "error_code": None}
+    result = {
+        "account": account_id,
+        "has_role": False,
+        "ok": False,
+        "error": None,
+        "error_code": None,
+        "trust_roles": [],
+    }
     try:
         log_step(f"Conta {index + 1}: iniciando verificação {account_id}")
         assumed_session = assume_role_for_account(
@@ -411,17 +439,20 @@ def check_account(
         )
         log_step(f"Conta {account_id}: assumeRole concluido")
 
-        result["has_role"] = trust_contains_required_role(
+        trust_result = check_trust_policy(
             iam_session=assumed_session,
             trust_role=args.trust_role,
             account_id=account_id,
             required_role_ref=args.required_role,
         )
+        result["has_role"] = trust_result["has_role"]
+        result["trust_roles"] = trust_result["trust_roles"]
         result["ok"] = result["has_role"]
         if result["has_role"]:
             log_step(f"Conta {account_id}: verificacao deu certo. Trust contem a role requerida.")
         else:
-            log_step(f"Conta {account_id}: verificacao falhou. Trust nao contem a role requerida.")
+            roles = ";".join(result["trust_roles"]) if result["trust_roles"] else "(nenhuma role AWS no trust)"
+            log_step(f"Conta {account_id}: verificacao falhou. Trust nao contem a role requerida. Roles no trust: {roles}")
     except (ClientError, BotoCoreError, ValueError) as error:
         result["error_code"] = _extract_error_code(error) or None
         if _is_no_such_entity(error):
@@ -493,13 +524,13 @@ def run_check(args: argparse.Namespace) -> int:
     report_path = args.report_csv or f"trust-check-report-{datetime.utcnow().strftime('%Y%m%dT%H%M%SZ')}.csv"
     with open(report_path, "w", encoding="utf-8", newline="") as handler:
         writer = csv.writer(handler)
-        writer.writerow(["account", "has_role_in_trust", "error"])
+        writer.writerow(["account", "has_role_in_trust", "roles_in_trust", "error"])
         for item in results:
             if item["error"]:
                 confirmation = "erro"
             else:
                 confirmation = "sim" if item["has_role"] else "nao"
-            writer.writerow([item["account"], confirmation, item["error"] or ""])
+            writer.writerow([item["account"], confirmation, ";".join(item["trust_roles"]), item["error"] or ""])
     log_step(f"Relatorio gerado: {report_path}")
 
     if had_error:
