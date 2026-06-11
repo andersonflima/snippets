@@ -12,6 +12,7 @@ from __future__ import annotations
 import csv
 import argparse
 import json
+from datetime import datetime
 import sys
 from pathlib import Path
 from typing import Iterable, List, Optional, Sequence, Set, Union
@@ -42,6 +43,10 @@ def parse_args() -> argparse.Namespace:
         "--accounts-csv",
         type=Path,
         help="Arquivo CSV com uma coluna de account id (`account_id`, `accountId`, `account` ou primeira coluna).",
+    )
+    parser.add_argument(
+        "--report-csv",
+        help="Arquivo CSV de saída com o resultado por conta (padrão: trust-check-report-<timestamp>.csv).",
     )
     parser.add_argument(
         "--assume-role",
@@ -285,6 +290,17 @@ def run_check(args: argparse.Namespace) -> int:
             result["ok"] = False
 
         results.append(result)
+
+    report_path = args.report_csv or f"trust-check-report-{datetime.utcnow().strftime('%Y%m%dT%H%M%SZ')}.csv"
+    with open(report_path, "w", encoding="utf-8", newline="") as handler:
+        writer = csv.writer(handler)
+        writer.writerow(["account", "has_role_in_trust", "error"])
+        for item in results:
+            if item["error"]:
+                confirmation = "erro"
+            else:
+                confirmation = "sim" if item["has_role"] else "nao"
+            writer.writerow([item["account"], confirmation, item["error"] or ""])
 
     if args.json:
         print(json.dumps(results, indent=2, ensure_ascii=False))
