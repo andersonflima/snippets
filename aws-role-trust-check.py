@@ -343,6 +343,13 @@ def _is_access_denied_get_role(error: Exception) -> bool:
     return error_code in {"AccessDenied", "UnauthorizedOperation"} and "iam:GetRole" in message
 
 
+def _is_no_such_entity(error: Exception) -> bool:
+    if not isinstance(error, ClientError):
+        return False
+    error_code = (error.response or {}).get("Error", {}).get("Code", "")
+    return error_code == "NoSuchEntity"
+
+
 def _format_access_error(account_id: str, trust_role: str, error: Exception) -> str:
     if _is_access_denied_get_role(error):
         role_arn = f"arn:aws:iam::{account_id}:role/{trust_role}"
@@ -385,6 +392,15 @@ def check_account(
         result["ok"] = result["has_role"]
         log_step(f"Conta {account_id}: trust {'OK' if result['has_role'] else 'FALHOU'}")
     except (ClientError, BotoCoreError, ValueError) as error:
+        if _is_no_such_entity(error):
+            result["error"] = None
+            result["has_role"] = False
+            log_step(
+                f"Conta {account_id}: role alvo '{args.trust_role}' nao encontrada "
+                f"(NoSuchEntity). Considera 'nao' no trust."
+            )
+            return index, result
+
         result["error"] = _format_access_error(account_id, args.trust_role, error)
         result["ok"] = False
         log_step(f"Conta {account_id}: erro: {result['error']}")
