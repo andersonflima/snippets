@@ -248,6 +248,13 @@ def extract_role_name_from_arn(arn: str) -> Optional[str]:
     return arn.split(":role/", 1)[1]
 
 
+def role_name_matches_pattern(principal_name: str, required_role_pattern: str) -> bool:
+    return (
+        fnmatch.fnmatch(principal_name, required_role_pattern)
+        or fnmatch.fnmatch(principal_name, f"*/{required_role_pattern}")
+    )
+
+
 def assume_role_for_account(
     source_session: boto3.Session,
     account_id: str,
@@ -283,15 +290,17 @@ def is_trust_matching_principal(
     if principal == "*":
         return True
     if required_role_arn:
-        if principal == required_role_arn:
-            return True
         return fnmatch.fnmatch(principal, required_role_arn)
 
-    # fallback by role name when only a name was provided
+    if fnmatch.fnmatch(principal, f"arn:*:iam::*:role/{required_role_name}"):
+        return True
+    if fnmatch.fnmatch(principal, f"arn:*:iam::*:role/*/{required_role_name}"):
+        return True
+
     principal_name = extract_role_name_from_arn(principal)
     if not principal_name:
         return False
-    return principal_name == required_role_name or principal_name.endswith(f"/{required_role_name}")
+    return role_name_matches_pattern(principal_name, required_role_name)
 
 
 def has_required_principal(statement: dict, account_id: str, required_role_arn: Optional[str], required_role_name: str) -> bool:
