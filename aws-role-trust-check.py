@@ -418,7 +418,10 @@ def check_account(
             required_role_ref=args.required_role,
         )
         result["ok"] = result["has_role"]
-        log_step(f"Conta {account_id}: trust {'OK' if result['has_role'] else 'FALHOU'}")
+        if result["has_role"]:
+            log_step(f"Conta {account_id}: verificacao deu certo. Trust contem a role requerida.")
+        else:
+            log_step(f"Conta {account_id}: verificacao falhou. Trust nao contem a role requerida.")
     except (ClientError, BotoCoreError, ValueError) as error:
         result["error_code"] = _extract_error_code(error) or None
         if _is_no_such_entity(error):
@@ -519,7 +522,7 @@ def run_check(args: argparse.Namespace) -> int:
                 if item["ok"]
                 else "FALHOU"
             )
-            detail = "trust contém role"
+            detail = "verificacao deu certo: trust contém role requerida"
             if item["error"]:
                 detail = item["error"]
             elif not item["has_role"]:
