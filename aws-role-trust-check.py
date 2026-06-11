@@ -155,11 +155,23 @@ def _dedupe_accounts(values: List[dict]) -> List[dict]:
     return deduped
 
 
+def _account_load_result(values: List[dict]) -> dict:
+    valid_accounts = [value for value in values if value["account"]]
+    unique_accounts = _dedupe_accounts(valid_accounts)
+    return {
+        "accounts": unique_accounts,
+        "raw_count": len(values),
+        "valid_count": len(valid_accounts),
+        "empty_count": len(values) - len(valid_accounts),
+        "duplicate_count": len(valid_accounts) - len(unique_accounts),
+    }
+
+
 def load_accounts(
     accounts_csv: Optional[str],
     accounts_file: Optional[Path],
     accounts_csv_file: Optional[Path],
-) -> List[dict]:
+) -> dict:
     if accounts_csv:
         values = [_account_record(acc.strip()) for acc in accounts_csv.split(",")]
     elif accounts_file:
@@ -169,14 +181,10 @@ def load_accounts(
     else:
         raise ValueError("Informe --accounts, --accounts-file ou --accounts-csv.")
 
-    accounts: List[dict] = []
-    for value in values:
-        if value["account"]:
-            accounts.append(value)
-    accounts = _dedupe_accounts(accounts)
-    if not accounts:
+    result = _account_load_result(values)
+    if not result["accounts"]:
         raise ValueError("Nenhuma conta válida encontrada.")
-    return accounts
+    return result
 
 
 def _read_json_path_or_text(raw: str) -> dict:
@@ -518,12 +526,21 @@ def check_account(
 
 
 def run_check(args: argparse.Namespace) -> int:
-    accounts = load_accounts(args.accounts, args.accounts_file, args.accounts_csv)
+    account_load = load_accounts(args.accounts, args.accounts_file, args.accounts_csv)
+    accounts = account_load["accounts"]
     source_session = build_source_session(args.region)
 
     if args.workers <= 0:
         raise ValueError("workers precisa ser maior que 0.")
     workers = min(args.workers, len(accounts))
+    log_step(
+        "Carga de contas: "
+        f"entradas_lidas={account_load['raw_count']} "
+        f"validas={account_load['valid_count']} "
+        f"vazias_ignoradas={account_load['empty_count']} "
+        f"duplicadas_removidas={account_load['duplicate_count']} "
+        f"unicas_processadas={len(accounts)}"
+    )
     log_step(
         f"Iniciando verificacao de trust: total_contas={len(accounts)} workers={workers} "
         f"assume_role={args.assume_role} trust_role={args.trust_role}"
