@@ -126,6 +126,18 @@ def _load_accounts_from_csv(accounts_csv: Path) -> List[str]:
     return values
 
 
+def _dedupe_accounts(values: List[str]) -> List[str]:
+    seen: Set[str] = set()
+    deduped: List[str] = []
+    for value in values:
+        if not value:
+            continue
+        if value not in seen:
+            seen.add(value)
+            deduped.append(value)
+    return deduped
+
+
 def load_accounts(
     accounts_csv: Optional[str],
     accounts_file: Optional[Path],
@@ -144,6 +156,7 @@ def load_accounts(
     for value in values:
         if value:
             accounts.append(value)
+    accounts = _dedupe_accounts(accounts)
     if not accounts:
         raise ValueError("Nenhuma conta válida encontrada.")
     return accounts
