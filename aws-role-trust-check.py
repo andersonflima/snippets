@@ -100,6 +100,10 @@ def _account_record(account_id: str, account_name: str = "") -> dict:
     return {"account": account_id, "account_name": account_name}
 
 
+def _account_name_headers() -> Set[str]:
+    return {"account_name", "accountname", "name", "nome", "nome_da_conta", "account_alias", "alias"}
+
+
 def _load_accounts_from_csv(accounts_csv: Path) -> List[dict]:
     with accounts_csv.open(encoding="utf-8-sig", newline="") as handler:
         rows = list(csv.reader(handler))
@@ -119,7 +123,7 @@ def _load_accounts_from_csv(accounts_csv: Path) -> List[dict]:
             if header in {"account_id", "accountid", "account"}
         )
         name_index = next(
-            (i for i, header in enumerate(headers) if header in {"account_name", "accountname", "name"}),
+            (i for i, header in enumerate(headers) if header in _account_name_headers()),
             None,
         )
         values = [
@@ -176,6 +180,30 @@ def load_accounts(
     if not accounts:
         raise ValueError("Nenhuma conta válida encontrada.")
     return accounts
+
+
+def fill_missing_account_names(accounts: List[dict], source_session: boto3.Session) -> List[dict]:
+    missing_name_accounts = [account for account in accounts if not account["account_name"]]
+    if not missing_name_accounts:
+        return accounts
+
+    try:
+        organizations = source_session.client("organizations", region_name="us-east-1")
+    except (ClientError, BotoCoreError) as error:
+        log_step(f"Nao foi possivel criar cliente AWS Organizations para obter account_name: {error}")
+        return accounts
+
+    names = {}
+    for account in missing_name_accounts:
+        try:
+            names[account["account"]] = organizations.describe_account(AccountId=account["account"])["Account"]["Name"]
+        except (ClientError, BotoCoreError) as error:
+            log_step(f"Nao foi possivel obter account_name da conta {account['account']}: {error}")
+
+    return [
+        _account_record(account["account"], account["account_name"] or names.get(account["account"], ""))
+        for account in accounts
+    ]
 
 
 def _read_json_path_or_text(raw: str) -> dict:
@@ -495,6 +523,7 @@ def check_account(
 def run_check(args: argparse.Namespace) -> int:
     accounts = load_accounts(args.accounts, args.accounts_file, args.accounts_csv)
     source_session = build_source_session(args.region)
+    accounts = fill_missing_account_names(accounts, source_session)
 
     if args.workers <= 0:
         raise ValueError("workers precisa ser maior que 0.")
