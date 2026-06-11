@@ -15,7 +15,8 @@ import json
 from datetime import datetime
 import sys
 from pathlib import Path
-from typing import Iterable, List, Optional, Sequence, Set, Union
+from concurrent.futures import ThreadPoolExecutor, as_completed
+from typing import List, Optional, Sequence, Set, Union
 import fnmatch
 
 import boto3
@@ -43,6 +44,12 @@ def parse_args() -> argparse.Namespace:
         "--accounts-csv",
         type=Path,
         help="Arquivo CSV com uma coluna de account id (`account_id`, `accountId`, `account` ou primeira coluna).",
+    )
+    parser.add_argument(
+        "--workers",
+        type=int,
+        default=8,
+        help="Quantidade máxima de contas processadas em paralelo.",
     )
     parser.add_argument(
         "--report-csv",
@@ -255,41 +262,81 @@ def trust_contains_required_role(iam_session: boto3.Session, trust_role: str, ac
     return False
 
 
+def log_step(message: str) -> None:
+    print(f"[{datetime.utcnow().strftime('%Y-%m-%dT%H:%M:%SZ')}] {message}", file=sys.stderr, flush=True)
+
+
+def check_account(
+    index: int,
+    account_id: str,
+    args: argparse.Namespace,
+    source_session: boto3.Session,
+) -> tuple[int, dict]:
+    result = {"account": account_id, "has_role": False, "ok": False, "error": None}
+    try:
+        log_step(f"Conta {index + 1}: iniciando verificação {account_id}")
+        assumed_session = assume_role_for_account(
+            source_session=source_session,
+            account_id=account_id,
+            role_name=args.assume_role,
+            role_session_name=args.role_session_name,
+            external_id=args.external_id,
+            region=args.region,
+        )
+        log_step(f"Conta {account_id}: assumeRole concluido")
+
+        result["has_role"] = trust_contains_required_role(
+            iam_session=assumed_session,
+            trust_role=args.trust_role,
+            account_id=account_id,
+            required_role_ref=args.required_role,
+        )
+        result["ok"] = result["has_role"]
+        log_step(f"Conta {account_id}: trust {'OK' if result['has_role'] else 'FALHOU'}")
+    except (ClientError, BotoCoreError, ValueError) as error:
+        result["error"] = str(error)
+        result["ok"] = False
+        log_step(f"Conta {account_id}: erro: {error}")
+    return index, result
+
+
 def run_check(args: argparse.Namespace) -> int:
     accounts = load_accounts(args.accounts, args.accounts_file, args.accounts_csv)
     source_session = boto3.Session(region_name=args.region)
 
-    missing: Set[str] = set()
-    results = []
+    if args.workers <= 0:
+        raise ValueError("workers precisa ser maior que 0.")
+    workers = min(args.workers, len(accounts))
+    log_step(
+        f"Iniciando verificacao de trust: total_contas={len(accounts)} workers={workers} "
+        f"assume_role={args.assume_role} trust_role={args.trust_role}"
+    )
+
+    results: list[dict] = [None for _ in accounts]  # type: ignore[list-item]
+    futures = []
     had_error = False
 
-    for account_id in accounts:
-        result = {"account": account_id, "has_role": False, "ok": False, "error": None}
-        try:
-            assumed_session = assume_role_for_account(
+    with ThreadPoolExecutor(max_workers=workers) as executor:
+        for index, account_id in enumerate(accounts):
+            future = executor.submit(
+                check_account,
+                index=index,
+                account_id=account_id,
+                args=args,
                 source_session=source_session,
-                account_id=account_id,
-                role_name=args.assume_role,
-                role_session_name=args.role_session_name,
-                external_id=args.external_id,
-                region=args.region,
             )
+            futures.append(future)
 
-            result["has_role"] = trust_contains_required_role(
-                iam_session=assumed_session,
-                trust_role=args.trust_role,
-                account_id=account_id,
-                required_role_ref=args.required_role,
-            )
-            result["ok"] = result["has_role"]
-            if not result["has_role"]:
-                missing.add(account_id)
-        except (ClientError, BotoCoreError, ValueError) as error:
-            result["error"] = str(error)
-            had_error = True
-            result["ok"] = False
+        for future in as_completed(futures):
+            index, result = future.result()
+            results[index] = result
 
-        results.append(result)
+    missing: Set[str] = set(
+        item["account"] for item in results if isinstance(item, dict) and item["error"] is None and not item["ok"]
+    )
+    errors = sum(1 for item in results if isinstance(item, dict) and item["error"] is not None)
+    if errors > 0:
+        had_error = True
 
     report_path = args.report_csv or f"trust-check-report-{datetime.utcnow().strftime('%Y%m%dT%H%M%SZ')}.csv"
     with open(report_path, "w", encoding="utf-8", newline="") as handler:
@@ -301,6 +348,18 @@ def run_check(args: argparse.Namespace) -> int:
             else:
                 confirmation = "sim" if item["has_role"] else "nao"
             writer.writerow([item["account"], confirmation, item["error"] or ""])
+    log_step(f"Relatorio gerado: {report_path}")
+
+    if had_error:
+        status = (
+            f"Concluido com {len(missing)} conta(s) sem role esperada e "
+            f"{errors} conta(s) com erro de execucao."
+        )
+    elif missing:
+        status = f"Concluido com {len(missing)} conta(s) sem a role esperada no trust."
+    else:
+        status = "Concluido com sucesso."
+    log_step(status)
 
     if args.json:
         print(json.dumps(results, indent=2, ensure_ascii=False))
