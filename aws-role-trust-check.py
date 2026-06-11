@@ -96,8 +96,8 @@ def parse_args() -> argparse.Namespace:
     return parser.parse_args()
 
 
-def _account_record(account_id: str, account_name: str = "") -> dict:
-    return {"account": account_id, "account_name": account_name}
+def _account_record(account_id: str) -> dict:
+    return {"account": account_id}
 
 
 def _normalize_header(header: str) -> str:
@@ -106,10 +106,6 @@ def _normalize_header(header: str) -> str:
 
 def _account_id_headers() -> Set[str]:
     return {"account", "accountid", "accountnumber", "id", "conta", "contaid", "numerodaconta"}
-
-
-def _account_name_headers() -> Set[str]:
-    return {"accountname", "name", "nome", "nomedaconta", "accountalias", "alias"}
 
 
 def _load_accounts_from_csv(accounts_csv: Path) -> List[dict]:
@@ -130,15 +126,8 @@ def _load_accounts_from_csv(accounts_csv: Path) -> List[dict]:
             for i, header in enumerate(headers)
             if header in _account_id_headers()
         )
-        name_index = next(
-            (i for i, header in enumerate(headers) if header in _account_name_headers()),
-            None,
-        )
         values = [
-            _account_record(
-                row[account_index].strip(),
-                row[name_index].strip() if name_index is not None and len(row) > name_index else "",
-            )
+            _account_record(row[account_index].strip())
             for row in rows[1:]
             if len(row) > account_index and row[account_index].strip()
         ]
@@ -406,15 +395,6 @@ def check_trust_policy(iam_session: boto3.Session, trust_role: str, account_id: 
     return {"has_role": has_role, "trust_roles": dedupe_values(trust_roles)}
 
 
-def get_account_alias(iam_session: boto3.Session, account_id: str) -> str:
-    try:
-        aliases = iam_session.client("iam").list_account_aliases().get("AccountAliases", [])
-    except (ClientError, BotoCoreError) as error:
-        log_step(f"Conta {account_id}: nao foi possivel obter account alias via iam:ListAccountAliases: {error}")
-        return ""
-    return aliases[0] if aliases else ""
-
-
 def _is_access_denied_get_role(error: Exception) -> bool:
     if not isinstance(error, ClientError):
         return False
@@ -457,10 +437,8 @@ def check_account(
     source_session: boto3.Session,
 ) -> tuple[int, dict]:
     account_id = account["account"]
-    account_name = account["account_name"]
     result = {
         "account": account_id,
-        "account_name": account_name,
         "has_role": False,
         "ok": False,
         "error": None,
@@ -478,8 +456,6 @@ def check_account(
             region=args.region,
         )
         log_step(f"Conta {account_id}: assumeRole concluido")
-        if not result["account_name"]:
-            result["account_name"] = get_account_alias(assumed_session, account_id)
 
         trust_result = check_trust_policy(
             iam_session=assumed_session,
@@ -566,7 +542,7 @@ def run_check(args: argparse.Namespace) -> int:
     report_path = args.report_csv or f"trust-check-report-{datetime.utcnow().strftime('%Y%m%dT%H%M%SZ')}.csv"
     with open(report_path, "w", encoding="utf-8", newline="") as handler:
         writer = csv.writer(handler)
-        writer.writerow(["account", "account_name", "has_role_in_trust", "roles_in_trust", "error"])
+        writer.writerow(["account", "has_role_in_trust", "roles_in_trust", "error"])
         for item in results:
             if item["error"]:
                 confirmation = "erro"
@@ -574,7 +550,6 @@ def run_check(args: argparse.Namespace) -> int:
                 confirmation = "sim" if item["has_role"] else "nao"
             writer.writerow([
                 item["account"],
-                item["account_name"],
                 confirmation,
                 ";".join(item["trust_roles"]),
                 item["error"] or "",
