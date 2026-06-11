@@ -350,6 +350,12 @@ def _is_no_such_entity(error: Exception) -> bool:
     return error_code == "NoSuchEntity"
 
 
+def _extract_error_code(error: Exception) -> str:
+    if not isinstance(error, ClientError):
+        return ""
+    return (error.response or {}).get("Error", {}).get("Code", "")
+
+
 def _format_access_error(account_id: str, trust_role: str, error: Exception) -> str:
     if _is_access_denied_get_role(error):
         role_arn = f"arn:aws:iam::{account_id}:role/{trust_role}"
@@ -370,7 +376,7 @@ def check_account(
     args: argparse.Namespace,
     source_session: boto3.Session,
 ) -> tuple[int, dict]:
-    result = {"account": account_id, "has_role": False, "ok": False, "error": None}
+    result = {"account": account_id, "has_role": False, "ok": False, "error": None, "error_code": None}
     try:
         log_step(f"Conta {index + 1}: iniciando verificação {account_id}")
         assumed_session = assume_role_for_account(
@@ -392,12 +398,16 @@ def check_account(
         result["ok"] = result["has_role"]
         log_step(f"Conta {account_id}: trust {'OK' if result['has_role'] else 'FALHOU'}")
     except (ClientError, BotoCoreError, ValueError) as error:
+        result["error_code"] = _extract_error_code(error) or None
         if _is_no_such_entity(error):
-            result["error"] = None
+            result["error"] = (
+                f"NoSuchEntity: a role alvo '{args.trust_role}' não foi encontrada "
+                f"na conta {account_id}."
+            )
             result["has_role"] = False
             log_step(
                 f"Conta {account_id}: role alvo '{args.trust_role}' nao encontrada "
-                f"(NoSuchEntity). Considera 'nao' no trust."
+                "(NoSuchEntity)."
             )
             return index, result
 
@@ -439,9 +449,19 @@ def run_check(args: argparse.Namespace) -> int:
             results[index] = result
 
     missing: Set[str] = set(
-        item["account"] for item in results if isinstance(item, dict) and item["error"] is None and not item["ok"]
+        item["account"]
+        for item in results
+        if isinstance(item, dict)
+        and not item["ok"]
+        and item["error_code"] in {None, "NoSuchEntity"}
     )
-    errors = sum(1 for item in results if isinstance(item, dict) and item["error"] is not None)
+    errors = sum(
+        1
+        for item in results
+        if isinstance(item, dict)
+        and item["error"] is not None
+        and item["error_code"] not in {None, "NoSuchEntity"}
+    )
     if errors > 0:
         had_error = True
 
@@ -483,6 +503,20 @@ def run_check(args: argparse.Namespace) -> int:
             elif not item["has_role"]:
                 detail = "trust não contém role"
             print(f'{item["account"]}: {status} - {detail}')
+        contas_ok = [item["account"] for item in results if isinstance(item, dict) and item["ok"]]
+        contas_sem_trust = [
+            item["account"]
+            for item in results
+            if isinstance(item, dict) and not item["ok"] and item["error_code"] in {None, "NoSuchEntity"}
+        ]
+        contas_erro = [
+            item["account"]
+            for item in results
+            if isinstance(item, dict) and item["error"] is not None and item["error_code"] not in {None, "NoSuchEntity"}
+        ]
+        print(f"Contas com sucesso: {', '.join(contas_ok) if contas_ok else '(nenhuma)'}")
+        print(f"Contas sem trust: {', '.join(contas_sem_trust) if contas_sem_trust else '(nenhuma)'}")
+        print(f"Contas com erro: {', '.join(contas_erro) if contas_erro else '(nenhuma)'}")
 
     if had_error:
         return 2
