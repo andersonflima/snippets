@@ -54,7 +54,11 @@ def parse_args() -> argparse.Namespace:
     )
     parser.add_argument(
         "--report-csv",
-        help="Arquivo CSV de saída com o resultado por conta (padrão: trust-check-report-<timestamp>.csv).",
+        help=(
+            "Arquivo de saída com o resultado por conta. Use extensão .xlsx para gerar abas "
+            "success/failed; com .csv gera consolidado e CSVs separados por status "
+            "(padrão: trust-check-report-<timestamp>.csv)."
+        ),
     )
     parser.add_argument(
         "--assume-role",
@@ -525,6 +529,84 @@ def check_account(
     return index, result
 
 
+def report_headers() -> List[str]:
+    return ["account", "has_role_in_trust", "roles_in_trust", "error"]
+
+
+def result_confirmation(item: dict) -> str:
+    if item["error"]:
+        return "erro"
+    return "sim" if item["has_role"] else "nao"
+
+
+def result_row(item: dict) -> List[str]:
+    return [
+        item["account"],
+        result_confirmation(item),
+        ";".join(item["trust_roles"]),
+        item["error"] or "",
+    ]
+
+
+def split_results(results: List[dict]) -> tuple[List[dict], List[dict]]:
+    success = [item for item in results if item["ok"]]
+    failed = [item for item in results if not item["ok"]]
+    return success, failed
+
+
+def write_csv_report(path: str, rows: List[dict]) -> None:
+    with open(path, "w", encoding="utf-8", newline="") as handler:
+        writer = csv.writer(handler)
+        writer.writerow(report_headers())
+        for item in rows:
+            writer.writerow(result_row(item))
+
+
+def report_variant_path(report_path: Path, suffix: str) -> str:
+    return str(report_path.with_name(f"{report_path.stem}-{suffix}{report_path.suffix}"))
+
+
+def write_split_csv_reports(report_path: str, success: List[dict], failed: List[dict]) -> None:
+    path = Path(report_path)
+    success_path = report_variant_path(path, "success")
+    failed_path = report_variant_path(path, "failed")
+    write_csv_report(success_path, success)
+    write_csv_report(failed_path, failed)
+    log_step(f"Relatorio success gerado: {success_path}")
+    log_step(f"Relatorio failed gerado: {failed_path}")
+
+
+def write_xlsx_report(report_path: str, success: List[dict], failed: List[dict]) -> None:
+    try:
+        from openpyxl import Workbook
+    except ImportError as error:
+        raise ValueError("Para gerar relatório .xlsx, instale openpyxl ou use --report-csv com extensão .csv.") from error
+
+    workbook = Workbook()
+    default_sheet = workbook.active
+    workbook.remove(default_sheet)
+
+    for sheet_name, rows in (("success", success), ("failed", failed)):
+        sheet = workbook.create_sheet(sheet_name)
+        sheet.append(report_headers())
+        for item in rows:
+            sheet.append(result_row(item))
+
+    workbook.save(report_path)
+
+
+def write_reports(report_path: str, results: List[dict]) -> None:
+    success, failed = split_results(results)
+    if report_path.lower().endswith(".xlsx"):
+        write_xlsx_report(report_path, success, failed)
+        log_step(f"Relatorio XLSX gerado: {report_path} sheets=success,failed")
+        return
+
+    write_csv_report(report_path, results)
+    log_step(f"Relatorio consolidado gerado: {report_path}")
+    write_split_csv_reports(report_path, success, failed)
+
+
 def run_check(args: argparse.Namespace) -> int:
     account_load = load_accounts(args.accounts, args.accounts_file, args.accounts_csv)
     accounts = account_load["accounts"]
@@ -583,21 +665,7 @@ def run_check(args: argparse.Namespace) -> int:
         had_error = True
 
     report_path = args.report_csv or f"trust-check-report-{datetime.utcnow().strftime('%Y%m%dT%H%M%SZ')}.csv"
-    with open(report_path, "w", encoding="utf-8", newline="") as handler:
-        writer = csv.writer(handler)
-        writer.writerow(["account", "has_role_in_trust", "roles_in_trust", "error"])
-        for item in results:
-            if item["error"]:
-                confirmation = "erro"
-            else:
-                confirmation = "sim" if item["has_role"] else "nao"
-            writer.writerow([
-                item["account"],
-                confirmation,
-                ";".join(item["trust_roles"]),
-                item["error"] or "",
-            ])
-    log_step(f"Relatorio gerado: {report_path}")
+    write_reports(report_path, results)
 
     if had_error:
         status = (
