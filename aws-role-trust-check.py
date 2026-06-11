@@ -16,6 +16,7 @@ from datetime import datetime
 import sys
 from pathlib import Path
 from concurrent.futures import ThreadPoolExecutor, as_completed
+from os import getenv
 from typing import List, Optional, Sequence, Set, Union
 import fnmatch
 
@@ -148,6 +149,78 @@ def load_accounts(
     return accounts
 
 
+def _read_json_path_or_text(raw: str) -> dict:
+    raw = raw.strip()
+    if not raw:
+        return {}
+
+    # If AWS_SECRETS points to a file path, load from file; else parse as JSON string.
+    path = Path(raw)
+    if path.exists():
+        raw = path.read_text(encoding="utf-8")
+
+    data = json.loads(raw)
+    if not isinstance(data, dict):
+        raise ValueError("AWS_SECRETS deve ser um JSON válido de mapa.")
+    return data
+
+
+def _resolve_source_credentials() -> dict:
+    # Priority 1: explicit AWS_SECRETS (JSON or file path to JSON).
+    aws_secrets = getenv("AWS_SECRETS")
+    if aws_secrets:
+        secrets = _read_json_path_or_text(aws_secrets)
+        return {
+            "aws_access_key_id": (
+                secrets.get("aws_access_key_id")
+                or secrets.get("AccessKeyId")
+                or secrets.get("accessKeyId")
+                or getenv("AWS_ACCESS_KEY_ID")
+            ),
+            "aws_secret_access_key": (
+                secrets.get("aws_secret_access_key")
+                or secrets.get("SecretAccessKey")
+                or secrets.get("secretAccessKey")
+                or getenv("AWS_SECRET_ACCESS_KEY")
+            ),
+            "aws_session_token": (
+                secrets.get("aws_session_token")
+                or secrets.get("SessionToken")
+                or secrets.get("sessionToken")
+                or getenv("AWS_SESSION_TOKEN")
+            ),
+            "region": secrets.get("region") or secrets.get("aws_region") or secrets.get("AWS_REGION") or getenv("AWS_REGION"),
+        }
+
+    # Priority 2: environment credentials.
+    return {
+        "aws_access_key_id": getenv("AWS_ACCESS_KEY_ID"),
+        "aws_secret_access_key": getenv("AWS_SECRET_ACCESS_KEY"),
+        "aws_session_token": getenv("AWS_SESSION_TOKEN"),
+        "region": getenv("AWS_REGION") or getenv("AWS_DEFAULT_REGION"),
+    }
+
+
+def build_source_session(region_name: str) -> boto3.Session:
+    credentials = _resolve_source_credentials()
+    access_key_id = credentials.get("aws_access_key_id")
+    secret_access_key = credentials.get("aws_secret_access_key")
+
+    if not access_key_id or not secret_access_key:
+        raise ValueError(
+            "Credenciais da conta origem não encontradas. Defina AWS_SECRETS ou "
+            "AWS_ACCESS_KEY_ID + AWS_SECRET_ACCESS_KEY no ambiente."
+        )
+
+    session_region = credentials.get("region") or region_name
+    return boto3.Session(
+        aws_access_key_id=access_key_id,
+        aws_secret_access_key=secret_access_key,
+        aws_session_token=credentials.get("aws_session_token"),
+        region_name=session_region,
+    )
+
+
 def as_list(value: Union[str, Sequence[str], None]) -> List[str]:
     if value is None:
         return []
@@ -262,6 +335,24 @@ def trust_contains_required_role(iam_session: boto3.Session, trust_role: str, ac
     return False
 
 
+def _is_access_denied_get_role(error: Exception) -> bool:
+    if not isinstance(error, ClientError):
+        return False
+    error_code = (error.response or {}).get("Error", {}).get("Code", "")
+    message = (error.response or {}).get("Error", {}).get("Message", "")
+    return error_code in {"AccessDenied", "UnauthorizedOperation"} and "iam:GetRole" in message
+
+
+def _format_access_error(account_id: str, trust_role: str, error: Exception) -> str:
+    if _is_access_denied_get_role(error):
+        role_arn = f"arn:aws:iam::{account_id}:role/{trust_role}"
+        return (
+            f"{error}. Ajuste a policy da role assumida para incluir iam:GetRole em {role_arn} "
+            "(ou Resource: * apenas para teste). Exemplo IAM action: \"iam:GetRole\"."
+        )
+    return str(error)
+
+
 def log_step(message: str) -> None:
     print(f"[{datetime.utcnow().strftime('%Y-%m-%dT%H:%M:%SZ')}] {message}", file=sys.stderr, flush=True)
 
@@ -294,15 +385,15 @@ def check_account(
         result["ok"] = result["has_role"]
         log_step(f"Conta {account_id}: trust {'OK' if result['has_role'] else 'FALHOU'}")
     except (ClientError, BotoCoreError, ValueError) as error:
-        result["error"] = str(error)
+        result["error"] = _format_access_error(account_id, args.trust_role, error)
         result["ok"] = False
-        log_step(f"Conta {account_id}: erro: {error}")
+        log_step(f"Conta {account_id}: erro: {result['error']}")
     return index, result
 
 
 def run_check(args: argparse.Namespace) -> int:
     accounts = load_accounts(args.accounts, args.accounts_file, args.accounts_csv)
-    source_session = boto3.Session(region_name=args.region)
+    source_session = build_source_session(args.region)
 
     if args.workers <= 0:
         raise ValueError("workers precisa ser maior que 0.")
