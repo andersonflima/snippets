@@ -406,6 +406,15 @@ def check_trust_policy(iam_session: boto3.Session, trust_role: str, account_id: 
     return {"has_role": has_role, "trust_roles": dedupe_values(trust_roles)}
 
 
+def get_account_alias(iam_session: boto3.Session, account_id: str) -> str:
+    try:
+        aliases = iam_session.client("iam").list_account_aliases().get("AccountAliases", [])
+    except (ClientError, BotoCoreError) as error:
+        log_step(f"Conta {account_id}: nao foi possivel obter account alias via iam:ListAccountAliases: {error}")
+        return ""
+    return aliases[0] if aliases else ""
+
+
 def _is_access_denied_get_role(error: Exception) -> bool:
     if not isinstance(error, ClientError):
         return False
@@ -469,6 +478,8 @@ def check_account(
             region=args.region,
         )
         log_step(f"Conta {account_id}: assumeRole concluido")
+        if not result["account_name"]:
+            result["account_name"] = get_account_alias(assumed_session, account_id)
 
         trust_result = check_trust_policy(
             iam_session=assumed_session,
