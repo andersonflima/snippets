@@ -55,9 +55,8 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--report-csv",
         help=(
-            "Arquivo de saída com o resultado por conta. Use extensão .xlsx para gerar abas "
-            "success/failed; com .csv gera consolidado e CSVs separados por status "
-            "(padrão: trust-check-report-<timestamp>.csv)."
+            "Arquivo Excel de saída com abas success/failed "
+            "(padrão: trust-check-report-<timestamp>.xlsx)."
         ),
     )
     parser.add_argument(
@@ -554,33 +553,11 @@ def split_results(results: List[dict]) -> tuple[List[dict], List[dict]]:
     return success, failed
 
 
-def write_csv_report(path: str, rows: List[dict]) -> None:
-    with open(path, "w", encoding="utf-8", newline="") as handler:
-        writer = csv.writer(handler)
-        writer.writerow(report_headers())
-        for item in rows:
-            writer.writerow(result_row(item))
-
-
-def report_variant_path(report_path: Path, suffix: str) -> str:
-    return str(report_path.with_name(f"{report_path.stem}-{suffix}{report_path.suffix}"))
-
-
-def write_split_csv_reports(report_path: str, success: List[dict], failed: List[dict]) -> None:
-    path = Path(report_path)
-    success_path = report_variant_path(path, "success")
-    failed_path = report_variant_path(path, "failed")
-    write_csv_report(success_path, success)
-    write_csv_report(failed_path, failed)
-    log_step(f"Relatorio success gerado: {success_path}")
-    log_step(f"Relatorio failed gerado: {failed_path}")
-
-
 def write_xlsx_report(report_path: str, success: List[dict], failed: List[dict]) -> None:
     try:
         from openpyxl import Workbook
     except ImportError as error:
-        raise ValueError("Para gerar relatório .xlsx, instale openpyxl ou use --report-csv com extensão .csv.") from error
+        raise ValueError("Para gerar relatório Excel, instale openpyxl.") from error
 
     workbook = Workbook()
     default_sheet = workbook.active
@@ -595,16 +572,18 @@ def write_xlsx_report(report_path: str, success: List[dict], failed: List[dict])
     workbook.save(report_path)
 
 
-def write_reports(report_path: str, results: List[dict]) -> None:
-    success, failed = split_results(results)
-    if report_path.lower().endswith(".xlsx"):
-        write_xlsx_report(report_path, success, failed)
-        log_step(f"Relatorio XLSX gerado: {report_path} sheets=success,failed")
-        return
+def normalize_report_path(report_path: str) -> str:
+    path = Path(report_path)
+    if path.suffix.lower() == ".xlsx":
+        return str(path)
+    return str(path.with_suffix(".xlsx"))
 
-    write_csv_report(report_path, results)
-    log_step(f"Relatorio consolidado gerado: {report_path}")
-    write_split_csv_reports(report_path, success, failed)
+
+def write_reports(report_path: str, results: List[dict]) -> None:
+    report_path = normalize_report_path(report_path)
+    success, failed = split_results(results)
+    write_xlsx_report(report_path, success, failed)
+    log_step(f"Relatorio Excel gerado: {report_path} sheets=success,failed")
 
 
 def run_check(args: argparse.Namespace) -> int:
@@ -664,7 +643,7 @@ def run_check(args: argparse.Namespace) -> int:
     if errors > 0:
         had_error = True
 
-    report_path = args.report_csv or f"trust-check-report-{datetime.utcnow().strftime('%Y%m%dT%H%M%SZ')}.csv"
+    report_path = args.report_csv or f"trust-check-report-{datetime.utcnow().strftime('%Y%m%dT%H%M%SZ')}.xlsx"
     write_reports(report_path, results)
 
     if had_error:
