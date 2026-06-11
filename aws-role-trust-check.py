@@ -335,6 +335,28 @@ def has_required_principal(statement: dict, account_id: str, required_role_arn: 
     return False
 
 
+def extract_condition_principal_arns(statement: dict) -> List[str]:
+    condition = statement.get("Condition", {})
+    if not isinstance(condition, dict):
+        return []
+
+    values: List[str] = []
+    for condition_values in condition.values():
+        if not isinstance(condition_values, dict):
+            continue
+        for key, value in condition_values.items():
+            if key.lower() == "aws:principalarn":
+                values.extend(as_list(value))
+    return values
+
+
+def has_required_condition_principal(statement: dict, account_id: str, required_role_arn: Optional[str], required_role_name: str) -> bool:
+    for principal_arn in extract_condition_principal_arns(statement):
+        if is_trust_matching_principal(principal_arn, account_id, required_role_arn, required_role_name):
+            return True
+    return False
+
+
 def extract_aws_principals(statement: dict) -> List[str]:
     principal_entry = statement.get("Principal", {})
     if not isinstance(principal_entry, dict):
@@ -390,7 +412,11 @@ def check_trust_policy(iam_session: boto3.Session, trust_role: str, account_id: 
     for statement in as_list(statements):
         if statement_allows_assume_role(statement):
             trust_roles.extend(extract_aws_principals(statement))
-            if has_required_principal(statement, account_id, required_role_arn, required_role_name):
+            trust_roles.extend(extract_condition_principal_arns(statement))
+            if (
+                has_required_principal(statement, account_id, required_role_arn, required_role_name)
+                or has_required_condition_principal(statement, account_id, required_role_arn, required_role_name)
+            ):
                 has_role = True
     return {"has_role": has_role, "trust_roles": dedupe_values(trust_roles)}
 
