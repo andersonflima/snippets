@@ -533,7 +533,6 @@ SH
 from __future__ import annotations
 
 import argparse
-import json
 import os
 import shutil
 import ssl
@@ -596,40 +595,11 @@ def download_zip(url: str, zip_path: Path, token: str) -> None:
     raise RuntimeError(f"falha no download ZIP {url}: {last_error}")
 
 
-def fetch_json(url: str, token: str) -> dict[str, object]:
-    headers = {
-        "Accept": "application/vnd.github+json",
-        "User-Agent": "lazy-zip-sync/1.0",
-    }
-    if token:
-        headers["Authorization"] = f"Bearer {token}"
-    request = Request(url=url, headers=headers, method="GET")
-    context = ssl._create_unverified_context()
-    with urlopen(request, timeout=60, context=context) as response:
-        status = getattr(response, "status", 200)
-        if status < 200 or status >= 300:
-            raise HTTPError(url, status, f"status {status}", response.headers, None)
-        return json.loads(response.read().decode("utf-8"))
-
-
-def resolve_default_branch(repo: str, token: str) -> str:
-    metadata = fetch_json(f"https://api.github.com/repos/{repo}", token)
-    default_branch = metadata.get("default_branch")
-    if not isinstance(default_branch, str) or not default_branch.strip():
-        raise RuntimeError(f"resposta sem default_branch para {repo}")
-    return default_branch.strip()
-
-
-def candidate_branches(repo: str, branch: str, token: str) -> list[str]:
+def candidate_branches(branch: str) -> list[str]:
     if branch != "default":
         branches = [branch]
     else:
-        branches = []
-        try:
-            branches.append(resolve_default_branch(repo, token))
-        except Exception as error:  # noqa: BLE001
-            print(f"[lazy-zip-sync] aviso: falha ao resolver branch padrao de {repo}: {error}", file=sys.stderr)
-        branches.extend(["main", "master"])
+        branches = ["default", "main", "master"]
 
     result: list[str] = []
     for candidate in branches:
@@ -640,6 +610,12 @@ def candidate_branches(repo: str, branch: str, token: str) -> list[str]:
     elif branch == "master" and "main" not in result:
         result.append("main")
     return result
+
+
+def archive_url(repo: str, branch: str) -> str:
+    if branch == "default":
+        return f"https://github.com/{repo}/archive/HEAD.zip"
+    return f"https://github.com/{repo}/archive/refs/heads/{branch}.zip"
 
 
 def extract_single_dir(zip_path: Path, destination: Path) -> None:
@@ -717,8 +693,8 @@ def sync_plugin(
         return False, f"{name}: {status}; check remoto desabilitado no modo ZIP-only"
 
     last_error: Exception | None = None
-    for candidate_branch in candidate_branches(repo, branch, token):
-        zip_url = f"https://github.com/{repo}/archive/refs/heads/{candidate_branch}.zip"
+    for candidate_branch in candidate_branches(branch):
+        zip_url = archive_url(repo, candidate_branch)
         try:
             with tempfile.TemporaryDirectory(prefix="lazy-zip-sync-") as td:
                 zip_path = Path(td) / f"{path.name}.zip"
@@ -811,44 +787,12 @@ SH
   append_wrapper_path_to_rc "${HOME}/.profile"
 }
 
-resolve_github_default_branch() {
-  local repo="$1"
-  "$VENV_PYTHON" - "$repo" <<'PY'
-from __future__ import annotations
-
-import json
-import os
-import ssl
-import sys
-from urllib.request import Request, urlopen
-
-repo = sys.argv[1]
-headers = {
-    "Accept": "application/vnd.github+json",
-    "User-Agent": "nvim-zip-bootstrap/1.0",
-}
-token = os.environ.get("GITHUB_TOKEN", "").strip()
-if token:
-    headers["Authorization"] = f"Bearer {token}"
-
-request = Request(f"https://api.github.com/repos/{repo}", headers=headers, method="GET")
-with urlopen(request, timeout=60, context=ssl._create_unverified_context()) as response:
-    metadata = json.loads(response.read().decode("utf-8"))
-
-default_branch = metadata.get("default_branch")
-if not isinstance(default_branch, str) or not default_branch.strip():
-    raise SystemExit(f"resposta sem default_branch para {repo}")
-print(default_branch.strip())
-PY
-}
-
 emit_candidate_branches() {
   local repo="$1"
   local branch="$2"
 
   if [ "$branch" = "default" ]; then
-    resolve_github_default_branch "$repo" 2>/dev/null || true
-    printf '%s\n' main master
+    printf '%s\n' default main master
   elif [ "$branch" = "main" ]; then
     printf '%s\n' main master
   elif [ "$branch" = "master" ]; then
@@ -876,6 +820,9 @@ download_and_extract_branch_zip() {
     local temp_zip="$TMP_DIR/${repo##*/}_${candidate_branch}.zip"
     local extract_root="$TMP_DIR/extract_${repo##*/}_${candidate_branch}"
     local url="${GITHUB_BASE_URL}/${repo}/archive/refs/heads/${candidate_branch}.zip"
+    if [ "$candidate_branch" = "default" ]; then
+      url="${GITHUB_BASE_URL}/${repo}/archive/HEAD.zip"
+    fi
 
     mkdir -p "$extract_root"
     if "$VENV_PYTHON" "$(dirname "$0")/github_zip_download_extract.py" \

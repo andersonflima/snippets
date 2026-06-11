@@ -65,8 +65,8 @@ lazy-update
 ```
 
 Observacao:
-- `lazy-update` usa download por ZIP (`github.com/.../archive/refs/heads/...zip`) e consulta `api.github.com` apenas para resolver a branch padrão quando o manifesto usa `default`.
-- Se a API do GitHub estiver bloqueada, o fluxo tenta `main` e `master` como fallback.
+- `lazy-update` usa download por ZIP (`github.com/.../archive/HEAD.zip` para `default` e `github.com/.../archive/refs/heads/...zip` para branches explicitas), sem `api.github.com`.
+- Se `archive/HEAD.zip` falhar, o fluxo tenta `main` e `master` como fallback.
 - `lazy-check` em modo offline nao calcula delta remoto; use `lazy-update` para aplicar refresh por ZIP.
 - Antes de `lazy-install`, `lazy-update` e `lazy-sync`, o Neovim atualiza o manifesto ZIP com os plugins carregados pelo Lazy. Plugins novos declarados na config passam a entrar no fluxo ZIP.
 - Se o download retornar HTML no lugar de ZIP, o setup falha com a URL e o inicio da resposta. Isso normalmente indica proxy, bloqueio, pagina de login, rate limit ou URL base incorreta em `--github-base`.
