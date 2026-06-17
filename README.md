@@ -25,10 +25,11 @@ Este repo é intencionalmente flexível: pode conter scripts independentes, help
 
 ## Scripts de setup de máquina (LazyVim + Mason)
 
-A pasta `scripts/` mantém dois scripts:
+A pasta `scripts/` mantém:
 
 - `scripts/setup_lazyvim_mason_from_zip.sh`
 - `scripts/undo_lazyvim_mason_from_zip.sh`
+- `scripts/setup_homebrew_proxy.sh`
 
 ### O que o setup faz
 
@@ -83,6 +84,60 @@ Além das teclas, os subcomandos `:Lazy install`, `:Lazy update`, `:Lazy sync` e
 Esse override também é escrito em `~/.config/nvim/after/plugin/` para garantir aplicação mesmo fora do popup.
 As ações ZIP abrem um terminal flutuante para exibir progresso e evitar timeout do comando dentro do Neovim.
 
+## Homebrew atrás de proxy (corrigir 403)
+
+`scripts/setup_homebrew_proxy.sh` analisa e melhora o `~/.zshrc` (ou outro rc) para
+permitir `brew install` atrás de proxy corporativo sem erro `403` nos bottles/artefatos.
+
+### O que faz
+
+- analisa o rc atual: detecta proxy/no_proxy e variáveis `HOMEBREW_*` existentes;
+- normaliza `NO_PROXY`/`no_proxy` (mescla defaults — `localhost,127.0.0.1,::1,*.local` —
+  com o valor atual e extras, deduplicando) e espelha proxy em maiúsculas e minúsculas;
+- garante as variáveis de mirror interno usadas para contornar o `403`:
+  `HOMEBREW_ARTIFACT_DOMAIN`, `HOMEBREW_BOTTLE_DOMAIN`, `HOMEBREW_API_DOMAIN`,
+  `HOMEBREW_DOCKER_REGISTRY_TOKEN`, `HOMEBREW_BREW_GIT_REMOTE`, `HOMEBREW_CORE_GIT_REMOTE`;
+- escreve tudo num bloco gerenciado e idempotente (`# >>> homebrew-proxy (managed) >>>`),
+  com backup timestamped do rc antes de gravar;
+- precedência de valores: flag > ambiente atual > valor já presente no rc (re-rodar sem
+  flags preserva o que já estava configurado);
+- variáveis importantes sem valor entram comentadas como template a preencher;
+- `--doctor` testa a conectividade dos endpoints (API e artifact/ghcr) e aponta a causa
+  provável do `403` (token ausente/mirror não configurado).
+
+O `403` típico do Homebrew vem de pedir bottles ao `ghcr.io` anonimamente atrás do proxy:
+apontar `HOMEBREW_ARTIFACT_DOMAIN` para o mirror interno e definir
+`HOMEBREW_DOCKER_REGISTRY_TOKEN` resolve. O bloco é adicionado no fim do rc, então
+prevalece sobre exports anteriores (é carregado por último).
+
+### Execução
+
+```bash
+# 1) Analisar (dry-run): mostra o bloco que seria aplicado; token é mascarado.
+bash scripts/setup_homebrew_proxy.sh
+
+# 2) Aplicar com os valores da empresa (cria backup do rc):
+bash scripts/setup_homebrew_proxy.sh --apply \
+  --https-proxy "http://proxy.empresa:porta" \
+  --artifact-domain "https://<mirror-interno>" \
+  --bottle-domain   "https://<mirror-interno>" \
+  --registry-token  "<token-do-ghcr-mirror>"
+
+# 3) Diagnosticar conectividade / causa do 403:
+bash scripts/setup_homebrew_proxy.sh --doctor
+
+# 4) (opcional) instalar Homebrew e o conjunto p/ LazyVim/Mason já com proxy:
+bash scripts/setup_homebrew_proxy.sh --apply --install-brew --install-packages
+
+source ~/.zshrc
+```
+
+Para encadear no setup do Neovim, use `--with-homebrew-proxy` (aplica o bloco antes):
+
+```bash
+bash scripts/setup_lazyvim_mason_from_zip.sh --force --with-homebrew-proxy
+```
+
 ## Como usar
 
 1. Entre no repositório.
@@ -95,6 +150,7 @@ Exemplos:
 python3 upgrade_resource_version.py --help
 python3 dynamodb_snapshot_lambda.py --help
 bash scripts/setup_lazyvim_mason_from_zip.sh --help
+bash scripts/setup_homebrew_proxy.sh --help
 ```
 
 ## Testes

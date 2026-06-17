@@ -18,6 +18,8 @@ Uso:
 Opcoes:
   --force                Sobrescreve instalacao atual (com backup automatico).
   --skip-plugins         Nao instala plugins em ~/.local/share/nvim/lazy.
+  --with-homebrew-proxy  Aplica antes o bloco de proxy/Homebrew no shell rc
+                         (chama setup_homebrew_proxy.sh --apply).
   --manage-config        Permite alterar ~/.config/nvim (opt-in).
   --config-source-dir    Copia config nvim de origem para --config-dir (requer --manage-config).
   --config-dir <dir>     Default: ${XDG_CONFIG_HOME:-$HOME/.config}/nvim
@@ -36,6 +38,7 @@ USAGE
 
 FORCE=0
 SKIP_PLUGINS=0
+WITH_HOMEBREW_PROXY=0
 MANAGE_CONFIG=0
 CONFIG_SOURCE_DIR=""
 NVIM_CONFIG_DIR="${XDG_CONFIG_HOME:-$HOME/.config}/nvim"
@@ -54,6 +57,10 @@ while [ "$#" -gt 0 ]; do
       ;;
     --skip-plugins)
       SKIP_PLUGINS=1
+      shift
+      ;;
+    --with-homebrew-proxy)
+      WITH_HOMEBREW_PROXY=1
       shift
       ;;
     --manage-config)
@@ -1278,6 +1285,13 @@ install_plugins_from_manifest() {
     printf '%s\n' "${repo}@${branch}" > "${lazy_dir}/${plugin_name}/.zip-source"
   done < <(emit_lazy_plugin_manifest)
 }
+
+if [ "$WITH_HOMEBREW_PROXY" = "1" ]; then
+  homebrew_proxy_script="${SCRIPT_DIR}/setup_homebrew_proxy.sh"
+  [ -f "$homebrew_proxy_script" ] || die "script nao encontrado: $homebrew_proxy_script"
+  log "aplicando bloco de proxy/Homebrew no shell rc"
+  bash "$homebrew_proxy_script" --apply
+fi
 
 ensure_absent_or_force "${NVIM_DATA_DIR}/lazy"
 ensure_absent_or_force "${NVIM_CACHE_DIR}/mason-registry-main"
