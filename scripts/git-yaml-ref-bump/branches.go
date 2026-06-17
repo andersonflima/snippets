@@ -1,6 +1,7 @@
 package main
 
 import (
+	"path"
 	"regexp"
 	"sort"
 	"strings"
@@ -60,4 +61,40 @@ func readRef(cfg config, branch string) string {
 		return branch
 	}
 	return cfg.Remote + "/" + branch
+}
+
+// listMatchingPaths returns the repo-relative paths under cfg.Dir at the given
+// ref whose name (or full path, when MatchFullPath) matches any -files pattern.
+// A branch lacking the directory simply yields an empty list, not an error.
+func listMatchingPaths(cfg config, ref string) ([]string, error) {
+	out, err := git(cfg.RepoPath, "ls-tree", "-r", "--name-only", ref, "--", cfg.Dir)
+	if err != nil {
+		return nil, err
+	}
+
+	var paths []string
+	for _, line := range strings.Split(out, "\n") {
+		p := strings.TrimSpace(line)
+		if p == "" {
+			continue
+		}
+		target := p
+		if !cfg.MatchFullPath {
+			target = path.Base(p)
+		}
+		if matchesAnyPattern(cfg.FilePatterns, target) {
+			paths = append(paths, p)
+		}
+	}
+	return paths, nil
+}
+
+// matchesAnyPattern reports whether value matches at least one pattern.
+func matchesAnyPattern(patterns []*regexp.Regexp, value string) bool {
+	for _, re := range patterns {
+		if re.MatchString(value) {
+			return true
+		}
+	}
+	return false
 }

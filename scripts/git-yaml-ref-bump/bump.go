@@ -14,7 +14,12 @@ func processBranch(cfg config, branch string) branchResult {
 	res := branchResult{Branch: branch, Source: readRef(cfg, branch)}
 
 	if cfg.DryRun {
-		res.Files = inspectBranch(cfg, branch)
+		files, err := inspectBranch(cfg, branch)
+		if err != nil {
+			res.Err = err.Error()
+			return res
+		}
+		res.Files = files
 		return res
 	}
 
@@ -23,7 +28,12 @@ func processBranch(cfg config, branch string) branchResult {
 		return res
 	}
 
-	res.Files = bumpBranchFiles(cfg, branch)
+	files, err := bumpBranchFiles(cfg, branch)
+	if err != nil {
+		res.Err = err.Error()
+		return res
+	}
+	res.Files = files
 	res.Skipped = res.changedCount() == 0
 
 	if res.Skipped {
@@ -37,13 +47,17 @@ func processBranch(cfg config, branch string) branchResult {
 	return res
 }
 
-// inspectBranch reports, per file, what would change on the branch without
-// touching the working tree (reads content straight from the ref).
-func inspectBranch(cfg config, branch string) []fileResult {
+// inspectBranch reports, per matching file, what would change on the branch
+// without touching the working tree (reads content straight from the ref).
+func inspectBranch(cfg config, branch string) ([]fileResult, error) {
 	ref := readRef(cfg, branch)
-	out := make([]fileResult, 0, len(cfg.Files))
+	paths, err := listMatchingPaths(cfg, ref)
+	if err != nil {
+		return nil, err
+	}
 
-	for _, path := range cfg.Files {
+	out := make([]fileResult, 0, len(paths))
+	for _, path := range paths {
 		fr := fileResult{Path: path}
 		content, exists, err := fileAtRef(cfg.RepoPath, ref, path)
 		if err != nil {
@@ -58,18 +72,22 @@ func inspectBranch(cfg config, branch string) []fileResult {
 		}
 		out = append(out, fr)
 	}
-	return out
+	return out, nil
 }
 
-// bumpBranchFiles rewrites each target file on the currently checked-out branch,
-// committing one file per change so each can be reverted independently.
-func bumpBranchFiles(cfg config, branch string) []fileResult {
-	out := make([]fileResult, 0, len(cfg.Files))
+// bumpBranchFiles rewrites each matching file on the currently checked-out
+// branch, committing one file per change so each can be reverted independently.
+func bumpBranchFiles(cfg config, branch string) ([]fileResult, error) {
+	paths, err := listMatchingPaths(cfg, branch)
+	if err != nil {
+		return nil, err
+	}
 
-	for _, path := range cfg.Files {
+	out := make([]fileResult, 0, len(paths))
+	for _, path := range paths {
 		out = append(out, bumpFile(cfg, branch, path))
 	}
-	return out
+	return out, nil
 }
 
 // bumpFile applies the replacement to a single file and commits it in isolation.

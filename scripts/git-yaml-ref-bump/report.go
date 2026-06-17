@@ -46,17 +46,27 @@ func renderReport(cfg config, results []branchResult) string {
 		mode = "DRY-RUN (no changes written, no commits, no push)"
 	}
 
+	matchScope := "name"
+	if cfg.MatchFullPath {
+		matchScope = "full path"
+	}
+
 	fmt.Fprintf(&sb, "# YAML ref bump report\n\n")
 	fmt.Fprintf(&sb, "- Mode: %s\n", mode)
 	fmt.Fprintf(&sb, "- Replacement: `%s` -> `%s`\n", cfg.From, cfg.To)
-	fmt.Fprintf(&sb, "- Files: %s\n", strings.Join(cfg.Files, ", "))
-	fmt.Fprintf(&sb, "- Pattern: `%s`\n", cfg.Pattern.String())
+	fmt.Fprintf(&sb, "- File patterns (%s): %s\n", matchScope, strings.Join(cfg.Files, ", "))
+	fmt.Fprintf(&sb, "- Search dir: `%s`\n", cfg.Dir)
+	fmt.Fprintf(&sb, "- Branch pattern: `%s`\n", cfg.Pattern.String())
 	fmt.Fprintf(&sb, "- Branches matched: %d\n\n", len(results))
 
 	for _, b := range results {
 		fmt.Fprintf(&sb, "## %s (%s)\n", b.Branch, b.Source)
 		if b.Err != "" {
 			fmt.Fprintf(&sb, "- ERROR: %s\n\n", b.Err)
+			continue
+		}
+		if len(b.Files) == 0 {
+			fmt.Fprintf(&sb, "- no file matched under `%s` (skipped)\n\n", cfg.Dir)
 			continue
 		}
 		for _, f := range b.Files {
