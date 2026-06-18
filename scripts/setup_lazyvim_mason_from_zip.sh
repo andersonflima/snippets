@@ -173,6 +173,7 @@ LuaSnip|L3MON4D3/LuaSnip|default
 blink.cmp|saghen/blink.cmp|default
 bufferline.nvim|akinsho/bufferline.nvim|default
 catppuccin|catppuccin/nvim|default
+claudecode.nvim|coder/claudecode.nvim|default
 cmp-buffer|hrsh7th/cmp-buffer|default
 cmp-cmdline|hrsh7th/cmp-cmdline|default
 cmp-nvim-lsp|hrsh7th/cmp-nvim-lsp|default
