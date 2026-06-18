@@ -69,8 +69,27 @@ PACKAGES="$DEFAULT_PACKAGES"
 CASKS=""
 
 # Overrides explicitos via flag (vazio = nao informado).
-declare -A FLAG=()
+# Sem array associativo (`declare -A`) para manter compatibilidade com o bash 3.2
+# do macOS, que e o interpretador disponivel antes do Homebrew existir.
 NO_PROXY_EXTRA=""
+
+# flag_set <var> <value>: registra override explicito de flag.
+flag_set() {
+  printf -v "FLAG_$1" '%s' "$2"
+  printf -v "FLAGSET_$1" '%s' "1"
+}
+
+# flag_is_set <var>: verdadeiro se a flag foi informada explicitamente.
+flag_is_set() {
+  local marker="FLAGSET_$1"
+  [ -n "${!marker:-}" ]
+}
+
+# flag_get <var>: valor do override explicito (vazio se ausente).
+flag_get() {
+  local var="FLAG_$1"
+  printf '%s' "${!var:-}"
+}
 
 while [ "$#" -gt 0 ]; do
   case "$1" in
@@ -80,16 +99,16 @@ while [ "$#" -gt 0 ]; do
     --install-brew) INSTALL_BREW=1; shift ;;
     --install-packages) INSTALL_PACKAGES=1; shift ;;
     --rc-file) RC_FILE="${2:?}"; shift 2 ;;
-    --http-proxy) FLAG[HTTP_PROXY]="${2:?}"; shift 2 ;;
-    --https-proxy) FLAG[HTTPS_PROXY]="${2:?}"; shift 2 ;;
-    --all-proxy) FLAG[ALL_PROXY]="${2:?}"; shift 2 ;;
+    --http-proxy) flag_set HTTP_PROXY "${2:?}"; shift 2 ;;
+    --https-proxy) flag_set HTTPS_PROXY "${2:?}"; shift 2 ;;
+    --all-proxy) flag_set ALL_PROXY "${2:?}"; shift 2 ;;
     --no-proxy) NO_PROXY_EXTRA="${2:?}"; shift 2 ;;
-    --artifact-domain) FLAG[HOMEBREW_ARTIFACT_DOMAIN]="${2:?}"; shift 2 ;;
-    --bottle-domain) FLAG[HOMEBREW_BOTTLE_DOMAIN]="${2:?}"; shift 2 ;;
-    --api-domain) FLAG[HOMEBREW_API_DOMAIN]="${2:?}"; shift 2 ;;
-    --registry-token) FLAG[HOMEBREW_DOCKER_REGISTRY_TOKEN]="${2:?}"; shift 2 ;;
-    --brew-git-remote) FLAG[HOMEBREW_BREW_GIT_REMOTE]="${2:?}"; shift 2 ;;
-    --core-git-remote) FLAG[HOMEBREW_CORE_GIT_REMOTE]="${2:?}"; shift 2 ;;
+    --artifact-domain) flag_set HOMEBREW_ARTIFACT_DOMAIN "${2:?}"; shift 2 ;;
+    --bottle-domain) flag_set HOMEBREW_BOTTLE_DOMAIN "${2:?}"; shift 2 ;;
+    --api-domain) flag_set HOMEBREW_API_DOMAIN "${2:?}"; shift 2 ;;
+    --registry-token) flag_set HOMEBREW_DOCKER_REGISTRY_TOKEN "${2:?}"; shift 2 ;;
+    --brew-git-remote) flag_set HOMEBREW_BREW_GIT_REMOTE "${2:?}"; shift 2 ;;
+    --core-git-remote) flag_set HOMEBREW_CORE_GIT_REMOTE "${2:?}"; shift 2 ;;
     --packages) PACKAGES="${2:?}"; shift 2 ;;
     --casks) CASKS="${2:?}"; shift 2 ;;
     -h|--help) usage; exit 0 ;;
@@ -128,7 +147,7 @@ rc_value() {
 # resolve_value <var>: precedencia flag > ambiente > rc.
 resolve_value() {
   local var="$1"
-  if [ -n "${FLAG[$var]+x}" ]; then printf '%s' "${FLAG[$var]}"; return 0; fi
+  if flag_is_set "$var"; then flag_get "$var"; return 0; fi
   if [ -n "${!var:-}" ]; then printf '%s' "${!var}"; return 0; fi
   rc_value "$var"
 }
