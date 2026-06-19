@@ -142,11 +142,30 @@ ensure_absent_or_force() {
   fi
 }
 
+venv_python_works() {
+  [ -x "$VENV_PYTHON" ] && "$VENV_PYTHON" -c 'import sys' >/dev/null 2>&1
+}
+
 ensure_python_runtime() {
-  if [ ! -x "$VENV_PYTHON" ]; then
-    log "criando venv em $VENV_DIR"
-    python3 -m venv "$VENV_DIR"
+  if venv_python_works; then
+    return 0
   fi
+
+  command -v python3 >/dev/null 2>&1 || die "python3 nao encontrado para criar a venv"
+
+  # Uma venv pode existir mas estar quebrada (interpretador removido/atualizado,
+  # ex.: 3.13 -> 3.14, deixando bin/python como symlink morto) ou ter sido criada
+  # pela metade. `python3 -m venv` sem --clear nao recria o bin/python existente,
+  # entao removemos e recriamos do zero para garantir um runtime utilizavel.
+  if [ -e "$VENV_DIR" ] || [ -L "$VENV_DIR" ]; then
+    log "venv invalida em $VENV_DIR; recriando"
+    rm -rf "$VENV_DIR"
+  else
+    log "criando venv em $VENV_DIR"
+  fi
+
+  python3 -m venv "$VENV_DIR" || die "falha ao criar venv em $VENV_DIR (python3 -m venv)"
+  venv_python_works || die "venv criada mas $VENV_PYTHON nao esta utilizavel"
 }
 
 append_wrapper_path_to_rc() {
