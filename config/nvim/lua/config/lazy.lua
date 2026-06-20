@@ -10,7 +10,7 @@ end
 
 local lazypath = vim.fn.stdpath("data") .. "/lazy/lazy.nvim"
 if not vim.loop.fs_stat(lazypath) then
-	vim.notify("lazy.nvim nao encontrado. Execute scripts/setup_lazyvim_mason_from_zip.sh.", vim.log.levels.ERROR)
+	vim.notify("lazy.nvim nao encontrado. Execute config/lazyvim/setup_lazyvim_mason_from_zip.sh.", vim.log.levels.ERROR)
 	return
 end
 vim.opt.rtp:prepend(lazypath)

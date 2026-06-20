@@ -21,7 +21,7 @@ BLOCK_END="# <<< homebrew-proxy (managed) <<<"
 usage() {
   cat <<'USAGE'
 Uso:
-  bash scripts/setup_homebrew_proxy.sh [opcoes]
+  bash config/homebrew/setup_homebrew_proxy.sh [opcoes]
 
 Modo:
   (sem flags)            Analisa o rc e mostra o bloco que SERIA aplicado (dry-run).
