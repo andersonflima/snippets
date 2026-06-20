@@ -13,7 +13,7 @@ die() {
 usage() {
   cat <<'USAGE'
 Uso:
-  bash scripts/setup_lazyvim_mason_from_zip.sh [opcoes]
+  bash config/lazyvim/setup_lazyvim_mason_from_zip.sh [opcoes]
 
 Opcoes:
   --force                Sobrescreve instalacao atual (com backup automatico).
@@ -46,8 +46,9 @@ NVIM_DATA_DIR="${XDG_DATA_HOME:-$HOME/.local/share}/nvim"
 NVIM_CACHE_DIR="${XDG_CACHE_HOME:-$HOME/.cache}/nvim"
 GITHUB_BASE_URL="https://github.com"
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
-REPO_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
-REPO_DEFAULT_CONFIG_SOURCE_DIR="${REPO_ROOT}/nvim-config"
+# Estrutura do repo: config/lazyvim/<este script>, config/homebrew/, config/nvim/.
+CONFIG_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
+REPO_DEFAULT_CONFIG_SOURCE_DIR="${CONFIG_ROOT}/nvim"
 
 while [ "$#" -gt 0 ]; do
   case "$1" in
@@ -1307,7 +1308,7 @@ install_plugins_from_manifest() {
 }
 
 if [ "$WITH_HOMEBREW_PROXY" = "1" ]; then
-  homebrew_proxy_script="${SCRIPT_DIR}/setup_homebrew_proxy.sh"
+  homebrew_proxy_script="${CONFIG_ROOT}/homebrew/setup_homebrew_proxy.sh"
   [ -f "$homebrew_proxy_script" ] || die "script nao encontrado: $homebrew_proxy_script"
   log "aplicando bloco de proxy/Homebrew no shell rc"
   bash "$homebrew_proxy_script" --apply

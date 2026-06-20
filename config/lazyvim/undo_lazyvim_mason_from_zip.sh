@@ -13,7 +13,7 @@ die() {
 usage() {
   cat <<'USAGE'
 Uso:
-  bash scripts/undo_lazyvim_mason_from_zip.sh
+  bash config/lazyvim/undo_lazyvim_mason_from_zip.sh
 
 Comportamento:
 - Remove instalacao aplicada pelo setup de ZIP.
