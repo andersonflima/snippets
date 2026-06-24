@@ -1,0 +1,1 @@
+"""Microserviço action-driven (autocontido)."""

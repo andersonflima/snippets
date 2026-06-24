@@ -20,6 +20,11 @@ automation/    # scripts e ferramentas de AUTOMAÇÃO (executam tarefas)
 
 diagrams/      # diagramas (Mermaid)
 docs/          # documentação específica de itens quando necessário
+
+microservicos/ # microserviços action-driven (FastAPI) p/ pipeline de mascaramento
+  docs/        #   arquitetura (diagrama 4K) + contratos
+  api-gateway/ #   contratos OpenAPI do API Gateway (REST, VPC Link -> NLB -> EKS)
+  <ação>/      #   um serviço autocontido por ação (Dockerfile + app FastAPI)
 ```
 
 A divisão principal é por propósito: **`config/`** (preparar uma máquina/ambiente) versus **`automation/`** (rodar uma tarefa). Dentro de cada uma, subpastas por domínio.
