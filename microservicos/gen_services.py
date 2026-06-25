@@ -61,6 +61,51 @@ def assumed_session(account: str, role_arn: str, region: str) -> boto3.Session:
     )
 '''
 
+GMUD_PY = '''\
+"""Gate de GMUD: em ambiente produtivo, exige change autorizada no ServiceNow."""
+from __future__ import annotations
+
+import os
+
+import httpx
+
+from .aws import ActionError
+
+PRODUCTIVE_ENVIRONMENTS = {"prod"}
+SERVICENOW_SERVICE_URL = os.getenv("SERVICENOW_SERVICE_URL", "http://servicenow/servicenow/execute")
+
+
+def ensure_change_authorized(action: str, req) -> None:
+    """Bloqueia a execução se o ambiente é produtivo e não há GMUD autorizada.
+
+    A change é sempre criada no ServiceNow (nunca por nós): em produção o código
+    da GMUD (changeNumber) é obrigatório para ser buscada/validada/acompanhada.
+    """
+    if req.environment not in PRODUCTIVE_ENVIRONMENTS:
+        return
+    if not req.changeNumber:
+        raise ActionError("validation_error", "changeNumber (GMUD) é obrigatório em produção", 400)
+    payload = {
+        "account": req.account,
+        "resource": req.resource,
+        "roleArn": req.roleArn,
+        "region": req.region,
+        "environment": req.environment,
+        "changeNumber": req.changeNumber,
+        "requestId": req.requestId,
+        "params": {"operation": "validate", "action": action, "changeNumber": req.changeNumber},
+    }
+    try:
+        resp = httpx.post(SERVICENOW_SERVICE_URL, json=payload, timeout=10.0)
+    except httpx.HTTPError as exc:
+        raise ActionError("upstream_error", f"falha ao validar GMUD: {exc}", 502) from exc
+    if resp.status_code >= 400:
+        raise ActionError("gmud_required", f"GMUD não autorizada ({resp.status_code})", 403)
+    allowed = bool((resp.json().get("detail") or {}).get("allowed"))
+    if not allowed:
+        raise ActionError("gmud_required", "execução produtiva requer GMUD aprovada na janela", 403)
+'''
+
 INIT_PY = '"""Microserviço action-driven (autocontido)."""\n'
 
 MAIN_PY = '''\
@@ -73,7 +118,7 @@ from fastapi.responses import JSONResponse
 
 from .aws import ActionError
 from .handler import execute
-from .models import ActionAccepted, ErrorResponse, __PYCLASS__Request
+__GUARD_IMPORT__from .models import ActionAccepted, ErrorResponse, __PYCLASS__Request
 
 app = FastAPI(title="__SVC__ action microservice", version="1.0.0")
 
@@ -111,7 +156,7 @@ def _client_error_to_http(exc: ClientError) -> tuple[int, str]:
 )
 def run(req: __PYCLASS__Request):
     try:
-        return execute(req)
+        __GUARD_CALL__return execute(req)
     except ActionError as exc:
         return JSONResponse(
             status_code=exc.http,
@@ -156,10 +201,14 @@ REQS_BASE = [
     "uvicorn[standard]==0.34.0",
     "boto3==1.35.90",
     "pydantic==2.10.4",
+    "httpx==0.28.1",
 ]
 
 def models_head(needs_any: bool) -> str:
-    typing_imp = "from typing import Any, Optional" if needs_any else "from typing import Optional"
+    typing_imp = (
+        "from typing import Any, Literal, Optional" if needs_any
+        else "from typing import Literal, Optional"
+    )
     return (
         '"""Modelos do contrato (envelope + params da ação)."""\n'
         "from __future__ import annotations\n\n"
@@ -172,6 +221,10 @@ ENVELOPE_FIELDS = '''\
     resource: str = Field(description="Nome ou ARN do recurso alvo.")
     roleArn: str = Field(pattern=r"^arn:aws:iam::\\d{12}:role/.+$", description="Role para assume-role.")
     region: str = Field(pattern=r"^[a-z]{2}-[a-z]+-\\d$", description="Região AWS.")
+    environment: Literal["dev", "homol", "staging", "prod"] = Field(
+        description="Ambiente target. 'prod' exige GMUD aprovada (ServiceNow)."
+    )
+    changeNumber: Optional[str] = Field(default=None, description="Número da GMUD (obrigatório p/ produção).")
     requestId: Optional[str] = Field(default=None, description="Idempotency key opcional.")
     dryRun: bool = Field(default=False, description="Valida sem executar.")
 '''
@@ -793,6 +846,122 @@ def execute(req: StorageRequest) -> ActionAccepted:
     return ActionAccepted(operationId=str(uuid.uuid4()), resource=req.resource, account=req.account, detail=detail)
 ''',
     },
+    {
+        "name": "servicenow",
+        "summary": "Integração com ServiceNow para GMUD: valida/registra/consulta a change.",
+        "gate": False,
+        "fields": [
+            ("operation", "str", True, None, "validate | register | status"),
+            ("action", "str", False, None, "Ação/microserviço sendo gateada."),
+            ("changeNumber", "str", False, None, "Número da GMUD/change."),
+            ("operationId", "str", False, None, "Correlação da operação em andamento."),
+            ("workNote", "str", False, None, "Nota de trabalho a registrar (operation=register)."),
+            ("state", "str", False, None, "Estado/anotação de progresso (operation=register)."),
+        ],
+        "reqs": [],
+        "handler": '''\
+"""Ação servicenow: GMUD via ServiceNow Table API (validate/register/status)."""
+from __future__ import annotations
+
+import os
+import uuid
+from datetime import datetime, timezone
+
+import httpx
+
+from .aws import ActionError
+from .models import ActionAccepted, ServicenowRequest
+
+# ServiceNow Change state: -1 = Implement (liberado p/ execução). Configurável.
+ALLOWED_STATES = {s.strip() for s in os.getenv("SERVICENOW_ALLOWED_STATES", "-1,implement").split(",") if s.strip()}
+CHANGE_TABLE = os.getenv("SERVICENOW_CHANGE_TABLE", "change_request")
+
+
+def _client() -> httpx.Client:
+    base = os.getenv("SERVICENOW_INSTANCE_URL")
+    if not base:
+        raise ActionError("validation_error", "SERVICENOW_INSTANCE_URL não configurado", 400)
+    headers = {"Accept": "application/json"}
+    auth = None
+    token = os.getenv("SERVICENOW_TOKEN")
+    user = os.getenv("SERVICENOW_USER")
+    if token:
+        headers["Authorization"] = f"Bearer {token}"
+    elif user:
+        auth = (user, os.getenv("SERVICENOW_PASSWORD", ""))
+    return httpx.Client(base_url=base.rstrip("/"), headers=headers, auth=auth, timeout=15.0)
+
+
+def _get_change(client: httpx.Client, number: str) -> dict:
+    resp = client.get(
+        f"/api/now/table/{CHANGE_TABLE}",
+        params={"sysparm_query": f"number={number}", "sysparm_limit": 1},
+    )
+    if resp.status_code in (401, 403):
+        raise ActionError("assume_role_denied", "credencial ServiceNow inválida", 403)
+    resp.raise_for_status()
+    results = resp.json().get("result", [])
+    if not results:
+        raise ActionError("not_found", f"change {number} não encontrado", 404)
+    return results[0]
+
+
+def _within_window(change: dict) -> bool:
+    start = change.get("start_date") or change.get("work_start")
+    end = change.get("end_date") or change.get("work_end")
+    if not start or not end:
+        return False
+    fmt = "%Y-%m-%d %H:%M:%S"
+    try:
+        begin = datetime.strptime(start, fmt).replace(tzinfo=timezone.utc)
+        finish = datetime.strptime(end, fmt).replace(tzinfo=timezone.utc)
+    except ValueError:
+        return False
+    return begin <= datetime.now(timezone.utc) <= finish
+
+
+def execute(req: ServicenowRequest) -> ActionAccepted:
+    p = req.params
+    number = p.changeNumber or req.changeNumber
+    operation = p.operation
+
+    if operation in ("validate", "status") and not number:
+        raise ActionError("validation_error", "changeNumber é obrigatório", 400)
+
+    try:
+        with _client() as client:
+            if operation == "validate":
+                change = _get_change(client, number)
+                state = str(change.get("state", ""))
+                in_window = _within_window(change)
+                allowed = state in ALLOWED_STATES and in_window
+                detail = {
+                    "operation": "validate", "change": number, "state": state,
+                    "withinWindow": in_window, "allowed": allowed,
+                }
+            elif operation == "status":
+                change = _get_change(client, number)
+                detail = {"operation": "status", "change": number, "state": str(change.get("state", ""))}
+            elif operation == "register":
+                if req.dryRun:
+                    detail = {"operation": "register", "change": number, "dryRun": True}
+                else:
+                    change = _get_change(client, number)
+                    note = p.workNote or f"action={p.action} operationId={p.operationId or req.requestId}"
+                    patch = client.patch(
+                        f"/api/now/table/{CHANGE_TABLE}/{change['sys_id']}",
+                        json={"work_notes": note},
+                    )
+                    patch.raise_for_status()
+                    detail = {"operation": "register", "change": number, "registered": True}
+            else:
+                raise ActionError("validation_error", f"operation inválida: {operation}", 400)
+    except httpx.HTTPError as exc:
+        raise ActionError("upstream_error", f"ServiceNow: {exc}", 502) from exc
+
+    return ActionAccepted(operationId=str(uuid.uuid4()), resource=req.resource, account=req.account, detail=detail)
+''',
+    },
 ]
 
 
@@ -858,11 +1027,23 @@ def main() -> None:
         root = os.path.join(HERE, name)
         app = os.path.join(root, "app")
 
+        gated = svc.get("gate", True)
+        guard_import = "from .gmud import ensure_change_authorized\n" if gated else ""
+        guard_call = f'ensure_change_authorized("{name}", req)\n        ' if gated else ""
+
         write(os.path.join(app, "__init__.py"), INIT_PY)
         write(os.path.join(app, "aws.py"), AWS_PY)
+        if gated:
+            write(os.path.join(app, "gmud.py"), GMUD_PY)
         write(os.path.join(app, "models.py"), build_models(pyclass, svc["fields"]))
         write(os.path.join(app, "handler.py"), svc["handler"])
-        write(os.path.join(app, "main.py"), MAIN_PY.replace("__PYCLASS__", pyclass).replace("__SVC__", name))
+        write(
+            os.path.join(app, "main.py"),
+            MAIN_PY.replace("__GUARD_IMPORT__", guard_import)
+            .replace("__GUARD_CALL__", guard_call)
+            .replace("__PYCLASS__", pyclass)
+            .replace("__SVC__", name),
+        )
 
         reqs = REQS_BASE + svc.get("reqs", [])
         write(os.path.join(root, "requirements.txt"), "\n".join(reqs) + "\n")
