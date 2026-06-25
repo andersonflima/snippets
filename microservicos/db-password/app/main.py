@@ -7,6 +7,7 @@ from fastapi.responses import JSONResponse
 
 from .aws import ActionError
 from .handler import execute
+from .gmud import ensure_change_authorized
 from .models import ActionAccepted, ErrorResponse, DbPasswordRequest
 
 app = FastAPI(title="db-password action microservice", version="1.0.0")
@@ -45,6 +46,7 @@ def _client_error_to_http(exc: ClientError) -> tuple[int, str]:
 )
 def run(req: DbPasswordRequest):
     try:
+        ensure_change_authorized("db-password", req)
         return execute(req)
     except ActionError as exc:
         return JSONResponse(

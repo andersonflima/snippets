@@ -84,10 +84,17 @@ ENVELOPE_PROPS = {
         pattern=r"^arn:aws:iam::\d{12}:role/.+$",
     ),
     "region": s_str("Região AWS.", pattern=r"^[a-z]{2}-[a-z]+-\d$"),
+    "environment": {
+        "type": "string",
+        "enum": ["dev", "homol", "staging", "prod"],
+        "description": "Ambiente target da ação. 'prod' exige GMUD aprovada (ServiceNow).",
+    },
+    "changeNumber": s_str("Número da GMUD/change no ServiceNow (obrigatório p/ produção)."),
     "requestId": s_str("Idempotency key opcional (correlação do pipeline)."),
     "dryRun": {"type": "boolean", "default": False, "description": "Valida sem executar."},
 }
-ENVELOPE_REQUIRED = ["account", "resource", "roleArn", "region"]
+ENVELOPE_REQUIRED = ["account", "resource", "roleArn", "region", "environment"]
+PRODUCTIVE_ENVIRONMENTS = ["prod"]
 
 
 # --- definição das ações (action-driven) ---------------------------------------
@@ -219,6 +226,19 @@ SERVICES = [
             "applyImmediately": {"type": "boolean", "default": False},
         },
         "required": ["resourceType"],
+    },
+    {
+        "name": "servicenow",
+        "summary": "Integra com o ServiceNow para acompanhamento de GMUD e autorização de execução produtiva.",
+        "params": {
+            "operation": {"type": "string", "enum": ["validate", "register", "status"]},
+            "action": s_str("Ação/microserviço sendo gateada (ex.: destroy)."),
+            "changeNumber": s_str("Número da GMUD/change a validar/registrar."),
+            "operationId": s_str("Correlação com a operação em andamento."),
+            "workNote": s_str("Nota de trabalho a registrar no change (operation=register)."),
+            "state": s_str("Novo estado/anotação de progresso (operation=register)."),
+        },
+        "required": ["operation"],
     },
 ]
 

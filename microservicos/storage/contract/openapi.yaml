@@ -95,6 +95,7 @@ components:
         - resource
         - roleArn
         - region
+        - environment
         - params
       properties:
         account:
@@ -112,6 +113,17 @@ components:
           type: string
           description: Região AWS.
           pattern: "^[a-z]{2}-[a-z]+-\\d$"
+        environment:
+          type: string
+          enum:
+            - dev
+            - homol
+            - staging
+            - prod
+          description: "Ambiente target da ação. 'prod' exige GMUD aprovada (ServiceNow)."
+        changeNumber:
+          type: string
+          description: Número da GMUD/change no ServiceNow (obrigatório p/ produção).
         requestId:
           type: string
           description: Idempotency key opcional (correlação do pipeline).
