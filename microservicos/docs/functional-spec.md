@@ -363,6 +363,46 @@ seus **deltas**.
   multinível. (A change continua sendo **criada no ServiceNow** — fora do escopo
   da plataforma.)
 
+### 2.12 `rds-data`
+
+- **Objetivo:** wrapper **seguro** do **RDS Data API** — uma camada extra que
+  **avalia o SQL** contra regras de negócio antes de executar.
+- **Responsabilidades:** carregar as regras (JSON em **S3**), avaliar o SQL,
+  bloquear o que viola a política e, se permitido, executar via Data API.
+- **Recursos AWS suportados:** Aurora (clusters com **Data API** habilitado);
+  segredo de credenciais no Secrets Manager; regras em **S3**.
+- **Operações:** `ExecuteStatement` (e parâmetros nomeados).
+- **Fluxo interno:** carrega regras de `s3://RULES_BUCKET/RULES_KEY` (cache TTL,
+  **identidade da plataforma/IRSA**) → `evaluate_sql` (sqlparse) → se negado
+  `403 sql_forbidden`; senão assume-role na conta-alvo → `rds-data`
+  `execute_statement`.
+- **Entradas:** `params.sql`, `secretArn`, `resourceArn` (default `resource`),
+  `database`, `schema`, `parameters` (name→value), `includeResultMetadata`,
+  `rulesBucket`/`rulesKey` (override). **Saídas:** `detail.records`/
+  `numberOfRecordsUpdated`/`columnMetadata` + `allowed`/`reason`.
+- **Regras (JSON em S3):** `default` (allow|deny), `maxStatements`,
+  `allowedStatements`/`deniedStatements` (por tipo), `deniedKeywords`,
+  `denyPatterns` (regex), `requireWhereOnWrite`, `tables.allow|deny`,
+  `environments.<env>` (override por ambiente). Exemplo em
+  `rds-data/rules.example.json`.
+- **Validações:** `sql` e `secretArn` obrigatórios; SQL avaliado contra as
+  regras (tipo de statement, keywords/regex, WHERE em escrita, nº de statements,
+  allow/deny de tabelas — best-effort).
+- **Erros:** SQL bloqueado → `403 sql_forbidden`; bucket não configurado/regras
+  inválidas → `400`; regras não encontradas → `404`.
+- **Idempotência:** depende do SQL (responsabilidade do chamador); `dryRun` só
+  avalia (não executa).
+- **STS/IAM:** Data API na conta-alvo (`rds-data:*` + `secretsmanager`); leitura
+  das regras com a **IRSA da plataforma** (`s3:GetObject` no bucket de regras).
+- **Gate de GMUD:** sim (produção exige change), como os demais.
+- **Limitações:** extração de tabelas é best-effort (regex); não substitui
+  privilégios do banco — é uma camada **adicional**. Exige Aurora com Data API.
+- **Casos de uso:** permitir queries operacionais controladas em produção sem dar
+  acesso direto ao banco; bloquear DDL/DML perigosos por política central.
+- **Evoluções:** parser AST completo p/ tabelas/colunas, limites de linhas,
+  mascaramento de resultado, allowlist por usuário/role, auditoria do SQL
+  avaliado, transações (Begin/Commit/Rollback).
+
 ---
 
 ## 3. Componentes compartilhados da plataforma
@@ -490,6 +530,7 @@ OpenAPI + role IAM + arquitetura/diagrama) vs. a especificação-alvo acima.
 | destroy | remover recursos (cleanup) | ✅ | | | Sem dependency-check; destrutivo (recomenda gate/dry-run). |
 | start-stop | ligar/desligar | ✅ | | | Sem espera por estado-alvo. |
 | storage | tipo + tamanho de storage | ✅ | | | Sem checagem do cooldown de 6h do RDS. |
+| rds-data | wrapper seguro do RDS Data API + regras (S3) | ✅ | | | Avaliador (sqlparse) testado; extração de tabelas best-effort; requer Aurora Data API. |
 | Envelope/Contrato | account+resource+role+region+**environment**+params | ✅ | | | 11 contratos OpenAPI validados; `environment` obrigatório. |
 | servicenow (microserviço) | validate/register/status de GMUD | | ⚠️ | | Implementado (ServiceNow Table API); integração real depende de credenciais/instância; não cria change automaticamente. |
 | Gate de GMUD (prod) | bloquear execução produtiva sem change aprovada | ✅ | | | Em `prod`, `changeNumber` obrigatório (400); `gmud.py` chama `servicenow validate` (Implement + janela). Change sempre criada no ServiceNow. |

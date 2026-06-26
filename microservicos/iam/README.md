@@ -38,6 +38,13 @@ A `microservicos-actions-role` **confia** (trust policy) na
 | **KMS** (cripto/grants) | Encrypt, Decrypt, ReEncrypt*, GenerateDataKey*, CreateGrant, List/Retire/RevokeGrant | `kms`, `restore`, `replicate` (snapshots encriptados) |
 | **Secrets Manager** | GetSecretValue, DescribeSecret, ListSecrets | `db-password` (master secret + nova senha) |
 | **IAM** | PassRole (condicionado a `monitoring.rds.amazonaws.com`) | `create`/`restore`/`modify` quando usam Enhanced Monitoring |
+| **RDS Data API** | rds-data: Execute/BatchExecute/Begin/Commit/RollbackTransaction | `rds-data` (wrapper seguro de SQL) |
+
+> **Nota (`rds-data`):** as **regras de SQL** são lidas de um bucket S3 com a
+> **identidade da plataforma (IRSA)** — não com esta role da conta-alvo. Portanto
+> a role IRSA do pod precisa de `s3:GetObject` no bucket de regras
+> (`RULES_BUCKET`). Esta role (conta-alvo) só precisa do `rds-data:*` acima e do
+> `secretsmanager:GetSecretValue` (já incluído) do segredo do banco.
 
 ## Criar via AWS CLI (na conta do cliente)
 
