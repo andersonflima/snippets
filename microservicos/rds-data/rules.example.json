@@ -1,0 +1,18 @@
+{
+  "version": 1,
+  "default": "deny",
+  "maxStatements": 1,
+  "allowedStatements": ["SELECT"],
+  "deniedStatements": ["DROP", "TRUNCATE", "ALTER", "CREATE", "GRANT", "REVOKE"],
+  "deniedKeywords": ["pg_sleep", "xp_cmdshell"],
+  "denyPatterns": [],
+  "requireWhereOnWrite": true,
+  "tables": {
+    "allow": [],
+    "deny": ["public.secrets"]
+  },
+  "environments": {
+    "dev": { "default": "allow" },
+    "homol": { "allowedStatements": ["SELECT", "INSERT", "UPDATE", "DELETE"] }
+  }
+}

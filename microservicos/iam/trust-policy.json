@@ -1,0 +1,13 @@
+{
+  "Version": "2012-10-17",
+  "Statement": [
+    {
+      "Sid": "AllowPlatformAssumeRole",
+      "Effect": "Allow",
+      "Principal": {
+        "AWS": "arn:aws:iam::<PLATFORM_ACCOUNT_ID>:role/<PLATFORM_ASSUME_ROLE>"
+      },
+      "Action": "sts:AssumeRole"
+    }
+  ]
+}

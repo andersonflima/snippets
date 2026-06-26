@@ -1,0 +1,30 @@
+{
+  "name": "microservicos-actions-console",
+  "version": "1.0.0",
+  "description": "Contract-driven console for the AWS action-driven microservices (dynamic forms from API Gateway OpenAPI).",
+  "scripts": {
+    "ng": "ng",
+    "start": "ng serve",
+    "build": "ng build",
+    "watch": "ng build --watch --configuration development"
+  },
+  "private": true,
+  "dependencies": {
+    "@angular/common": "^20.0.0",
+    "@angular/compiler": "^20.0.0",
+    "@angular/core": "^20.0.0",
+    "@angular/forms": "^20.0.0",
+    "@angular/platform-browser": "^20.0.0",
+    "@angular/router": "^20.0.0",
+    "js-yaml": "^4.1.0",
+    "rxjs": "~7.8.0",
+    "tslib": "^2.3.0"
+  },
+  "devDependencies": {
+    "@angular/build": "^20.0.0",
+    "@angular/cli": "^20.0.0",
+    "@angular/compiler-cli": "^20.0.0",
+    "@types/js-yaml": "^4.0.9",
+    "typescript": "~5.8.0"
+  }
+}

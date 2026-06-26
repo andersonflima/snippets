@@ -1,0 +1,76 @@
+---
+config:
+  theme: neo
+  layout: elk
+  look: classic
+---
+flowchart LR
+  subgraph Platform["Microservicos Action-Driven (assume-role cross-account)"]
+    direction TB
+    Restore["restore<br/>restaura/cria snapshot"]
+    DbPassword["db-password<br/>troca senha do usuario do banco"]
+    Kms["kms<br/>cria custom key + vincula/re-encripta"]
+    Replicate["replicate<br/>copia recurso cross-account / region"]
+    VpcLink["vpc-link<br/>acesso privado ao banco"]
+    Modify["modify"]
+    Create["create"]
+    Destroy["destroy"]
+    StartStop["start / stop"]
+    Storage["storage"]
+  end
+
+  Orchestrator{{"Orquestrador / Control Plane<br/>Step Functions + Event Bus"}}
+
+  subgraph PrdAccount["Conta PRD (Producao)"]
+    direction TB
+    DbReal[("DB Real (Producao)")]
+    DbCopy[("DB Copia")]
+    PrdVpcLink["VPC-Link / PrivateLink"]
+    MaskedSnapshot[("Snapshot Mascarado")]
+    PrdKms{{"Custom KMS Key (PRD)"}}
+  end
+
+  subgraph MaskAccount["Conta do Time de Mascaramento"]
+    direction TB
+    MaskTool["Ferramenta de Mascaramento"]
+    MaskAccess["Recebe endpoint + credenciais"]
+    MaskWork["Conecta e mascara via VPC-Link"]
+    MaskGate{"Mascaramento OK?"}
+  end
+
+  subgraph HomolAccount["Conta HOMOL (Homologacao)"]
+    direction TB
+    HomolKms{{"Custom KMS Key (HOMOL)"}}
+    DbHomol[("DB HOMOL (restaurado)")]
+    Devs["Devs / QA"]
+  end
+
+  Platform e1@-. "invoca via STS:AssumeRole" .-> Orchestrator
+  Orchestrator e2@-. STS .-> PrdAccount
+  Orchestrator e3@-. STS .-> MaskAccount
+  Orchestrator e4@-. STS .-> HomolAccount
+
+  DbReal e5@== "1 restore" ==> DbCopy
+  DbCopy e6@== "2 db-password" ==> DbCopy
+  DbCopy e7@== "3 vpc-link" ==> PrdVpcLink
+  PrdVpcLink e8@== "4 acesso privado" ==> MaskAccess
+  MaskAccess e9@== "5 mascara" ==> MaskWork
+  MaskWork e10@== "6 create-snapshot" ==> MaskedSnapshot
+  MaskedSnapshot e11@== "7 kms re-encripta" ==> PrdKms
+  MaskWork e12@== avalia ==> MaskGate
+  MaskGate e13@== "8 OK -> promove" ==> MaskedSnapshot
+  MaskedSnapshot e14@== "9 replicate + KMS" ==> DbHomol
+  PrdKms e15@== "9 KMS key" ==> HomolKms
+  DbHomol e16@== "10 restore / 11 db-password" ==> DbHomol
+  DbHomol e17@== "12 notifica" ==> Devs
+  DbCopy e18@== "13 destroy + stop + storage" ==> Destroy
+
+  classDef account stroke:#AB47BC
+  classDef action fill:#F2FBF5,stroke:#10B981,color:#0F5132
+  classDef data fill:#EFF5FF,stroke:#2563EB,color:#0D47A1
+  classDef kms fill:#FFF6EC,stroke:#EA580C,color:#7C2D12
+
+  class PrdAccount,MaskAccount,HomolAccount account
+  class Restore,DbPassword,Kms,Replicate,VpcLink,Modify,Create,Destroy,StartStop,Storage action
+  class DbReal,DbCopy,MaskedSnapshot,DbHomol,PrdVpcLink data
+  class PrdKms,HomolKms kms
