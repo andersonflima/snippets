@@ -1,0 +1,16 @@
+{
+  "name": "git-yaml-ref-bump",
+  "version": "1.0.0",
+  "description": "Replace a versioned reference (e.g. build.yml@v2 -> build.yml@v3) inside YAML files across a set of release branches.",
+  "type": "module",
+  "bin": {
+    "git-yaml-ref-bump": "./index.js"
+  },
+  "scripts": {
+    "start": "node index.js"
+  },
+  "engines": {
+    "node": ">=18"
+  },
+  "license": "MIT"
+}
