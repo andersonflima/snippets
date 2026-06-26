@@ -307,6 +307,8 @@ RESPONSES = {
     "403": {"description": "AssumeRole negado / sem permissão.", "content": {"application/json": {"schema": {"$ref": "#/components/schemas/Error"}}}},
     "404": {"description": "Recurso não encontrado.", "content": {"application/json": {"schema": {"$ref": "#/components/schemas/Error"}}}},
     "409": {"description": "Conflito / estado inválido do recurso.", "content": {"application/json": {"schema": {"$ref": "#/components/schemas/Error"}}}},
+    "422": {"description": "Payload inválido (validação do schema).", "content": {"application/json": {"schema": {"$ref": "#/components/schemas/Error"}}}},
+    "500": {"description": "Erro interno inesperado.", "content": {"application/json": {"schema": {"$ref": "#/components/schemas/Error"}}}},
     "502": {"description": "Falha no upstream (EKS/NLB).", "content": {"application/json": {"schema": {"$ref": "#/components/schemas/Error"}}}},
 }
 
