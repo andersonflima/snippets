@@ -113,7 +113,8 @@ MAIN_PY = '''\
 from __future__ import annotations
 
 from botocore.exceptions import ClientError
-from fastapi import FastAPI
+from fastapi import FastAPI, Request
+from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
 
 from .aws import ActionError
@@ -131,6 +132,37 @@ def healthz() -> dict:
 @app.get("/readyz")
 def readyz() -> dict:
     return {"status": "ready"}
+
+
+@app.exception_handler(RequestValidationError)
+async def on_validation_error(request: Request, exc: RequestValidationError) -> JSONResponse:
+    """Padroniza erros de validacao (Pydantic) no envelope ErrorResponse."""
+    errors = exc.errors()
+    message = "payload invalido"
+    if errors:
+        loc = ".".join(str(part) for part in errors[0].get("loc", []) if part != "body")
+        message = f"payload invalido: {loc}: {errors[0].get('msg', '')}".strip(": ")
+    return JSONResponse(
+        status_code=422,
+        content=ErrorResponse(
+            code="validation_error",
+            message=message,
+            requestId=request.headers.get("x-request-id"),
+        ).model_dump(),
+    )
+
+
+@app.exception_handler(Exception)
+async def on_unexpected_error(request: Request, exc: Exception) -> JSONResponse:
+    """Captura qualquer erro inesperado, garantindo 500 no envelope ErrorResponse."""
+    return JSONResponse(
+        status_code=500,
+        content=ErrorResponse(
+            code="internal_error",
+            message="erro interno inesperado",
+            requestId=request.headers.get("x-request-id"),
+        ).model_dump(),
+    )
 
 
 def _client_error_to_http(exc: ClientError) -> tuple[int, str]:
@@ -151,6 +183,8 @@ def _client_error_to_http(exc: ClientError) -> tuple[int, str]:
         403: {"model": ErrorResponse},
         404: {"model": ErrorResponse},
         409: {"model": ErrorResponse},
+        422: {"model": ErrorResponse},
+        500: {"model": ErrorResponse},
         502: {"model": ErrorResponse},
     },
 )

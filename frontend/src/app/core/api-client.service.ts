@@ -12,18 +12,25 @@ export interface ActionResult {
   body: unknown;
 }
 
-/** Sends action requests to the configured API Gateway base URL. */
+/** Sends action requests to the BFF, which proxies them to the microservices. */
 @Injectable({ providedIn: 'root' })
 export class ApiClientService {
   private readonly http = inject(HttpClient);
   private readonly settings = inject(SettingsService);
 
-  /** POST the payload to `{baseUrl}{path}` and normalize success/error. */
+  /**
+   * POST the payload to `{baseUrl}/api{path}` and normalize success/error.
+   * The BFF exposes microservice actions under `/api/<service>/execute`.
+   * `withCredentials` sends the httpOnly session cookie the BFF relies on.
+   */
   async runAction(path: string, payload: JsonValue): Promise<ActionResult> {
-    const url = `${this.settings.baseUrl()}${path}`;
+    const url = `${this.settings.baseUrl()}/api${path}`;
     try {
       const response = await firstValueFrom(
-        this.http.post(url, payload, { observe: 'response' }),
+        this.http.post(url, payload, {
+          observe: 'response',
+          withCredentials: true,
+        }),
       );
       return {
         ok: true,
