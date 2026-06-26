@@ -2,7 +2,7 @@ import { ChangeDetectionStrategy, Component, inject, signal } from '@angular/cor
 import { FormsModule } from '@angular/forms';
 import { SettingsService } from '../core/settings.service';
 
-/** Lets the operator configure the API Gateway base URL (persisted to localStorage). */
+/** Lets the operator configure the BFF base URL (persisted to localStorage). */
 @Component({
   selector: 'app-settings',
   standalone: true,
@@ -14,14 +14,15 @@ import { SettingsService } from '../core/settings.service';
 
       <div class="card">
         <div class="field">
-          <label>Base URL do API Gateway</label>
+          <label>Base URL do BFF</label>
           <input
-            type="url"
+            type="text"
             [(ngModel)]="draft"
-            placeholder="https://api.example.com/v1"
+            placeholder="/bff"
           />
           <div class="hint">
-            As ações são enviadas para <code>{{ draft() }}{{ '{path}' }}</code>.
+            As ações são enviadas para
+            <code>{{ draft() }}/api{{ '{path}' }}</code>.
           </div>
         </div>
         <div class="toolbar">
@@ -33,9 +34,9 @@ import { SettingsService } from '../core/settings.service';
       </div>
 
       <div class="note">
-        Autenticação (Active Directory / Cognito) será adicionada depois. Um
-        <code>authInterceptor</code> placeholder já está conectado para receber o
-        token quando o login estiver disponível.
+        O BFF é o único backend acessado pelo frontend e cuida da autenticação:
+        emite o JWT e o guarda num cookie httpOnly. As chamadas vão com
+        <code>withCredentials</code>; o navegador nunca vê o token.
       </div>
     </div>
   `,

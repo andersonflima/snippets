@@ -1,11 +1,13 @@
 import { Injectable, signal } from '@angular/core';
 
 const STORAGE_KEY = 'msc.baseUrl';
-const DEFAULT_BASE_URL = 'https://api.example.com/v1';
+const DEFAULT_BASE_URL = '/bff';
 
 /**
- * Holds operator settings. Currently only the API Gateway base URL, persisted to
- * localStorage. Auth (AD/Cognito) settings will join here later.
+ * Holds operator settings. The base URL points at the BFF, the single backend
+ * the frontend talks to. The BFF proxies microservice actions and owns auth:
+ * it sets an httpOnly session cookie, so calls go out with `withCredentials`
+ * and the browser never sees the token. Persisted to localStorage.
  */
 @Injectable({ providedIn: 'root' })
 export class SettingsService {

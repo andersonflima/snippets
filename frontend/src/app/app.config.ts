@@ -14,7 +14,7 @@ export const appConfig: ApplicationConfig = {
   providers: [
     provideZonelessChangeDetection(),
     provideRouter(routes),
-    // authInterceptor is a placeholder today; AD/Cognito token attaches here later.
+    // authInterceptor sends the httpOnly session cookie and bounces 401s to /login.
     provideHttpClient(withInterceptors([authInterceptor])),
     // Load the versioned registry seed before the app renders.
     provideAppInitializer(() => inject(RegistryService).load()),
