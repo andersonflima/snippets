@@ -240,6 +240,26 @@ SERVICES = [
         },
         "required": ["operation"],
     },
+    {
+        "name": "rds-data",
+        "summary": "Wrapper seguro do RDS Data API: avalia o SQL contra regras (S3) antes de executar.",
+        "params": {
+            "sql": s_str("SQL a executar (validado contra as regras de negócio)."),
+            "secretArn": s_str("ARN do segredo (Secrets Manager) com as credenciais do banco."),
+            "resourceArn": s_str("ARN do cluster Aurora (default: campo resource)."),
+            "database": s_str("Banco/Database alvo."),
+            "schema": s_str("Schema alvo (opcional)."),
+            "parameters": {
+                "type": "object",
+                "description": "Parâmetros nomeados (name -> value) p/ SQL parametrizado.",
+                "additionalProperties": True,
+            },
+            "includeResultMetadata": {"type": "boolean", "default": False},
+            "rulesBucket": s_str("Bucket S3 com as regras (default: env RULES_BUCKET)."),
+            "rulesKey": s_str("Chave do .json de regras (default: env RULES_KEY)."),
+        },
+        "required": ["sql", "secretArn"],
+    },
 ]
 
 

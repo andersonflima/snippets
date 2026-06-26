@@ -139,6 +139,18 @@
           "iam:PassedToService": "monitoring.rds.amazonaws.com"
         }
       }
+    },
+    {
+      "Sid": "RdsDataApi",
+      "Effect": "Allow",
+      "Action": [
+        "rds-data:ExecuteStatement",
+        "rds-data:BatchExecuteStatement",
+        "rds-data:BeginTransaction",
+        "rds-data:CommitTransaction",
+        "rds-data:RollbackTransaction"
+      ],
+      "Resource": "*"
     }
   ]
 }
