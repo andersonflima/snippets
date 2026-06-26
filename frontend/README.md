@@ -80,9 +80,33 @@ The repo ships seeded with one contract (`microservicos-actions`) built from
 
 ## Authentication
 
-There is **no auth today** (AD/Cognito will be integrated later). An empty
-`authInterceptor` (`src/app/core/auth.interceptor.ts`) is already wired into
-`provideHttpClient(withInterceptors([authInterceptor]))` with a `TODO` so the
-bearer token can be attached without touching call sites. Settings only exposes
-the configurable base URL.
+The SPA talks **only to the BFF** (`/bff`). Login is handled by the BFF, which
+issues its own JWT and keeps it in an **httpOnly cookie** — the browser never
+sees the token. Every call therefore goes out with `withCredentials: true`:
+
+- `AuthService` (`src/app/core/auth.service.ts`) — `login` / `logout` / `loadMe`,
+  with `currentUser` exposed as a signal.
+- `authGuard` (`src/app/core/auth.guard.ts`) — protects routes; hydrates the
+  session via `loadMe()` and redirects to `/login` when unauthenticated.
+- `authInterceptor` — sends credentials on every request and bounces to `/login`
+  on a `401` (skipping the login call itself).
+
+The default `baseUrl` is `/bff`; in the container the bundled nginx proxies
+`/bff/*` to the BFF service (`BFF_UPSTREAM`).
+
+## Docker
+
+Multi-stage build (Node 22 build → nginx serving the SPA). The nginx layer also
+reverse-proxies `/bff/*` to the BFF and falls back unknown routes to `index.html`.
+
+```bash
+docker build -t actions-frontend .
+# BFF_UPSTREAM aponta para o serviço do BFF (default http://bff:8081)
+docker run -p 8080:80 -e BFF_UPSTREAM=http://bff:8081 actions-frontend
+```
+
+- `nginx.default.conf.template` is rendered at start via envsubst (`BFF_UPSTREAM`,
+  `NGINX_LOCAL_RESOLVERS`); the `/bff` proxy resolves the upstream at request time,
+  so the container starts even if the BFF is not up yet.
+- `GET /healthz` returns `ok` for liveness/readiness probes.
 ```
