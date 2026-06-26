@@ -1,0 +1,49 @@
+server {
+    listen 80;
+    server_name _;
+
+    root /usr/share/nginx/html;
+    index index.html;
+
+    # compressão dos estáticos
+    gzip on;
+    gzip_types text/css application/javascript application/json image/svg+xml;
+    gzip_min_length 1024;
+
+    # health do próprio nginx (usado pelo HEALTHCHECK / readiness)
+    location = /healthz {
+        access_log off;
+        add_header Content-Type text/plain;
+        return 200 "ok";
+    }
+
+    # BFF: o frontend chama /bff/* (baseUrl) e o nginx repassa removendo o prefixo.
+    # ${BFF_UPSTREAM} (ex.: http://bff:8081) e ${NGINX_LOCAL_RESOLVERS} (DNS do
+    # /etc/resolv.conf) vêm de envsubst no start. Usar variável + resolver faz o
+    # nginx subir mesmo se o BFF ainda não existir (resolve no request, 502 se fora).
+    location /bff/ {
+        resolver ${NGINX_LOCAL_RESOLVERS} ipv6=off valid=10s;
+        set $bff_upstream ${BFF_UPSTREAM};
+        rewrite ^/bff/(.*)$ /$1 break;
+        proxy_pass $bff_upstream;
+        proxy_http_version 1.1;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+        # cookies de sessão (httpOnly) trafegam de forma transparente
+        proxy_pass_request_headers on;
+    }
+
+    # assets com hash podem ser cacheados agressivamente
+    location /assets/ {
+        try_files $uri =404;
+        expires 7d;
+        add_header Cache-Control "public, immutable";
+    }
+
+    # SPA: qualquer rota desconhecida cai no index.html (roteamento do Angular)
+    location / {
+        try_files $uri $uri/ /index.html;
+    }
+}
