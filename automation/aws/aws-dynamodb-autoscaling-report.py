@@ -265,6 +265,30 @@ def _autoscaling_rows(results: List[dict]) -> List[list]:
     return rows
 
 
+def _account_label(item: dict) -> str:
+    name = item["account_name"]
+    return f"{item['account_id']} ({name})" if name else item["account_id"]
+
+
+def print_console_summary(results: List[dict], report_path: str) -> None:
+    """Resumo claro no stdout, destacando as contas que falharam."""
+    failed = [item for item in results if not item["ok"]]
+    ok_count = len(results) - len(failed)
+    total_resources = sum(len(item["resources"]) for item in results)
+
+    print(f"\nRelatório: {report_path}")
+    print(
+        f"Contas OK: {ok_count}/{len(results)} | "
+        f"recursos com auto scaling: {total_resources} | "
+        f"contas com erro: {len(failed)}"
+    )
+    if failed:
+        print(f"\n{len(failed)} conta(s) NÃO processada(s) (também na aba 'falhas'):")
+        for item in failed:
+            reason = item["error_code"] or item["error"] or "erro desconhecido"
+            print(f"  - {_account_label(item)}: {reason}")
+
+
 def write_report(report_path: str, results: List[dict]) -> str:
     from openpyxl import Workbook
 
@@ -336,6 +360,7 @@ def run(args: argparse.Namespace) -> int:
         f"Concluído: relatorio={report_path} recursos_com_autoscaling={total_resources} "
         f"contas_ok={len(results) - len(failed)} contas_falha={len(failed)}"
     )
+    print_console_summary(results, report_path)
     return 2 if failed else 0
 
 
