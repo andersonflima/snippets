@@ -1,0 +1,104 @@
+# Deploy do BFF (FastAPI) — padrão pdi-portal, imagem ECR sa-east-1.
+# A IMAGEM é construída/publicada (ECR) por uma esteira; este manifesto é aplicado
+# no EKS por outra (GitOps), que atualiza a tag da imagem. Substitua <ACCOUNT_ID>.
+#
+# O BFF autentica o usuário (cookie httpOnly) e repassa para o API Gateway com token
+# M2M. Segredos (JWT, usuários, client secret) via Secret — em produção, popular a
+# partir de um secret manager, NÃO commitar valores reais.
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: bff
+  namespace: microservicos
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: bff-config
+  namespace: microservicos
+data:
+  BFF_JWT_ISSUER: bff
+  BFF_JWT_TTL_SECONDS: "1800"
+  BFF_COOKIE_NAME: bff_session
+  BFF_COOKIE_SECURE: "true"
+  BFF_COOKIE_SAMESITE: strict
+  BFF_UPSTREAM_TIMEOUT: "15.0"
+  # Endpoints/identidade não-sensíveis (ajuste por ambiente):
+  API_GATEWAY_BASE_URL: https://api.example.com
+  BFF_M2M_TOKEN_URL: https://<cognito-domain>/oauth2/token
+  BFF_M2M_CLIENT_ID: <m2m-client-id>
+  BFF_M2M_SCOPE: ""
+  BFF_CORS_ORIGINS: ""
+---
+apiVersion: v1
+kind: Secret
+metadata:
+  name: bff-secret
+  namespace: microservicos
+type: Opaque
+stringData:
+  # Popular a partir de um secret manager — placeholders, NÃO usar em produção.
+  BFF_JWT_SECRET: CHANGE_ME_JWT_SECRET
+  BFF_M2M_CLIENT_SECRET: CHANGE_ME_M2M_CLIENT_SECRET
+  # JSON de usuários (bcrypt): [{"username":"...","passwordHash":"$2b$...","roles":["operator"]}]
+  BFF_USERS: "[]"
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: bff
+  namespace: microservicos
+  labels:
+    app: bff
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: bff
+  template:
+    metadata:
+      labels:
+        app: bff
+    spec:
+      serviceAccountName: bff
+      containers:
+        - name: bff
+          image: <ACCOUNT_ID>.dkr.ecr.sa-east-1.amazonaws.com/microservicos-bff:latest
+          ports:
+            - containerPort: 8081
+          envFrom:
+            - configMapRef:
+                name: bff-config
+            - secretRef:
+                name: bff-secret
+          resources:
+            requests:
+              cpu: 50m
+              memory: 128Mi
+            limits:
+              cpu: 500m
+              memory: 256Mi
+          readinessProbe:
+            httpGet:
+              path: /readyz
+              port: 8081
+          livenessProbe:
+            httpGet:
+              path: /healthz
+              port: 8081
+          securityContext:
+            runAsNonRoot: true
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: bff
+  namespace: microservicos
+spec:
+  selector:
+    app: bff
+  ports:
+    - port: 8081
+      targetPort: 8081
