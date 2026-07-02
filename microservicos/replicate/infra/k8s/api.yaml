@@ -1,18 +1,18 @@
-# Deploy do microserviço finops (padrão pdi-portal, imagem ECR sa-east-1).
+# Deploy do microserviço replicate (padrão pdi-portal, imagem ECR sa-east-1).
 # Substitua <ACCOUNT_ID> pela conta da plataforma (a esteira de deploy sobrescreve
 # a tag da imagem). Defina RULES_BACKEND (s3|dynamodb) e as chaves no ConfigMap.
 apiVersion: v1
 kind: ServiceAccount
 metadata:
-  name: finops
+  name: replicate
   namespace: microservicos
   annotations:
-    eks.amazonaws.com/role-arn: arn:aws:iam::<ACCOUNT_ID>:role/microservicos-finops-irsa
+    eks.amazonaws.com/role-arn: arn:aws:iam::<ACCOUNT_ID>:role/microservicos-replicate-irsa
 ---
 apiVersion: v1
 kind: ConfigMap
 metadata:
-  name: finops-config
+  name: replicate-config
   namespace: microservicos
 data:
   AWS_REGION: sa-east-1
@@ -26,29 +26,29 @@ data:
 apiVersion: apps/v1
 kind: Deployment
 metadata:
-  name: finops
+  name: replicate
   namespace: microservicos
   labels:
-    app: finops
+    app: replicate
 spec:
   replicas: 2
   selector:
     matchLabels:
-      app: finops
+      app: replicate
   template:
     metadata:
       labels:
-        app: finops
+        app: replicate
     spec:
-      serviceAccountName: finops
+      serviceAccountName: replicate
       containers:
-        - name: finops
-          image: <ACCOUNT_ID>.dkr.ecr.sa-east-1.amazonaws.com/microservicos-finops:latest
+        - name: replicate
+          image: <ACCOUNT_ID>.dkr.ecr.sa-east-1.amazonaws.com/microservicos-replicate:latest
           ports:
             - containerPort: 8080
           envFrom:
             - configMapRef:
-                name: finops-config
+                name: replicate-config
           resources:
             requests:
               cpu: 50m
@@ -72,11 +72,11 @@ spec:
 apiVersion: v1
 kind: Service
 metadata:
-  name: finops
+  name: replicate
   namespace: microservicos
 spec:
   selector:
-    app: finops
+    app: replicate
   ports:
     - port: 8080
       targetPort: 8080
