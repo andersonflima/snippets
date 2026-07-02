@@ -6,6 +6,7 @@ import uuid
 
 from .aws import ActionError, assumed_session
 from .models import ActionAccepted, DbPasswordRequest
+from .rules import enforce_allowed, enforce_common, enforce_denied, load_rules
 
 
 def _secret_password(raw: str) -> str:
@@ -50,6 +51,10 @@ def _alter_mysql(host, port, admin_user, admin_pw, username, new_pw) -> None:
 
 def execute(req: DbPasswordRequest) -> ActionAccepted:
     p = req.params
+    rules = load_rules({})
+    enforce_common(rules, req)
+    enforce_allowed(rules, "allowedEngines", p.engine, "engine")
+    enforce_denied(rules, "deniedUsernames", p.username, "usuário")
     session = assumed_session(req.account, req.roleArn, req.region)
     rds = session.client("rds")
     sm = session.client("secretsmanager")

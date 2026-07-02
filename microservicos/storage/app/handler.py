@@ -5,10 +5,17 @@ import uuid
 
 from .aws import ActionError, assumed_session
 from .models import ActionAccepted, StorageRequest
+from .rules import enforce_allowed, enforce_common, enforce_max, load_rules
 
 
 def execute(req: StorageRequest) -> ActionAccepted:
     p = req.params
+    rules = load_rules({})
+    enforce_common(rules, req)
+    enforce_allowed(rules, "allowedResourceTypes", p.resourceType, "resourceType")
+    enforce_allowed(rules, "allowedStorageTypes", p.storageType, "storage type")
+    enforce_max(rules, "maxAllocatedStorage", p.allocatedStorage, "allocatedStorage")
+    enforce_max(rules, "maxIops", p.iops, "iops")
     session = assumed_session(req.account, req.roleArn, req.region)
 
     if req.dryRun:

@@ -5,10 +5,15 @@ import uuid
 
 from .aws import ActionError, assumed_session
 from .models import ActionAccepted, StartStopRequest
+from .rules import enforce_allowed, enforce_common, load_rules
 
 
 def execute(req: StartStopRequest) -> ActionAccepted:
     p = req.params
+    rules = load_rules({})
+    enforce_common(rules, req)
+    enforce_allowed(rules, "allowedOperations", p.operation, "operação")
+    enforce_allowed(rules, "allowedResourceTypes", p.resourceType, "resourceType")
     session = assumed_session(req.account, req.roleArn, req.region)
     start = p.operation == "start"
 

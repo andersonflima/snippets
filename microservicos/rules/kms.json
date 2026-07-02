@@ -1,0 +1,9 @@
+{
+  "allowedRegions": [
+    "sa-east-1"
+  ],
+  "allowedTargetResourceTypes": [
+    "db-instance",
+    "db-snapshot"
+  ]
+}

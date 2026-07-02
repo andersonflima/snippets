@@ -5,10 +5,15 @@ import uuid
 
 from .aws import ActionError, assumed_session
 from .models import ActionAccepted, RestoreRequest
+from .rules import enforce_allowed, enforce_common, load_rules
 
 
 def execute(req: RestoreRequest) -> ActionAccepted:
     p = req.params
+    rules = load_rules({})
+    enforce_common(rules, req)
+    enforce_allowed(rules, "allowedOperations", p.operation, "operação")
+    enforce_allowed(rules, "allowedInstanceClasses", p.dbInstanceClass, "instance class")
     session = assumed_session(req.account, req.roleArn, req.region)
     rds = session.client("rds")
 

@@ -32,7 +32,41 @@ A esteira publica cada arquivo no backend escolhido:
 - Alterações valem no próximo ciclo de cache (`RULES_CACHE_TTL`, default 60s),
   sem redeploy.
 
+## Enforcement (serviços de escrita)
+
+Os serviços de escrita validam a requisição contra as regras **antes de qualquer
+chamada AWS**. O modelo é **opt-in e permissivo por omissão**: uma chave ausente
+(ou lista vazia) **não restringe nada** — o comportamento atual é preservado até
+você publicar uma regra. Violação retorna `rule_violation` (HTTP 403).
+
+Chaves genéricas (todos os serviços de escrita), via `enforce_common`:
+
+- `allowedRegions`: lista de regiões permitidas (ex.: `["sa-east-1"]`).
+- `allowedEnvironments` / `deniedEnvironments`: allow/deny de ambiente.
+
+Chaves por serviço:
+
+| Serviço       | Chaves de regra |
+|---------------|-----------------|
+| `modify`      | `allowedResourceTypes`, `allowedInstanceClasses`, `allowedInstanceClassesByEnv`, `allowedEngineVersions`, `maxBackupRetentionDays` |
+| `create`      | `allowedResourceTypes`, `allowedInstanceClasses`, `allowedEngines` |
+| `destroy`     | `allowedResourceTypes`, `deniedResourceTypes`, `requireFinalSnapshot` |
+| `storage`     | `allowedResourceTypes`, `allowedStorageTypes`, `maxAllocatedStorage`, `maxIops` |
+| `start-stop`  | `allowedOperations`, `allowedResourceTypes` |
+| `restore`     | `allowedOperations`, `allowedInstanceClasses` |
+| `replicate`   | `allowedResourceTypes`, `allowedDestinationAccounts`, `allowedDestinationRegions` |
+| `vpc-link`    | `allowedConsumerAccounts` |
+| `kms`         | `allowedTargetResourceTypes` |
+| `db-password` | `allowedEngines`, `deniedUsernames` |
+
+> `rds-data` mantém suas próprias regras de SQL (loader S3 existente). `servicenow`
+> (gate de GMUD) e `finops` (read-only) não fazem enforcement de escrita.
+
 ## Exemplos
 
 - [`finops.json`](./finops.json) — thresholds de ociosidade, tabela de preços
   (sa-east-1) e mapa de downgrade de instância usados pela varredura de desperdício.
+- `modify.json`, `create.json`, `destroy.json`, `storage.json`, `start-stop.json`,
+  `restore.json`, `replicate.json`, `vpc-link.json`, `kms.json`, `db-password.json`
+  — **schemas de exemplo** (região `sa-east-1`, classes/engines comuns, caps por
+  ambiente) prontos para revisão e publicação. Listas vazias = sem restrição.

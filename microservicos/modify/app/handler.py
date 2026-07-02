@@ -5,11 +5,19 @@ import uuid
 
 from .aws import ActionError, assumed_session
 from .models import ActionAccepted, ModifyRequest
+from .rules import enforce_allowed, enforce_common, enforce_env_map, enforce_max, load_rules
 
 
 def execute(req: ModifyRequest) -> ActionAccepted:
     p = req.params
     m = p.modifications or {}
+    rules = load_rules({})
+    enforce_common(rules, req)
+    enforce_allowed(rules, "allowedResourceTypes", p.resourceType, "resourceType")
+    enforce_env_map(rules, "allowedInstanceClassesByEnv", req.environment, m.get("dbInstanceClass"), "instance class")
+    enforce_allowed(rules, "allowedInstanceClasses", m.get("dbInstanceClass"), "instance class")
+    enforce_allowed(rules, "allowedEngineVersions", m.get("engineVersion"), "engine version")
+    enforce_max(rules, "maxBackupRetentionDays", m.get("backupRetentionPeriod"), "retenção de backup")
     session = assumed_session(req.account, req.roleArn, req.region)
 
     if req.dryRun:

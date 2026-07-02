@@ -5,10 +5,14 @@ import uuid
 
 from .aws import ActionError, assumed_session
 from .models import ActionAccepted, VpcLinkRequest
+from .rules import enforce_allowed, enforce_common, load_rules
 
 
 def execute(req: VpcLinkRequest) -> ActionAccepted:
     p = req.params
+    rules = load_rules({})
+    enforce_common(rules, req)
+    enforce_allowed(rules, "allowedConsumerAccounts", p.consumerAccount, "conta consumidora")
     session = assumed_session(req.account, req.roleArn, req.region)
     ec2 = session.client("ec2")
 

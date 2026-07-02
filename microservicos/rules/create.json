@@ -1,0 +1,24 @@
+{
+  "allowedRegions": [
+    "sa-east-1"
+  ],
+  "allowedResourceTypes": [
+    "db-instance",
+    "db-subnet-group",
+    "security-group",
+    "parameter-group"
+  ],
+  "allowedInstanceClasses": [
+    "db.t3.medium",
+    "db.t3.large",
+    "db.m5.large",
+    "db.m5.xlarge"
+  ],
+  "allowedEngines": [
+    "postgres",
+    "mysql",
+    "mariadb",
+    "aurora-postgresql",
+    "aurora-mysql"
+  ]
+}
