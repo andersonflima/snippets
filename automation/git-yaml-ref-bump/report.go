@@ -54,7 +54,11 @@ func renderReport(cfg config, results []branchResult) string {
 	fmt.Fprintf(&sb, "# YAML ref bump report\n\n")
 	fmt.Fprintf(&sb, "- Mode: %s\n", mode)
 	fmt.Fprintf(&sb, "- Replacement: `%s` -> `%s`\n", cfg.From, cfg.To)
-	fmt.Fprintf(&sb, "- File patterns (%s): %s\n", matchScope, strings.Join(cfg.Files, ", "))
+	filesLabel := strings.Join(cfg.Files, ", ")
+	if filesLabel == "" {
+		filesLabel = "(all files under dir)"
+	}
+	fmt.Fprintf(&sb, "- File patterns (%s): %s\n", matchScope, filesLabel)
 	fmt.Fprintf(&sb, "- Search dir: `%s`\n", cfg.Dir)
 	fmt.Fprintf(&sb, "- Branch pattern: `%s`\n", cfg.Pattern.String())
 	fmt.Fprintf(&sb, "- Branches matched: %d\n\n", len(results))
