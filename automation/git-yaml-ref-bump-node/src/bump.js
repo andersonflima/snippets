@@ -3,6 +3,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { git, localBranchExists, remoteBranchExists, fileAtRef } from "./git.js";
 import { readRef, listMatchingPaths } from "./branches.js";
+import { progress } from "./log.js";
 
 // countOccurrences counts non-overlapping literal occurrences of needle.
 function countOccurrences(haystack, needle) {
@@ -31,6 +32,7 @@ export function processBranch(cfg, branch) {
 
   if (cfg.dryRun) {
     try {
+      progress(cfg, `    inspecting ${res.source} (no checkout)`);
       res.files = inspectBranch(cfg, branch);
     } catch (err) {
       res.err = err.message;
@@ -39,6 +41,7 @@ export function processBranch(cfg, branch) {
   }
 
   try {
+    progress(cfg, `    checkout ${branch}`);
     checkoutBranch(cfg, branch);
     res.files = bumpBranchFiles(cfg, branch);
   } catch (err) {
@@ -48,10 +51,12 @@ export function processBranch(cfg, branch) {
 
   res.skipped = changedCount(res.files) === 0;
   if (res.skipped) {
+    progress(cfg, `    no occurrence found, nothing to push`);
     return res;
   }
 
   try {
+    progress(cfg, `    push ${branch} -> ${cfg.remote}`);
     git(cfg.repoPath, "push", cfg.remote, branch);
     res.pushed = true;
   } catch (err) {
@@ -79,6 +84,9 @@ function inspectBranch(cfg, branch) {
       if (exists) {
         fr.occurrences = countOccurrences(content, cfg.from);
         fr.changed = fr.occurrences > 0;
+        if (fr.changed) {
+          progress(cfg, `      would replace ${p} (${fr.occurrences}x)`);
+        }
       }
     } catch (err) {
       fr.err = err.message;
@@ -121,6 +129,7 @@ function bumpFile(cfg, filePath) {
     commitFile(cfg, filePath);
     fr.committed = true;
     fr.commit = git(cfg.repoPath, "rev-parse", "--short", "HEAD");
+    progress(cfg, `      commit ${fr.commit} ${filePath} (${fr.occurrences}x)`);
   } catch (err) {
     fr.err = err.message;
   }

@@ -13,9 +13,10 @@ const DEFAULTS = {
   "dry-run": false,
   fetch: true,
   report: "",
+  quiet: false,
 };
 
-const BOOLEAN_FLAGS = new Set(["full-path", "dry-run", "fetch"]);
+const BOOLEAN_FLAGS = new Set(["full-path", "dry-run", "fetch", "quiet"]);
 
 export const USAGE = `Usage: git-yaml-ref-bump [--files <patterns>] [options]
 
@@ -34,6 +35,7 @@ Options:
   --dry-run          report planned changes without writing, committing or pushing
   --fetch            run 'git fetch <remote>' before discovery (default true; disable with --no-fetch)
   --report <path>    optional path to also write the Markdown report to
+  --quiet            suppress the per-branch/per-file progress log on stderr
   -h, --help         show this help
 `;
 
@@ -135,5 +137,6 @@ export function resolveConfig(argv) {
     dryRun: raw["dry-run"],
     fetch: raw.fetch,
     reportPath: raw.report,
+    quiet: raw.quiet,
   });
 }

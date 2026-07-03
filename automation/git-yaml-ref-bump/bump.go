@@ -14,6 +14,7 @@ func processBranch(cfg config, branch string) branchResult {
 	res := branchResult{Branch: branch, Source: readRef(cfg, branch)}
 
 	if cfg.DryRun {
+		progress(cfg, "    inspecting %s (no checkout)", res.Source)
 		files, err := inspectBranch(cfg, branch)
 		if err != nil {
 			res.Err = err.Error()
@@ -23,6 +24,7 @@ func processBranch(cfg config, branch string) branchResult {
 		return res
 	}
 
+	progress(cfg, "    checkout %s", branch)
 	if err := checkoutBranch(cfg, branch); err != nil {
 		res.Err = err.Error()
 		return res
@@ -37,8 +39,10 @@ func processBranch(cfg config, branch string) branchResult {
 	res.Skipped = res.changedCount() == 0
 
 	if res.Skipped {
+		progress(cfg, "    no occurrence found, nothing to push")
 		return res
 	}
+	progress(cfg, "    push %s -> %s", branch, cfg.Remote)
 	if _, err := git(cfg.RepoPath, "push", cfg.Remote, branch); err != nil {
 		res.Err = fmt.Sprintf("push failed: %v", err)
 		return res
@@ -69,6 +73,9 @@ func inspectBranch(cfg config, branch string) ([]fileResult, error) {
 		if exists {
 			fr.Occurrences = strings.Count(content, cfg.From)
 			fr.Changed = fr.Occurrences > 0
+			if fr.Changed {
+				progress(cfg, "      would replace %s (%dx)", path, fr.Occurrences)
+			}
 		}
 		out = append(out, fr)
 	}
@@ -127,6 +134,7 @@ func bumpFile(cfg config, branch, path string) fileResult {
 	if hash, err := git(cfg.RepoPath, "rev-parse", "--short", "HEAD"); err == nil {
 		fr.Commit = hash
 	}
+	progress(cfg, "      commit %s %s (%dx)", fr.Commit, path, fr.Occurrences)
 	return fr
 }
 
