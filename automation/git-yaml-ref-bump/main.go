@@ -29,6 +29,16 @@ type config struct {
 	DryRun        bool
 	Fetch         bool
 	ReportPath    string
+	Quiet         bool
+}
+
+// progress writes a step line to stderr unless the run is quiet, keeping the
+// Markdown report on stdout clean and pipeable.
+func progress(cfg config, format string, args ...any) {
+	if cfg.Quiet {
+		return
+	}
+	fmt.Fprintf(os.Stderr, "» "+format+"\n", args...)
 }
 
 func main() {
@@ -56,6 +66,7 @@ func parseFlags() (config, error) {
 		dryRun   = flag.Bool("dry-run", false, "report planned changes without writing, committing or pushing")
 		fetch    = flag.Bool("fetch", true, "run 'git fetch <remote>' before discovering branches")
 		report   = flag.String("report", "", "optional path to also write the Markdown report to")
+		quiet    = flag.Bool("quiet", false, "suppress the per-branch/per-file progress log on stderr")
 	)
 	flag.Parse()
 
@@ -86,6 +97,7 @@ func parseFlags() (config, error) {
 		DryRun:        *dryRun,
 		Fetch:         *fetch,
 		ReportPath:    *report,
+		Quiet:         *quiet,
 	}, nil
 }
 
@@ -120,8 +132,14 @@ func run(cfg config) error {
 	if err := preflight(cfg); err != nil {
 		return err
 	}
+	mode := "EXECUTION"
+	if cfg.DryRun {
+		mode = "DRY-RUN"
+	}
+	progress(cfg, "mode: %s | %s -> %s | dir %s", mode, cfg.From, cfg.To, cfg.Dir)
 
 	if cfg.Fetch {
+		progress(cfg, "fetching %s ...", cfg.Remote)
 		if _, err := git(cfg.RepoPath, "fetch", cfg.Remote, "--prune"); err != nil {
 			return fmt.Errorf("fetch: %w", err)
 		}
@@ -134,17 +152,22 @@ func run(cfg config) error {
 	if len(branches) == 0 {
 		return fmt.Errorf("no branch matched pattern %q", cfg.Pattern.String())
 	}
+	progress(cfg, "%d branch(es) matched: %s", len(branches), strings.Join(branches, ", "))
 
 	original, err := currentBranch(cfg.RepoPath)
 	if err != nil {
 		return err
 	}
 	if !cfg.DryRun {
-		defer restoreBranch(cfg, original)
+		defer func() {
+			progress(cfg, "restoring branch %s", original)
+			restoreBranch(cfg, original)
+		}()
 	}
 
 	results := make([]branchResult, 0, len(branches))
-	for _, b := range branches {
+	for i, b := range branches {
+		progress(cfg, "[%d/%d] %s", i+1, len(branches), b)
 		results = append(results, processBranch(cfg, b))
 	}
 
