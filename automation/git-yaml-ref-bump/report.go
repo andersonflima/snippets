@@ -37,6 +37,17 @@ func (b branchResult) changedCount() int {
 	return n
 }
 
+// changedFiles returns only the files that will be (or were) impacted.
+func changedFiles(files []fileResult) []fileResult {
+	out := make([]fileResult, 0, len(files))
+	for _, f := range files {
+		if f.Changed {
+			out = append(out, f)
+		}
+	}
+	return out
+}
+
 // renderReport produces a human-readable Markdown report for all branches.
 func renderReport(cfg config, results []branchResult) string {
 	var sb strings.Builder
@@ -61,19 +72,30 @@ func renderReport(cfg config, results []branchResult) string {
 	fmt.Fprintf(&sb, "- File patterns (%s): %s\n", matchScope, filesLabel)
 	fmt.Fprintf(&sb, "- Search dir: `%s`\n", cfg.Dir)
 	fmt.Fprintf(&sb, "- Branch pattern: `%s`\n", cfg.Pattern.String())
-	fmt.Fprintf(&sb, "- Branches matched: %d\n\n", len(results))
+	fmt.Fprintf(&sb, "- Branches matched: %d\n", len(results))
+	if cfg.ChangedOnly {
+		fmt.Fprintf(&sb, "- Filter: changed-only (branches/files with an impact)\n")
+	}
+	sb.WriteString("\n")
 
 	for _, b := range results {
+		if cfg.ChangedOnly && b.Err == "" && b.changedCount() == 0 {
+			continue
+		}
 		fmt.Fprintf(&sb, "## %s (%s)\n", b.Branch, b.Source)
 		if b.Err != "" {
 			fmt.Fprintf(&sb, "- ERROR: %s\n\n", b.Err)
 			continue
 		}
-		if len(b.Files) == 0 {
+		files := b.Files
+		if cfg.ChangedOnly {
+			files = changedFiles(files)
+		}
+		if len(files) == 0 {
 			fmt.Fprintf(&sb, "- no file matched under `%s` (skipped)\n\n", cfg.Dir)
 			continue
 		}
-		for _, f := range b.Files {
+		for _, f := range files {
 			fmt.Fprintf(&sb, "- %s\n", renderFile(cfg, f))
 		}
 		fmt.Fprintf(&sb, "- changed files: %d\n", b.changedCount())

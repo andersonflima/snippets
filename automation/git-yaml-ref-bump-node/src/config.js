@@ -14,9 +14,10 @@ const DEFAULTS = {
   fetch: true,
   report: "",
   quiet: false,
+  "changed-only": false,
 };
 
-const BOOLEAN_FLAGS = new Set(["full-path", "dry-run", "fetch", "quiet"]);
+const BOOLEAN_FLAGS = new Set(["full-path", "dry-run", "fetch", "quiet", "changed-only"]);
 
 export const USAGE = `Usage: git-yaml-ref-bump [--files <patterns>] [options]
 
@@ -36,6 +37,8 @@ Options:
   --fetch            run 'git fetch <remote>' before discovery (default true; disable with --no-fetch)
   --report <path>    optional path to also write the Markdown report to
   --quiet            suppress the per-branch/per-file progress log on stderr
+  --changed-only     report only branches/files that will be impacted (have an
+                     occurrence of --from); errors are still shown
   -h, --help         show this help
 `;
 
@@ -138,5 +141,6 @@ export function resolveConfig(argv) {
     fetch: raw.fetch,
     reportPath: raw.report,
     quiet: raw.quiet,
+    changedOnly: raw["changed-only"],
   });
 }
