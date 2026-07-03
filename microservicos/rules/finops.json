@@ -1,0 +1,53 @@
+{
+  "idleCpuPct": 5.0,
+  "oversizedAvgCpuPct": 20.0,
+  "oversizedMaxCpuPct": 40.0,
+  "idleConnections": 1.0,
+  "orphanSnapshotAgeDays": 90,
+  "pricing": {
+    "currency": "USD",
+    "rds": {
+      "db.t3.micro": 25.0,
+      "db.t3.small": 50.0,
+      "db.t3.medium": 100.0,
+      "db.t3.large": 200.0,
+      "db.m5.large": 260.0,
+      "db.m5.xlarge": 520.0,
+      "db.m5.2xlarge": 1040.0,
+      "db.r5.large": 330.0,
+      "db.r5.xlarge": 660.0
+    },
+    "ec2": {
+      "t3.micro": 9.0,
+      "t3.small": 18.0,
+      "t3.medium": 36.0,
+      "t3.large": 72.0,
+      "m5.large": 100.0,
+      "m5.xlarge": 200.0,
+      "m5.2xlarge": 400.0,
+      "c5.large": 88.0,
+      "c5.xlarge": 176.0
+    },
+    "ebsGbMonth": {
+      "gp2": 0.19,
+      "gp3": 0.152,
+      "io1": 0.238,
+      "io2": 0.238,
+      "standard": 0.11,
+      "sc1": 0.018,
+      "st1": 0.05
+    },
+    "snapshotGbMonth": 0.055,
+    "eipMonth": 3.65,
+    "elbMonth": 22.0
+  },
+  "instanceDowngrade": {
+    "db.m5.2xlarge": "db.m5.xlarge",
+    "db.m5.xlarge": "db.m5.large",
+    "db.m5.large": "db.t3.large",
+    "db.r5.xlarge": "db.r5.large",
+    "m5.2xlarge": "m5.xlarge",
+    "m5.xlarge": "m5.large",
+    "m5.large": "t3.large"
+  }
+}

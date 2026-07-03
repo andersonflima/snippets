@@ -3,6 +3,7 @@ import { IntegrationsComponent } from './features/integrations.component';
 import { RunActionComponent } from './features/run-action.component';
 import { AdminComponent } from './features/admin.component';
 import { SettingsComponent } from './features/settings.component';
+import { FinOpsComponent } from './features/finops.component';
 import { LoginComponent } from './features/login/login.component';
 import { authGuard } from './core/auth.guard';
 
@@ -30,6 +31,12 @@ export const routes: Routes = [
     path: 'settings',
     component: SettingsComponent,
     title: 'Settings',
+    canActivate: [authGuard],
+  },
+  {
+    path: 'finops',
+    component: FinOpsComponent,
+    title: 'FinOps',
     canActivate: [authGuard],
   },
   { path: '**', redirectTo: '' },

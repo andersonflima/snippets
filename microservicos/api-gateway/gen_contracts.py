@@ -260,6 +260,24 @@ SERVICES = [
         },
         "required": ["sql", "secretArn"],
     },
+    {
+        "name": "finops",
+        "summary": "Varredura read-only de desperdício e recomendações de economia (RDS/EC2/EBS/EIP/ELB/snapshots).",
+        "params": {
+            "scope": {
+                "type": "string",
+                "enum": ["all", "rds", "ec2", "ebs", "eip", "elb", "snapshots"],
+                "default": "all",
+                "description": "Escopo da varredura de desperdício.",
+            },
+            "lookbackDays": {
+                "type": "integer",
+                "default": 14,
+                "description": "Janela (dias) de métricas do CloudWatch para detectar ociosidade.",
+            },
+        },
+        "required": [],
+    },
 ]
 
 

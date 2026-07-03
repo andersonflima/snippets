@@ -151,6 +151,22 @@
         "rds-data:RollbackTransaction"
       ],
       "Resource": "*"
+    },
+    {
+      "Sid": "FinopsReadOnlyAnalysis",
+      "Effect": "Allow",
+      "Action": [
+        "cloudwatch:GetMetricStatistics",
+        "cloudwatch:ListMetrics",
+        "ec2:DescribeAddresses",
+        "ec2:DescribeSnapshots",
+        "elasticloadbalancing:DescribeLoadBalancers",
+        "elasticloadbalancing:DescribeTargetGroups",
+        "elasticloadbalancing:DescribeTargetHealth",
+        "elasticloadbalancing:DescribeInstanceHealth",
+        "elasticloadbalancing:DescribeTags"
+      ],
+      "Resource": "*"
     }
   ]
 }

@@ -17,6 +17,7 @@ import { AuthService } from './core/auth.service';
           Integrações
         </a>
         <a routerLink="/admin" routerLinkActive="active">Admin</a>
+        <a routerLink="/finops" routerLinkActive="active">FinOps</a>
         <a routerLink="/settings" routerLinkActive="active">Settings</a>
       </nav>
       <span class="baseurl">{{ baseUrl() }}</span>

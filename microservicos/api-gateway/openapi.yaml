@@ -934,6 +934,83 @@ paths:
         responses:
           default:
             statusCode: 200
+  /finops:
+    post:
+      summary: Varredura read-only de desperdício e recomendações de economia (RDS/EC2/EBS/EIP/ELB/snapshots).
+      operationId: finops_execute
+      tags:
+        - finops
+      security:
+        - CognitoJWT: []
+      x-amazon-apigateway-request-validator: all
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/FinopsRequest"
+      responses:
+        202:
+          description: Ação aceita (assíncrona).
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ActionAccepted"
+        400:
+          description: Requisição inválida.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        403:
+          description: AssumeRole negado / sem permissão.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        404:
+          description: Recurso não encontrado.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        409:
+          description: Conflito / estado inválido do recurso.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        422:
+          description: Payload inválido (validação do schema).
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        500:
+          description: Erro interno inesperado.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        502:
+          description: Falha no upstream (EKS/NLB).
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+      x-amazon-apigateway-integration:
+        type: http_proxy
+        httpMethod: POST
+        connectionType: VPC_LINK
+        connectionId: "${stageVariables.vpcLinkId}"
+        uri: "http://${stageVariables.nlbDns}/finops/execute"
+        passthroughBehavior: when_no_match
+        timeoutInMillis: 29000
+        requestParameters:
+          integration.request.header.X-Request-Id: context.requestId
+        responses:
+          default:
+            statusCode: 200
 components:
   securitySchemes:
     CognitoJWT:
@@ -1859,4 +1936,70 @@ components:
           required:
             - sql
             - secretArn
+          additionalProperties: false
+    FinopsRequest:
+      type: object
+      additionalProperties: false
+      required:
+        - account
+        - resource
+        - roleArn
+        - region
+        - environment
+        - params
+      properties:
+        account:
+          type: string
+          description: Conta AWS alvo (12 dígitos).
+          pattern: "^\\d{12}$"
+        resource:
+          type: string
+          description: Nome ou ARN do recurso alvo da ação.
+        roleArn:
+          type: string
+          description: "Role para STS:AssumeRole na conta alvo."
+          pattern: "^arn:aws:iam::\\d{12}:role/.+$"
+        region:
+          type: string
+          description: Região AWS.
+          pattern: "^[a-z]{2}-[a-z]+-\\d$"
+        environment:
+          type: string
+          enum:
+            - dev
+            - homol
+            - staging
+            - prod
+          description: "Ambiente target da ação. 'prod' exige GMUD aprovada (ServiceNow)."
+        changeNumber:
+          type: string
+          description: Número da GMUD/change no ServiceNow (obrigatório p/ produção).
+        requestId:
+          type: string
+          description: Idempotency key opcional (correlação do pipeline).
+        dryRun:
+          type: boolean
+          default: false
+          description: Valida sem executar.
+        params:
+          type: object
+          description: Parâmetros específicos da ação finops.
+          properties:
+            scope:
+              type: string
+              enum:
+                - all
+                - rds
+                - ec2
+                - ebs
+                - eip
+                - elb
+                - snapshots
+              default: all
+              description: Escopo da varredura de desperdício.
+            lookbackDays:
+              type: integer
+              default: 14
+              description: Janela (dias) de métricas do CloudWatch para detectar ociosidade.
+          required: []
           additionalProperties: false

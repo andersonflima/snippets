@@ -1,0 +1,96 @@
+# Manifesto do microserviço finops (read-only, sem estado).
+# Padrão espelhado do pdi-portal: a IMAGEM é construída e publicada por outro
+# repositório (esteira de build) e este manifesto é aplicado no EKS pela esteira
+# de deploy (GitOps), que atualiza a tag da imagem.
+#
+# Registry: Amazon ECR (sa-east-1). Substitua <ACCOUNT_ID> pela conta da plataforma
+# (a esteira de deploy sobrescreve a tag da imagem).
+#
+# Regras externalizadas: defina RULES_BACKEND (s3 | dynamodb) e as chaves do backend
+# escolhido no ConfigMap abaixo. Sem default — o serviço usa os defaults embutidos
+# apenas como fallback quando a regra não existir/estiver indisponível.
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: finops
+  namespace: microservicos
+  annotations:
+    # IRSA: role da plataforma com a policy de leitura (iam/permissions-policy.json).
+    eks.amazonaws.com/role-arn: arn:aws:iam::<ACCOUNT_ID>:role/microservicos-finops-irsa
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: finops-config
+  namespace: microservicos
+data:
+  AWS_REGION: sa-east-1
+  RULES_REGION: sa-east-1
+  RULES_CACHE_TTL: "60"
+  # Escolha o backend de regras (obrigatório):
+  RULES_BACKEND: dynamodb
+  # dynamodb:
+  RULES_TABLE: microservicos-rules
+  RULES_PK: service
+  RULES_ATTR: rules
+  # s3 (usar quando RULES_BACKEND=s3):
+  # RULES_BUCKET: microservicos-rules
+  # RULES_KEY_PREFIX: rules
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: finops
+  namespace: microservicos
+  labels:
+    app: finops
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: finops
+  template:
+    metadata:
+      labels:
+        app: finops
+    spec:
+      serviceAccountName: finops
+      containers:
+        - name: finops
+          image: <ACCOUNT_ID>.dkr.ecr.sa-east-1.amazonaws.com/microservicos-finops:latest
+          ports:
+            - containerPort: 8080
+          envFrom:
+            - configMapRef:
+                name: finops-config
+          resources:
+            requests:
+              cpu: 50m
+              memory: 128Mi
+            limits:
+              cpu: 500m
+              memory: 256Mi
+          readinessProbe:
+            httpGet:
+              path: /readyz
+              port: 8080
+          livenessProbe:
+            httpGet:
+              path: /healthz
+              port: 8080
+          securityContext:
+            runAsNonRoot: true
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: finops
+  namespace: microservicos
+spec:
+  selector:
+    app: finops
+  ports:
+    - port: 8080
+      targetPort: 8080
