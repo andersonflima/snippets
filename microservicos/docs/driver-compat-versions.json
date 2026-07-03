@@ -1,0 +1,5439 @@
+{
+  "$schema_note": "Enumeracao das ~20 ultimas versoes de cada driver por linguagem, com compatibilidade agrupada (compat_group) e veredito de upgrade. Complementa driver-compat-matrix.json com profundidade de versao para validar drivers antigos.",
+  "meta": {
+    "generated_at": "2026-07-03",
+    "repo": "andersonflima/snippets",
+    "scope": "Ultimas ~20 versoes lancadas de cada driver (Java/Go/Python/Node) das familias RDS/Aurora (Postgres, MySQL/MariaDB, Oracle), ElastiCache (Redis/Valkey) e DynamoDB/DocumentDB.",
+    "how_to_read": "Cada driver tem compat_groups (atributos de compatibilidade definidos 1x por grupo) e versions[] (as ~20 ultimas, mais novas primeiro, cada uma apontando um group). Datas = registry real (Maven/PyPI/npm/GitHub/goproxy).",
+    "verdict_legend": {
+      "safe": "conecta sem trocar driver",
+      "needs_bump": "exige versao minima de driver/config",
+      "breaks": "migracao source-incompativel"
+    },
+    "honesty_note": "Numeros de versao e datas sao reais (puxados dos registries). Campos de compatibilidade marcados 'unverified' nao foram confirmados na fonte; principais: valkey-py server matrix, floors de runtime em linhas de dev, channel_binding do asyncpg/postgres.js.",
+    "counts": {
+      "engine_families": 5,
+      "drivers": 45,
+      "version_rows": 855
+    }
+  },
+  "engines": [
+    {
+      "engine_family": "postgresql",
+      "drivers": [
+        {
+          "driver": "pgjdbc (org.postgresql:postgresql)",
+          "language": "java",
+          "registry": "maven",
+          "compat_groups": {
+            "G1": {
+              "min_server_major": "11",
+              "max_server_major_verified": "17",
+              "scram": "yes",
+              "channel_binding": "yes",
+              "runtime_req": "Java 8+",
+              "verdict_hint": "safe",
+              "notes": "42.7.4+ line: SCRAM since 42.2.0; channel binding since 42.5.0. PG17 tested from ~42.7.4. Safe across md5->scram on RDS/Aurora 11-17."
+            },
+            "G2": {
+              "min_server_major": "11",
+              "max_server_major_verified": "16",
+              "scram": "yes",
+              "channel_binding": "yes",
+              "runtime_req": "Java 8+",
+              "verdict_hint": "safe",
+              "notes": "42.5.3-42.7.3: SCRAM + channel binding present. PG17 protocol-compatible but not explicitly verified at release."
+            }
+          },
+          "versions": [
+            {
+              "version": "42.7.12",
+              "released": "2026-06-29",
+              "group": "G1"
+            },
+            {
+              "version": "42.7.11",
+              "released": "2026-04-28",
+              "group": "G1"
+            },
+            {
+              "version": "42.7.10",
+              "released": "2026-02-11",
+              "group": "G1"
+            },
+            {
+              "version": "42.7.9",
+              "released": "2026-01-15",
+              "group": "G1"
+            },
+            {
+              "version": "42.7.8",
+              "released": "2025-09-18",
+              "group": "G1"
+            },
+            {
+              "version": "42.7.7",
+              "released": "2025-06-11",
+              "group": "G1"
+            },
+            {
+              "version": "42.7.6",
+              "released": "2025-05-28",
+              "group": "G1"
+            },
+            {
+              "version": "42.7.5",
+              "released": "2025-01-14",
+              "group": "G1"
+            },
+            {
+              "version": "42.7.4",
+              "released": "2024-08-22",
+              "group": "G1"
+            },
+            {
+              "version": "42.7.3",
+              "released": "2024-03-14",
+              "group": "G2"
+            },
+            {
+              "version": "42.7.2",
+              "released": "2024-02-20",
+              "group": "G2"
+            },
+            {
+              "version": "42.7.1",
+              "released": "2023-12-06",
+              "group": "G2"
+            },
+            {
+              "version": "42.7.0",
+              "released": "2023-11-20",
+              "group": "G2"
+            },
+            {
+              "version": "42.6.2",
+              "released": "2024-03-13",
+              "group": "G2"
+            },
+            {
+              "version": "42.6.1",
+              "released": "2024-02-21",
+              "group": "G2"
+            },
+            {
+              "version": "42.6.0",
+              "released": "2023-03-17",
+              "group": "G2"
+            },
+            {
+              "version": "42.5.6",
+              "released": "2024-03-13",
+              "group": "G2"
+            },
+            {
+              "version": "42.5.5",
+              "released": "2024-02-21",
+              "group": "G2"
+            },
+            {
+              "version": "42.5.4",
+              "released": "2023-02-16",
+              "group": "G2"
+            },
+            {
+              "version": "42.5.3",
+              "released": "2023-02-03",
+              "group": "G2"
+            }
+          ]
+        },
+        {
+          "driver": "r2dbc-postgresql",
+          "language": "java",
+          "registry": "maven",
+          "compat_groups": {
+            "G1": {
+              "min_server_major": "11",
+              "max_server_major_verified": "17",
+              "scram": "yes",
+              "channel_binding": "no",
+              "runtime_req": "Java 8+ (1.1.x may target 17+, unverified)",
+              "verdict_hint": "safe",
+              "notes": "1.1.x line. SCRAM survives md5->scram. Channel binding not implemented."
+            },
+            "G2": {
+              "min_server_major": "11",
+              "max_server_major_verified": "16",
+              "scram": "yes",
+              "channel_binding": "no",
+              "runtime_req": "Java 8+",
+              "verdict_hint": "safe",
+              "notes": "1.0.x. SCRAM yes; PG17 not explicitly verified."
+            },
+            "G3": {
+              "min_server_major": "11",
+              "max_server_major_verified": "15",
+              "scram": "yes",
+              "channel_binding": "no",
+              "runtime_req": "Java 8+",
+              "verdict_hint": "safe",
+              "notes": "0.9.x (SPI 0.9). SCRAM since 0.8.x. Max server verified approximate."
+            }
+          },
+          "versions": [
+            {
+              "version": "1.1.2.RELEASE",
+              "released": "2026-06-22",
+              "group": "G1"
+            },
+            {
+              "version": "1.1.1.RELEASE",
+              "released": "2025-10-30",
+              "group": "G1"
+            },
+            {
+              "version": "1.1.0.RELEASE",
+              "released": "2025-10-07",
+              "group": "G1"
+            },
+            {
+              "version": "1.0.9.RELEASE",
+              "released": "2025-10-30",
+              "group": "G2"
+            },
+            {
+              "version": "1.0.8.RELEASE",
+              "released": "2025-10-07",
+              "group": "G2"
+            },
+            {
+              "version": "1.0.7.RELEASE",
+              "released": "2024-10-17",
+              "group": "G2"
+            },
+            {
+              "version": "1.0.6.RELEASE",
+              "released": "2024-10-08",
+              "group": "G2"
+            },
+            {
+              "version": "1.0.5.RELEASE",
+              "released": "2024-04-10",
+              "group": "G2"
+            },
+            {
+              "version": "1.0.4.RELEASE",
+              "released": "2024-01-10",
+              "group": "G2"
+            },
+            {
+              "version": "1.0.3.RELEASE",
+              "released": "2023-12-12",
+              "group": "G2"
+            },
+            {
+              "version": "1.0.2.RELEASE",
+              "released": "2023-07-14",
+              "group": "G2"
+            },
+            {
+              "version": "1.0.1.RELEASE",
+              "released": "2023-02-16",
+              "group": "G2"
+            },
+            {
+              "version": "1.0.0.RELEASE",
+              "released": "2022-11-10",
+              "group": "G2"
+            },
+            {
+              "version": "0.9.3.RELEASE",
+              "released": "2022-11-10",
+              "group": "G3"
+            },
+            {
+              "version": "0.9.2.RELEASE",
+              "released": "2022-09-01",
+              "group": "G3"
+            },
+            {
+              "version": "0.9.1.RELEASE",
+              "released": "2022-03-17",
+              "group": "G3"
+            },
+            {
+              "version": "0.9.0.RELEASE",
+              "released": "2022-01-12",
+              "group": "G3"
+            }
+          ]
+        },
+        {
+          "driver": "pgx (github.com/jackc/pgx)",
+          "language": "go",
+          "registry": "github",
+          "compat_groups": {
+            "G1": {
+              "min_server_major": "11",
+              "max_server_major_verified": "17",
+              "scram": "yes",
+              "channel_binding": "no",
+              "runtime_req": "Go 1.21+ (v5.7.0+); earlier v5.x Go 1.19-1.20",
+              "verdict_hint": "safe",
+              "notes": "v5 line. SCRAM survives md5->scram. Channel binding not implemented. The 20 newest tags are all v5; v4 (maintenance) not in newest-20."
+            }
+          },
+          "versions": [
+            {
+              "version": "v5.10.0",
+              "released": "2026-06-03",
+              "group": "G1"
+            },
+            {
+              "version": "v5.9.2",
+              "released": "2026-04-19",
+              "group": "G1"
+            },
+            {
+              "version": "v5.9.1",
+              "released": "2026-03-22",
+              "group": "G1"
+            },
+            {
+              "version": "v5.9.0",
+              "released": "2026-03-21",
+              "group": "G1"
+            },
+            {
+              "version": "v5.8.0",
+              "released": "2025-12-26",
+              "group": "G1"
+            },
+            {
+              "version": "v5.7.6",
+              "released": "2025-09-08",
+              "group": "G1"
+            },
+            {
+              "version": "v5.7.5",
+              "released": "2025-05-17",
+              "group": "G1"
+            },
+            {
+              "version": "v5.7.4",
+              "released": "2025-03-25",
+              "group": "G1"
+            },
+            {
+              "version": "v5.7.3",
+              "released": "2025-03-22",
+              "group": "G1"
+            },
+            {
+              "version": "v5.7.2",
+              "released": "2024-12-21",
+              "group": "G1"
+            },
+            {
+              "version": "v5.7.1",
+              "released": "2024-09-10",
+              "group": "G1"
+            },
+            {
+              "version": "v5.7.0",
+              "released": "2024-09-07",
+              "group": "G1"
+            },
+            {
+              "version": "v5.6.0",
+              "released": "2024-05-25",
+              "group": "G1"
+            },
+            {
+              "version": "v5.5.5",
+              "released": "2024-03-09",
+              "group": "G1"
+            },
+            {
+              "version": "v5.5.4",
+              "released": "2024-03-04",
+              "group": "G1"
+            },
+            {
+              "version": "v5.5.3",
+              "released": "2024-02-03",
+              "group": "G1"
+            },
+            {
+              "version": "v5.5.2",
+              "released": "2024-01-13",
+              "group": "G1"
+            },
+            {
+              "version": "v5.5.1",
+              "released": "2023-12-09",
+              "group": "G1"
+            },
+            {
+              "version": "v5.5.0",
+              "released": "2023-11-04",
+              "group": "G1"
+            },
+            {
+              "version": "v5.4.3",
+              "released": "2023-08-05",
+              "group": "G1"
+            }
+          ]
+        },
+        {
+          "driver": "lib/pq (github.com/lib/pq)",
+          "language": "go",
+          "registry": "github",
+          "compat_groups": {
+            "G1": {
+              "min_server_major": "11",
+              "max_server_major_verified": "17",
+              "scram": "yes",
+              "channel_binding": "no",
+              "runtime_req": "Go 1.13+",
+              "verdict_hint": "safe",
+              "notes": "SCRAM since v1.1.0 (2018); every listed version survives md5->scram. No channel binding. Maintenance mode; PG17 protocol-compatible/unverified."
+            }
+          },
+          "versions": [
+            {
+              "version": "v1.12.3",
+              "released": "2026-04-03",
+              "group": "G1"
+            },
+            {
+              "version": "v1.12.2",
+              "released": "2026-04-02",
+              "group": "G1"
+            },
+            {
+              "version": "v1.12.1",
+              "released": "2026-03-30",
+              "group": "G1"
+            },
+            {
+              "version": "v1.12.0",
+              "released": "2026-03-18",
+              "group": "G1"
+            },
+            {
+              "version": "v1.11.2",
+              "released": "2026-02-10",
+              "group": "G1"
+            },
+            {
+              "version": "v1.11.1",
+              "released": "2026-01-29",
+              "group": "G1"
+            },
+            {
+              "version": "v1.11.0",
+              "released": "2026-01-28",
+              "group": "G1"
+            },
+            {
+              "version": "v1.10.9",
+              "released": "2023-04-26",
+              "group": "G1"
+            },
+            {
+              "version": "v1.10.8",
+              "released": "2023-04-14",
+              "group": "G1"
+            },
+            {
+              "version": "v1.10.7",
+              "released": "2022-09-06",
+              "group": "G1"
+            },
+            {
+              "version": "v1.10.6",
+              "released": "2022-05-16",
+              "group": "G1"
+            },
+            {
+              "version": "v1.10.5",
+              "released": "2022-04-07",
+              "group": "G1"
+            },
+            {
+              "version": "v1.10.4",
+              "released": "2021-11-08",
+              "group": "G1"
+            },
+            {
+              "version": "v1.10.3",
+              "released": "2021-09-02",
+              "group": "G1"
+            },
+            {
+              "version": "v1.10.2",
+              "released": "2021-05-17",
+              "group": "G1"
+            },
+            {
+              "version": "v1.10.1",
+              "released": "2021-04-21",
+              "group": "G1"
+            },
+            {
+              "version": "v1.10.0",
+              "released": "2021-02-12",
+              "group": "G1"
+            },
+            {
+              "version": "v1.9.0",
+              "released": "2020-12-01",
+              "group": "G1"
+            },
+            {
+              "version": "v1.8.0",
+              "released": "2020-07-27",
+              "group": "G1"
+            },
+            {
+              "version": "v1.7.1",
+              "released": "2020-07-20",
+              "group": "G1"
+            }
+          ]
+        },
+        {
+          "driver": "psycopg2",
+          "language": "python",
+          "registry": "pypi",
+          "compat_groups": {
+            "G1": {
+              "min_server_major": "11",
+              "max_server_major_verified": "17",
+              "scram": "libpq-dependent",
+              "channel_binding": "libpq-dependent",
+              "runtime_req": "Python 3.8+",
+              "verdict_hint": "safe-modern",
+              "notes": "2.9.10+ dropped Python<3.8. SCRAM works only if bundled/linked libpq>=10; psycopg2-binary wheels ship recent libpq; source builds inherit system libpq. channel_binding needs libpq>=13. Package version does NOT determine SCRAM."
+            },
+            "G2": {
+              "min_server_major": "11",
+              "max_server_major_verified": "16",
+              "scram": "libpq-dependent",
+              "channel_binding": "libpq-dependent",
+              "runtime_req": "Python 3.6+",
+              "verdict_hint": "ok",
+              "notes": "2.9-2.9.9. SCRAM entirely governed by linked libpq. PG17 unverified."
+            },
+            "G3": {
+              "min_server_major": "11",
+              "max_server_major_verified": "unverified",
+              "scram": "libpq-dependent",
+              "channel_binding": "libpq-dependent",
+              "runtime_req": "Python 2.7 / 3.4+",
+              "verdict_hint": "legacy",
+              "notes": "2.8.x EOL-era. Old wheels may bundle libpq predating SCRAM; verify libpq at runtime."
+            }
+          },
+          "versions": [
+            {
+              "version": "2.9.12",
+              "released": "2024-11",
+              "group": "G1"
+            },
+            {
+              "version": "2.9.11",
+              "released": "2024-10",
+              "group": "G1"
+            },
+            {
+              "version": "2.9.10",
+              "released": "2024-08",
+              "group": "G1"
+            },
+            {
+              "version": "2.9.9",
+              "released": "2023-10",
+              "group": "G2"
+            },
+            {
+              "version": "2.9.8",
+              "released": "2023-09",
+              "group": "G2"
+            },
+            {
+              "version": "2.9.7",
+              "released": "2022-11",
+              "group": "G2"
+            },
+            {
+              "version": "2.9.6",
+              "released": "2022-09",
+              "group": "G2"
+            },
+            {
+              "version": "2.9.5",
+              "released": "2022-08",
+              "group": "G2"
+            },
+            {
+              "version": "2.9.4",
+              "released": "2022-08",
+              "group": "G2"
+            },
+            {
+              "version": "2.9.3",
+              "released": "2022-02",
+              "group": "G2"
+            },
+            {
+              "version": "2.9.2",
+              "released": "2021-10",
+              "group": "G2"
+            },
+            {
+              "version": "2.9.1",
+              "released": "2021-06",
+              "group": "G2"
+            },
+            {
+              "version": "2.9",
+              "released": "2021-03",
+              "group": "G2"
+            },
+            {
+              "version": "2.8.6",
+              "released": "2021-01",
+              "group": "G3"
+            },
+            {
+              "version": "2.8.5",
+              "released": "2020-09",
+              "group": "G3"
+            },
+            {
+              "version": "2.8.4",
+              "released": "2020-02",
+              "group": "G3"
+            },
+            {
+              "version": "2.8.3",
+              "released": "2019-12",
+              "group": "G3"
+            },
+            {
+              "version": "2.8.2",
+              "released": "2019-09",
+              "group": "G3"
+            },
+            {
+              "version": "2.8.1",
+              "released": "2019-02",
+              "group": "G3"
+            },
+            {
+              "version": "2.8",
+              "released": "2018-12",
+              "group": "G3"
+            }
+          ]
+        },
+        {
+          "driver": "psycopg (v3)",
+          "language": "python",
+          "registry": "pypi",
+          "compat_groups": {
+            "G1": {
+              "min_server_major": "11",
+              "max_server_major_verified": "18",
+              "scram": "yes",
+              "channel_binding": "yes",
+              "runtime_req": "Python 3.9+",
+              "verdict_hint": "recommended",
+              "notes": "3.3.x; 3.3.0 dropped Python 3.8. Native SCRAM. channel_binding supported."
+            },
+            "G2": {
+              "min_server_major": "11",
+              "max_server_major_verified": "17",
+              "scram": "yes",
+              "channel_binding": "yes",
+              "runtime_req": "Python 3.8+",
+              "verdict_hint": "recommended",
+              "notes": "3.2.x, Python 3.8-3.13. Verified against PG17."
+            },
+            "G3": {
+              "min_server_major": "11",
+              "max_server_major_verified": "16",
+              "scram": "yes",
+              "channel_binding": "yes",
+              "runtime_req": "Python 3.7+",
+              "verdict_hint": "ok",
+              "notes": "3.1.x. PG17 unverified for this era."
+            }
+          },
+          "versions": [
+            {
+              "version": "3.3.4",
+              "released": "2026-05",
+              "group": "G1"
+            },
+            {
+              "version": "3.3.3",
+              "released": "2026-02",
+              "group": "G1"
+            },
+            {
+              "version": "3.3.2",
+              "released": "2025-12",
+              "group": "G1"
+            },
+            {
+              "version": "3.3.1",
+              "released": "2025-12",
+              "group": "G1"
+            },
+            {
+              "version": "3.3.0",
+              "released": "2025-12",
+              "group": "G1"
+            },
+            {
+              "version": "3.2.13",
+              "released": "2025-11",
+              "group": "G2"
+            },
+            {
+              "version": "3.2.12",
+              "released": "2025-10",
+              "group": "G2"
+            },
+            {
+              "version": "3.2.11",
+              "released": "2025-10",
+              "group": "G2"
+            },
+            {
+              "version": "3.2.10",
+              "released": "2025-09",
+              "group": "G2"
+            },
+            {
+              "version": "3.2.9",
+              "released": "2025-05",
+              "group": "G2"
+            },
+            {
+              "version": "3.2.8",
+              "released": "2025-05",
+              "group": "G2"
+            },
+            {
+              "version": "3.2.7",
+              "released": "2025-04",
+              "group": "G2"
+            },
+            {
+              "version": "3.2.6",
+              "released": "2025-03",
+              "group": "G2"
+            },
+            {
+              "version": "3.2.5",
+              "released": "2025-02",
+              "group": "G2"
+            },
+            {
+              "version": "3.2.4",
+              "released": "2025-01",
+              "group": "G2"
+            },
+            {
+              "version": "3.2.3",
+              "released": "2024-09",
+              "group": "G2"
+            },
+            {
+              "version": "3.2.2",
+              "released": "2024-09",
+              "group": "G2"
+            },
+            {
+              "version": "3.2.1",
+              "released": "2024-07",
+              "group": "G2"
+            },
+            {
+              "version": "3.2.0",
+              "released": "2024-06",
+              "group": "G2"
+            },
+            {
+              "version": "3.1.20",
+              "released": "2024-06",
+              "group": "G3"
+            }
+          ]
+        },
+        {
+          "driver": "asyncpg",
+          "language": "python",
+          "registry": "pypi",
+          "compat_groups": {
+            "G1": {
+              "min_server_major": "11",
+              "max_server_major_verified": "17",
+              "scram": "yes",
+              "channel_binding": "unverified",
+              "runtime_req": "Python 3.9+",
+              "verdict_hint": "recommended",
+              "notes": "0.31.0 drops Python 3.8. SCRAM since 0.11. Channel binding historically not implemented; status unverified."
+            },
+            "G2": {
+              "min_server_major": "11",
+              "max_server_major_verified": "17",
+              "scram": "yes",
+              "channel_binding": "unverified",
+              "runtime_req": "Python 3.8+",
+              "verdict_hint": "recommended",
+              "notes": "0.30.0 added PG17 + CPython 3.13."
+            },
+            "G3": {
+              "min_server_major": "11",
+              "max_server_major_verified": "16",
+              "scram": "yes",
+              "channel_binding": "unverified",
+              "runtime_req": "Python 3.8+",
+              "verdict_hint": "ok",
+              "notes": "0.29.0 added PG16."
+            },
+            "G4": {
+              "min_server_major": "11",
+              "max_server_major_verified": "15",
+              "scram": "yes",
+              "channel_binding": "unverified",
+              "runtime_req": "Python 3.7+/3.6+",
+              "verdict_hint": "legacy",
+              "notes": "0.28.0 and earlier; server ceilings approximate/unverified."
+            }
+          },
+          "versions": [
+            {
+              "version": "0.31.0",
+              "released": "2024-12",
+              "group": "G1"
+            },
+            {
+              "version": "0.30.0",
+              "released": "2024-07",
+              "group": "G2"
+            },
+            {
+              "version": "0.29.0",
+              "released": "2023-12",
+              "group": "G3"
+            },
+            {
+              "version": "0.28.0",
+              "released": "2023-08",
+              "group": "G4"
+            },
+            {
+              "version": "0.27.0",
+              "released": "2022-12",
+              "group": "G4"
+            },
+            {
+              "version": "0.26.0",
+              "released": "2022-04",
+              "group": "G4"
+            },
+            {
+              "version": "0.25.0",
+              "released": "2021-11",
+              "group": "G4"
+            },
+            {
+              "version": "0.24.0",
+              "released": "2021-10",
+              "group": "G4"
+            },
+            {
+              "version": "0.23.0",
+              "released": "2021-06",
+              "group": "G4"
+            },
+            {
+              "version": "0.22.0",
+              "released": "2021-01",
+              "group": "G4"
+            },
+            {
+              "version": "0.21.0",
+              "released": "2020-11",
+              "group": "G4"
+            },
+            {
+              "version": "0.20.1",
+              "released": "2020-05",
+              "group": "G4"
+            },
+            {
+              "version": "0.20.0",
+              "released": "2020-03",
+              "group": "G4"
+            },
+            {
+              "version": "0.19.0",
+              "released": "2020-01",
+              "group": "G4"
+            },
+            {
+              "version": "0.18.3",
+              "released": "2019-04",
+              "group": "G4"
+            },
+            {
+              "version": "0.18.2",
+              "released": "2018-12",
+              "group": "G4"
+            },
+            {
+              "version": "0.18.1",
+              "released": "2018-10",
+              "group": "G4"
+            },
+            {
+              "version": "0.18.0",
+              "released": "2018-10",
+              "group": "G4"
+            },
+            {
+              "version": "0.17.0",
+              "released": "2018-07",
+              "group": "G4"
+            },
+            {
+              "version": "0.16.0",
+              "released": "2018-06",
+              "group": "G4"
+            }
+          ]
+        },
+        {
+          "driver": "pg (node-postgres)",
+          "language": "node",
+          "registry": "npm",
+          "compat_groups": {
+            "G1": {
+              "min_server_major": "11",
+              "max_server_major_verified": "17",
+              "scram": "yes",
+              "channel_binding": "no",
+              "runtime_req": "Node >=16 (floor rose over 8.13->8.22)",
+              "verdict_hint": "recommended",
+              "notes": "8.x implements SASL/SCRAM in JS (since 8.0) so works vs SCRAM-default PG14+ regardless of libpq. Channel binding not implemented."
+            }
+          },
+          "versions": [
+            {
+              "version": "8.22.0",
+              "released": "2026-06",
+              "group": "G1"
+            },
+            {
+              "version": "8.21.0",
+              "released": "2026-05",
+              "group": "G1"
+            },
+            {
+              "version": "8.20.0",
+              "released": "2026-03",
+              "group": "G1"
+            },
+            {
+              "version": "8.19.0",
+              "released": "2026-02",
+              "group": "G1"
+            },
+            {
+              "version": "8.18.0",
+              "released": "2026-01",
+              "group": "G1"
+            },
+            {
+              "version": "8.17.2",
+              "released": "2026-01",
+              "group": "G1"
+            },
+            {
+              "version": "8.17.1",
+              "released": "2026-01",
+              "group": "G1"
+            },
+            {
+              "version": "8.17.0",
+              "released": "2026-01",
+              "group": "G1"
+            },
+            {
+              "version": "8.16.3",
+              "released": "2025-06",
+              "group": "G1"
+            },
+            {
+              "version": "8.16.2",
+              "released": "2025-06",
+              "group": "G1"
+            },
+            {
+              "version": "8.16.1",
+              "released": "2025-06",
+              "group": "G1"
+            },
+            {
+              "version": "8.16.0",
+              "released": "2025-05",
+              "group": "G1"
+            },
+            {
+              "version": "8.15.6",
+              "released": "2025-04",
+              "group": "G1"
+            },
+            {
+              "version": "8.15.5",
+              "released": "2025-04",
+              "group": "G1"
+            },
+            {
+              "version": "8.15.2",
+              "released": "2025-04",
+              "group": "G1"
+            },
+            {
+              "version": "8.15.1",
+              "released": "2025-04",
+              "group": "G1"
+            },
+            {
+              "version": "8.15.0",
+              "released": "2025-04",
+              "group": "G1"
+            },
+            {
+              "version": "8.14.1",
+              "released": "2025-03",
+              "group": "G1"
+            },
+            {
+              "version": "8.14.0",
+              "released": "2025-03",
+              "group": "G1"
+            },
+            {
+              "version": "8.13.3",
+              "released": "2025-02",
+              "group": "G1"
+            }
+          ]
+        },
+        {
+          "driver": "postgres (postgres.js)",
+          "language": "node",
+          "registry": "npm",
+          "compat_groups": {
+            "G1": {
+              "min_server_major": "11",
+              "max_server_major_verified": "17",
+              "scram": "yes",
+              "channel_binding": "unverified",
+              "runtime_req": "Node >=12",
+              "verdict_hint": "recommended",
+              "notes": "3.x implements SASL/SCRAM in pure JS. Channel binding unverified. PG17 not release-verified but no protocol blocker."
+            }
+          },
+          "versions": [
+            {
+              "version": "3.4.9",
+              "released": "2026-04",
+              "group": "G1"
+            },
+            {
+              "version": "3.4.8",
+              "released": "2026-01",
+              "group": "G1"
+            },
+            {
+              "version": "3.4.7",
+              "released": "2025-05",
+              "group": "G1"
+            },
+            {
+              "version": "3.4.6",
+              "released": "2025-05",
+              "group": "G1"
+            },
+            {
+              "version": "3.4.5",
+              "released": "2024-10",
+              "group": "G1"
+            },
+            {
+              "version": "3.4.4",
+              "released": "2024-03",
+              "group": "G1"
+            },
+            {
+              "version": "3.4.3",
+              "released": "2023-11",
+              "group": "G1"
+            },
+            {
+              "version": "3.4.2",
+              "released": "2023-10",
+              "group": "G1"
+            },
+            {
+              "version": "3.4.1",
+              "released": "2023-10",
+              "group": "G1"
+            },
+            {
+              "version": "3.4.0",
+              "released": "2023-10",
+              "group": "G1"
+            },
+            {
+              "version": "3.3.5",
+              "released": "2023-05",
+              "group": "G1"
+            },
+            {
+              "version": "3.3.4",
+              "released": "2023-03",
+              "group": "G1"
+            },
+            {
+              "version": "3.3.3",
+              "released": "2023-01",
+              "group": "G1"
+            },
+            {
+              "version": "3.3.2",
+              "released": "2022-11",
+              "group": "G1"
+            },
+            {
+              "version": "3.3.1",
+              "released": "2022-10",
+              "group": "G1"
+            },
+            {
+              "version": "3.3.0",
+              "released": "2022-09",
+              "group": "G1"
+            },
+            {
+              "version": "3.2.4",
+              "released": "2022-05",
+              "group": "G1"
+            },
+            {
+              "version": "3.2.3",
+              "released": "2022-05",
+              "group": "G1"
+            },
+            {
+              "version": "3.2.2",
+              "released": "2022-05",
+              "group": "G1"
+            },
+            {
+              "version": "3.2.1",
+              "released": "2022-05",
+              "group": "G1"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "engine_family": "mysql-family",
+      "drivers": [
+        {
+          "driver": "mysql-connector-j",
+          "language": "java",
+          "registry": "maven",
+          "compat_groups": {
+            "G1": {
+              "server_family": "mysql",
+              "min_server": "MySQL 8.0",
+              "max_server_verified": "MySQL 9.x / 8.4 LTS",
+              "caching_sha2": "yes",
+              "runtime_req": "Java 8 min",
+              "verdict_hint": "Best for RDS MySQL 8.0/8.4 + Aurora v3. 9.x dropped MySQL 5.7.",
+              "notes": "9.x GA under com.mysql:mysql-connector-j. caching_sha2 since 8.0.9."
+            },
+            "G2": {
+              "server_family": "mysql",
+              "min_server": "MySQL 5.7",
+              "max_server_verified": "MySQL 8.4 LTS",
+              "caching_sha2": "yes",
+              "runtime_req": "Java 8 min",
+              "verdict_hint": "Transitional 8.x covering 5.7+8.0/8.4 and Aurora v2+v3.",
+              "notes": "8.1.0-8.4.0."
+            },
+            "G3": {
+              "server_family": "mysql",
+              "min_server": "MySQL 5.7",
+              "max_server_verified": "MySQL 8.0",
+              "caching_sha2": "yes",
+              "runtime_req": "Java 8 min",
+              "verdict_hint": "Legacy 8.0.x GA; works 5.7/8.0, caching_sha2 ok.",
+              "notes": "8.0.31-8.0.33 last under old coordinate mysql:mysql-connector-java before rename."
+            }
+          },
+          "versions": [
+            {
+              "version": "9.7.0",
+              "released": "2026-04",
+              "group": "G1"
+            },
+            {
+              "version": "9.6.0",
+              "released": "2026-01",
+              "group": "G1"
+            },
+            {
+              "version": "9.5.0",
+              "released": "2025-10",
+              "group": "G1"
+            },
+            {
+              "version": "9.4.0",
+              "released": "2025-07",
+              "group": "G1"
+            },
+            {
+              "version": "9.3.0",
+              "released": "2025-04",
+              "group": "G1"
+            },
+            {
+              "version": "9.2.0",
+              "released": "2025-01",
+              "group": "G1"
+            },
+            {
+              "version": "9.1.0",
+              "released": "2024-10",
+              "group": "G1"
+            },
+            {
+              "version": "9.0.0",
+              "released": "2024-07",
+              "group": "G1"
+            },
+            {
+              "version": "8.4.0",
+              "released": "2024-04",
+              "group": "G2"
+            },
+            {
+              "version": "8.3.0",
+              "released": "2024-01",
+              "group": "G2"
+            },
+            {
+              "version": "8.2.0",
+              "released": "2023-10",
+              "group": "G2"
+            },
+            {
+              "version": "8.1.0",
+              "released": "2023-07",
+              "group": "G2"
+            },
+            {
+              "version": "8.0.33",
+              "released": "2023-04",
+              "group": "G3"
+            },
+            {
+              "version": "8.0.32",
+              "released": "2023-01",
+              "group": "G3"
+            },
+            {
+              "version": "8.0.31",
+              "released": "2022-10",
+              "group": "G3"
+            }
+          ]
+        },
+        {
+          "driver": "mariadb-java-client",
+          "language": "java",
+          "registry": "maven",
+          "compat_groups": {
+            "G1": {
+              "server_family": "mariadb",
+              "min_server": "MariaDB 10.x",
+              "max_server_verified": "MariaDB 11.4 LTS; MySQL 5.7/8.0 usable",
+              "caching_sha2": "partial",
+              "runtime_req": "Java 8+",
+              "verdict_hint": "Primary for RDS MariaDB 10.6/10.11/11.4; MySQL 8 caching_sha2 secondary (validate vs Aurora v3).",
+              "notes": "3.4.x-3.5.x. caching_sha2 RSA since 3.5.6."
+            },
+            "G2": {
+              "server_family": "mariadb",
+              "min_server": "MariaDB 10.x",
+              "max_server_verified": "MariaDB 11.x; MySQL usable",
+              "caching_sha2": "partial",
+              "runtime_req": "Java 8+",
+              "verdict_hint": "Older 3.2/3.3; MySQL 8 caching_sha2 less mature.",
+              "notes": "3.2.0-3.3.5."
+            }
+          },
+          "versions": [
+            {
+              "version": "3.5.9",
+              "released": "2026-06",
+              "group": "G1"
+            },
+            {
+              "version": "3.5.8",
+              "released": "2026-04",
+              "group": "G1"
+            },
+            {
+              "version": "3.5.7",
+              "released": "2025-12",
+              "group": "G1"
+            },
+            {
+              "version": "3.5.6",
+              "released": "2025-09",
+              "group": "G1"
+            },
+            {
+              "version": "3.5.5",
+              "released": "2025-08",
+              "group": "G1"
+            },
+            {
+              "version": "3.5.4",
+              "released": "2025-06",
+              "group": "G1"
+            },
+            {
+              "version": "3.5.3",
+              "released": "2025-03",
+              "group": "G1"
+            },
+            {
+              "version": "3.5.2",
+              "released": "2025-02",
+              "group": "G1"
+            },
+            {
+              "version": "3.5.1",
+              "released": "2024-11",
+              "group": "G1"
+            },
+            {
+              "version": "3.5.0",
+              "released": "2024-10",
+              "group": "G1"
+            },
+            {
+              "version": "3.4.3",
+              "released": "2026-06",
+              "group": "G1"
+            },
+            {
+              "version": "3.4.2",
+              "released": "2025-03",
+              "group": "G1"
+            },
+            {
+              "version": "3.4.1",
+              "released": "2024-07",
+              "group": "G1"
+            },
+            {
+              "version": "3.4.0",
+              "released": "2024-05",
+              "group": "G1"
+            },
+            {
+              "version": "3.3.5",
+              "released": "2026-06",
+              "group": "G2"
+            },
+            {
+              "version": "3.3.4",
+              "released": "2025-03",
+              "group": "G2"
+            },
+            {
+              "version": "3.3.3",
+              "released": "2024-02",
+              "group": "G2"
+            },
+            {
+              "version": "3.3.2",
+              "released": "2023-12",
+              "group": "G2"
+            },
+            {
+              "version": "3.3.1",
+              "released": "2023-11",
+              "group": "G2"
+            },
+            {
+              "version": "3.3.0",
+              "released": "2023-11",
+              "group": "G2"
+            },
+            {
+              "version": "3.2.0",
+              "released": "2023-08",
+              "group": "G2"
+            }
+          ]
+        },
+        {
+          "driver": "go-sql-driver/mysql",
+          "language": "go",
+          "registry": "github",
+          "compat_groups": {
+            "G1": {
+              "server_family": "both",
+              "min_server": "MySQL 5.7 / MariaDB 10.x",
+              "max_server_verified": "MySQL 8.4/8.0; MariaDB 11.4",
+              "caching_sha2": "yes",
+              "runtime_req": "Go 1.18+ (recent)",
+              "verdict_hint": "caching_sha2 since v1.5.0 — safe for MySQL 8.0/8.4 + Aurora v3.",
+              "notes": "Full auth (incl RSA) since v1.5.0 (Jan 2020)."
+            },
+            "G2": {
+              "server_family": "both",
+              "min_server": "MySQL 5.x / MariaDB 10.x",
+              "max_server_verified": "MySQL 5.7",
+              "caching_sha2": "no",
+              "runtime_req": "Go (older)",
+              "verdict_hint": "Pre-v1.5.0: no caching_sha2 -> fails MySQL 8.0.4+/Aurora v3 default auth.",
+              "notes": "v1.4.1 and earlier."
+            }
+          },
+          "versions": [
+            {
+              "version": "v1.10.0",
+              "released": "2026-04",
+              "group": "G1"
+            },
+            {
+              "version": "v1.9.3",
+              "released": "2025-06",
+              "group": "G1"
+            },
+            {
+              "version": "v1.9.2",
+              "released": "2025-04",
+              "group": "G1"
+            },
+            {
+              "version": "v1.9.1",
+              "released": "2025-03",
+              "group": "G1"
+            },
+            {
+              "version": "v1.9.0",
+              "released": "2025-02",
+              "group": "G1"
+            },
+            {
+              "version": "v1.8.1",
+              "released": "2024-03",
+              "group": "G1"
+            },
+            {
+              "version": "v1.8.0",
+              "released": "2024-03",
+              "group": "G1"
+            },
+            {
+              "version": "v1.7.1",
+              "released": "2023-04",
+              "group": "G1"
+            },
+            {
+              "version": "v1.7.0",
+              "released": "2022-12",
+              "group": "G1"
+            },
+            {
+              "version": "v1.6.0",
+              "released": "2021-04",
+              "group": "G1"
+            },
+            {
+              "version": "v1.5.0",
+              "released": "2020-01",
+              "group": "G1"
+            },
+            {
+              "version": "v1.4.1",
+              "released": "2018-11",
+              "group": "G2"
+            },
+            {
+              "version": "v1.4.0",
+              "released": "2018-06",
+              "group": "G2"
+            },
+            {
+              "version": "v1.3.0",
+              "released": "2016-12",
+              "group": "G2"
+            },
+            {
+              "version": "v1.2.0",
+              "released": "2014-06",
+              "group": "G2"
+            },
+            {
+              "version": "v1.1.0",
+              "released": "2013-11",
+              "group": "G2"
+            },
+            {
+              "version": "v1.0.3",
+              "released": "2013-11",
+              "group": "G2"
+            },
+            {
+              "version": "v1.0.2",
+              "released": "2013-10",
+              "group": "G2"
+            },
+            {
+              "version": "v1.0.1",
+              "released": "2013-07",
+              "group": "G2"
+            },
+            {
+              "version": "v1.0.0",
+              "released": "2013-07",
+              "group": "G2"
+            }
+          ]
+        },
+        {
+          "driver": "PyMySQL",
+          "language": "python",
+          "registry": "pypi",
+          "compat_groups": {
+            "G1": {
+              "server_family": "both",
+              "min_server": "MySQL 5.7 / MariaDB 10.x",
+              "max_server_verified": "MySQL 8.4 / MariaDB 11.x",
+              "caching_sha2": "yes",
+              "runtime_req": "Python >=3.7 (1.2.0 >=3.9)",
+              "verdict_hint": "safe-default",
+              "notes": "caching_sha2 ok; RSA path needs 'cryptography' or TLS."
+            },
+            "G2": {
+              "server_family": "both",
+              "min_server": "MySQL 5.5 / MariaDB 10.x",
+              "max_server_verified": "MySQL 8.0",
+              "caching_sha2": "yes",
+              "runtime_req": "Python 2.7 / 3.4+",
+              "verdict_hint": "legacy-ok",
+              "notes": "SHA-2 auth since 0.9.0 (Jun 2018)."
+            },
+            "G3": {
+              "server_family": "both",
+              "min_server": "MySQL 5.1 / MariaDB 5.x",
+              "max_server_verified": "MySQL 5.7",
+              "caching_sha2": "no",
+              "runtime_req": "Python 2.7 / 3.4+",
+              "verdict_hint": "avoid-for-mysql8",
+              "notes": "pre-0.9.0: fails vs default MySQL 8."
+            }
+          },
+          "versions": [
+            {
+              "version": "1.2.0",
+              "released": "2026-05",
+              "group": "G1"
+            },
+            {
+              "version": "1.1.3",
+              "released": "2026-05",
+              "group": "G1"
+            },
+            {
+              "version": "1.1.2",
+              "released": "2025-08",
+              "group": "G1"
+            },
+            {
+              "version": "1.1.1",
+              "released": "2024-05",
+              "group": "G1"
+            },
+            {
+              "version": "1.1.0",
+              "released": "2023-06",
+              "group": "G1"
+            },
+            {
+              "version": "1.0.3",
+              "released": "2023-03",
+              "group": "G1"
+            },
+            {
+              "version": "1.0.2",
+              "released": "2021-01",
+              "group": "G1"
+            },
+            {
+              "version": "1.0.1",
+              "released": "2021-01",
+              "group": "G1"
+            },
+            {
+              "version": "1.0.0",
+              "released": "2021-01",
+              "group": "G1"
+            },
+            {
+              "version": "0.10.1",
+              "released": "2020-09",
+              "group": "G2"
+            },
+            {
+              "version": "0.10.0",
+              "released": "2020-07",
+              "group": "G2"
+            },
+            {
+              "version": "0.9.3",
+              "released": "2018-12",
+              "group": "G2"
+            },
+            {
+              "version": "0.9.2",
+              "released": "2018-07",
+              "group": "G2"
+            },
+            {
+              "version": "0.9.1",
+              "released": "2018-07",
+              "group": "G2"
+            },
+            {
+              "version": "0.9.0",
+              "released": "2018-06",
+              "group": "G2"
+            },
+            {
+              "version": "0.8.1",
+              "released": "2018-05",
+              "group": "G3"
+            },
+            {
+              "version": "0.8.0",
+              "released": "2017-12",
+              "group": "G3"
+            },
+            {
+              "version": "0.7.11",
+              "released": "2017-04",
+              "group": "G3"
+            },
+            {
+              "version": "0.7.10",
+              "released": "2017-02",
+              "group": "G3"
+            },
+            {
+              "version": "0.7.9",
+              "released": "2016-09",
+              "group": "G3"
+            }
+          ]
+        },
+        {
+          "driver": "mysqlclient",
+          "language": "python",
+          "registry": "pypi",
+          "compat_groups": {
+            "G1": {
+              "server_family": "both",
+              "min_server": "MySQL 5.7 / MariaDB 10.x",
+              "max_server_verified": "MySQL 8.4 / MariaDB 11.x (recent client lib)",
+              "caching_sha2": "partial",
+              "runtime_req": "Python >=3.8 (2.2.8 >=3.10)",
+              "verdict_hint": "safe-if-recent-clientlib",
+              "notes": "caching_sha2 determined by LINKED C client (libmysqlclient 8.0+ / MariaDB Connector/C 3.x), NOT the package version."
+            },
+            "G2": {
+              "server_family": "both",
+              "min_server": "MySQL 5.6 / MariaDB 10.x",
+              "max_server_verified": "MySQL 8.0",
+              "caching_sha2": "partial",
+              "runtime_req": "Python >=3.5/3.6",
+              "verdict_hint": "legacy-ok",
+              "notes": "2.0.x-2.1.x; same C-lib dependency (unverified per-version)."
+            },
+            "G3": {
+              "server_family": "both",
+              "min_server": "MySQL 5.5 / MariaDB 5.x",
+              "max_server_verified": "MySQL 5.7",
+              "caching_sha2": "partial",
+              "runtime_req": "Python 2.7 / 3.5+",
+              "verdict_hint": "legacy",
+              "notes": "1.4.x; typically linked pre-8.0 client so caching_sha2 often unavailable."
+            }
+          },
+          "versions": [
+            {
+              "version": "2.2.8",
+              "released": "2026-02",
+              "group": "G1"
+            },
+            {
+              "version": "2.2.7",
+              "released": "2025-01",
+              "group": "G1"
+            },
+            {
+              "version": "2.2.6",
+              "released": "2024-11",
+              "group": "G1"
+            },
+            {
+              "version": "2.2.5",
+              "released": "2024-10",
+              "group": "G1"
+            },
+            {
+              "version": "2.2.4",
+              "released": "2024-02",
+              "group": "G1"
+            },
+            {
+              "version": "2.2.3",
+              "released": "2024-02",
+              "group": "G1"
+            },
+            {
+              "version": "2.2.2",
+              "released": "2024-02",
+              "group": "G1"
+            },
+            {
+              "version": "2.2.1",
+              "released": "2023-12",
+              "group": "G1"
+            },
+            {
+              "version": "2.2.0",
+              "released": "2023-06",
+              "group": "G1"
+            },
+            {
+              "version": "2.1.1",
+              "released": "2022-06",
+              "group": "G2"
+            },
+            {
+              "version": "2.1.0",
+              "released": "2021-11",
+              "group": "G2"
+            },
+            {
+              "version": "2.0.3",
+              "released": "2021-01",
+              "group": "G2"
+            },
+            {
+              "version": "2.0.2",
+              "released": "2020-12",
+              "group": "G2"
+            },
+            {
+              "version": "2.0.1",
+              "released": "2020-07",
+              "group": "G2"
+            },
+            {
+              "version": "2.0.0",
+              "released": "2020-07",
+              "group": "G2"
+            },
+            {
+              "version": "1.4.6",
+              "released": "2019-11",
+              "group": "G3"
+            },
+            {
+              "version": "1.4.5",
+              "released": "2019-11",
+              "group": "G3"
+            },
+            {
+              "version": "1.4.4",
+              "released": "2019-08",
+              "group": "G3"
+            },
+            {
+              "version": "1.4.3",
+              "released": "2019-08",
+              "group": "G3"
+            },
+            {
+              "version": "1.4.2",
+              "released": "2019-02",
+              "group": "G3"
+            }
+          ]
+        },
+        {
+          "driver": "mysql-connector-python",
+          "language": "python",
+          "registry": "pypi",
+          "compat_groups": {
+            "G1": {
+              "server_family": "MySQL",
+              "min_server": "MySQL 8.0",
+              "max_server_verified": "MySQL 9.x / 8.4 LTS",
+              "caching_sha2": "yes",
+              "runtime_req": "Python >=3.9 (9.7.0 >=3.10)",
+              "verdict_hint": "safe-default",
+              "notes": "9.x tracks MySQL 9.x. MariaDB NOT officially supported."
+            },
+            "G2": {
+              "server_family": "MySQL",
+              "min_server": "MySQL 5.7",
+              "max_server_verified": "MySQL 8.4 LTS",
+              "caching_sha2": "yes",
+              "runtime_req": "Python >=3.8",
+              "verdict_hint": "safe",
+              "notes": "8.1-8.4."
+            },
+            "G3": {
+              "server_family": "MySQL",
+              "min_server": "MySQL 5.6",
+              "max_server_verified": "MySQL 8.0",
+              "caching_sha2": "yes",
+              "runtime_req": "Python >=3.7",
+              "verdict_hint": "legacy-ok",
+              "notes": "8.0.x; RSA path needs cryptography."
+            }
+          },
+          "versions": [
+            {
+              "version": "9.7.0",
+              "released": "2026-04",
+              "group": "G1"
+            },
+            {
+              "version": "9.6.0",
+              "released": "2026-01",
+              "group": "G1"
+            },
+            {
+              "version": "9.5.0",
+              "released": "2025-10",
+              "group": "G1"
+            },
+            {
+              "version": "9.4.0",
+              "released": "2025-07",
+              "group": "G1"
+            },
+            {
+              "version": "9.3.0",
+              "released": "2025-04",
+              "group": "G1"
+            },
+            {
+              "version": "9.2.0",
+              "released": "2025-01",
+              "group": "G1"
+            },
+            {
+              "version": "9.1.0",
+              "released": "2024-10",
+              "group": "G1"
+            },
+            {
+              "version": "9.0.0",
+              "released": "2024-07",
+              "group": "G1"
+            },
+            {
+              "version": "8.4.0",
+              "released": "2024-04",
+              "group": "G2"
+            },
+            {
+              "version": "8.3.0",
+              "released": "2024-01",
+              "group": "G2"
+            },
+            {
+              "version": "8.2.0",
+              "released": "2023-10",
+              "group": "G2"
+            },
+            {
+              "version": "8.1.0",
+              "released": "2023-07",
+              "group": "G2"
+            },
+            {
+              "version": "8.0.33",
+              "released": "2023-04",
+              "group": "G3"
+            },
+            {
+              "version": "8.0.32",
+              "released": "2023-01",
+              "group": "G3"
+            },
+            {
+              "version": "8.0.31",
+              "released": "2022-10",
+              "group": "G3"
+            },
+            {
+              "version": "8.0.30",
+              "released": "2022-07",
+              "group": "G3"
+            },
+            {
+              "version": "8.0.29",
+              "released": "2022-04",
+              "group": "G3"
+            },
+            {
+              "version": "8.0.28",
+              "released": "2022-01",
+              "group": "G3"
+            },
+            {
+              "version": "8.0.27",
+              "released": "2021-10",
+              "group": "G3"
+            },
+            {
+              "version": "8.0.26",
+              "released": "2021-07",
+              "group": "G3"
+            }
+          ]
+        },
+        {
+          "driver": "mysql2",
+          "language": "node",
+          "registry": "npm",
+          "compat_groups": {
+            "G1": {
+              "server_family": "both",
+              "min_server": "MySQL 5.7 / MariaDB 10.x",
+              "max_server_verified": "MySQL 8.4 / MariaDB 11.x / Aurora v3",
+              "caching_sha2": "yes",
+              "runtime_req": "Node >=8.0",
+              "verdict_hint": "safe-default",
+              "notes": "3.x supports caching_sha2 (MySQL 8.0.4+/Aurora v3), sha256, native. Recommended Node driver."
+            }
+          },
+          "versions": [
+            {
+              "version": "3.22.5",
+              "released": "2026-06",
+              "group": "G1"
+            },
+            {
+              "version": "3.22.4",
+              "released": "2026-05",
+              "group": "G1"
+            },
+            {
+              "version": "3.22.3",
+              "released": "2026-04",
+              "group": "G1"
+            },
+            {
+              "version": "3.22.2",
+              "released": "2026-04",
+              "group": "G1"
+            },
+            {
+              "version": "3.22.1",
+              "released": "2026-04",
+              "group": "G1"
+            },
+            {
+              "version": "3.22.0",
+              "released": "2026-04",
+              "group": "G1"
+            },
+            {
+              "version": "3.21.1",
+              "released": "2026-04",
+              "group": "G1"
+            },
+            {
+              "version": "3.21.0",
+              "released": "2026-04",
+              "group": "G1"
+            },
+            {
+              "version": "3.20.0",
+              "released": "2026-03",
+              "group": "G1"
+            },
+            {
+              "version": "3.19.1",
+              "released": "2026-03",
+              "group": "G1"
+            },
+            {
+              "version": "3.19.0",
+              "released": "2026-03",
+              "group": "G1"
+            },
+            {
+              "version": "3.18.2",
+              "released": "2026-02",
+              "group": "G1"
+            },
+            {
+              "version": "3.18.1",
+              "released": "2026-02",
+              "group": "G1"
+            },
+            {
+              "version": "3.18.0",
+              "released": "2026-02",
+              "group": "G1"
+            },
+            {
+              "version": "3.17.5",
+              "released": "2026-02",
+              "group": "G1"
+            },
+            {
+              "version": "3.17.4",
+              "released": "2026-02",
+              "group": "G1"
+            },
+            {
+              "version": "3.17.3",
+              "released": "2026-02",
+              "group": "G1"
+            },
+            {
+              "version": "3.17.2",
+              "released": "2026-02",
+              "group": "G1"
+            },
+            {
+              "version": "3.17.1",
+              "released": "2026-02",
+              "group": "G1"
+            },
+            {
+              "version": "3.17.0",
+              "released": "2026-02",
+              "group": "G1"
+            }
+          ]
+        },
+        {
+          "driver": "mysql (mysqljs)",
+          "language": "node",
+          "registry": "npm",
+          "compat_groups": {
+            "G1": {
+              "server_family": "both",
+              "min_server": "MySQL 5.5 / MariaDB 10.x",
+              "max_server_verified": "MySQL 5.7 (MySQL 8 only w/ mysql_native_password user)",
+              "caching_sha2": "no",
+              "runtime_req": "Node >=0.6",
+              "verdict_hint": "avoid-for-mysql8-default",
+              "notes": "mysqljs 2.x, unmaintained (last 2.18.1 Jan 2020). NO caching_sha2 -> default MySQL 8.0+/Aurora v3 fail ER_NOT_SUPPORTED_AUTH_MODE. Use mysql2."
+            }
+          },
+          "versions": [
+            {
+              "version": "2.18.1",
+              "released": "2020-01",
+              "group": "G1"
+            },
+            {
+              "version": "2.18.0",
+              "released": "2020-01",
+              "group": "G1"
+            },
+            {
+              "version": "2.17.1",
+              "released": "2019-04",
+              "group": "G1"
+            },
+            {
+              "version": "2.17.0",
+              "released": "2019-04",
+              "group": "G1"
+            },
+            {
+              "version": "2.16.0",
+              "released": "2018-07",
+              "group": "G1"
+            },
+            {
+              "version": "2.15.0",
+              "released": "2017-10",
+              "group": "G1"
+            },
+            {
+              "version": "2.14.1",
+              "released": "2017-08",
+              "group": "G1"
+            },
+            {
+              "version": "2.14.0",
+              "released": "2017-07",
+              "group": "G1"
+            },
+            {
+              "version": "2.13.0",
+              "released": "2017-01",
+              "group": "G1"
+            },
+            {
+              "version": "2.12.0",
+              "released": "2016-11",
+              "group": "G1"
+            },
+            {
+              "version": "2.11.1",
+              "released": "2016-06",
+              "group": "G1"
+            },
+            {
+              "version": "2.11.0",
+              "released": "2016-06",
+              "group": "G1"
+            },
+            {
+              "version": "2.10.2",
+              "released": "2016-01",
+              "group": "G1"
+            },
+            {
+              "version": "2.10.1",
+              "released": "2016-01",
+              "group": "G1"
+            },
+            {
+              "version": "2.10.0",
+              "released": "2015-12",
+              "group": "G1"
+            },
+            {
+              "version": "2.9.0",
+              "released": "2015-08",
+              "group": "G1"
+            },
+            {
+              "version": "2.8.0",
+              "released": "2015-07",
+              "group": "G1"
+            },
+            {
+              "version": "2.7.0",
+              "released": "2015-05",
+              "group": "G1"
+            },
+            {
+              "version": "2.6.2",
+              "released": "2015-04",
+              "group": "G1"
+            },
+            {
+              "version": "2.6.1",
+              "released": "2015-03",
+              "group": "G1"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "engine_family": "oracle",
+      "drivers": [
+        {
+          "driver": "ojdbc8",
+          "language": "java",
+          "registry": "maven",
+          "mode": "jdbc",
+          "compat_groups": {
+            "G1": {
+              "min_server": "12.1",
+              "max_server_verified": "21c (23ai driver, backward-compat)",
+              "needs_instant_client": "no",
+              "runtime_req": "JDK 8+",
+              "verdict_hint": "safe",
+              "notes": "23.x line. Thin default, pure-Java. Instant Client only for thick/OCI."
+            },
+            "G2": {
+              "min_server": "11.2",
+              "max_server_verified": "21c",
+              "needs_instant_client": "no",
+              "runtime_req": "JDK 8+",
+              "verdict_hint": "safe",
+              "notes": "21.x line."
+            }
+          },
+          "versions": [
+            {
+              "version": "23.26.2.0.0",
+              "released": "2026-05",
+              "group": "G1"
+            },
+            {
+              "version": "21.21.0.0",
+              "released": "2026-02",
+              "group": "G2"
+            },
+            {
+              "version": "23.26.1.0.0",
+              "released": "2026-01",
+              "group": "G1"
+            },
+            {
+              "version": "21.20.0.0",
+              "released": "2025-10",
+              "group": "G2"
+            },
+            {
+              "version": "23.26.0.0.0",
+              "released": "2025-10",
+              "group": "G1"
+            },
+            {
+              "version": "21.19.0.0",
+              "released": "2025-07",
+              "group": "G2"
+            },
+            {
+              "version": "23.9.0.25.07",
+              "released": "2025-07",
+              "group": "G1"
+            },
+            {
+              "version": "21.18.0.0",
+              "released": "2025-05",
+              "group": "G2"
+            },
+            {
+              "version": "23.8.0.25.04",
+              "released": "2025-05",
+              "group": "G1"
+            },
+            {
+              "version": "21.17.0.0",
+              "released": "2025-02",
+              "group": "G2"
+            },
+            {
+              "version": "23.7.0.25.01",
+              "released": "2025-02",
+              "group": "G1"
+            },
+            {
+              "version": "21.16.0.0",
+              "released": "2024-11",
+              "group": "G2"
+            },
+            {
+              "version": "23.6.0.24.10",
+              "released": "2024-10",
+              "group": "G1"
+            },
+            {
+              "version": "21.15.0.0",
+              "released": "2024-08",
+              "group": "G2"
+            },
+            {
+              "version": "23.5.0.24.07",
+              "released": "2024-07",
+              "group": "G1"
+            },
+            {
+              "version": "21.14.0.0",
+              "released": "2024-05",
+              "group": "G2"
+            },
+            {
+              "version": "23.4.0.24.05",
+              "released": "2024-05",
+              "group": "G1"
+            },
+            {
+              "version": "21.13.0.0",
+              "released": "2024-02",
+              "group": "G2"
+            },
+            {
+              "version": "23.3.0.23.09",
+              "released": "2023-09",
+              "group": "G1"
+            },
+            {
+              "version": "21.11.0.0",
+              "released": "2023-08",
+              "group": "G2"
+            }
+          ]
+        },
+        {
+          "driver": "ojdbc11",
+          "language": "java",
+          "registry": "maven",
+          "mode": "jdbc",
+          "compat_groups": {
+            "G1": {
+              "min_server": "12.1",
+              "max_server_verified": "21c",
+              "needs_instant_client": "no",
+              "runtime_req": "JDK 11+",
+              "verdict_hint": "safe",
+              "notes": "23.x for JDK 11+. Thin default."
+            },
+            "G2": {
+              "min_server": "11.2",
+              "max_server_verified": "21c",
+              "needs_instant_client": "no",
+              "runtime_req": "JDK 11+",
+              "verdict_hint": "safe",
+              "notes": "21.x for JDK 11+."
+            }
+          },
+          "versions": [
+            {
+              "version": "23.26.2.0.0",
+              "released": "2026-05",
+              "group": "G1"
+            },
+            {
+              "version": "21.21.0.0",
+              "released": "2026-02",
+              "group": "G2"
+            },
+            {
+              "version": "23.26.1.0.0",
+              "released": "2026-01",
+              "group": "G1"
+            },
+            {
+              "version": "21.20.0.0",
+              "released": "2025-10",
+              "group": "G2"
+            },
+            {
+              "version": "23.26.0.0.0",
+              "released": "2025-10",
+              "group": "G1"
+            },
+            {
+              "version": "21.19.0.0",
+              "released": "2025-07",
+              "group": "G2"
+            },
+            {
+              "version": "23.9.0.25.07",
+              "released": "2025-07",
+              "group": "G1"
+            },
+            {
+              "version": "21.18.0.0",
+              "released": "2025-05",
+              "group": "G2"
+            },
+            {
+              "version": "23.8.0.25.04",
+              "released": "2025-05",
+              "group": "G1"
+            },
+            {
+              "version": "21.17.0.0",
+              "released": "2025-02",
+              "group": "G2"
+            },
+            {
+              "version": "23.7.0.25.01",
+              "released": "2025-02",
+              "group": "G1"
+            },
+            {
+              "version": "21.16.0.0",
+              "released": "2024-11",
+              "group": "G2"
+            },
+            {
+              "version": "23.6.0.24.10",
+              "released": "2024-10",
+              "group": "G1"
+            },
+            {
+              "version": "21.15.0.0",
+              "released": "2024-08",
+              "group": "G2"
+            },
+            {
+              "version": "23.5.0.24.07",
+              "released": "2024-07",
+              "group": "G1"
+            },
+            {
+              "version": "21.14.0.0",
+              "released": "2024-05",
+              "group": "G2"
+            },
+            {
+              "version": "23.4.0.24.05",
+              "released": "2024-05",
+              "group": "G1"
+            },
+            {
+              "version": "21.13.0.0",
+              "released": "2024-02",
+              "group": "G2"
+            },
+            {
+              "version": "23.3.0.23.09",
+              "released": "2023-09",
+              "group": "G1"
+            },
+            {
+              "version": "21.11.0.0",
+              "released": "2023-08",
+              "group": "G2"
+            }
+          ]
+        },
+        {
+          "driver": "ojdbc17",
+          "language": "java",
+          "registry": "maven",
+          "mode": "jdbc",
+          "compat_groups": {
+            "G1": {
+              "min_server": "12.1",
+              "max_server_verified": "21c",
+              "needs_instant_client": "no",
+              "runtime_req": "JDK 17+",
+              "verdict_hint": "safe",
+              "notes": "JDK 17+ artifact introduced with 23ai; only 23.x exist (no 21.x). Thin default."
+            }
+          },
+          "versions": [
+            {
+              "version": "23.26.2.0.0",
+              "released": "2026-05",
+              "group": "G1"
+            },
+            {
+              "version": "23.26.1.0.0",
+              "released": "2026-01",
+              "group": "G1"
+            },
+            {
+              "version": "23.26.0.0.0",
+              "released": "2025-10",
+              "group": "G1"
+            },
+            {
+              "version": "23.9.0.25.07",
+              "released": "2025-07",
+              "group": "G1"
+            },
+            {
+              "version": "23.8.0.25.04",
+              "released": "2025-05",
+              "group": "G1"
+            },
+            {
+              "version": "23.7.0.25.01",
+              "released": "2025-02",
+              "group": "G1"
+            },
+            {
+              "version": "23.6.0.24.10",
+              "released": "2024-10",
+              "group": "G1"
+            }
+          ]
+        },
+        {
+          "driver": "python-oracledb",
+          "language": "python",
+          "registry": "pypi",
+          "mode": "thin",
+          "compat_groups": {
+            "G1": {
+              "min_server": "12.1",
+              "max_server_verified": "21c",
+              "needs_instant_client": "no",
+              "runtime_req": "Python >=3.9 (4.x)",
+              "verdict_hint": "safe",
+              "notes": "4.x. Thin default; thick optional. Successor to cx_Oracle."
+            },
+            "G2": {
+              "min_server": "12.1",
+              "max_server_verified": "21c",
+              "needs_instant_client": "no",
+              "runtime_req": "Python >=3.8 (3.x)",
+              "verdict_hint": "safe",
+              "notes": "3.x. Thin default."
+            },
+            "G3": {
+              "min_server": "12.1",
+              "max_server_verified": "21c",
+              "needs_instant_client": "no",
+              "runtime_req": "Python >=3.7/3.8 (2.x)",
+              "verdict_hint": "safe",
+              "notes": "2.x. Thin since 1.0. Predecessor cx_Oracle (last 8.3.0, 2021) was thick-only, REQUIRED Instant Client."
+            }
+          },
+          "versions": [
+            {
+              "version": "4.0.1",
+              "released": "2026-05",
+              "group": "G1"
+            },
+            {
+              "version": "4.0.0",
+              "released": "2026-05",
+              "group": "G1"
+            },
+            {
+              "version": "3.4.2",
+              "released": "2026-01",
+              "group": "G2"
+            },
+            {
+              "version": "3.4.1",
+              "released": "2025-11",
+              "group": "G2"
+            },
+            {
+              "version": "3.4.0",
+              "released": "2025-10",
+              "group": "G2"
+            },
+            {
+              "version": "3.3.0",
+              "released": "2025-07",
+              "group": "G2"
+            },
+            {
+              "version": "3.2.0",
+              "released": "2025-06",
+              "group": "G2"
+            },
+            {
+              "version": "3.1.1",
+              "released": "2025-05",
+              "group": "G2"
+            },
+            {
+              "version": "3.1.0",
+              "released": "2025-04",
+              "group": "G2"
+            },
+            {
+              "version": "3.0.0",
+              "released": "2025-03",
+              "group": "G2"
+            },
+            {
+              "version": "2.5.1",
+              "released": "2024-12",
+              "group": "G3"
+            },
+            {
+              "version": "2.5.0",
+              "released": "2024-11",
+              "group": "G3"
+            },
+            {
+              "version": "2.4.1",
+              "released": "2024-08",
+              "group": "G3"
+            },
+            {
+              "version": "2.4.0",
+              "released": "2024-08",
+              "group": "G3"
+            },
+            {
+              "version": "2.3.0",
+              "released": "2024-07",
+              "group": "G3"
+            },
+            {
+              "version": "2.2.1",
+              "released": "2024-05",
+              "group": "G3"
+            },
+            {
+              "version": "2.2.0",
+              "released": "2024-05",
+              "group": "G3"
+            },
+            {
+              "version": "2.1.2",
+              "released": "2024-04",
+              "group": "G3"
+            },
+            {
+              "version": "2.1.1",
+              "released": "2024-03",
+              "group": "G3"
+            },
+            {
+              "version": "2.1.0",
+              "released": "2024-03",
+              "group": "G3"
+            }
+          ]
+        },
+        {
+          "driver": "node-oracledb",
+          "language": "node",
+          "registry": "npm",
+          "mode": "thin",
+          "compat_groups": {
+            "G1": {
+              "min_server": "12.1",
+              "max_server_verified": "21c",
+              "needs_instant_client": "no",
+              "runtime_req": "Node >=14.17",
+              "verdict_hint": "safe",
+              "notes": "7.x. Thin default; thick optional."
+            },
+            "G2": {
+              "min_server": "12.1",
+              "max_server_verified": "21c",
+              "needs_instant_client": "no",
+              "runtime_req": "Node >=14.6 (6.0-6.8); >=14.17 (6.9+)",
+              "verdict_hint": "safe",
+              "notes": "6.x. THIN MODE INTRODUCED in 6.0.0 (2023-05) — pure-JS, no Instant Client."
+            },
+            "G3": {
+              "min_server": "11.2",
+              "max_server_verified": "21c",
+              "needs_instant_client": "yes",
+              "runtime_req": "Node >=10.16",
+              "verdict_hint": "safe",
+              "notes": "5.x. THICK ONLY — requires Instant Client. Bump to 6.x+ to drop it."
+            }
+          },
+          "versions": [
+            {
+              "version": "7.0.0",
+              "released": "2026-06",
+              "group": "G1"
+            },
+            {
+              "version": "6.10.0",
+              "released": "2025-10",
+              "group": "G2"
+            },
+            {
+              "version": "6.9.0",
+              "released": "2025-07",
+              "group": "G2"
+            },
+            {
+              "version": "6.8.0",
+              "released": "2025-02",
+              "group": "G2"
+            },
+            {
+              "version": "6.7.2",
+              "released": "2025-02",
+              "group": "G2"
+            },
+            {
+              "version": "6.7.1",
+              "released": "2024-12",
+              "group": "G2"
+            },
+            {
+              "version": "6.7.0",
+              "released": "2024-11",
+              "group": "G2"
+            },
+            {
+              "version": "6.6.0",
+              "released": "2024-07",
+              "group": "G2"
+            },
+            {
+              "version": "6.5.1",
+              "released": "2024-05",
+              "group": "G2"
+            },
+            {
+              "version": "6.5.0",
+              "released": "2024-05",
+              "group": "G2"
+            },
+            {
+              "version": "6.4.0",
+              "released": "2024-03",
+              "group": "G2"
+            },
+            {
+              "version": "6.3.0",
+              "released": "2023-12",
+              "group": "G2"
+            },
+            {
+              "version": "6.2.0",
+              "released": "2023-10",
+              "group": "G2"
+            },
+            {
+              "version": "6.1.0",
+              "released": "2023-08",
+              "group": "G2"
+            },
+            {
+              "version": "6.0.3",
+              "released": "2023-07",
+              "group": "G2"
+            },
+            {
+              "version": "6.0.2",
+              "released": "2023-06",
+              "group": "G2"
+            },
+            {
+              "version": "6.0.1",
+              "released": "2023-06",
+              "group": "G2"
+            },
+            {
+              "version": "6.0.0",
+              "released": "2023-05",
+              "group": "G2"
+            },
+            {
+              "version": "5.5.0",
+              "released": "2022-09",
+              "group": "G3"
+            },
+            {
+              "version": "5.4.0",
+              "released": "2022-06",
+              "group": "G3"
+            }
+          ]
+        },
+        {
+          "driver": "godror",
+          "language": "go",
+          "registry": "github",
+          "mode": "thick",
+          "compat_groups": {
+            "G1": {
+              "min_server": "11.2",
+              "max_server_verified": "21c",
+              "needs_instant_client": "yes",
+              "runtime_req": "Go ~1.21+",
+              "verdict_hint": "safe",
+              "notes": "Wraps ODPI-C/OCI — THICK ONLY, REQUIRES Instant Client at runtime. No thin mode; use go-ora if Instant Client undesirable."
+            }
+          },
+          "versions": [
+            {
+              "version": "v0.51.0",
+              "released": "2026-06",
+              "group": "G1"
+            },
+            {
+              "version": "v0.50.0",
+              "released": "2026-01",
+              "group": "G1"
+            },
+            {
+              "version": "v0.49.6",
+              "released": "2025-12",
+              "group": "G1"
+            },
+            {
+              "version": "v0.49.5",
+              "released": "2025-11",
+              "group": "G1"
+            },
+            {
+              "version": "v0.49.4",
+              "released": "2025-10",
+              "group": "G1"
+            },
+            {
+              "version": "v0.49.3",
+              "released": "2025-09",
+              "group": "G1"
+            },
+            {
+              "version": "v0.49.2",
+              "released": "2025-09",
+              "group": "G1"
+            },
+            {
+              "version": "v0.49.1",
+              "released": "2025-07",
+              "group": "G1"
+            },
+            {
+              "version": "v0.49.0",
+              "released": "2025-06",
+              "group": "G1"
+            },
+            {
+              "version": "v0.48.3",
+              "released": "2025-05",
+              "group": "G1"
+            },
+            {
+              "version": "v0.48.2",
+              "released": "2025-05",
+              "group": "G1"
+            },
+            {
+              "version": "v0.48.1",
+              "released": "2025-04",
+              "group": "G1"
+            },
+            {
+              "version": "v0.48.0",
+              "released": "2025-03",
+              "group": "G1"
+            },
+            {
+              "version": "v0.47.1",
+              "released": "2025-03",
+              "group": "G1"
+            },
+            {
+              "version": "v0.47.0",
+              "released": "2025-03",
+              "group": "G1"
+            },
+            {
+              "version": "v0.46.0",
+              "released": "2024-12",
+              "group": "G1"
+            },
+            {
+              "version": "v0.45.2",
+              "released": "2024-11",
+              "group": "G1"
+            },
+            {
+              "version": "v0.45.1",
+              "released": "2024-11",
+              "group": "G1"
+            },
+            {
+              "version": "v0.45.0",
+              "released": "2024-11",
+              "group": "G1"
+            },
+            {
+              "version": "v0.44.8",
+              "released": "2024-09",
+              "group": "G1"
+            }
+          ]
+        },
+        {
+          "driver": "go-ora (sijms/go-ora)",
+          "language": "go",
+          "registry": "github",
+          "mode": "thin",
+          "compat_groups": {
+            "G1": {
+              "min_server": "10g/11g",
+              "max_server_verified": "21c",
+              "needs_instant_client": "no",
+              "runtime_req": "Go (pure-Go, no CGO)",
+              "verdict_hint": "safe",
+              "notes": "Pure-Go native TNS — THIN, no Instant Client, no CGO. The Instant-Client-free Go choice vs godror. Some advanced features may lag (unverified)."
+            }
+          },
+          "versions": [
+            {
+              "version": "v2.9.0",
+              "released": "2025-06",
+              "group": "G1"
+            },
+            {
+              "version": "v2.8.24",
+              "released": "2025-02",
+              "group": "G1"
+            },
+            {
+              "version": "v2.8.23",
+              "released": "2025-01",
+              "group": "G1"
+            },
+            {
+              "version": "v2.8.22",
+              "released": "2024-10",
+              "group": "G1"
+            },
+            {
+              "version": "v2.8.21",
+              "released": "2024-09",
+              "group": "G1"
+            },
+            {
+              "version": "v2.8.20",
+              "released": "2024-09",
+              "group": "G1"
+            },
+            {
+              "version": "v2.8.19",
+              "released": "2024-05",
+              "group": "G1"
+            },
+            {
+              "version": "v2.8.18",
+              "released": "2024-05",
+              "group": "G1"
+            },
+            {
+              "version": "v2.8.17",
+              "released": "2024-05",
+              "group": "G1"
+            },
+            {
+              "version": "v2.8.16",
+              "released": "2024-05",
+              "group": "G1"
+            },
+            {
+              "version": "v2.8.15",
+              "released": "2024-05",
+              "group": "G1"
+            },
+            {
+              "version": "v2.8.14",
+              "released": "2024-04",
+              "group": "G1"
+            },
+            {
+              "version": "v2.8.13",
+              "released": "2024-04",
+              "group": "G1"
+            },
+            {
+              "version": "v2.8.12",
+              "released": "2024-04",
+              "group": "G1"
+            },
+            {
+              "version": "v2.8.11",
+              "released": "2024-04",
+              "group": "G1"
+            },
+            {
+              "version": "v2.8.10",
+              "released": "2024-03",
+              "group": "G1"
+            },
+            {
+              "version": "v2.8.9",
+              "released": "2024-02",
+              "group": "G1"
+            },
+            {
+              "version": "v2.8.8",
+              "released": "2024-02",
+              "group": "G1"
+            },
+            {
+              "version": "v2.8.7",
+              "released": "2024-01",
+              "group": "G1"
+            },
+            {
+              "version": "v2.8.6",
+              "released": "2024-01",
+              "group": "G1"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "engine_family": "redis-valkey",
+      "drivers": [
+        {
+          "driver": "Jedis",
+          "language": "java",
+          "registry": "maven",
+          "compat_groups": {
+            "G1": {
+              "resp3": "yes",
+              "min_engine": "Redis 6+ for RESP3 (RESP2 back to Redis 5 / any Valkey)",
+              "max_engine_verified": "unverified",
+              "valkey_ok": "yes",
+              "runtime_req": "Java 8+",
+              "verdict_hint": "safe (wire-compat)",
+              "notes": "All listed are Jedis 5+, RESP3 opt-in; default RESP2. Connects to Valkey unchanged. No Jedis 8 stable yet."
+            }
+          },
+          "versions": [
+            {
+              "version": "7.5.3",
+              "released": "2026-07",
+              "group": "G1"
+            },
+            {
+              "version": "7.5.2",
+              "released": "2026-05",
+              "group": "G1"
+            },
+            {
+              "version": "7.5.1",
+              "released": "2026-05",
+              "group": "G1"
+            },
+            {
+              "version": "7.5.0",
+              "released": "2026-04",
+              "group": "G1"
+            },
+            {
+              "version": "7.4.1",
+              "released": "2026-04",
+              "group": "G1"
+            },
+            {
+              "version": "7.4.0",
+              "released": "2026-03",
+              "group": "G1"
+            },
+            {
+              "version": "7.3.0",
+              "released": "2026-02",
+              "group": "G1"
+            },
+            {
+              "version": "7.2.1",
+              "released": "2026-01",
+              "group": "G1"
+            },
+            {
+              "version": "7.2.0",
+              "released": "2025-12",
+              "group": "G1"
+            },
+            {
+              "version": "7.1.0",
+              "released": "2025-11",
+              "group": "G1"
+            },
+            {
+              "version": "7.0.0",
+              "released": "2025-10",
+              "group": "G1"
+            },
+            {
+              "version": "6.2.0",
+              "released": "2025-08",
+              "group": "G1"
+            },
+            {
+              "version": "6.1.0",
+              "released": "2025-08",
+              "group": "G1"
+            },
+            {
+              "version": "6.0.0",
+              "released": "2025-04",
+              "group": "G1"
+            },
+            {
+              "version": "5.2.0",
+              "released": "2024-09",
+              "group": "G1"
+            },
+            {
+              "version": "5.1.5",
+              "released": "2024-08",
+              "group": "G1"
+            },
+            {
+              "version": "5.1.4",
+              "released": "2024-07",
+              "group": "G1"
+            },
+            {
+              "version": "5.1.3",
+              "released": "2024-05",
+              "group": "G1"
+            },
+            {
+              "version": "5.1.2",
+              "released": "2024-03",
+              "group": "G1"
+            },
+            {
+              "version": "5.1.1",
+              "released": "2024-02",
+              "group": "G1"
+            }
+          ]
+        },
+        {
+          "driver": "Lettuce",
+          "language": "java",
+          "registry": "maven",
+          "compat_groups": {
+            "G1": {
+              "resp3": "yes",
+              "min_engine": "Redis 6+ for RESP3 (RESP2 back to Redis 5 / any Valkey)",
+              "max_engine_verified": "unverified",
+              "valkey_ok": "yes",
+              "runtime_req": "Java 8+ (7.x floor unverified)",
+              "verdict_hint": "safe (wire-compat)",
+              "notes": "All listed are Lettuce 6+, RESP3 auto-negotiated/opt-in. Connects to Valkey unchanged."
+            }
+          },
+          "versions": [
+            {
+              "version": "7.6.0.RELEASE",
+              "released": "2026-05",
+              "group": "G1"
+            },
+            {
+              "version": "7.5.2.RELEASE",
+              "released": "2026-05",
+              "group": "G1"
+            },
+            {
+              "version": "7.4.2.RELEASE",
+              "released": "2026-05",
+              "group": "G1"
+            },
+            {
+              "version": "7.3.2.RELEASE",
+              "released": "2026-05",
+              "group": "G1"
+            },
+            {
+              "version": "7.2.3.RELEASE",
+              "released": "2026-05",
+              "group": "G1"
+            },
+            {
+              "version": "7.1.3.RELEASE",
+              "released": "2026-05",
+              "group": "G1"
+            },
+            {
+              "version": "7.0.3.RELEASE",
+              "released": "2026-05",
+              "group": "G1"
+            },
+            {
+              "version": "7.5.1.RELEASE",
+              "released": "2026-04",
+              "group": "G1"
+            },
+            {
+              "version": "7.4.1.RELEASE",
+              "released": "2026-04",
+              "group": "G1"
+            },
+            {
+              "version": "7.3.1.RELEASE",
+              "released": "2026-04",
+              "group": "G1"
+            },
+            {
+              "version": "7.2.2.RELEASE",
+              "released": "2026-04",
+              "group": "G1"
+            },
+            {
+              "version": "7.1.2.RELEASE",
+              "released": "2026-04",
+              "group": "G1"
+            },
+            {
+              "version": "7.0.2.RELEASE",
+              "released": "2026-04",
+              "group": "G1"
+            },
+            {
+              "version": "7.5.0.RELEASE",
+              "released": "2026-03",
+              "group": "G1"
+            },
+            {
+              "version": "7.4.0.RELEASE",
+              "released": "2026-02",
+              "group": "G1"
+            },
+            {
+              "version": "7.3.0.RELEASE",
+              "released": "2026-02",
+              "group": "G1"
+            },
+            {
+              "version": "6.8.2.RELEASE",
+              "released": "2025-12",
+              "group": "G1"
+            },
+            {
+              "version": "7.2.1.RELEASE",
+              "released": "2025-12",
+              "group": "G1"
+            },
+            {
+              "version": "7.1.1.RELEASE",
+              "released": "2025-12",
+              "group": "G1"
+            },
+            {
+              "version": "7.0.1.RELEASE",
+              "released": "2025-12",
+              "group": "G1"
+            }
+          ]
+        },
+        {
+          "driver": "valkey-glide (io.valkey:valkey-glide)",
+          "language": "java",
+          "registry": "maven",
+          "compat_groups": {
+            "G1": {
+              "resp3": "yes",
+              "min_engine": "Valkey 7.2+ / Redis OSS 6.2+",
+              "max_engine_verified": "unverified",
+              "valkey_ok": "yes",
+              "runtime_req": "Java 11+ (typical)",
+              "verdict_hint": "safe (native Valkey client)",
+              "notes": "Official Valkey GLIDE (Rust core); RESP3 by default. Purpose-built for Valkey, also supports Redis OSS."
+            }
+          },
+          "versions": [
+            {
+              "version": "2.4.2",
+              "released": "2026-06",
+              "group": "G1"
+            },
+            {
+              "version": "2.4.1",
+              "released": "2026-05",
+              "group": "G1"
+            },
+            {
+              "version": "2.4.0",
+              "released": "2026-05",
+              "group": "G1"
+            },
+            {
+              "version": "2.2.10",
+              "released": "2026-05",
+              "group": "G1"
+            },
+            {
+              "version": "2.3.1",
+              "released": "2026-04",
+              "group": "G1"
+            },
+            {
+              "version": "2.2.9",
+              "released": "2026-03",
+              "group": "G1"
+            },
+            {
+              "version": "2.2.8",
+              "released": "2026-03",
+              "group": "G1"
+            },
+            {
+              "version": "2.3.0",
+              "released": "2026-03",
+              "group": "G1"
+            },
+            {
+              "version": "2.2.7",
+              "released": "2026-02",
+              "group": "G1"
+            },
+            {
+              "version": "2.2.6",
+              "released": "2026-01",
+              "group": "G1"
+            },
+            {
+              "version": "2.2.5",
+              "released": "2026-01",
+              "group": "G1"
+            },
+            {
+              "version": "2.2.4",
+              "released": "2025-12",
+              "group": "G1"
+            },
+            {
+              "version": "2.2.3",
+              "released": "2025-12",
+              "group": "G1"
+            },
+            {
+              "version": "2.2.2",
+              "released": "2025-12",
+              "group": "G1"
+            },
+            {
+              "version": "2.2.1",
+              "released": "2025-12",
+              "group": "G1"
+            },
+            {
+              "version": "2.2.0",
+              "released": "2025-11",
+              "group": "G1"
+            },
+            {
+              "version": "2.1.1",
+              "released": "2025-10",
+              "group": "G1"
+            },
+            {
+              "version": "2.1.0",
+              "released": "2025-09",
+              "group": "G1"
+            },
+            {
+              "version": "2.0.1",
+              "released": "2025-06",
+              "group": "G1"
+            },
+            {
+              "version": "2.0.0",
+              "released": "2025-06",
+              "group": "G1"
+            }
+          ]
+        },
+        {
+          "driver": "go-redis (github.com/redis/go-redis)",
+          "language": "go",
+          "registry": "github",
+          "compat_groups": {
+            "G1": {
+              "resp3": "yes",
+              "min_engine": "Redis 6+ for RESP3",
+              "max_engine_verified": "unverified",
+              "valkey_ok": "yes",
+              "runtime_req": "Go 1.18+",
+              "verdict_hint": "safe (push-frame bug fixed)",
+              "notes": "v9 with RESP3 push-frame bug FIXED. Requires >= v9.20.1. Recommended baseline for RESP3."
+            },
+            "G2": {
+              "resp3": "yes",
+              "min_engine": "Redis 6+ for RESP3",
+              "max_engine_verified": "unverified",
+              "valkey_ok": "yes",
+              "runtime_req": "Go 1.18+",
+              "verdict_hint": "needs bump for RESP3 (push-frame bug < v9.20.1)",
+              "notes": "v9 below v9.20.1: RESP2 fine, RESP3 push-frame bug; bump before enabling RESP3. v8 (no RESP3) predates newest-20."
+            }
+          },
+          "versions": [
+            {
+              "version": "v9.21.0",
+              "released": "2026-06",
+              "group": "G1"
+            },
+            {
+              "version": "v9.20.1",
+              "released": "2026-06",
+              "group": "G1"
+            },
+            {
+              "version": "v9.20.0",
+              "released": "2026-05",
+              "group": "G2"
+            },
+            {
+              "version": "v9.19.0",
+              "released": "2026-04",
+              "group": "G2"
+            },
+            {
+              "version": "v9.18.0",
+              "released": "2026-02",
+              "group": "G2"
+            },
+            {
+              "version": "v9.17.3",
+              "released": "2026-01",
+              "group": "G2"
+            },
+            {
+              "version": "v9.17.2",
+              "released": "2025-12",
+              "group": "G2"
+            },
+            {
+              "version": "v9.17.1",
+              "released": "2025-11",
+              "group": "G2"
+            },
+            {
+              "version": "v9.17.0",
+              "released": "2025-11",
+              "group": "G2"
+            },
+            {
+              "version": "v9.16.0",
+              "released": "2025-10",
+              "group": "G2"
+            },
+            {
+              "version": "v9.14.1",
+              "released": "2025-10",
+              "group": "G2"
+            },
+            {
+              "version": "v9.15.1",
+              "released": "2025-09",
+              "group": "G2"
+            },
+            {
+              "version": "v9.14.0",
+              "released": "2025-09",
+              "group": "G2"
+            },
+            {
+              "version": "v9.13.0",
+              "released": "2025-09",
+              "group": "G2"
+            },
+            {
+              "version": "v9.12.1",
+              "released": "2025-08",
+              "group": "G2"
+            },
+            {
+              "version": "v9.12.0",
+              "released": "2025-08",
+              "group": "G2"
+            },
+            {
+              "version": "v9.11.0",
+              "released": "2025-06",
+              "group": "G2"
+            },
+            {
+              "version": "v9.10.0",
+              "released": "2025-06",
+              "group": "G2"
+            },
+            {
+              "version": "v9.9.0",
+              "released": "2025-05",
+              "group": "G2"
+            },
+            {
+              "version": "v9.8.0",
+              "released": "2025-04",
+              "group": "G2"
+            }
+          ]
+        },
+        {
+          "driver": "rueidis (github.com/redis/rueidis)",
+          "language": "go",
+          "registry": "github",
+          "compat_groups": {
+            "G1": {
+              "resp3": "yes",
+              "min_engine": "Redis 6+ / Valkey 7+ (RESP3-only)",
+              "max_engine_verified": "unverified",
+              "valkey_ok": "yes",
+              "runtime_req": "Go 1.21+",
+              "verdict_hint": "safe (RESP3-native)",
+              "notes": "Always RESP3; not affected by go-redis push-frame bug. Needs engine speaking RESP3."
+            }
+          },
+          "versions": [
+            {
+              "version": "v1.0.76",
+              "released": "2026-06",
+              "group": "G1"
+            },
+            {
+              "version": "v1.0.75",
+              "released": "2026-05",
+              "group": "G1"
+            },
+            {
+              "version": "v1.0.74",
+              "released": "2026-04",
+              "group": "G1"
+            },
+            {
+              "version": "v1.0.73",
+              "released": "2026-03",
+              "group": "G1"
+            },
+            {
+              "version": "v1.0.72",
+              "released": "2026-02",
+              "group": "G1"
+            },
+            {
+              "version": "v1.0.71",
+              "released": "2026-01",
+              "group": "G1"
+            },
+            {
+              "version": "v1.0.70",
+              "released": "2025-12",
+              "group": "G1"
+            },
+            {
+              "version": "v1.0.69",
+              "released": "2025-12",
+              "group": "G1"
+            },
+            {
+              "version": "v1.0.68",
+              "released": "2025-11",
+              "group": "G1"
+            },
+            {
+              "version": "v1.0.67",
+              "released": "2025-10",
+              "group": "G1"
+            },
+            {
+              "version": "v1.0.66",
+              "released": "2025-09",
+              "group": "G1"
+            },
+            {
+              "version": "v1.0.65",
+              "released": "2025-09",
+              "group": "G1"
+            },
+            {
+              "version": "v1.0.64",
+              "released": "2025-08",
+              "group": "G1"
+            },
+            {
+              "version": "v1.0.63",
+              "released": "2025-07",
+              "group": "G1"
+            },
+            {
+              "version": "v1.0.62",
+              "released": "2025-06",
+              "group": "G1"
+            },
+            {
+              "version": "v1.0.61",
+              "released": "2025-06",
+              "group": "G1"
+            },
+            {
+              "version": "v1.0.60",
+              "released": "2025-05",
+              "group": "G1"
+            },
+            {
+              "version": "v1.0.59",
+              "released": "2025-04",
+              "group": "G1"
+            },
+            {
+              "version": "v1.0.57",
+              "released": "2025-04",
+              "group": "G1"
+            },
+            {
+              "version": "v1.0.56",
+              "released": "2025-03",
+              "group": "G1"
+            }
+          ]
+        },
+        {
+          "driver": "valkey-go (github.com/valkey-io/valkey-go)",
+          "language": "go",
+          "registry": "github",
+          "compat_groups": {
+            "G1": {
+              "resp3": "yes",
+              "min_engine": "Valkey 7+ / Redis 6+ (RESP3-only)",
+              "max_engine_verified": "unverified",
+              "valkey_ok": "yes",
+              "runtime_req": "Go 1.21+",
+              "verdict_hint": "safe (native Valkey, RESP3)",
+              "notes": "Valkey-io fork of rueidis; not affected by go-redis push-frame bug."
+            }
+          },
+          "versions": [
+            {
+              "version": "v1.0.75",
+              "released": "2026-05",
+              "group": "G1"
+            },
+            {
+              "version": "v1.0.74",
+              "released": "2026-04",
+              "group": "G1"
+            },
+            {
+              "version": "v1.0.73",
+              "released": "2026-03",
+              "group": "G1"
+            },
+            {
+              "version": "v1.0.72",
+              "released": "2026-02",
+              "group": "G1"
+            },
+            {
+              "version": "v1.0.71",
+              "released": "2026-01",
+              "group": "G1"
+            },
+            {
+              "version": "v1.0.70",
+              "released": "2025-12",
+              "group": "G1"
+            },
+            {
+              "version": "v1.0.69",
+              "released": "2025-12",
+              "group": "G1"
+            },
+            {
+              "version": "v1.0.68",
+              "released": "2025-11",
+              "group": "G1"
+            },
+            {
+              "version": "v1.0.67",
+              "released": "2025-10",
+              "group": "G1"
+            },
+            {
+              "version": "v1.0.66",
+              "released": "2025-09",
+              "group": "G1"
+            },
+            {
+              "version": "v1.0.65",
+              "released": "2025-09",
+              "group": "G1"
+            },
+            {
+              "version": "v1.0.64",
+              "released": "2025-08",
+              "group": "G1"
+            },
+            {
+              "version": "v1.0.63",
+              "released": "2025-07",
+              "group": "G1"
+            },
+            {
+              "version": "v1.0.62",
+              "released": "2025-06",
+              "group": "G1"
+            },
+            {
+              "version": "v1.0.61",
+              "released": "2025-06",
+              "group": "G1"
+            },
+            {
+              "version": "v1.0.60",
+              "released": "2025-05",
+              "group": "G1"
+            },
+            {
+              "version": "v1.0.59",
+              "released": "2025-04",
+              "group": "G1"
+            },
+            {
+              "version": "v1.0.57",
+              "released": "2025-04",
+              "group": "G1"
+            },
+            {
+              "version": "v1.0.56",
+              "released": "2025-03",
+              "group": "G1"
+            },
+            {
+              "version": "v1.0.55",
+              "released": "2025-02",
+              "group": "G1"
+            }
+          ]
+        },
+        {
+          "driver": "redis-py (pip redis)",
+          "language": "python",
+          "registry": "pypi",
+          "compat_groups": {
+            "G1": {
+              "resp3": "yes (opt-in protocol=3; default RESP2)",
+              "min_engine": "Redis 6.0 for RESP3; RESP2 back to Redis 2.6",
+              "max_engine_verified": "unverified",
+              "valkey_ok": "yes",
+              "runtime_req": "Python 3.8+ (5.x)",
+              "verdict_hint": "Legacy-safe; RESP3 explicit",
+              "notes": "5.x. RESP3 first shipped in 5.0 opt-in."
+            },
+            "G2": {
+              "resp3": "yes (opt-in; default RESP2)",
+              "min_engine": "Redis 6.0 for RESP3",
+              "max_engine_verified": "unverified",
+              "valkey_ok": "yes",
+              "runtime_req": "Python 3.9+ (unverified)",
+              "verdict_hint": "Broad coverage; RESP3 opt-in",
+              "notes": "6.x/7.x lines; RESP3 opt-in."
+            },
+            "G3": {
+              "resp3": "yes (default in 8.x)",
+              "min_engine": "Redis 6.0+ / Valkey",
+              "max_engine_verified": "unverified",
+              "valkey_ok": "yes",
+              "runtime_req": "Python 3.9+ (unverified)",
+              "verdict_hint": "RESP3-default modern line",
+              "notes": "8.x aligned to Redis 8; RESP3 default on the wire (protocol=2 to force RESP2)."
+            }
+          },
+          "versions": [
+            {
+              "version": "8.0.1",
+              "released": "2026-06",
+              "group": "G3"
+            },
+            {
+              "version": "7.4.1",
+              "released": "2026-06",
+              "group": "G2"
+            },
+            {
+              "version": "7.3.1",
+              "released": "2026-06",
+              "group": "G2"
+            },
+            {
+              "version": "7.2.2",
+              "released": "2026-06",
+              "group": "G2"
+            },
+            {
+              "version": "8.0.0",
+              "released": "2026-05",
+              "group": "G3"
+            },
+            {
+              "version": "7.4.0",
+              "released": "2026-03",
+              "group": "G2"
+            },
+            {
+              "version": "7.3.0",
+              "released": "2026-03",
+              "group": "G2"
+            },
+            {
+              "version": "7.2.1",
+              "released": "2026-02",
+              "group": "G2"
+            },
+            {
+              "version": "7.2.0",
+              "released": "2026-02",
+              "group": "G2"
+            },
+            {
+              "version": "7.1.1",
+              "released": "2026-02",
+              "group": "G2"
+            },
+            {
+              "version": "7.1.0",
+              "released": "2025-11",
+              "group": "G2"
+            },
+            {
+              "version": "7.0.1",
+              "released": "2025-10",
+              "group": "G2"
+            },
+            {
+              "version": "7.0.0",
+              "released": "2025-10",
+              "group": "G2"
+            },
+            {
+              "version": "6.4.0",
+              "released": "2025-08",
+              "group": "G2"
+            },
+            {
+              "version": "6.3.0",
+              "released": "2025-08",
+              "group": "G2"
+            },
+            {
+              "version": "5.3.1",
+              "released": "2025-07",
+              "group": "G1"
+            },
+            {
+              "version": "6.1.1",
+              "released": "2025-06",
+              "group": "G2"
+            },
+            {
+              "version": "6.2.0",
+              "released": "2025-05",
+              "group": "G2"
+            },
+            {
+              "version": "6.1.0",
+              "released": "2025-05",
+              "group": "G2"
+            },
+            {
+              "version": "6.0.0",
+              "released": "2025-04",
+              "group": "G2"
+            }
+          ]
+        },
+        {
+          "driver": "valkey-py (pip valkey)",
+          "language": "python",
+          "registry": "pypi",
+          "compat_groups": {
+            "G1": {
+              "resp3": "yes (opt-in; default RESP2)",
+              "min_engine": "Redis 6.0 for RESP3",
+              "max_engine_verified": "unverified",
+              "valkey_ok": "yes (native Valkey fork of redis-py)",
+              "runtime_req": "Python 3.8+ (unverified per minor)",
+              "verdict_hint": "Drop-in on Valkey and Redis",
+              "notes": "6.x. Fork of redis-py by Valkey project. Only 5 stable releases exist (all listed)."
+            }
+          },
+          "versions": [
+            {
+              "version": "6.1.1",
+              "released": "2025-08",
+              "group": "G1"
+            },
+            {
+              "version": "6.1.0",
+              "released": "2025-02",
+              "group": "G1"
+            },
+            {
+              "version": "6.0.2",
+              "released": "2024-09",
+              "group": "G1"
+            },
+            {
+              "version": "6.0.1",
+              "released": "2024-09",
+              "group": "G1"
+            },
+            {
+              "version": "6.0.0",
+              "released": "2024-08",
+              "group": "G1"
+            }
+          ]
+        },
+        {
+          "driver": "valkey-glide (pip valkey-glide)",
+          "language": "python",
+          "registry": "pypi",
+          "compat_groups": {
+            "G1": {
+              "resp3": "yes (RESP3-first, Rust core)",
+              "min_engine": "Redis 6.2 / Valkey 7.2 (unverified)",
+              "max_engine_verified": "unverified",
+              "valkey_ok": "yes (native, Valkey-official)",
+              "runtime_req": "Python 3.9+ (unverified)",
+              "verdict_hint": "Modern 2.x GLIDE; recommended for new work",
+              "notes": "2.x. GLIDE shared Rust core over RESP3."
+            },
+            "G2": {
+              "resp3": "yes",
+              "min_engine": "Redis 6.2 / Valkey 7.2 (unverified)",
+              "max_engine_verified": "unverified",
+              "valkey_ok": "yes",
+              "runtime_req": "Python 3.8+/3.9+ (unverified)",
+              "verdict_hint": "Prior GLIDE 1.x; superseded",
+              "notes": "1.x line."
+            }
+          },
+          "versions": [
+            {
+              "version": "2.4.2",
+              "released": "2026-06",
+              "group": "G1"
+            },
+            {
+              "version": "2.4.1",
+              "released": "2026-05",
+              "group": "G1"
+            },
+            {
+              "version": "2.4.0",
+              "released": "2026-05",
+              "group": "G1"
+            },
+            {
+              "version": "2.2.10",
+              "released": "2026-05",
+              "group": "G1"
+            },
+            {
+              "version": "2.3.1",
+              "released": "2026-04",
+              "group": "G1"
+            },
+            {
+              "version": "2.2.9",
+              "released": "2026-03",
+              "group": "G1"
+            },
+            {
+              "version": "2.3.0",
+              "released": "2026-03",
+              "group": "G1"
+            },
+            {
+              "version": "2.2.7",
+              "released": "2026-02",
+              "group": "G1"
+            },
+            {
+              "version": "2.2.6",
+              "released": "2026-01",
+              "group": "G1"
+            },
+            {
+              "version": "2.2.5",
+              "released": "2026-01",
+              "group": "G1"
+            },
+            {
+              "version": "2.2.3",
+              "released": "2025-12",
+              "group": "G1"
+            },
+            {
+              "version": "2.2.2",
+              "released": "2025-12",
+              "group": "G1"
+            },
+            {
+              "version": "2.2.1",
+              "released": "2025-12",
+              "group": "G1"
+            },
+            {
+              "version": "2.2.0",
+              "released": "2025-11",
+              "group": "G1"
+            },
+            {
+              "version": "2.1.1",
+              "released": "2025-10",
+              "group": "G1"
+            },
+            {
+              "version": "2.1.0",
+              "released": "2025-09",
+              "group": "G1"
+            },
+            {
+              "version": "2.0.1",
+              "released": "2025-06",
+              "group": "G1"
+            },
+            {
+              "version": "2.0.0",
+              "released": "2025-06",
+              "group": "G1"
+            },
+            {
+              "version": "1.3.5",
+              "released": "2025-05",
+              "group": "G2"
+            },
+            {
+              "version": "1.3.4",
+              "released": "2025-05",
+              "group": "G2"
+            }
+          ]
+        },
+        {
+          "driver": "node-redis (redis / @redis/client)",
+          "language": "node",
+          "registry": "npm",
+          "compat_groups": {
+            "G1": {
+              "resp3": "yes (v5+)",
+              "min_engine": "Redis 6.0 for RESP3",
+              "max_engine_verified": "unverified",
+              "valkey_ok": "yes",
+              "runtime_req": "Node 18+ (v5/v6, unverified)",
+              "verdict_hint": "RESP3-capable, safe on Redis/Valkey",
+              "notes": "v5.x/v6.x. RESP3 landed in v5."
+            },
+            "G2": {
+              "resp3": "partial (experimental; default RESP2)",
+              "min_engine": "RESP2 wire-compat; Redis 6+ for experimental RESP3",
+              "max_engine_verified": "unverified",
+              "valkey_ok": "yes",
+              "runtime_req": "Node 14+ (v4)",
+              "verdict_hint": "Legacy v4; treat as RESP2",
+              "notes": "4.x. RESP3 experimental/opt-in, not default."
+            }
+          },
+          "versions": [
+            {
+              "version": "6.1.0",
+              "released": "2026-07",
+              "group": "G1"
+            },
+            {
+              "version": "6.0.1",
+              "released": "2026-06",
+              "group": "G1"
+            },
+            {
+              "version": "6.0.0",
+              "released": "2026-05",
+              "group": "G1"
+            },
+            {
+              "version": "5.12.1",
+              "released": "2026-04",
+              "group": "G1"
+            },
+            {
+              "version": "5.12.0",
+              "released": "2026-04",
+              "group": "G1"
+            },
+            {
+              "version": "5.11.0",
+              "released": "2026-02",
+              "group": "G1"
+            },
+            {
+              "version": "5.10.0",
+              "released": "2025-11",
+              "group": "G1"
+            },
+            {
+              "version": "5.9.0",
+              "released": "2025-10",
+              "group": "G1"
+            },
+            {
+              "version": "5.8.3",
+              "released": "2025-10",
+              "group": "G1"
+            },
+            {
+              "version": "5.8.2",
+              "released": "2025-08",
+              "group": "G1"
+            },
+            {
+              "version": "5.8.1",
+              "released": "2025-08",
+              "group": "G1"
+            },
+            {
+              "version": "5.8.0",
+              "released": "2025-08",
+              "group": "G1"
+            },
+            {
+              "version": "5.7.0",
+              "released": "2025-07",
+              "group": "G1"
+            },
+            {
+              "version": "5.6.1",
+              "released": "2025-07",
+              "group": "G1"
+            },
+            {
+              "version": "5.6.0",
+              "released": "2025-07",
+              "group": "G1"
+            },
+            {
+              "version": "5.5.6",
+              "released": "2025-06",
+              "group": "G1"
+            },
+            {
+              "version": "5.5.5",
+              "released": "2025-06",
+              "group": "G1"
+            },
+            {
+              "version": "5.1.1",
+              "released": "2025-05",
+              "group": "G1"
+            },
+            {
+              "version": "5.1.0",
+              "released": "2025-05",
+              "group": "G1"
+            },
+            {
+              "version": "4.7.1",
+              "released": "2025-05",
+              "group": "G2"
+            }
+          ]
+        },
+        {
+          "driver": "ioredis",
+          "language": "node",
+          "registry": "npm",
+          "compat_groups": {
+            "G1": {
+              "resp3": "no (RESP2-only by design; no RESP3 roadmap)",
+              "min_engine": "RESP2 wire-compat (Redis 2.6+)",
+              "max_engine_verified": "unverified",
+              "valkey_ok": "yes (connects to Valkey over RESP2)",
+              "runtime_req": "Node 14+ (v5)",
+              "verdict_hint": "Stable RESP2; works on Redis/Valkey but never RESP3",
+              "notes": "5.x. RESP2-only permanently; RESP3-only features unavailable."
+            },
+            "G2": {
+              "resp3": "no (RESP2-only)",
+              "min_engine": "RESP2 wire-compat (Redis 2.6+)",
+              "max_engine_verified": "unverified",
+              "valkey_ok": "yes",
+              "runtime_req": "Node 12+ (v4)",
+              "verdict_hint": "Legacy v4 maintenance; RESP2-only",
+              "notes": "4.x, occasional patches."
+            }
+          },
+          "versions": [
+            {
+              "version": "5.11.1",
+              "released": "2026-06",
+              "group": "G1"
+            },
+            {
+              "version": "5.11.0",
+              "released": "2026-05",
+              "group": "G1"
+            },
+            {
+              "version": "5.10.1",
+              "released": "2026-03",
+              "group": "G1"
+            },
+            {
+              "version": "5.10.0",
+              "released": "2026-02",
+              "group": "G1"
+            },
+            {
+              "version": "5.9.3",
+              "released": "2026-02",
+              "group": "G1"
+            },
+            {
+              "version": "5.9.2",
+              "released": "2026-01",
+              "group": "G1"
+            },
+            {
+              "version": "5.9.1",
+              "released": "2026-01",
+              "group": "G1"
+            },
+            {
+              "version": "4.31.0",
+              "released": "2026-01",
+              "group": "G2"
+            },
+            {
+              "version": "5.9.0",
+              "released": "2026-01",
+              "group": "G1"
+            },
+            {
+              "version": "5.8.2",
+              "released": "2025-10",
+              "group": "G1"
+            },
+            {
+              "version": "5.8.1",
+              "released": "2025-10",
+              "group": "G1"
+            },
+            {
+              "version": "5.8.0",
+              "released": "2025-09",
+              "group": "G1"
+            },
+            {
+              "version": "4.30.1",
+              "released": "2025-09",
+              "group": "G2"
+            },
+            {
+              "version": "5.7.0",
+              "released": "2025-07",
+              "group": "G1"
+            },
+            {
+              "version": "5.6.1",
+              "released": "2025-04",
+              "group": "G1"
+            },
+            {
+              "version": "4.30.0",
+              "released": "2025-04",
+              "group": "G2"
+            },
+            {
+              "version": "5.6.0",
+              "released": "2025-03",
+              "group": "G1"
+            },
+            {
+              "version": "4.29.1",
+              "released": "2025-03",
+              "group": "G2"
+            },
+            {
+              "version": "5.5.0",
+              "released": "2025-02",
+              "group": "G1"
+            },
+            {
+              "version": "5.4.2",
+              "released": "2024-12",
+              "group": "G1"
+            }
+          ]
+        },
+        {
+          "driver": "iovalkey",
+          "language": "node",
+          "registry": "npm",
+          "compat_groups": {
+            "G1": {
+              "resp3": "no (RESP2-only; inherits ioredis)",
+              "min_engine": "RESP2 wire-compat (Redis 2.6+ / Valkey)",
+              "max_engine_verified": "unverified",
+              "valkey_ok": "yes (native Valkey fork of ioredis)",
+              "runtime_req": "Node 14+ (unverified)",
+              "verdict_hint": "Valkey-branded ioredis fork; RESP2-only, pre-1.0",
+              "notes": "0.x pre-1.0. Redis >=2.6.12, Valkey >=7.0.0."
+            }
+          },
+          "versions": [
+            {
+              "version": "0.3.3",
+              "released": "2025-06",
+              "group": "G1"
+            },
+            {
+              "version": "0.3.2",
+              "released": "2025-05",
+              "group": "G1"
+            },
+            {
+              "version": "0.3.1",
+              "released": "2025-01",
+              "group": "G1"
+            },
+            {
+              "version": "0.3.0",
+              "released": "2025-01",
+              "group": "G1"
+            },
+            {
+              "version": "0.2.2",
+              "released": "2025-01",
+              "group": "G1"
+            },
+            {
+              "version": "0.2.1",
+              "released": "2024-11",
+              "group": "G1"
+            },
+            {
+              "version": "0.2.0",
+              "released": "2024-10",
+              "group": "G1"
+            },
+            {
+              "version": "0.1.0",
+              "released": "2024-06",
+              "group": "G1"
+            },
+            {
+              "version": "0.0.1",
+              "released": "2024-03",
+              "group": "G1"
+            }
+          ]
+        },
+        {
+          "driver": "valkey-glide (@valkey/valkey-glide)",
+          "language": "node",
+          "registry": "npm",
+          "compat_groups": {
+            "G1": {
+              "resp3": "yes (RESP3-first, Rust core)",
+              "min_engine": "Redis 6.2 / Valkey 7.2 (unverified)",
+              "max_engine_verified": "unverified",
+              "valkey_ok": "yes (native, Valkey-official)",
+              "runtime_req": "Node 16+/18+ (unverified)",
+              "verdict_hint": "Modern 2.x GLIDE; recommended for new work",
+              "notes": "2.x, same Rust core as Python GLIDE."
+            },
+            "G2": {
+              "resp3": "yes",
+              "min_engine": "Redis 6.2 / Valkey 7.2 (unverified)",
+              "max_engine_verified": "unverified",
+              "valkey_ok": "yes",
+              "runtime_req": "Node 16+ (unverified)",
+              "verdict_hint": "Prior GLIDE 1.x; superseded",
+              "notes": "1.x."
+            }
+          },
+          "versions": [
+            {
+              "version": "2.4.2",
+              "released": "2026-06",
+              "group": "G1"
+            },
+            {
+              "version": "2.4.1",
+              "released": "2026-05",
+              "group": "G1"
+            },
+            {
+              "version": "2.4.0",
+              "released": "2026-05",
+              "group": "G1"
+            },
+            {
+              "version": "2.2.10",
+              "released": "2026-05",
+              "group": "G1"
+            },
+            {
+              "version": "2.3.1",
+              "released": "2026-04",
+              "group": "G1"
+            },
+            {
+              "version": "2.2.9",
+              "released": "2026-03",
+              "group": "G1"
+            },
+            {
+              "version": "2.3.0",
+              "released": "2026-03",
+              "group": "G1"
+            },
+            {
+              "version": "2.2.7",
+              "released": "2026-02",
+              "group": "G1"
+            },
+            {
+              "version": "2.2.6",
+              "released": "2026-01",
+              "group": "G1"
+            },
+            {
+              "version": "2.2.5",
+              "released": "2026-01",
+              "group": "G1"
+            },
+            {
+              "version": "2.2.1",
+              "released": "2025-12",
+              "group": "G1"
+            },
+            {
+              "version": "2.2.0",
+              "released": "2025-11",
+              "group": "G1"
+            },
+            {
+              "version": "2.1.2",
+              "released": "2025-10",
+              "group": "G1"
+            },
+            {
+              "version": "2.1.1",
+              "released": "2025-10",
+              "group": "G1"
+            },
+            {
+              "version": "2.1.0",
+              "released": "2025-09",
+              "group": "G1"
+            },
+            {
+              "version": "2.0.1",
+              "released": "2025-06",
+              "group": "G1"
+            },
+            {
+              "version": "2.0.0",
+              "released": "2025-06",
+              "group": "G1"
+            },
+            {
+              "version": "1.3.4",
+              "released": "2025-05",
+              "group": "G2"
+            },
+            {
+              "version": "1.3.2",
+              "released": "2025-04",
+              "group": "G2"
+            },
+            {
+              "version": "1.3.1",
+              "released": "2025-03",
+              "group": "G2"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "engine_family": "nosql",
+      "drivers": [
+        {
+          "driver": "boto3",
+          "language": "python",
+          "service": "dynamodb",
+          "registry": "pypi",
+          "compat_groups": {
+            "G1": {
+              "lifecycle": "current",
+              "runtime_req": "Python 3.9+ (botocore dropped 3.8 in 1.36.x)",
+              "verdict_hint": "current/GA; no server-version axis - keep latest",
+              "notes": "1.43.x current line; sole supported track (no parallel EOL major)."
+            }
+          },
+          "versions": [
+            {
+              "version": "1.43.40",
+              "released": "2026-07-03",
+              "group": "G1"
+            },
+            {
+              "version": "1.43.39",
+              "released": "2026-07-01",
+              "group": "G1"
+            },
+            {
+              "version": "1.43.38",
+              "released": "2026-06-30",
+              "group": "G1"
+            },
+            {
+              "version": "1.43.37",
+              "released": "2026-06-29",
+              "group": "G1"
+            },
+            {
+              "version": "1.43.36",
+              "released": "2026-06-23",
+              "group": "G1"
+            },
+            {
+              "version": "1.43.35",
+              "released": "2026-06-22",
+              "group": "G1"
+            },
+            {
+              "version": "1.43.34",
+              "released": "2026-06-19",
+              "group": "G1"
+            },
+            {
+              "version": "1.43.33",
+              "released": "2026-06-18",
+              "group": "G1"
+            },
+            {
+              "version": "1.43.32",
+              "released": "2026-06-17",
+              "group": "G1"
+            },
+            {
+              "version": "1.43.31",
+              "released": "2026-06-16",
+              "group": "G1"
+            },
+            {
+              "version": "1.43.30",
+              "released": "2026-06-15",
+              "group": "G1"
+            },
+            {
+              "version": "1.43.29",
+              "released": "2026-06-12",
+              "group": "G1"
+            },
+            {
+              "version": "1.43.28",
+              "released": "2026-06-11",
+              "group": "G1"
+            },
+            {
+              "version": "1.43.27",
+              "released": "2026-06-10",
+              "group": "G1"
+            },
+            {
+              "version": "1.43.26",
+              "released": "2026-06-09",
+              "group": "G1"
+            },
+            {
+              "version": "1.43.25",
+              "released": "2026-06-08",
+              "group": "G1"
+            },
+            {
+              "version": "1.43.24",
+              "released": "2026-06-05",
+              "group": "G1"
+            },
+            {
+              "version": "1.43.23",
+              "released": "2026-06-04",
+              "group": "G1"
+            },
+            {
+              "version": "1.43.22",
+              "released": "2026-06-03",
+              "group": "G1"
+            },
+            {
+              "version": "1.43.21",
+              "released": "2026-06-03",
+              "group": "G1"
+            }
+          ]
+        },
+        {
+          "driver": "@aws-sdk/client-dynamodb",
+          "language": "node",
+          "service": "dynamodb",
+          "registry": "npm",
+          "compat_groups": {
+            "G1": {
+              "lifecycle": "current",
+              "runtime_req": "Node >=18 (v3 dropped Node 16 early 2025)",
+              "verdict_hint": "current/GA v3; no server-version axis",
+              "notes": "v3 (3.10xx.x). Predecessor aws-sdk v2 EOL 2025-09-08."
+            }
+          },
+          "versions": [
+            {
+              "version": "3.1079.0",
+              "released": "2026-07-02",
+              "group": "G1"
+            },
+            {
+              "version": "3.1078.0",
+              "released": "2026-07-01",
+              "group": "G1"
+            },
+            {
+              "version": "3.1077.0",
+              "released": "2026-06-30",
+              "group": "G1"
+            },
+            {
+              "version": "3.1076.0",
+              "released": "2026-06-29",
+              "group": "G1"
+            },
+            {
+              "version": "3.1075.0",
+              "released": "2026-06-23",
+              "group": "G1"
+            },
+            {
+              "version": "3.1074.0",
+              "released": "2026-06-22",
+              "group": "G1"
+            },
+            {
+              "version": "3.1073.0",
+              "released": "2026-06-19",
+              "group": "G1"
+            },
+            {
+              "version": "3.1072.0",
+              "released": "2026-06-18",
+              "group": "G1"
+            },
+            {
+              "version": "3.1071.0",
+              "released": "2026-06-17",
+              "group": "G1"
+            },
+            {
+              "version": "3.1070.0",
+              "released": "2026-06-16",
+              "group": "G1"
+            },
+            {
+              "version": "3.1069.0",
+              "released": "2026-06-15",
+              "group": "G1"
+            },
+            {
+              "version": "3.1068.0",
+              "released": "2026-06-12",
+              "group": "G1"
+            },
+            {
+              "version": "3.1067.0",
+              "released": "2026-06-11",
+              "group": "G1"
+            },
+            {
+              "version": "3.1066.0",
+              "released": "2026-06-10",
+              "group": "G1"
+            },
+            {
+              "version": "3.1065.0",
+              "released": "2026-06-09",
+              "group": "G1"
+            },
+            {
+              "version": "3.1064.0",
+              "released": "2026-06-08",
+              "group": "G1"
+            },
+            {
+              "version": "3.1063.0",
+              "released": "2026-06-05",
+              "group": "G1"
+            },
+            {
+              "version": "3.1062.0",
+              "released": "2026-06-04",
+              "group": "G1"
+            },
+            {
+              "version": "3.1061.0",
+              "released": "2026-06-03",
+              "group": "G1"
+            },
+            {
+              "version": "3.1060.0",
+              "released": "2026-06-03",
+              "group": "G1"
+            }
+          ]
+        },
+        {
+          "driver": "aws-sdk-go-v2/service/dynamodb",
+          "language": "go",
+          "service": "dynamodb",
+          "registry": "goproxy",
+          "compat_groups": {
+            "G1": {
+              "lifecycle": "current",
+              "runtime_req": "Go >=1.21 (tracks two most recent Go minors)",
+              "verdict_hint": "current/GA v2 (service/dynamodb v1.x) - stay updated",
+              "notes": "Per-service Go module. Predecessor aws-sdk-go v1 EOL 2025."
+            }
+          },
+          "versions": [
+            {
+              "version": "v1.59.2",
+              "released": "2026-07-01",
+              "group": "G1"
+            },
+            {
+              "version": "v1.59.1",
+              "released": "2026-06-29",
+              "group": "G1"
+            },
+            {
+              "version": "v1.59.0",
+              "released": "2026-06-08",
+              "group": "G1"
+            },
+            {
+              "version": "v1.58.0",
+              "released": "2026-06-05",
+              "group": "G1"
+            },
+            {
+              "version": "v1.57.9",
+              "released": "2026-06-04",
+              "group": "G1"
+            },
+            {
+              "version": "v1.57.8",
+              "released": "2026-06-03",
+              "group": "G1"
+            },
+            {
+              "version": "v1.57.7",
+              "released": "2026-06-02",
+              "group": "G1"
+            },
+            {
+              "version": "v1.57.6",
+              "released": "2026-05-29",
+              "group": "G1"
+            },
+            {
+              "version": "v1.57.5",
+              "released": "2026-05-28",
+              "group": "G1"
+            },
+            {
+              "version": "v1.57.4",
+              "released": "2026-05-22",
+              "group": "G1"
+            },
+            {
+              "version": "v1.57.3",
+              "released": "2026-04-29",
+              "group": "G1"
+            },
+            {
+              "version": "v1.57.2",
+              "released": "2026-04-17",
+              "group": "G1"
+            },
+            {
+              "version": "v1.57.1",
+              "released": "2026-03-26",
+              "group": "G1"
+            },
+            {
+              "version": "v1.57.0",
+              "released": "2026-03-20",
+              "group": "G1"
+            },
+            {
+              "version": "v1.56.2",
+              "released": "2026-03-13",
+              "group": "G1"
+            },
+            {
+              "version": "v1.56.1",
+              "released": "2026-03-03",
+              "group": "G1"
+            },
+            {
+              "version": "v1.56.0",
+              "released": "2026-02-23",
+              "group": "G1"
+            },
+            {
+              "version": "v1.55.0",
+              "released": "2026-02-03",
+              "group": "G1"
+            },
+            {
+              "version": "v1.54.0",
+              "released": "2026-01-22",
+              "group": "G1"
+            },
+            {
+              "version": "v1.53.6",
+              "released": "2026-01-09",
+              "group": "G1"
+            }
+          ]
+        },
+        {
+          "driver": "software.amazon.awssdk:dynamodb",
+          "language": "java",
+          "service": "dynamodb",
+          "registry": "maven",
+          "compat_groups": {
+            "G1": {
+              "lifecycle": "current",
+              "runtime_req": "Java 8+ (v2 supports JDK 8/11/17/21)",
+              "verdict_hint": "current/GA v2; no server-version axis",
+              "notes": "2.x patch trains. AWS SDK for Java v1.x EOL 2025-12-31."
+            }
+          },
+          "versions": [
+            {
+              "version": "2.46.21",
+              "released": "2026-07-02",
+              "group": "G1"
+            },
+            {
+              "version": "2.45.1",
+              "released": "2026-05-29",
+              "group": "G1"
+            },
+            {
+              "version": "2.44.14",
+              "released": "2026-05-27",
+              "group": "G1"
+            },
+            {
+              "version": "2.43.2",
+              "released": "2026-04-30",
+              "group": "G1"
+            },
+            {
+              "version": "2.42.41",
+              "released": "2026-04-24",
+              "group": "G1"
+            },
+            {
+              "version": "2.41.34",
+              "released": "2026-02-20",
+              "group": "G1"
+            },
+            {
+              "version": "2.40.17",
+              "released": "2025-12-29",
+              "group": "G1"
+            },
+            {
+              "version": "2.39.6",
+              "released": "2025-12-01",
+              "group": "G1"
+            },
+            {
+              "version": "2.38.9",
+              "released": "2025-11-19",
+              "group": "G1"
+            },
+            {
+              "version": "2.37.5",
+              "released": "2025-11-04",
+              "group": "G1"
+            },
+            {
+              "version": "2.36.3",
+              "released": "2025-10-27",
+              "group": "G1"
+            },
+            {
+              "version": "2.35.11",
+              "released": "2025-10-21",
+              "group": "G1"
+            },
+            {
+              "version": "2.34.9",
+              "released": "2025-10-02",
+              "group": "G1"
+            },
+            {
+              "version": "2.33.13",
+              "released": "2025-09-19",
+              "group": "G1"
+            },
+            {
+              "version": "2.32.33",
+              "released": "2025-08-28",
+              "group": "G1"
+            },
+            {
+              "version": "2.31.78",
+              "released": "2025-07-09",
+              "group": "G1"
+            },
+            {
+              "version": "2.30.38",
+              "released": "2025-03-11",
+              "group": "G1"
+            },
+            {
+              "version": "2.29.52",
+              "released": "2025-01-14",
+              "group": "G1"
+            },
+            {
+              "version": "2.28.29",
+              "released": "2024-10-23",
+              "group": "G1"
+            },
+            {
+              "version": "2.27.24",
+              "released": "2024-09-11",
+              "group": "G1"
+            }
+          ]
+        },
+        {
+          "driver": "pymongo",
+          "language": "python",
+          "service": "documentdb",
+          "registry": "pypi",
+          "compat_groups": {
+            "G1": {
+              "min_mongo_server": "3.6",
+              "docdb_api_ok": "3.6+ (DocDB 3.6/4.0/5.0)",
+              "runtime_req": "Python 3.8+",
+              "verdict_hint": "safe vs DocDB 3.6, 4.0, 5.0",
+              "notes": "retryWrites=false + TLS required. Pre-4.11 speaks wire to 3.6."
+            },
+            "G2": {
+              "min_mongo_server": "4.0",
+              "docdb_api_ok": "4.0+ (DocDB 4.0/5.0; NOT 3.6)",
+              "runtime_req": "Python 3.8+",
+              "verdict_hint": "avoid on DocDB 3.6",
+              "notes": "4.11 dropped MongoDB 3.6."
+            },
+            "G3": {
+              "min_mongo_server": "4.2",
+              "docdb_api_ok": "4.2+ (=> only DocDB 5.0)",
+              "runtime_req": "Python 3.9+",
+              "verdict_hint": "requires DocDB 5.0",
+              "notes": "4.14 dropped MongoDB 4.0."
+            }
+          },
+          "versions": [
+            {
+              "version": "4.17.0",
+              "released": "2026-04-20",
+              "group": "G3"
+            },
+            {
+              "version": "4.16.0",
+              "released": "2026-01-07",
+              "group": "G3"
+            },
+            {
+              "version": "4.15.5",
+              "released": "2025-12-02",
+              "group": "G3"
+            },
+            {
+              "version": "4.15.4",
+              "released": "2025-11-11",
+              "group": "G3"
+            },
+            {
+              "version": "4.15.3",
+              "released": "2025-10-07",
+              "group": "G3"
+            },
+            {
+              "version": "4.15.2",
+              "released": "2025-10-01",
+              "group": "G3"
+            },
+            {
+              "version": "4.15.1",
+              "released": "2025-09-16",
+              "group": "G3"
+            },
+            {
+              "version": "4.15.0",
+              "released": "2025-09-10",
+              "group": "G3"
+            },
+            {
+              "version": "4.14.1",
+              "released": "2025-08-19",
+              "group": "G3"
+            },
+            {
+              "version": "4.14.0",
+              "released": "2025-08-06",
+              "group": "G3"
+            },
+            {
+              "version": "4.13.2",
+              "released": "2025-06-16",
+              "group": "G2"
+            },
+            {
+              "version": "4.13.1",
+              "released": "2025-06-11",
+              "group": "G2"
+            },
+            {
+              "version": "4.13.0",
+              "released": "2025-05-14",
+              "group": "G2"
+            },
+            {
+              "version": "4.12.1",
+              "released": "2025-04-29",
+              "group": "G2"
+            },
+            {
+              "version": "4.12.0",
+              "released": "2025-04-08",
+              "group": "G2"
+            },
+            {
+              "version": "4.11.3",
+              "released": "2025-03-18",
+              "group": "G2"
+            },
+            {
+              "version": "4.11.2",
+              "released": "2025-03-03",
+              "group": "G2"
+            },
+            {
+              "version": "4.11.1",
+              "released": "2025-02-10",
+              "group": "G2"
+            },
+            {
+              "version": "4.11",
+              "released": "2025-01-28",
+              "group": "G2"
+            },
+            {
+              "version": "4.10.1",
+              "released": "2024-10-01",
+              "group": "G1"
+            },
+            {
+              "version": "4.10.0",
+              "released": "2024-10-01",
+              "group": "G1"
+            },
+            {
+              "version": "4.9.2",
+              "released": "2024-10-02",
+              "group": "G1"
+            }
+          ]
+        },
+        {
+          "driver": "mongodb-driver-sync",
+          "language": "java",
+          "service": "documentdb",
+          "registry": "maven",
+          "compat_groups": {
+            "G1": {
+              "min_mongo_server": "3.6",
+              "docdb_api_ok": "3.6+ (DocDB 3.6/4.0/5.0)",
+              "runtime_req": "Java 8+",
+              "verdict_hint": "safe vs DocDB 3.6, 4.0, 5.0",
+              "notes": "retryWrites=false + TLS. 5.1.x speaks wire to 3.6."
+            },
+            "G2": {
+              "min_mongo_server": "4.0",
+              "docdb_api_ok": "4.0+ (DocDB 4.0/5.0; NOT 3.6)",
+              "runtime_req": "Java 8+",
+              "verdict_hint": "avoid on DocDB 3.6",
+              "notes": "5.2 dropped MongoDB 3.6."
+            },
+            "G3": {
+              "min_mongo_server": "4.2",
+              "docdb_api_ok": "4.2+ (=> only DocDB 5.0)",
+              "runtime_req": "Java 8+",
+              "verdict_hint": "requires DocDB 5.0",
+              "notes": "5.5 dropped MongoDB 4.0."
+            }
+          },
+          "versions": [
+            {
+              "version": "5.8.0",
+              "released": "2026-05-28",
+              "group": "G3"
+            },
+            {
+              "version": "5.7.1",
+              "released": "2026-05-27",
+              "group": "G3"
+            },
+            {
+              "version": "5.7.0",
+              "released": "2026-04-30",
+              "group": "G3"
+            },
+            {
+              "version": "5.6.5",
+              "released": "2026-04-09",
+              "group": "G3"
+            },
+            {
+              "version": "5.6.4",
+              "released": "2026-02-23",
+              "group": "G3"
+            },
+            {
+              "version": "5.6.3",
+              "released": "2026-02-03",
+              "group": "G3"
+            },
+            {
+              "version": "5.6.2",
+              "released": "2025-12-08",
+              "group": "G3"
+            },
+            {
+              "version": "5.6.1",
+              "released": "2025-10-06",
+              "group": "G3"
+            },
+            {
+              "version": "5.6.0",
+              "released": "2025-09-11",
+              "group": "G3"
+            },
+            {
+              "version": "5.5.2",
+              "released": "2025-10-06",
+              "group": "G3"
+            },
+            {
+              "version": "5.5.1",
+              "released": "2025-06-06",
+              "group": "G3"
+            },
+            {
+              "version": "5.5.0",
+              "released": "2025-05-07",
+              "group": "G3"
+            },
+            {
+              "version": "5.4.0",
+              "released": "2025-03-20",
+              "group": "G2"
+            },
+            {
+              "version": "5.3.1",
+              "released": "2025-01-23",
+              "group": "G2"
+            },
+            {
+              "version": "5.3.0",
+              "released": "2025-01-10",
+              "group": "G2"
+            },
+            {
+              "version": "5.2.1",
+              "released": "2024-11-06",
+              "group": "G2"
+            },
+            {
+              "version": "5.2.0",
+              "released": "2024-09-24",
+              "group": "G2"
+            },
+            {
+              "version": "5.1.4",
+              "released": "2024-09-03",
+              "group": "G1"
+            },
+            {
+              "version": "5.1.3",
+              "released": "2024-08-08",
+              "group": "G1"
+            }
+          ]
+        },
+        {
+          "driver": "mongo-go-driver",
+          "language": "go",
+          "service": "documentdb",
+          "registry": "goproxy",
+          "compat_groups": {
+            "G1": {
+              "min_mongo_server": "4.2",
+              "docdb_api_ok": "4.2+ (=> only DocDB 5.0)",
+              "runtime_req": "Go >=1.18 (v2)",
+              "verdict_hint": "requires DocDB 5.0",
+              "notes": "v2.x whole major min server 4.2. Legacy v1.x (latest v1.17.9) still supports 3.6/4.0 but not in newest-20. retryWrites=false + TLS."
+            }
+          },
+          "versions": [
+            {
+              "version": "v2.7.0",
+              "released": "2026-06-17",
+              "group": "G1"
+            },
+            {
+              "version": "v2.6.2",
+              "released": "2026-06-17",
+              "group": "G1"
+            },
+            {
+              "version": "v2.6.1",
+              "released": "2026-06-15",
+              "group": "G1"
+            },
+            {
+              "version": "v2.6.0",
+              "released": "2026-04-27",
+              "group": "G1"
+            },
+            {
+              "version": "v2.5.1",
+              "released": "2026-04-14",
+              "group": "G1"
+            },
+            {
+              "version": "v2.5.0",
+              "released": "2026-01-28",
+              "group": "G1"
+            },
+            {
+              "version": "v2.4.4",
+              "released": "2026-04-15",
+              "group": "G1"
+            },
+            {
+              "version": "v2.4.3",
+              "released": "2026-04-09",
+              "group": "G1"
+            },
+            {
+              "version": "v2.4.2",
+              "released": "2026-01-21",
+              "group": "G1"
+            },
+            {
+              "version": "v2.4.1",
+              "released": "2025-12-09",
+              "group": "G1"
+            },
+            {
+              "version": "v2.4.0",
+              "released": "2025-10-28",
+              "group": "G1"
+            },
+            {
+              "version": "v2.3.1",
+              "released": "2025-10-09",
+              "group": "G1"
+            },
+            {
+              "version": "v2.3.0",
+              "released": "2025-08-13",
+              "group": "G1"
+            },
+            {
+              "version": "v2.2.3",
+              "released": "2025-08-05",
+              "group": "G1"
+            },
+            {
+              "version": "v2.2.2",
+              "released": "2025-06-05",
+              "group": "G1"
+            },
+            {
+              "version": "v2.2.1",
+              "released": "2025-05-06",
+              "group": "G1"
+            },
+            {
+              "version": "v2.2.0",
+              "released": "2025-04-09",
+              "group": "G1"
+            },
+            {
+              "version": "v2.1.0",
+              "released": "2025-02-26",
+              "group": "G1"
+            },
+            {
+              "version": "v2.0.1",
+              "released": "2025-02-20",
+              "group": "G1"
+            },
+            {
+              "version": "v2.0.0",
+              "released": "2024-12-10",
+              "group": "G1"
+            }
+          ]
+        },
+        {
+          "driver": "mongodb (node-mongodb-native)",
+          "language": "node",
+          "service": "documentdb",
+          "registry": "npm",
+          "compat_groups": {
+            "G1": {
+              "min_mongo_server": "4.2",
+              "docdb_api_ok": "4.2+ (officially only DocDB 5.0)",
+              "runtime_req": "v6.x Node >=16; v7.x Node >=20 (v7.0 removed MONGODB-CR)",
+              "verdict_hint": "officially only DocDB 5.0; 4.0/3.6 unsupported (may connect, unverified)",
+              "notes": "v6.21/v7.4 READMEs state 'supports 4.2+ servers'. Historically connected to 3.6/4.0 DocDB in practice (unverified). retryWrites=false + TLS."
+            }
+          },
+          "versions": [
+            {
+              "version": "7.4.0",
+              "released": "2026-06-25",
+              "group": "G1"
+            },
+            {
+              "version": "7.3.0",
+              "released": "2026-06-09",
+              "group": "G1"
+            },
+            {
+              "version": "7.2.0",
+              "released": "2026-04-20",
+              "group": "G1"
+            },
+            {
+              "version": "7.1.1",
+              "released": "2026-03-24",
+              "group": "G1"
+            },
+            {
+              "version": "7.1.0",
+              "released": "2026-02-04",
+              "group": "G1"
+            },
+            {
+              "version": "7.0.0",
+              "released": "2025-11-06",
+              "group": "G1"
+            },
+            {
+              "version": "6.21.0",
+              "released": "2025-11-12",
+              "group": "G1"
+            },
+            {
+              "version": "6.20.0",
+              "released": "2025-09-18",
+              "group": "G1"
+            },
+            {
+              "version": "6.19.0",
+              "released": "2025-08-26",
+              "group": "G1"
+            },
+            {
+              "version": "6.18.0",
+              "released": "2025-07-22",
+              "group": "G1"
+            },
+            {
+              "version": "6.17.0",
+              "released": "2025-06-03",
+              "group": "G1"
+            },
+            {
+              "version": "6.16.0",
+              "released": "2025-04-21",
+              "group": "G1"
+            },
+            {
+              "version": "6.15.0",
+              "released": "2025-03-18",
+              "group": "G1"
+            },
+            {
+              "version": "6.14.2",
+              "released": "2025-03-04",
+              "group": "G1"
+            },
+            {
+              "version": "6.14.1",
+              "released": "2025-03-03",
+              "group": "G1"
+            },
+            {
+              "version": "6.14.0",
+              "released": "2025-02-28",
+              "group": "G1"
+            },
+            {
+              "version": "6.13.1",
+              "released": "2025-02-20",
+              "group": "G1"
+            },
+            {
+              "version": "6.13.0",
+              "released": "2025-01-30",
+              "group": "G1"
+            },
+            {
+              "version": "6.12.0",
+              "released": "2024-12-10",
+              "group": "G1"
+            },
+            {
+              "version": "6.11.0",
+              "released": "2024-11-22",
+              "group": "G1"
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}
