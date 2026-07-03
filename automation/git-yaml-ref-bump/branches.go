@@ -89,8 +89,12 @@ func listMatchingPaths(cfg config, ref string) ([]string, error) {
 	return paths, nil
 }
 
-// matchesAnyPattern reports whether value matches at least one pattern.
+// matchesAnyPattern reports whether value matches at least one pattern. With no
+// patterns (empty -files) every value matches, so all files under -dir are taken.
 func matchesAnyPattern(patterns []*regexp.Regexp, value string) bool {
+	if len(patterns) == 0 {
+		return true
+	}
 	for _, re := range patterns {
 		if re.MatchString(value) {
 			return true

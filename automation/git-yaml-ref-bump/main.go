@@ -45,7 +45,7 @@ func main() {
 
 func parseFlags() (config, error) {
 	var (
-		files    = flag.String("files", "", "comma-separated file-name patterns (regexp) to update, e.g. 'build.yml,deploy.yml' (required)")
+		files    = flag.String("files", "", "comma-separated file-name patterns (regexp) to update, e.g. 'build.yml,deploy.yml'; empty matches every file under -dir")
 		dir      = flag.String("dir", ".github/workflows", "directory searched for matching files in each branch")
 		fullPath = flag.Bool("full-path", false, "match -files patterns against the full repo-relative path instead of the basename")
 		from     = flag.String("from", "build.yml@v2", "reference string to replace")
@@ -60,9 +60,6 @@ func parseFlags() (config, error) {
 	flag.Parse()
 
 	rawFiles := splitFiles(*files)
-	if len(rawFiles) == 0 {
-		return config{}, fmt.Errorf("-files is required")
-	}
 	filePatterns, err := compileFilePatterns(rawFiles)
 	if err != nil {
 		return config{}, err

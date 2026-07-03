@@ -14,7 +14,7 @@ export function renderReport(cfg, results) {
   lines.push("# YAML ref bump report", "");
   lines.push(`- Mode: ${mode}`);
   lines.push(`- Replacement: \`${cfg.from}\` -> \`${cfg.to}\``);
-  lines.push(`- File patterns (${matchScope}): ${cfg.files.join(", ")}`);
+  lines.push(`- File patterns (${matchScope}): ${cfg.files.length ? cfg.files.join(", ") : "(all files under dir)"}`);
   lines.push(`- Search dir: \`${cfg.dir}\``);
   lines.push(`- Branch pattern: \`${cfg.pattern.source}\``);
   lines.push(`- Branches matched: ${results.length}`, "");

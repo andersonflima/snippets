@@ -17,13 +17,13 @@ const DEFAULTS = {
 
 const BOOLEAN_FLAGS = new Set(["full-path", "dry-run", "fetch"]);
 
-export const USAGE = `Usage: git-yaml-ref-bump --files <patterns> [options]
+export const USAGE = `Usage: git-yaml-ref-bump [--files <patterns>] [options]
 
 Replace a versioned reference inside YAML files across release branches.
 
 Options:
   --files <list>     comma-separated file-name patterns (regexp) to update,
-                     e.g. 'build.yml,deploy.yml' (required)
+                     e.g. 'build.yml,deploy.yml'; empty matches every file under --dir
   --dir <path>       directory searched for matching files (default ".github/workflows")
   --full-path        match --files patterns against the full repo-relative path
   --from <ref>       reference string to replace (default "build.yml@v2")
@@ -111,9 +111,6 @@ export function resolveConfig(argv) {
   }
 
   const files = splitFiles(raw.files);
-  if (files.length === 0) {
-    throw new Error("--files is required");
-  }
   const filePatterns = compileFilePatterns(files);
 
   let pattern;

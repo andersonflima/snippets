@@ -67,7 +67,11 @@ export function listMatchingPaths(cfg, ref) {
   return paths;
 }
 
-// matchesAnyPattern reports whether value matches at least one pattern.
+// matchesAnyPattern reports whether value matches at least one pattern. With no
+// patterns (empty --files) every value matches, so all files under --dir are taken.
 function matchesAnyPattern(patterns, value) {
+  if (patterns.length === 0) {
+    return true;
+  }
   return patterns.some((re) => re.test(value));
 }
