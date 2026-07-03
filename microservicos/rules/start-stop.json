@@ -1,0 +1,14 @@
+{
+  "allowedRegions": [
+    "sa-east-1"
+  ],
+  "allowedOperations": [
+    "start",
+    "stop"
+  ],
+  "allowedResourceTypes": [
+    "db-instance",
+    "db-cluster",
+    "ec2-instance"
+  ]
+}

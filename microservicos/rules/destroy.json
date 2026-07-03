@@ -1,0 +1,14 @@
+{
+  "allowedRegions": [
+    "sa-east-1"
+  ],
+  "allowedResourceTypes": [
+    "db-instance",
+    "db-snapshot",
+    "vpc-endpoint",
+    "kms-grant",
+    "security-group"
+  ],
+  "deniedResourceTypes": [],
+  "requireFinalSnapshot": true
+}

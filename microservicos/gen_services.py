@@ -242,6 +242,55 @@ def load_rules(defaults: dict | None = None, service: str | None = None) -> dict
         if cached:
             return _merge(base, cached[1])
         return base
+
+
+def _deny(message: str) -> None:
+    from .aws import ActionError  # import tardio: evita acoplamento no load do módulo
+
+    raise ActionError("rule_violation", message, 403)
+
+
+def enforce_common(rules: dict, req) -> None:
+    """Enforcement genérico (opt-in por chave). Ausência de chave = sem restrição."""
+    allowed_regions = rules.get("allowedRegions")
+    if allowed_regions and req.region not in allowed_regions:
+        _deny(f"região não permitida: {req.region} (permitidas: {allowed_regions})")
+    allowed_envs = rules.get("allowedEnvironments")
+    if allowed_envs and req.environment not in allowed_envs:
+        _deny(f"ambiente não permitido: {req.environment} (permitidos: {allowed_envs})")
+    denied_envs = rules.get("deniedEnvironments")
+    if denied_envs and req.environment in denied_envs:
+        _deny(f"ambiente bloqueado por regra: {req.environment}")
+
+
+def enforce_allowed(rules: dict, key: str, value, label: str) -> None:
+    """Nega se `value` estiver definido e fora da allowlist `rules[key]`."""
+    allowed = rules.get(key)
+    if allowed and value is not None and value not in allowed:
+        _deny(f"{label} não permitido: {value} (permitidos: {allowed})")
+
+
+def enforce_denied(rules: dict, key: str, value, label: str) -> None:
+    """Nega se `value` estiver na denylist `rules[key]`."""
+    denied = rules.get(key)
+    if denied and value is not None and value in denied:
+        _deny(f"{label} bloqueado por regra: {value}")
+
+
+def enforce_max(rules: dict, key: str, value, label: str) -> None:
+    """Nega se `value` exceder o teto numérico `rules[key]`."""
+    cap = rules.get(key)
+    if cap is not None and value is not None and value > cap:
+        _deny(f"{label} acima do limite permitido: {value} > {cap}")
+
+
+def enforce_env_map(rules: dict, key: str, env: str, value, label: str) -> None:
+    """Allowlist por ambiente: rules[key] = {env: [permitidos]} (opt-in por env)."""
+    per_env = rules.get(key)
+    if isinstance(per_env, dict) and env in per_env:
+        allowed = per_env[env]
+        if allowed and value is not None and value not in allowed:
+            _deny(f"{label} não permitido em {env}: {value} (permitidos: {allowed})")
 '''
 
 INIT_PY = '"""Microserviço action-driven (autocontido)."""\n'
@@ -483,10 +532,15 @@ import uuid
 
 from .aws import ActionError, assumed_session
 from .models import ActionAccepted, RestoreRequest
+from .rules import enforce_allowed, enforce_common, load_rules
 
 
 def execute(req: RestoreRequest) -> ActionAccepted:
     p = req.params
+    rules = load_rules({})
+    enforce_common(rules, req)
+    enforce_allowed(rules, "allowedOperations", p.operation, "operação")
+    enforce_allowed(rules, "allowedInstanceClasses", p.dbInstanceClass, "instance class")
     session = assumed_session(req.account, req.roleArn, req.region)
     rds = session.client("rds")
 
@@ -534,6 +588,7 @@ import uuid
 
 from .aws import ActionError, assumed_session
 from .models import ActionAccepted, DbPasswordRequest
+from .rules import enforce_allowed, enforce_common, enforce_denied, load_rules
 
 
 def _secret_password(raw: str) -> str:
@@ -578,6 +633,10 @@ def _alter_mysql(host, port, admin_user, admin_pw, username, new_pw) -> None:
 
 def execute(req: DbPasswordRequest) -> ActionAccepted:
     p = req.params
+    rules = load_rules({})
+    enforce_common(rules, req)
+    enforce_allowed(rules, "allowedEngines", p.engine, "engine")
+    enforce_denied(rules, "deniedUsernames", p.username, "usuário")
     session = assumed_session(req.account, req.roleArn, req.region)
     rds = session.client("rds")
     sm = session.client("secretsmanager")
@@ -629,10 +688,14 @@ import uuid
 
 from .aws import assumed_session
 from .models import ActionAccepted, KmsRequest
+from .rules import enforce_allowed, enforce_common, load_rules
 
 
 def execute(req: KmsRequest) -> ActionAccepted:
     p = req.params
+    rules = load_rules({})
+    enforce_common(rules, req)
+    enforce_allowed(rules, "allowedTargetResourceTypes", p.targetResourceType, "targetResourceType")
     session = assumed_session(req.account, req.roleArn, req.region)
     kms = session.client("kms")
     alias = p.keyAlias if p.keyAlias.startswith("alias/") else f"alias/{p.keyAlias}"
@@ -687,10 +750,16 @@ import uuid
 
 from .aws import ActionError, assumed_session
 from .models import ActionAccepted, ReplicateRequest
+from .rules import enforce_allowed, enforce_common, load_rules
 
 
 def execute(req: ReplicateRequest) -> ActionAccepted:
     p = req.params
+    rules = load_rules({})
+    enforce_common(rules, req)
+    enforce_allowed(rules, "allowedResourceTypes", p.resourceType, "resourceType")
+    enforce_allowed(rules, "allowedDestinationAccounts", p.destinationAccount, "conta destino")
+    enforce_allowed(rules, "allowedDestinationRegions", p.destinationRegion, "região destino")
     session = assumed_session(req.account, req.roleArn, req.region)
 
     if req.dryRun:
@@ -736,10 +805,14 @@ import uuid
 
 from .aws import ActionError, assumed_session
 from .models import ActionAccepted, VpcLinkRequest
+from .rules import enforce_allowed, enforce_common, load_rules
 
 
 def execute(req: VpcLinkRequest) -> ActionAccepted:
     p = req.params
+    rules = load_rules({})
+    enforce_common(rules, req)
+    enforce_allowed(rules, "allowedConsumerAccounts", p.consumerAccount, "conta consumidora")
     session = assumed_session(req.account, req.roleArn, req.region)
     ec2 = session.client("ec2")
 
@@ -781,11 +854,19 @@ import uuid
 
 from .aws import ActionError, assumed_session
 from .models import ActionAccepted, ModifyRequest
+from .rules import enforce_allowed, enforce_common, enforce_env_map, enforce_max, load_rules
 
 
 def execute(req: ModifyRequest) -> ActionAccepted:
     p = req.params
     m = p.modifications or {}
+    rules = load_rules({})
+    enforce_common(rules, req)
+    enforce_allowed(rules, "allowedResourceTypes", p.resourceType, "resourceType")
+    enforce_env_map(rules, "allowedInstanceClassesByEnv", req.environment, m.get("dbInstanceClass"), "instance class")
+    enforce_allowed(rules, "allowedInstanceClasses", m.get("dbInstanceClass"), "instance class")
+    enforce_allowed(rules, "allowedEngineVersions", m.get("engineVersion"), "engine version")
+    enforce_max(rules, "maxBackupRetentionDays", m.get("backupRetentionPeriod"), "retenção de backup")
     session = assumed_session(req.account, req.roleArn, req.region)
 
     if req.dryRun:
@@ -836,11 +917,17 @@ import uuid
 
 from .aws import ActionError, assumed_session
 from .models import ActionAccepted, CreateRequest
+from .rules import enforce_allowed, enforce_common, load_rules
 
 
 def execute(req: CreateRequest) -> ActionAccepted:
     p = req.params
     spec = dict(p.spec or {})
+    rules = load_rules({})
+    enforce_common(rules, req)
+    enforce_allowed(rules, "allowedResourceTypes", p.resourceType, "resourceType")
+    enforce_allowed(rules, "allowedInstanceClasses", spec.get("DBInstanceClass") or spec.get("dbInstanceClass"), "instance class")
+    enforce_allowed(rules, "allowedEngines", spec.get("Engine") or spec.get("engine"), "engine")
     session = assumed_session(req.account, req.roleArn, req.region)
 
     if req.dryRun:
@@ -880,10 +967,17 @@ import uuid
 
 from .aws import ActionError, assumed_session
 from .models import ActionAccepted, DestroyRequest
+from .rules import enforce_allowed, enforce_common, enforce_denied, load_rules
 
 
 def execute(req: DestroyRequest) -> ActionAccepted:
     p = req.params
+    rules = load_rules({})
+    enforce_common(rules, req)
+    enforce_allowed(rules, "allowedResourceTypes", p.resourceType, "resourceType")
+    enforce_denied(rules, "deniedResourceTypes", p.resourceType, "resourceType")
+    if rules.get("requireFinalSnapshot") and getattr(p, "skipFinalSnapshot", False):
+        raise ActionError("rule_violation", "snapshot final obrigatório por regra (skipFinalSnapshot bloqueado)", 403)
     session = assumed_session(req.account, req.roleArn, req.region)
 
     if req.dryRun:
@@ -926,10 +1020,15 @@ import uuid
 
 from .aws import ActionError, assumed_session
 from .models import ActionAccepted, StartStopRequest
+from .rules import enforce_allowed, enforce_common, load_rules
 
 
 def execute(req: StartStopRequest) -> ActionAccepted:
     p = req.params
+    rules = load_rules({})
+    enforce_common(rules, req)
+    enforce_allowed(rules, "allowedOperations", p.operation, "operação")
+    enforce_allowed(rules, "allowedResourceTypes", p.resourceType, "resourceType")
     session = assumed_session(req.account, req.roleArn, req.region)
     start = p.operation == "start"
 
@@ -974,10 +1073,17 @@ import uuid
 
 from .aws import ActionError, assumed_session
 from .models import ActionAccepted, StorageRequest
+from .rules import enforce_allowed, enforce_common, enforce_max, load_rules
 
 
 def execute(req: StorageRequest) -> ActionAccepted:
     p = req.params
+    rules = load_rules({})
+    enforce_common(rules, req)
+    enforce_allowed(rules, "allowedResourceTypes", p.resourceType, "resourceType")
+    enforce_allowed(rules, "allowedStorageTypes", p.storageType, "storage type")
+    enforce_max(rules, "maxAllocatedStorage", p.allocatedStorage, "allocatedStorage")
+    enforce_max(rules, "maxIops", p.iops, "iops")
     session = assumed_session(req.account, req.roleArn, req.region)
 
     if req.dryRun:

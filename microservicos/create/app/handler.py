@@ -5,11 +5,17 @@ import uuid
 
 from .aws import ActionError, assumed_session
 from .models import ActionAccepted, CreateRequest
+from .rules import enforce_allowed, enforce_common, load_rules
 
 
 def execute(req: CreateRequest) -> ActionAccepted:
     p = req.params
     spec = dict(p.spec or {})
+    rules = load_rules({})
+    enforce_common(rules, req)
+    enforce_allowed(rules, "allowedResourceTypes", p.resourceType, "resourceType")
+    enforce_allowed(rules, "allowedInstanceClasses", spec.get("DBInstanceClass") or spec.get("dbInstanceClass"), "instance class")
+    enforce_allowed(rules, "allowedEngines", spec.get("Engine") or spec.get("engine"), "engine")
     session = assumed_session(req.account, req.roleArn, req.region)
 
     if req.dryRun:

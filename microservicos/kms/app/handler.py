@@ -5,10 +5,14 @@ import uuid
 
 from .aws import assumed_session
 from .models import ActionAccepted, KmsRequest
+from .rules import enforce_allowed, enforce_common, load_rules
 
 
 def execute(req: KmsRequest) -> ActionAccepted:
     p = req.params
+    rules = load_rules({})
+    enforce_common(rules, req)
+    enforce_allowed(rules, "allowedTargetResourceTypes", p.targetResourceType, "targetResourceType")
     session = assumed_session(req.account, req.roleArn, req.region)
     kms = session.client("kms")
     alias = p.keyAlias if p.keyAlias.startswith("alias/") else f"alias/{p.keyAlias}"

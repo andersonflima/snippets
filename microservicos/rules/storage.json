@@ -1,0 +1,16 @@
+{
+  "allowedRegions": [
+    "sa-east-1"
+  ],
+  "allowedResourceTypes": [
+    "db-instance",
+    "ec2-volume"
+  ],
+  "allowedStorageTypes": [
+    "gp3",
+    "io1",
+    "io2"
+  ],
+  "maxAllocatedStorage": 4096,
+  "maxIops": 16000
+}

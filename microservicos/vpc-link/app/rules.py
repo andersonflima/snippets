@@ -133,3 +133,52 @@ def load_rules(defaults: dict | None = None, service: str | None = None) -> dict
         if cached:
             return _merge(base, cached[1])
         return base
+
+
+def _deny(message: str) -> None:
+    from .aws import ActionError  # import tardio: evita acoplamento no load do módulo
+
+    raise ActionError("rule_violation", message, 403)
+
+
+def enforce_common(rules: dict, req) -> None:
+    """Enforcement genérico (opt-in por chave). Ausência de chave = sem restrição."""
+    allowed_regions = rules.get("allowedRegions")
+    if allowed_regions and req.region not in allowed_regions:
+        _deny(f"região não permitida: {req.region} (permitidas: {allowed_regions})")
+    allowed_envs = rules.get("allowedEnvironments")
+    if allowed_envs and req.environment not in allowed_envs:
+        _deny(f"ambiente não permitido: {req.environment} (permitidos: {allowed_envs})")
+    denied_envs = rules.get("deniedEnvironments")
+    if denied_envs and req.environment in denied_envs:
+        _deny(f"ambiente bloqueado por regra: {req.environment}")
+
+
+def enforce_allowed(rules: dict, key: str, value, label: str) -> None:
+    """Nega se `value` estiver definido e fora da allowlist `rules[key]`."""
+    allowed = rules.get(key)
+    if allowed and value is not None and value not in allowed:
+        _deny(f"{label} não permitido: {value} (permitidos: {allowed})")
+
+
+def enforce_denied(rules: dict, key: str, value, label: str) -> None:
+    """Nega se `value` estiver na denylist `rules[key]`."""
+    denied = rules.get(key)
+    if denied and value is not None and value in denied:
+        _deny(f"{label} bloqueado por regra: {value}")
+
+
+def enforce_max(rules: dict, key: str, value, label: str) -> None:
+    """Nega se `value` exceder o teto numérico `rules[key]`."""
+    cap = rules.get(key)
+    if cap is not None and value is not None and value > cap:
+        _deny(f"{label} acima do limite permitido: {value} > {cap}")
+
+
+def enforce_env_map(rules: dict, key: str, env: str, value, label: str) -> None:
+    """Allowlist por ambiente: rules[key] = {env: [permitidos]} (opt-in por env)."""
+    per_env = rules.get(key)
+    if isinstance(per_env, dict) and env in per_env:
+        allowed = per_env[env]
+        if allowed and value is not None and value not in allowed:
+            _deny(f"{label} não permitido em {env}: {value} (permitidos: {allowed})")
