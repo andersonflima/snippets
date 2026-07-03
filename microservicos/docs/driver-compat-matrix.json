@@ -1,0 +1,294 @@
+{
+  "$schema_note": "Matriz de compatibilidade driver(cliente) <-> engine(recurso AWS) para os microservicos action-driven. Objetivo: dado um upgrade/migracao de recurso (banco/cache), decidir se os drivers de Java/Go/Python/Node.js continuam compativeis, e qual versao minima de driver e necessaria.",
+  "meta": {
+    "generated_at": "2026-07-03",
+    "repo": "andersonflima/snippets",
+    "context": "microservicos/ — plataforma action-driven (FastAPI + boto3) que opera o control plane de RDS/Aurora + ElastiCache; este artefato cobre o DATA PLANE (apps que conectam nos recursos via drivers de linguagem).",
+    "languages": ["java", "go", "python", "node"],
+    "verdict_legend": {
+      "safe": "Upgrade nao exige troca de driver; clientes atuais continuam conectando (mudanca aditiva/wire-compativel).",
+      "needs_bump": "Upgrade exige versao minima de driver (ou config extra); drivers antigos quebram.",
+      "breaks": "Migracao source-incompativel: exige mudanca de codigo/reescrita, nao apenas bump de versao."
+    },
+    "methodology": "Pesquisa verificada na web (release notes, docs oficiais AWS/vendor, changelogs, PyPI/npm/Maven/pkg.go.dev). Cada engine cobre linha atual E legada por linguagem. Campos marcados 'unverified' quando a fonte nao confirmou a faixa exata.",
+    "how_to_read": "Para cada engine: 'drivers[]' lista pacotes por linguagem com faixa de engine suportada por linha de versao; 'upgrade_scenarios[]' da o veredito + versao minima de driver por linguagem para os saltos de versao mais comuns."
+  },
+
+  "cross_cutting_summary": {
+    "principio_geral": "Na quase totalidade dos casos o wire protocol NAO quebra em upgrade de major. O que quebra driver e AUTENTICACAO (Postgres md5->scram-sha-256; MySQL mysql_native_password->caching_sha2_password) e LIFECYCLE/EOL de SDK (AWS SDK v1->v2/v3; MongoDB driver majors que sobem o server minimo).",
+    "gatilhos_de_quebra_por_engine": {
+      "postgresql": "md5 -> scram-sha-256 (default desde PG14; latente no RDS ate resetar a senha do role). Drivers so-md5 quebram. Para psycopg2 o real fator e libpq>=10, nao a versao do pacote.",
+      "mysql-family": "caching_sha2_password (default desde MySQL 8.0.4 / Aurora MySQL v3). Drivers so-mysql_native_password quebram. MariaDB NAO adota caching_sha2 -> upgrade MariaDB e safe. Cuidado: nao usar MySQL Connector/J contra servidor MariaDB e vice-versa.",
+      "oracle": "Praticamente nao ha quebra por major (19c<->21c safe). Fator real e runtime (JDK/Node/Python/Go) e se precisa Oracle Instant Client (thick: godror, e modos thick opcionais).",
+      "redis-valkey": "Redis->Valkey e Redis 6.2->7.x sao WIRE-COMPATIVEIS: cliente nao precisa mudar para conectar. So precisa driver mais novo se quiser features RESP3 (client-side caching, tipos nativos) ou cluster-mode-aware. RESP3 exige Jedis 5+/Lettuce 6+/go-redis v9/redis-py 5+/node-redis v5+.",
+      "nosql": "DynamoDB: sem versao de servidor -> compat = SDK ainda suportado (AWS SDK v1 JS/Java/Go ja EOL em 2025; migrar para v2/v3 e reescrita/'breaks'). DocumentDB: risco e driver Mongo novo subir o server minimo acima da API emulada (3.6/4.0) -> upgrade de driver pode exigir upgrade do cluster."
+    }
+  },
+
+  "engines": [
+    {
+      "engine": "postgresql",
+      "aws_services": ["RDS PostgreSQL", "Aurora PostgreSQL"],
+      "engine_majors_in_scope": ["11", "12", "13", "14", "15", "16", "17"],
+      "wire_protocol": "Wire v3.0 estavel desde PG 7.4; upgrade de major quase nunca quebra no protocolo. O que quebra e AUTH: scram-sha-256 (adicionado no PG10, DEFAULT desde PG14). A troca e latente no RDS/Aurora — hashes md5 existentes nao sao reescritos; o role so migra para SCRAM quando a senha e (re)setada sob o novo default. Driver sobrevive ao md5->scram se implementa SASL/SCRAM-SHA-256. channel_binding (SCRAM-SHA-256-PLUS) e hardening opcional que varios drivers nao implementam.",
+      "drivers": [
+        {"language": "java", "name": "org.postgresql:postgresql (pgjdbc)", "role": "canonical", "repo": "https://github.com/pgjdbc/pgjdbc", "versions": [
+          {"line": "42.7.x", "status": "current", "min_server_major": "8.4 (testado 9.1+)", "max_server_major_verified": "17", "runtime_req": "Java 8+", "notes": "42.7.12 (2026-06-29). SCRAM ok; channelBinding desde 42.7.4; 42.7.12 corrige CVE-2026-54291. Toda a linha 42.x ainda alvo Java 8 (mito de exigir Java 11 e falso)."},
+          {"line": "42.5.x", "status": "maintained", "min_server_major": "8.4", "max_server_major_verified": "16", "runtime_req": "Java 8+", "notes": "SCRAM ok, sem channel_binding. Sobrevive md5->scram."},
+          {"line": "42.2.x", "status": "legacy", "min_server_major": "8.2/8.4", "max_server_major_verified": "13", "runtime_req": "Java 8+ (artefatos Java6/7 nao fazem SCRAM)", "notes": "SCRAM desde 42.2.1 (42.2.0 tinha bug de packaging). Artefatos JDBC 4.0/4.1 (Java 6/7) NAO fazem SCRAM -> quebram no md5->scram."}
+        ]},
+        {"language": "java", "name": "org.postgresql:r2dbc-postgresql", "role": "alternative", "repo": "https://github.com/pgjdbc/r2dbc-postgresql", "versions": [
+          {"line": "1.0.x", "status": "current", "min_server_major": "PG moderno", "max_server_major_verified": "17", "runtime_req": "Java 8+", "notes": "Reactive R2DBC. SCRAM + channel binding. Coordenada io.r2dbc:r2dbc-postgresql 0.8.x esta deprecada."}
+        ]},
+        {"language": "go", "name": "github.com/jackc/pgx/v5", "role": "canonical", "repo": "https://github.com/jackc/pgx", "versions": [
+          {"line": "v5.10.x", "status": "current", "min_server_major": "14 (janela testada; conecta em 11/12/13 na pratica)", "max_server_major_verified": "17", "runtime_req": "Go 1.25+ (segue as 2 releases recentes do Go)", "notes": "SCRAM + channel_binding + protocolo 3.2. v5 subiu o minimo de PG para 14 (era 10 no v4)."},
+          {"line": "v4.x", "status": "legacy", "min_server_major": "10", "max_server_major_verified": "15", "runtime_req": "Go 1.17+", "notes": "Maintenance-only; SCRAM ok. Upgrade recomendado para v5."}
+        ]},
+        {"language": "go", "name": "github.com/lib/pq", "role": "alternative", "repo": "https://github.com/lib/pq", "versions": [
+          {"line": "v1.10.x-v1.12.x", "status": "legacy", "min_server_major": "majors mantidos", "max_server_major_verified": "17", "runtime_req": "Go (sem minimo fixado)", "notes": "MAINTENANCE MODE; README recomenda pgx. SCRAM desde 2019 (sobrevive md5->scram), sem channel binding. lib/pq anterior a ~v1.1 quebra em servidor scram."}
+        ]},
+        {"language": "python", "name": "psycopg (v3)", "role": "canonical", "repo": "https://github.com/psycopg/psycopg", "versions": [
+          {"line": "3.3.x", "status": "current", "min_server_major": "10", "max_server_major_verified": "18", "runtime_req": "Python 3.10+", "notes": "Pacote PyPI = 'psycopg' (nao existe 'psycopg3'). SCRAM ok. sync + async."}
+        ]},
+        {"language": "python", "name": "psycopg2", "role": "alternative", "repo": "https://github.com/psycopg/psycopg2", "versions": [
+          {"line": "2.9.x", "status": "legacy", "min_server_major": "depende do libpq (broadly 10-18)", "max_server_major_verified": "18", "runtime_req": "Python 3.9+", "notes": "SCRAM depende do libpq LINKADO, nao da versao do pacote: precisa libpq>=10. Wheels psycopg2-binary desde 2.8 embutem libpq 10+ (sobrevivem md5->scram). Esse e o real gotcha, nao o numero da versao."},
+          {"line": "asyncpg 0.30.x", "status": "current", "min_server_major": "9.5", "max_server_major_verified": "18", "runtime_req": "Python 3.9+", "notes": "Driver alternativo (MagicStack/asyncpg). Puro-Python, nao usa libpq. SCRAM nativo, sem channel binding. Async-only, maior faixa de servidor."}
+        ]},
+        {"language": "node", "name": "pg (node-postgres)", "role": "canonical", "repo": "https://github.com/brianc/node-postgres", "versions": [
+          {"line": "8.x", "status": "current", "min_server_major": "wire v3 / majors atuais", "max_server_major_verified": "17", "runtime_req": "Node 16+", "notes": "8.22.0 (2026-06-19). SCRAM ok; channel binding desde 8.14.0."},
+          {"line": "7.0-7.8 / 6.x", "status": "legacy", "min_server_major": "n/a (pre-SCRAM)", "max_server_major_verified": "11", "runtime_req": "Node antigo", "notes": "GOTCHA CRITICO: SCRAM so a partir de pg 7.9.0 (2019). pg 6.x ou <7.9.0 NAO autentica em servidor scram (PG10+, default PG14). Minimo pg 7.9.0; usar 8.x."}
+        ]},
+        {"language": "node", "name": "postgres (postgres.js)", "role": "alternative", "repo": "https://github.com/porsager/postgres", "versions": [
+          {"line": "3.4.x", "status": "current", "min_server_major": "~9.5", "max_server_major_verified": "17", "runtime_req": "Node 12+", "notes": "3.4.9 (2026-04). SASL/SCRAM nativo (sobrevive md5->scram), sem channel binding (PR aberto)."}
+        ]}
+      ],
+      "upgrade_scenarios": [
+        {"from": "PG 12", "to": "PG 16", "verdict": "needs_bump", "min_driver_required": {"java": "pgjdbc 42.2.1+", "go": "pgx v4/v5 ou lib/pq >=1.1", "python": "psycopg2 2.8+ com libpq>=10 / psycopg3 / asyncpg", "node": "pg 7.9.0+ (usar 8.x) / postgres.js 3.x"}, "reason": "Protocolo inalterado. Risco = md5->scram se roles forem rehash para scram-sha-256. So drivers realmente antigos quebram. Flip e latente no RDS ate reset de senha."},
+        {"from": "PG 13", "to": "PG 16", "verdict": "needs_bump", "min_driver_required": {"java": "pgjdbc 42.2.1+", "go": "pgx v4/v5 ou lib/pq >=1.1", "python": "psycopg2 2.8+ (libpq>=10) / psycopg3 / asyncpg", "node": "pg 7.9.0+ / postgres.js 3.x"}, "reason": "Igual 12->16: unico breaker real e md5->scram."},
+        {"from": "PG 15", "to": "PG 17", "verdict": "safe", "min_driver_required": {"java": "pgjdbc 42.5/42.7", "go": "pgx v5 ou v4 / lib/pq atual", "python": "psycopg3 3.3 / psycopg2 2.9 / asyncpg", "node": "pg 8.x / postgres.js 3.4"}, "reason": "15 e 17 ja usam scram por default (flip foi no PG14) -> sem nova surpresa de auth. Qualquer driver atual funciona."},
+        {"from": "md5 default", "to": "scram-sha-256 default (flip PG14 ou mudanca manual de password_encryption)", "verdict": "needs_bump", "min_driver_required": {"java": "pgjdbc 42.2.1+ (build Java 8+/JDBC 4.2)", "go": "pgx moderno ou lib/pq >=1.1", "python": "psycopg2 2.8+ com libpq>=10, ou psycopg3, ou asyncpg", "node": "pg 7.9.0+ (usar 8.x), postgres.js 3.x"}, "reason": "O gotcha central. Fix = upgrade de DRIVER (e libpq>=10 para psycopg2), nunca mudanca de protocolo. channel_binding e opcional; lib/pq, asyncpg e postgres.js fazem SCRAM plano (sem channel binding)."}
+      ],
+      "sources": ["https://github.com/pgjdbc/pgjdbc/releases", "https://jdbc.postgresql.org/changelogs/2018-01-17-42.2.0-release/", "https://github.com/jackc/pgx", "https://github.com/lib/pq/pull/833", "https://pypi.org/pypi/psycopg/json", "https://github.com/psycopg/psycopg2/issues/1360", "https://raw.githubusercontent.com/MagicStack/asyncpg/master/README.rst", "https://github.com/brianc/node-postgres/blob/master/CHANGELOG.md", "https://www.postgresql.org/docs/release/14.0/", "https://docs.aws.amazon.com/AmazonRDS/latest/PostgreSQLReleaseNotes/postgresql-release-calendar.html"]
+    },
+
+    {
+      "engine": "mysql-family",
+      "aws_services": ["RDS MySQL", "RDS MariaDB", "Aurora MySQL"],
+      "engine_majors_in_scope": ["MySQL 5.7", "MySQL 8.0", "MySQL 8.4", "MariaDB 10.6", "MariaDB 10.11", "MariaDB 11.4", "Aurora MySQL v2", "Aurora MySQL v3"],
+      "wire_protocol": "Breaker #1 no upgrade = plugin de auth default. MySQL 8.0.4+ (e Aurora MySQL v3, RDS MySQL 8.0/8.4) usam caching_sha2_password por default no lugar de mysql_native_password; driver so-native quebra com ER_NOT_SUPPORTED_AUTH_MODE. caching_sha2 exige TLS ou troca de chave RSA (sem TLS precisa suporte RSA: allowPublicKeyRetrieval no JDBC, pacote 'cryptography' no Python). MySQL e MariaDB divergiram no protocolo (MariaDB usa mysql_native_password + client_ed25519 e NAO implementa caching_sha2_password server-side). Connector/J oficial nao suporta servidor MariaDB e vice-versa: usar driver da familia do servidor.",
+      "drivers": [
+        {"language": "java", "name": "com.mysql:mysql-connector-j (ex mysql:mysql-connector-java)", "role": "canonical", "repo": "https://github.com/mysql/mysql-connector-j", "server_family_support": "MySQL (oficial). Aurora/RDS MySQL. Nao oficial contra MariaDB.", "versions": [
+          {"line": "9.x", "status": "current", "min_server": "MySQL 8.0", "max_server_verified": "MySQL 8.4+", "auth_caching_sha2": "yes", "runtime_req": "JRE/JDK 8+ (TLS1.3 precisa 8u261+)", "notes": "9.x dropou suporte a MySQL 5.7. Recomendado para 8.0/8.4 e Aurora v3."},
+          {"line": "8.1.x-8.4.x (8.4 = LTS)", "status": "maintained", "min_server": "MySQL 5.7", "max_server_verified": "MySQL 8.4", "auth_caching_sha2": "yes", "runtime_req": "JRE/JDK 8+", "notes": "Ultima familia antes do 9.x dropar 5.7. Bom driver-ponte para conectar em 5.7 E 8.x."},
+          {"line": "8.0.x (GAV renomeado para com.mysql:mysql-connector-j em 8.0.31)", "status": "maintained", "min_server": "MySQL 5.6/5.7", "max_server_verified": "MySQL 8.0", "auth_caching_sha2": "yes", "runtime_req": "JRE/JDK 8+", "notes": "Workhorse da migracao 5.7->8.0: suporta 5.7 E 8.0 e faz caching_sha2."},
+          {"line": "5.1.x", "status": "legacy", "min_server": "MySQL 5.x", "max_server_verified": "MySQL 5.7", "auth_caching_sha2": "partial", "runtime_req": "JRE 5/6/8", "notes": "EOL. caching_sha2 nas 5.1.4x finais e instavel/nao suportado contra 8.0. Nao usar para 8.0/8.4/Aurora v3."}
+        ]},
+        {"language": "java", "name": "org.mariadb.jdbc:mariadb-java-client (MariaDB Connector/J)", "role": "alternative", "repo": "https://github.com/mariadb-corporation/mariadb-connector-j", "server_family_support": "MariaDB E MySQL (suporta oficialmente conectar em MySQL). Canonico para MariaDB 10.6/10.11/11.4.", "versions": [
+          {"line": "3.x", "status": "current", "min_server": "MariaDB 10.2 / MySQL 5.7", "max_server_verified": "MariaDB 11.4; MySQL 8.4", "auth_caching_sha2": "yes", "runtime_req": "JDK 8+", "notes": "Implementa caching_sha2_password (RSA desde 3.5.6) -> 3.x CONECTA em MySQL 8.0/8.4. Usa scheme jdbc:mariadb: (jdbc:mysql: so com permitMysqlScheme)."},
+          {"line": "2.x", "status": "legacy", "min_server": "MariaDB 5.5 / MySQL 5.x", "max_server_verified": "MariaDB 10.5; MySQL 5.7", "auth_caching_sha2": "no", "runtime_req": "JDK 8+", "notes": "NAO implementa caching_sha2 -> classico 'driver MariaDB nao conecta em MySQL 8'. Bump para 3.x."}
+        ]},
+        {"language": "go", "name": "github.com/go-sql-driver/mysql", "role": "canonical", "repo": "https://github.com/go-sql-driver/mysql", "server_family_support": "MySQL E MariaDB (puro-Go).", "versions": [
+          {"line": "v1.9.x", "status": "current", "min_server": "MySQL 5.7 / MariaDB 10.x", "max_server_verified": "MySQL 8.4; MariaDB 11.4", "auth_caching_sha2": "yes", "runtime_req": "Go 1.21+", "notes": "caching_sha2 ok."},
+          {"line": "v1.5.0-v1.8.x", "status": "maintained", "min_server": "MySQL 5.6/5.7", "max_server_verified": "MySQL 8.0/8.4", "auth_caching_sha2": "yes", "runtime_req": "Go 1.10+ (v1.8 subiu p/ 1.18+)", "notes": "Preferir >=1.7 para MySQL 8.x."},
+          {"line": "v1.4.0", "status": "legacy", "min_server": "MySQL 5.5+", "max_server_verified": "MySQL 8.0", "auth_caching_sha2": "yes", "runtime_req": "Go 1.10+", "notes": "1a release com caching_sha2 (2018). Versao MINIMA para conectar em user caching_sha2 do MySQL 8.0."},
+          {"line": "<= v1.3.x", "status": "legacy", "min_server": "MySQL 5.x", "max_server_verified": "MySQL 5.7", "auth_caching_sha2": "no", "runtime_req": "Go antigo", "notes": "Quebra em MySQL 8.0 default. Bump para >=1.4.0."}
+        ]},
+        {"language": "python", "name": "mysqlclient (MySQLdb)", "role": "canonical", "repo": "https://github.com/PyMySQL/mysqlclient", "server_family_support": "MySQL e MariaDB (C ext sobre libmysqlclient/libmariadb).", "versions": [
+          {"line": "2.x", "status": "current", "min_server": "depende da client lib linkada", "max_server_verified": "MySQL 8.4 / MariaDB 11.4 (com client lib moderna)", "auth_caching_sha2": "partial", "runtime_req": "Python 3.8+ + toolchain C + headers", "notes": "caching_sha2 herdado do C client: buildar/linkar contra libmysqlclient 8.x (ou MariaDB Connector/C 3.x). Distros com libmariadb antigo falham. Verificar a client lib linkada antes do upgrade."}
+        ]},
+        {"language": "python", "name": "PyMySQL", "role": "alternative", "repo": "https://github.com/PyMySQL/PyMySQL", "server_family_support": "MySQL e MariaDB (puro-Python).", "versions": [
+          {"line": "1.x", "status": "current", "min_server": "MySQL 5.7 / MariaDB 10.x", "max_server_verified": "MySQL 8.4 / MariaDB 11.4", "auth_caching_sha2": "yes", "runtime_req": "Python 3.7+; precisa 'cryptography' para caching_sha2 sem TLS", "notes": "caching_sha2 desde 0.9.0 (2018). Popular como opcao puro-Python (SQLAlchemy/Django)."},
+          {"line": "0.8.x e anterior", "status": "legacy", "min_server": "MySQL 5.x", "max_server_verified": "MySQL 5.7", "auth_caching_sha2": "no", "runtime_req": "Python 2.7/3.x", "notes": "Quebra em MySQL 8.0. Bump >=0.9.0 (preferir 1.x)."}
+        ]},
+        {"language": "python", "name": "mysql-connector-python", "role": "alternative", "repo": "https://github.com/mysql/mysql-connector-python", "server_family_support": "MySQL (oficial Oracle). Nao mira MariaDB.", "versions": [
+          {"line": "8.x / 9.x", "status": "current", "min_server": "MySQL 5.7 (8.x) / 8.0 (9.x)", "max_server_verified": "MySQL 8.4", "auth_caching_sha2": "yes", "runtime_req": "Python 3.8+", "notes": "caching_sha2 first-class."},
+          {"line": "2.1.x/2.2.x", "status": "legacy", "min_server": "MySQL 5.x", "max_server_verified": "MySQL 5.7", "auth_caching_sha2": "no", "runtime_req": "Python 2.7/3.x", "notes": "NotSupportedError contra MySQL 8. Bump 8.x/9.x."}
+        ]},
+        {"language": "node", "name": "mysql2", "role": "canonical", "repo": "https://github.com/sidorares/node-mysql2", "server_family_support": "MySQL e MariaDB.", "versions": [
+          {"line": "3.x", "status": "current", "min_server": "MySQL 5.7 / MariaDB 10.x", "max_server_verified": "MySQL 8.4 / MariaDB 11.4", "auth_caching_sha2": "yes", "runtime_req": "Node 14+ (preferir 18+)", "notes": "caching_sha2 out-of-the-box. Driver Node recomendado para MySQL 8/Aurora v3."}
+        ]},
+        {"language": "node", "name": "mysql (mysqljs)", "role": "alternative", "repo": "https://github.com/mysqljs/mysql", "server_family_support": "MySQL e MariaDB, mas auth-limitado.", "versions": [
+          {"line": "2.x", "status": "legacy", "min_server": "MySQL 5.7 / MariaDB 10.x", "max_server_verified": "so users mysql_native_password", "auth_caching_sha2": "no", "runtime_req": "Node antigo", "notes": "So mysql_native_password; falha em MySQL 8.0/8.4/Aurora v3 default. Efetivamente sem manutencao. Migrar para mysql2 (API quase compativel)."}
+        ]}
+      ],
+      "upgrade_scenarios": [
+        {"from": "MySQL 5.7", "to": "MySQL 8.0", "verdict": "needs_bump", "min_driver_required": {"java": "Connector/J 8.0.x+ (evitar 5.1.x); ou MariaDB Connector/J 3.x (2.x NAO funciona)", "go": "go-sql-driver/mysql v1.4.0+ (preferir >=1.7)", "python": "PyMySQL >=0.9.0 (+cryptography) OU mysql-connector-python 8.x OU mysqlclient contra client lib 8", "node": "mysql2 3.x (trocar mysqljs/mysql)"}, "reason": "MySQL 8.0.4+ torna caching_sha2_password o default; drivers so-native quebram com ER_NOT_SUPPORTED_AUTH_MODE. Sem TLS precisa RSA. Mesmo caso em RDS MySQL 8.0/8.4."},
+        {"from": "Aurora MySQL v2", "to": "Aurora MySQL v3", "verdict": "needs_bump", "min_driver_required": {"java": "Connector/J 8.0.x+ (ou MariaDB Connector/J 3.x)", "go": "go-sql-driver/mysql v1.4.0+ (preferir >=1.7)", "python": "PyMySQL >=0.9.0 (+cryptography) / mysql-connector-python 8.x / mysqlclient moderno", "node": "mysql2 3.x"}, "reason": "Aurora MySQL v2 = MySQL 5.7-compat, v3 = MySQL 8.0-compat. Mesma quebra de caching_sha2. Aurora v2 saiu do suporte padrao em 2024-10-31 (urgencia)."},
+        {"from": "MariaDB 10.6", "to": "MariaDB 11.4", "verdict": "safe", "min_driver_required": {"java": "MariaDB Connector/J 3.x recomendado (2.x tambem serve; NAO usar MySQL Connector/J contra MariaDB)", "go": "go-sql-driver/mysql v1.5+", "python": "PyMySQL 1.x / mysqlclient contra libmariadb", "node": "mysql2 3.x"}, "reason": "MariaDB nao adota caching_sha2 (fica em mysql_native_password/ed25519) -> sem quebra de auth. 10.6/10.11/11.4 sao LTS. Cuidado principal: usar driver ciente de MariaDB, nao MySQL Connector/J."}
+      ],
+      "sources": ["https://dev.mysql.com/doc/connector-j/en/connector-j-versions.html", "https://dev.mysql.com/doc/relnotes/connector-j/en/news-9-0-0.html", "https://mariadb.com/kb/en/caching_sha2_password-authentication-plugin/", "https://github.com/go-sql-driver/mysql/releases/tag/v1.4.0", "https://github.com/sidorares/node-mysql2", "https://docs.aws.amazon.com/AmazonRDS/latest/AuroraUserGuide/AuroraMySQL.Compare-v2-v3.html", "https://dev.mysql.com/doc/refman/8.4/en/caching-sha2-pluggable-authentication.html"]
+    },
+
+    {
+      "engine": "oracle",
+      "aws_services": ["RDS Oracle"],
+      "engine_majors_in_scope": ["19c", "21c"],
+      "wire_protocol": "Oracle Net (TNS/OCI), TCP 1521 ou TCPS(TLS). Thin (ojdbc thin, python-oracledb Thin, node-oracledb Thin, go-ora) implementam o protocolo nativamente sem client Oracle. Thick (godror, e modos thick opcionais) usam OCI via Instant Client/ODPI-C. Interoperabilidade cliente-servidor Oracle e ampla: clientes 19c/21c certificados contra 19c/21c/23ai, thin conecta em qualquer servidor 12.1+. Como RDS so oferece 19c/21c, quase todo driver mantido conecta; gargalos reais sao runtime (JDK/Node/Python/Go) e se precisa Instant Client, nao o major do DB.",
+      "drivers": [
+        {"language": "java", "name": "com.oracle.database.jdbc:ojdbc8", "role": "canonical", "repo": "https://www.oracle.com/database/technologies/appdev/jdbc-downloads.html", "mode": "jdbc", "versions": [
+          {"line": "23.x ojdbc8 (23ai)", "status": "maintained", "min_server": "19c (cert 19c/21c/23ai)", "max_server_verified": "23ai/26ai", "runtime_req": "JDK 8 ou 11", "needs_instant_client": "no", "notes": "Thin, puro Java, JDBC 4.2. Escolha quando app preso em JDK 8. Conecta em RDS 19c/21c sem client libs."},
+          {"line": "21.x / 19.x ojdbc8", "status": "legacy", "min_server": "11.2", "max_server_verified": "21c", "runtime_req": "JDK 8 (ojdbc8), JDK 10 (ojdbc10 no 19c)", "needs_instant_client": "no", "notes": "Amplamente implantado; forward-compat. Safe contra RDS 19c/21c."}
+        ]},
+        {"language": "java", "name": "com.oracle.database.jdbc:ojdbc11", "role": "canonical", "repo": "https://central.sonatype.com/artifact/com.oracle.database.jdbc/ojdbc11", "mode": "jdbc", "versions": [
+          {"line": "23.x ojdbc11 (23ai)", "status": "current", "min_server": "19c", "max_server_verified": "23ai/26ai", "runtime_req": "JDK 11 ou 21", "needs_instant_client": "no", "notes": "Thin JDBC 4.3. Default moderno recomendado para apps JDK 11/21."},
+          {"line": "21.x ojdbc11", "status": "maintained", "min_server": "11.2", "max_server_verified": "21c/23ai", "runtime_req": "JDK 11+", "needs_instant_client": "no", "notes": "Cert contra 19c/21c."}
+        ]},
+        {"language": "java", "name": "com.oracle.database.jdbc:ojdbc17", "role": "canonical", "repo": "https://central.sonatype.com/artifact/com.oracle.database.jdbc/ojdbc17", "mode": "jdbc", "versions": [
+          {"line": "23.x ojdbc17 (23ai)", "status": "current", "min_server": "19c", "max_server_verified": "23ai/26ai", "runtime_req": "JDK 17/19/21", "needs_instant_client": "no", "notes": "Novo thin JDBC 4.3, recomendado para JDKs modernos. So existe na linha 23ai (nao ha ojdbc17 em 19c/21c)."}
+        ]},
+        {"language": "python", "name": "oracledb (python-oracledb)", "role": "canonical", "repo": "https://github.com/oracle/python-oracledb", "mode": "thin", "versions": [
+          {"line": "3.x (Thin, default)", "status": "current", "min_server": "12.1", "max_server_verified": "23ai/26ai", "runtime_req": "CPython 3.8+", "needs_instant_client": "no", "notes": "Sucessor do cx_Oracle (reescrita, nao mero rename). Thin puro-Python conecta em RDS 19c/21c sem client Oracle."},
+          {"line": "3.x (Thick, opcional)", "status": "current", "min_server": "11.2 (depende do Instant Client)", "max_server_verified": "23ai/26ai", "runtime_req": "CPython 3.8+ + Instant Client", "needs_instant_client": "yes", "notes": "Via init_oracle_client(). So para features avancadas; nao necessario p/ RDS 19c/21c."},
+          {"line": "cx_Oracle 8.x (predecessor)", "status": "legacy", "min_server": "11.2 (OCI)", "max_server_verified": "21c", "runtime_req": "Python 3.6+ + Instant Client", "needs_instant_client": "yes", "notes": "Obsoleto; sempre thick. Migrar para python-oracledb."}
+        ]},
+        {"language": "node", "name": "oracledb (node-oracledb)", "role": "canonical", "repo": "https://github.com/oracle/node-oracledb", "mode": "thin", "versions": [
+          {"line": "6.x / 7.x (Thin, default)", "status": "current", "min_server": "12.1", "max_server_verified": "23ai/26ai", "runtime_req": "Node.js 14.6+ (7.x exige Node mais novo — verificar antes de pinar)", "needs_instant_client": "no", "notes": "Thin (puro JS) introduzido no 6.0 e default desde. Conecta em RDS 19c/21c sem client."},
+          {"line": "6.x / 7.x (Thick, opcional)", "status": "current", "min_server": "11.2 (depende do Instant Client)", "max_server_verified": "23ai/26ai", "runtime_req": "Node 14.6+ + Instant Client", "needs_instant_client": "yes", "notes": "Via initOracleClient(). So para features avancadas."},
+          {"line": "5.x e anterior", "status": "legacy", "min_server": "11.2", "max_server_verified": "21c", "runtime_req": "Node 8+/10+ + Instant Client (sempre thick)", "needs_instant_client": "yes", "notes": "Sem Thin mode; client Oracle obrigatorio. Upgrade p/ 6.x+ para largar a dependencia."}
+        ]},
+        {"language": "go", "name": "github.com/godror/godror", "role": "canonical", "repo": "https://github.com/godror/godror", "mode": "thick", "versions": [
+          {"line": "v0.4x / latest", "status": "current", "min_server": "11.2 (depende do Instant Client)", "max_server_verified": "23ai/26ai", "runtime_req": "Go ~1.20+ + CGO + Instant Client em runtime", "needs_instant_client": "yes", "notes": "ODPI-C/OCI -> thick: Instant Client obrigatorio em runtime. Precisa CGO. Opcao Go mais completa."},
+          {"line": "sijms/go-ora v2", "status": "current", "min_server": "10.2 (broadly 11.2+/12.1+)", "max_server_verified": "21c/23ai (community)", "runtime_req": "Go moderno (puro Go, sem CGO)", "needs_instant_client": "no", "notes": "ALTERNATIVA. Puro-Go do protocolo Oracle Net; sem client, sem CGO, builds estaticos faceis. Nao oficial (suporte community); validar LOBs/wallets/TCPS. Conecta em RDS 19c/21c."}
+        ]}
+      ],
+      "upgrade_scenarios": [
+        {"from": "Oracle 19c", "to": "Oracle 21c", "verdict": "safe", "min_driver_required": {"java": "ojdbc8/11/17 (qualquer linha 19c+; ojdbc11 23.x recomendado)", "go": "godror latest, ou sijms/go-ora v2", "python": "python-oracledb 1.x+ (Thin)", "node": "node-oracledb 6.x+ (Thin)"}, "reason": "19c e 21c estao na faixa certificada de todo driver atual; thin exige so servidor 12.1+ (thick 11.2+). Nenhuma mudanca de protocolo/client e forcada entre dois majors RDS adjacentes. Gargalos: runtime da app e, para godror/thick, shipar Instant Client compativel."}
+      ],
+      "sources": ["https://www.oracle.com/database/technologies/faq-jdbc.html", "https://python-oracledb.readthedocs.io/en/latest/user_guide/installation.html", "https://node-oracledb.readthedocs.io/en/latest/user_guide/initialization.html", "https://github.com/godror/godror", "https://github.com/sijms/go-ora", "https://docs.aws.amazon.com/AmazonRDS/latest/UserGuide/Oracle.Concepts.database-versions.html", "https://support.oracle.com/knowledge/Oracle%20Database%20Products/207303_1.html"]
+    },
+
+    {
+      "engine": "redis-valkey",
+      "aws_services": ["ElastiCache Redis OSS", "ElastiCache Valkey"],
+      "engine_versions_in_scope": ["Redis 6.2", "Redis 7.0", "Redis 7.1", "Valkey 7.2", "Valkey 8.0", "Valkey 8.1"],
+      "wire_protocol": "RESP2 (default legado) e RESP3 (opt-in via HELLO 3). Valkey e fork source-level do Redis 7.2.4 e herda RESP2/RESP3 identico -> no nivel de bytes o cliente NAO distingue Valkey de Redis. Clientes Redis existentes conectam em ElastiCache Valkey SEM mudanca de codigo. Na ElastiCache o default efetivo e RESP2 salvo negociacao RESP3. O que forca troca de cliente: (1) features RESP3-only (client-side caching, tipos nativos) -> Jedis 5+/Lettuce 6+/go-redis v9/rueidis/redis-py 5+/node-redis v5+; (2) endpoint cluster-mode-enabled exige cliente cluster-aware; (3) TLS + AUTH/RBAC/IAM e config, nao troca de lib. Gotcha de banner: Valkey 8.x reporta redis_version compat 7.4.x + campo valkey_version separado — nenhum cliente mainstream desta matriz quebra nisso.",
+      "drivers": [
+        {"language": "java", "name": "Jedis", "role": "canonical", "repo": "https://github.com/redis/jedis", "versions": [
+          {"line": "Jedis 3.x", "status": "legacy", "resp3": "no", "min_engine_verified": "Redis 5.0", "max_engine_verified": "Valkey 8.x (RESP2)", "valkey_ok": "yes", "runtime_req": "Java 8", "notes": "EOL p/ features. Cluster+TLS+Sentinel. Pre-UnifiedJedis."},
+          {"line": "Jedis 4.x", "status": "legacy", "resp3": "no", "min_engine_verified": "Redis 6.2", "max_engine_verified": "Valkey 8.x (RESP2)", "valkey_ok": "yes", "runtime_req": "Java 8", "notes": "4.0.0 (2021) trouxe UnifiedJedis. SEM RESP3 first-class (mito de 'Jedis 4+ tem RESP3' e falso)."},
+          {"line": "Jedis 5.x", "status": "maintained", "resp3": "yes", "min_engine_verified": "Redis 6.2", "max_engine_verified": "Valkey 8.x", "valkey_ok": "yes", "runtime_req": "Java 8 (testado 8/11/17/21)", "notes": "RESP3 chegou aqui (5.0.0, set/2023) opt-in via .resp3(). Suporte total Redis 7.2."},
+          {"line": "Jedis 6.x", "status": "maintained", "resp3": "yes", "min_engine_verified": "Redis 7.0", "max_engine_verified": "Valkey 8.x", "valkey_ok": "yes", "runtime_req": "Java 8", "notes": "RESP3 opt-in. Cluster+TLS."},
+          {"line": "Jedis 7.x", "status": "current", "resp3": "yes", "min_engine_verified": "Redis 7.0", "max_engine_verified": "Valkey 8.1", "valkey_ok": "yes", "runtime_req": "Java 8", "notes": "Atual (~7.5.3). 7.2.0 novo RedisClient/RedisClusterClient; JedisPool/JedisCluster deprecados. RESP3 opt-in."}
+        ]},
+        {"language": "java", "name": "Lettuce (io.lettuce:lettuce-core)", "role": "canonical", "repo": "https://github.com/redis/lettuce", "versions": [
+          {"line": "Lettuce 5.x", "status": "legacy", "resp3": "no", "min_engine_verified": "Redis 5.0", "max_engine_verified": "Valkey 8.x (RESP2)", "valkey_ok": "yes", "runtime_req": "Java 8", "notes": "Reactive/async, Streams. RESP2 only."},
+          {"line": "Lettuce 6.x", "status": "maintained", "resp3": "yes", "min_engine_verified": "Redis 6.2", "max_engine_verified": "Valkey 8.x", "valkey_ok": "yes", "runtime_req": "Java 8", "notes": "RESP3 chegou aqui (6.0) com handshake/discovery; default RESP2. Driver default do Spring Data Redis."},
+          {"line": "Lettuce 7.x", "status": "current", "resp3": "yes", "min_engine_verified": "Redis 7.0", "max_engine_verified": "Valkey 8.x", "valkey_ok": "yes", "runtime_req": "Java 8 (levemente incerto no 7.x mais novo)", "notes": "Atual (7.6.0). Netty 4.2. AWS tem guia dedicado Lettuce-on-ElastiCache."}
+        ]},
+        {"language": "java", "name": "valkey-glide (io.valkey:valkey-glide)", "role": "valkey-native", "repo": "https://github.com/valkey-io/valkey-glide", "versions": [
+          {"line": "valkey-glide-java 2.x", "status": "current", "resp3": "yes", "min_engine_verified": "Redis 6.2", "max_engine_verified": "Valkey 8.1", "valkey_ok": "yes", "runtime_req": "Java 8 min, 11+ recomendado", "notes": "GA (core Rust). Redis OSS 6.2/7.0/7.2 e Valkey 7.2+ (algumas features Valkey 8.0+). Feito por AWS/Valkey para ElastiCache."}
+        ]},
+        {"language": "go", "name": "go-redis (github.com/redis/go-redis)", "role": "canonical", "repo": "https://github.com/redis/go-redis", "versions": [
+          {"line": "v8 (github.com/go-redis/redis/v8)", "status": "legacy", "resp3": "no", "min_engine_verified": "Redis 6.0", "max_engine_verified": "Valkey 8.x (RESP2)", "valkey_ok": "yes", "runtime_req": "Go 1.17+", "notes": "Import path legado; RESP2-only. Upgrade p/ v9 e breaking (muda import path)."},
+          {"line": "v9 (github.com/redis/go-redis/v9)", "status": "current", "resp3": "yes", "min_engine_verified": "Redis 6.2", "max_engine_verified": "Valkey 8.1", "valkey_ok": "yes", "runtime_req": "Go 1.24 no main (tags v9 antigas ~1.21)", "notes": "Atual (~v9.21). RESP3 default (forcar via Protocol:2/3). GOTCHA: pinar >= v9.20.1 — push-frame RESP3 na borda do buffer podia dropar pub/sub silenciosamente."}
+        ]},
+        {"language": "go", "name": "rueidis (github.com/redis/rueidis)", "role": "alternative", "repo": "https://github.com/redis/rueidis", "versions": [
+          {"line": "v1.0.x", "status": "current", "resp3": "yes", "min_engine_verified": "Redis 6.0", "max_engine_verified": "Valkey 8.x", "valkey_ok": "yes", "runtime_req": "Go 1.25 no main (README diz 1.20+)", "notes": "RESP3-first (AlwaysRESP2:true p/ fallback). Auto-pipelining + client-side caching (DoCache). Upstream do valkey-go."}
+        ]},
+        {"language": "go", "name": "valkey-go (github.com/valkey-io/valkey-go)", "role": "valkey-native", "repo": "https://github.com/valkey-io/valkey-go", "versions": [
+          {"line": "v1.0.x", "status": "current", "resp3": "yes", "min_engine_verified": "Redis 6.0", "max_engine_verified": "Valkey 8.1", "valkey_ok": "yes", "runtime_req": "Go 1.23", "notes": "Fork oficial Valkey do rueidis (mesma API). ~v1.0.69 (dez/2025). Features Valkey 8.1+ (CLIENT CAPA, AZ-awareness)."}
+        ]},
+        {"language": "python", "name": "redis-py (pip redis)", "role": "canonical", "repo": "https://github.com/redis/redis-py", "versions": [
+          {"line": "redis-py 3.x", "status": "legacy", "resp3": "no", "min_engine_verified": "Redis 5.0", "max_engine_verified": "Valkey 8.x (RESP2)", "valkey_ok": "yes", "runtime_req": "Python 3.6-era", "notes": "EOL (3.5.3). Sem asyncio. RESP2 only."},
+          {"line": "redis-py 4.x", "status": "legacy", "resp3": "no", "min_engine_verified": "Redis 6.2", "max_engine_verified": "Valkey 8.x (RESP2)", "valkey_ok": "yes", "runtime_req": "Python 3.7", "notes": "4.2 fundiu aioredis (from redis import asyncio). RESP2 only (RESP3 so no 5.0)."},
+          {"line": "redis-py 5.x", "status": "maintained", "resp3": "yes", "min_engine_verified": "Redis 6.2", "max_engine_verified": "Valkey 8.x", "valkey_ok": "yes", "runtime_req": "Python 3.8+ (5.1+)", "notes": "RESP3 chegou aqui (5.0) opt-in via protocol=3; RESP2 default."},
+          {"line": "redis-py 6.x", "status": "maintained", "resp3": "yes", "min_engine_verified": "Redis 7.0", "max_engine_verified": "Valkey 8.x", "valkey_ok": "yes", "runtime_req": "Python 3.9+", "notes": "RESP3 opt-in. Cluster+TLS."},
+          {"line": "redis-py 8.x", "status": "current", "resp3": "yes", "min_engine_verified": "Redis 7.0", "max_engine_verified": "Valkey 8.1", "valkey_ok": "yes", "runtime_req": "Python 3.10+", "notes": "Atual (~8.0.1). RESP3 default no wire (breaking); mantem respostas RESP2-shaped p/ compat (protocol=2 forca RESP2). Docs pulam 6.x -> 8.x."}
+        ]},
+        {"language": "python", "name": "valkey-py (pip valkey)", "role": "valkey-native", "repo": "https://github.com/valkey-io/valkey-py", "versions": [
+          {"line": "valkey-py 6.x", "status": "current", "resp3": "yes", "min_engine_verified": "Valkey 7.2 (unverified exato)", "max_engine_verified": "Valkey 8.x (unverified exato)", "valkey_ok": "yes", "runtime_req": "Python 3.9+", "notes": "Fork oficial Valkey do redis-py. GA (6.1.1, 2025). Parser C libvalkey opcional. Tambem conecta em Redis."}
+        ]},
+        {"language": "python", "name": "valkey-glide (pip valkey-glide)", "role": "valkey-native", "repo": "https://github.com/valkey-io/valkey-glide", "versions": [
+          {"line": "valkey-glide 2.x (Python)", "status": "current", "resp3": "yes", "min_engine_verified": "Redis 6.2", "max_engine_verified": "Valkey 8.x", "valkey_ok": "yes", "runtime_req": "Python 3.9+ (ate 3.13; CPython+PyPy)", "notes": "GA (~2.4.2). Core Rust. Redis OSS 6.2/7.0/7.1/7.2 e Valkey incl 8.x. Feito com AWS p/ ElastiCache."}
+        ]},
+        {"language": "node", "name": "node-redis (redis / @redis/client)", "role": "canonical", "repo": "https://github.com/redis/node-redis", "versions": [
+          {"line": "v3", "status": "legacy", "resp3": "no", "min_engine_verified": "Redis 5.0", "max_engine_verified": "Valkey 8.x (RESP2)", "valkey_ok": "yes", "runtime_req": "Node 12-era", "notes": "API callback, superada. RESP2 only."},
+          {"line": "v4", "status": "legacy", "resp3": "no", "min_engine_verified": "Redis 6.2", "max_engine_verified": "Valkey 8.x (RESP2)", "valkey_ok": "yes", "runtime_req": "Node 14+", "notes": "Rewrite Promise. RESP3 so parcial/inicial, nao finalizado (mito de 'v4 tem RESP3')."},
+          {"line": "v5", "status": "maintained", "resp3": "yes", "min_engine_verified": "Redis 7.0", "max_engine_verified": "Valkey 8.x", "valkey_ok": "yes", "runtime_req": "Node 18+", "notes": "RESP3 opt-in real aqui ({ RESP: 3 }); RESP2 default. Client-side caching."},
+          {"line": "v6", "status": "current", "resp3": "yes", "min_engine_verified": "Redis 7.0", "max_engine_verified": "Valkey 8.1", "valkey_ok": "yes", "runtime_req": "Node 20+", "notes": "Atual (~6.1.0). RESP3 DEFAULT (RESP2 via { RESP: 2 }). Breaking: sob RESP3 HGETALL retorna Map. Dropou Node 18."}
+        ]},
+        {"language": "node", "name": "ioredis", "role": "alternative", "repo": "https://github.com/redis/ioredis", "versions": [
+          {"line": "4.x", "status": "legacy", "resp3": "no", "min_engine_verified": "Redis 5.0", "max_engine_verified": "Valkey 8.x (RESP2)", "valkey_ok": "yes", "runtime_req": "Node 10-era", "notes": "Legado. RESP2 only."},
+          {"line": "5.x", "status": "maintained", "resp3": "no", "min_engine_verified": "Redis 6.2", "max_engine_verified": "Valkey 8.x (RESP2)", "valkey_ok": "yes", "runtime_req": "Node 12.22.0+", "notes": "Linha atual (~5.11) mas maintenance/best-effort. RESP2-ONLY — RESP3 nunca implementado (issue #1073); guia oficial manda usar node-redis p/ RESP3. Funciona 100% contra Valkey via RESP2."}
+        ]},
+        {"language": "node", "name": "iovalkey", "role": "valkey-native", "repo": "https://github.com/valkey-io/iovalkey", "versions": [
+          {"line": "0.x", "status": "current", "resp3": "no", "min_engine_verified": "Valkey 7.0", "max_engine_verified": "Valkey 8.x", "valkey_ok": "yes", "runtime_req": "Node 18.12.0+", "notes": "Fork amigavel do ioredis mantido por valkey-io. Pre-1.0 (~0.3.3). Redis >=2.6.12, Valkey >=7.0.0. RESP2 (herda ioredis)."}
+        ]},
+        {"language": "node", "name": "valkey-glide (@valkey/valkey-glide)", "role": "valkey-native", "repo": "https://github.com/valkey-io/valkey-glide", "versions": [
+          {"line": "valkey-glide 2.x (Node)", "status": "current", "resp3": "yes", "min_engine_verified": "Redis 6.2", "max_engine_verified": "Valkey 8.1", "valkey_ok": "yes", "runtime_req": "Node 16+", "notes": "GA (GLIDE 2.0, ~2.4.2). Core Rust. Valkey 7.2/8.0/8.1 e Redis OSS 6.2/7.0/7.2."}
+        ]}
+      ],
+      "upgrade_scenarios": [
+        {"from": "Redis 6.2", "to": "Redis 7.1", "verdict": "safe", "min_driver_required": {"java": "Jedis 4.x ou Lettuce 6.x (qualquer linha mantida)", "go": "go-redis v8 ou v9", "python": "redis-py 4.x+", "node": "ioredis 5.x ou node-redis v4+"}, "reason": "6.2->7.x e wire-compativel para comandos padrao; nenhuma troca de cliente para conectar. So precisa linha mais nova para USAR comandos 7.x-especificos ou RESP3 (aditivo). Upgrade in-place da ElastiCache preserva o endpoint."},
+        {"from": "Redis OSS 7.1", "to": "Valkey 8.0", "verdict": "safe", "min_driver_required": {"java": "Jedis 3.x+/Lettuce 5.x+ (driver existente inalterado)", "go": "go-redis v8+/v9 (inalterado)", "python": "redis-py 4.x+ (inalterado)", "node": "ioredis 5.x ou node-redis v4+ (inalterado)"}, "reason": "Valkey e fork do Redis 7.2.4 e fala RESP2/RESP3 identico — o cliente NAO se importa. AWS/Valkey documentam migracao Redis->Valkey com zero mudanca de codigo; upgrade in-place preserva o endpoint. Caveats sao config (TLS/AUTH/RBAC/IAM, cluster-aware), nao troca de lib."}
+      ],
+      "sources": ["https://docs.aws.amazon.com/AmazonElastiCache/latest/dg/VersionManagementConsiderations-valkey.html", "https://aws.amazon.com/blogs/database/best-practices-valkey-redis-oss-clients-and-amazon-elasticache/", "https://valkey.io/topics/migration/", "https://valkey.io/topics/protocol/", "https://github.com/redis/jedis/releases/tag/v5.0.0", "https://redis.github.io/lettuce/new-features/", "https://github.com/redis/go-redis/blob/master/RELEASE-NOTES.md", "https://github.com/redis/ioredis/issues/1073", "https://github.com/valkey-io/valkey-glide", "https://pypi.org/project/redis/"]
+    },
+
+    {
+      "engine": "nosql",
+      "sub_engines": [
+        {
+          "name": "dynamodb",
+          "aws_services": ["DynamoDB"],
+          "compat_axis": "Lifecycle/EOL de SDK, nao versao de servidor. DynamoDB nao tem versao de engine visivel; a API evolui aditivamente. 'Compatibilidade' = rodar um major de SDK ainda suportado.",
+          "drivers": [
+            {"language": "java", "name": "AWS SDK for Java v2 — software.amazon.awssdk:dynamodb", "role": "canonical", "repo": "https://github.com/aws/aws-sdk-java-v2", "versions": [
+              {"line": "2.x", "status": "current", "eol_note": "Ativo e recomendado.", "runtime_req": "Java 8+", "notes": "Namespace software.amazon.awssdk. Oferece DynamoDB Enhanced Client."}
+            ]},
+            {"language": "java", "name": "AWS SDK for Java v1 — com.amazonaws:aws-java-sdk-dynamodb", "role": "legacy", "repo": "https://github.com/aws/aws-sdk-java", "versions": [
+              {"line": "1.x", "status": "eol", "eol_note": "Maintenance 2024-07-31; end-of-support 2025-12-31 (EOL).", "runtime_req": "Java 7+", "notes": "com.amazonaws. Migrar para v2 (API diferente). Sem patch de seguranca pos-EOL."}
+            ]},
+            {"language": "go", "name": "aws-sdk-go-v2 — github.com/aws/aws-sdk-go-v2/service/dynamodb", "role": "canonical", "repo": "https://github.com/aws/aws-sdk-go-v2", "versions": [
+              {"line": "v2", "status": "current", "eol_note": "GA desde jan/2021; ativo.", "runtime_req": "Go 1.24 (README atual; floor sobe com a policy do Go)", "notes": "Submodulos por servico; API context-first, functional options."}
+            ]},
+            {"language": "go", "name": "aws-sdk-go v1 — github.com/aws/aws-sdk-go", "role": "legacy", "repo": "https://github.com/aws/aws-sdk-go", "versions": [
+              {"line": "v1", "status": "eol", "eol_note": "Maintenance 2024-07-31; end-of-support 2025-07-31 (EOL).", "runtime_req": "Go (legado)", "notes": "Modulo monolitico. Migrar para v2 (import paths e construcao diferentes)."}
+            ]},
+            {"language": "python", "name": "boto3", "role": "canonical", "repo": "https://github.com/boto/boto3", "versions": [
+              {"line": "1.x (linha unica)", "status": "current", "eol_note": "Sem split v1/v2; sempre atual. Unico EOL e drop de runtimes Python antigos.", "runtime_req": "Python 3.10+ (3.9 encerrou 2026-04-29)", "notes": "Camada fina sobre botocore. client('dynamodb') e resource('dynamodb')."}
+            ]},
+            {"language": "node", "name": "AWS SDK for JavaScript v3 — @aws-sdk/client-dynamodb", "role": "canonical", "repo": "https://github.com/aws/aws-sdk-js-v3", "versions": [
+              {"line": "v3", "status": "current", "eol_note": "Ativo e recomendado.", "runtime_req": "Node.js 20+ (Node 18 dropado jan/2026)", "notes": "Clientes modulares (~3MB vs ~40MB do v2), padrao command client.send(new XxxCommand). lib-dynamodb DocumentClient opcional. Codemod: npx aws-sdk-js-codemod -t v2-to-v3."}
+            ]},
+            {"language": "node", "name": "aws-sdk v2 (monolitico)", "role": "legacy", "repo": "https://github.com/aws/aws-sdk-js", "versions": [
+              {"line": "v2", "status": "eol", "eol_note": "Maintenance 2024-09-08; end-of-support 2025-09-08 (EOL).", "runtime_req": "Node.js (legado)", "notes": "Pacote 'aws-sdk'. API .operation(params).promise(). Migrar para v3."}
+            ]}
+          ],
+          "upgrade_scenarios": [
+            {"from": "SDK v2 (JS) — aws-sdk", "to": "SDK v3 (JS) — @aws-sdk/client-dynamodb", "verdict": "breaks", "reason": "Reescrita completa: clientes modulares, padrao command, middleware stack. Nao drop-in; exige migracao (codemod disponivel). v2 EOL em 2025-09-08."},
+            {"from": "SDK for Java v1 (com.amazonaws)", "to": "SDK for Java v2 (software.amazon.awssdk)", "verdict": "breaks", "reason": "Coordenadas/namespace diferentes, novos builders. Reescrita source-incompativel. v1 EOL 2025-12-31."},
+            {"from": "aws-sdk-go v1", "to": "aws-sdk-go-v2", "verdict": "breaks", "reason": "Novo module/import path, API context-first. Nao drop-in. v1 EOL 2025-07-31."},
+            {"from": "Node v3 em Node.js 18", "to": "Node v3 em Node.js 20+", "verdict": "needs_bump", "reason": "v3 dropou Node 18 em jan/2026; SDK inalterado mas o floor de runtime sobe para Node 20+."}
+          ]
+        },
+        {
+          "name": "documentdb",
+          "aws_services": ["DocumentDB"],
+          "api_versions_in_scope": ["3.6", "4.0", "5.0"],
+          "compat_axis": "Driver MongoDB vs versao de API/wire emulada pelo DocumentDB (3.6/4.0/5.0). Risco = driver novo subir o server minimo acima do que o cluster anuncia, fazendo o check client-side rejeitar o handshake. AWS NAO publica matriz oficial driver x versao — dados abaixo vem das docs por-driver do MongoDB + pins de exemplos AWS.",
+          "drivers": [
+            {"language": "java", "name": "mongodb-driver-sync", "role": "canonical", "repo": "https://github.com/mongodb/mongo-java-driver", "versions": [
+              {"line": "5.x", "status": "current", "min_docdb_api": "5.0-5.1 suportam server 3.6+; 5.2 dropa 3.6 (min 4.0); 5.5 dropa 4.0 (min 4.2)", "max_driver_verified_against_docdb": "AWS pina mongodb-driver-sync 5.3.0 no sample atual", "runtime_req": "Java 8+ (JDK 17 e do Spring Data, nao do driver)", "notes": "retryWrites=false obrigatorio; TLS on por default (global-bundle.pem). DocDB 5.0: qualquer 5.x. DocDB 4.0: ficar <=5.4 ou upgrade cluster antes de driver >=5.5. DocDB 3.6: ficar <=5.1."}
+            ]},
+            {"language": "go", "name": "go.mongodb.org/mongo-driver", "role": "canonical", "repo": "https://github.com/mongodb/mongo-go-driver", "versions": [
+              {"line": "v1.x (v1.17 final, deprecado) & v2.x", "status": "maintained", "min_docdb_api": "v1 e v2 pisam em server 4.2 — nenhum suporta DocumentDB 3.6", "max_driver_verified_against_docdb": "v2.x compativel com DocDB 4.0 e 5.0", "runtime_req": "v2 Go 1.19+; v1.14+ dropou Go <1.18", "notes": "retryWrites=false; TLS default. DocumentDB 3.6 NAO suportado por nenhum driver Go atual (floor 4.2). Preferir v2 (import go.mongodb.org/mongo-driver/v2)."}
+            ]},
+            {"language": "python", "name": "pymongo", "role": "canonical", "repo": "https://github.com/mongodb/mongo-python-driver", "versions": [
+              {"line": "4.x", "status": "current", "min_docdb_api": "4.9 ainda suporta server 3.6; 4.11 dropa 3.6 (min 4.0); 4.14 dropa 4.0 (min 4.2)", "max_driver_verified_against_docdb": "4.x moderno funciona contra DocDB 5.0", "runtime_req": "Python 3.9+", "notes": "retryWrites=false; TLS default. DocDB 3.6: ficar <=4.10. DocDB 4.0: ficar <=4.13 ou upgrade cluster antes de >=4.14. DocDB 5.0: qualquer 4.x atual."}
+            ]},
+            {"language": "node", "name": "mongodb (node-mongodb-native)", "role": "canonical", "repo": "https://github.com/mongodb/node-mongodb-native", "versions": [
+              {"line": "6.x (e 5.x)", "status": "current", "min_docdb_api": "6.x minimo server MongoDB 3.6 (deprecado, ainda nao removido no 6.x atual)", "max_driver_verified_against_docdb": "6.x cobre DocDB 3.6/4.0/5.0", "runtime_req": "6.0 Node >=16.20.1; 5.x Node >=14.20.1", "notes": "retryWrites=false; TLS default. Floor de server menos documentado dos quatro — tratar '3.6 min, deprecado' como best-available."}
+            ]}
+          ],
+          "upgrade_scenarios": [
+            {"from": "DocumentDB 4.0", "to": "DocumentDB 5.0", "verdict": "safe", "min_driver_required": {"java": "qualquer 5.x atual (AWS pina 5.3.0)", "go": "v1.17 ou v2.x (floor 4.2 < 5.0)", "python": "pymongo 4.x atual (incl 4.14)", "node": "6.x (ou 5.x)"}, "reason": "DocDB 5.0 anuncia versao de wire/API MAIOR que 4.0 -> qualquer driver que rodava em 4.0 roda em 5.0 (subir a API emulada nunca trip o check de server MINIMO). Risco corre no sentido oposto (abaixo). Unico to-do: manter runtime no floor de cada driver."},
+            {"from": "DocumentDB 3.6", "to": "majores novos de driver MongoDB", "verdict": "breaks", "min_driver_required": {"java": "ficar <=5.1 (5.2 dropa server 3.6)", "go": "nenhum driver Go atual suporta 3.6 (floor 4.2) — pinar <=1.13 ou upgrade cluster", "python": "ficar <=4.10 (4.11 dropa server 3.6)", "node": "6.x ainda suporta 3.6 (deprecado)"}, "reason": "DocumentDB 3.6 e o alvo fragil: majores novos sobem o server minimo acima de 3.6 e o check client-side rejeita o handshake 3.6. Mitigacao: upgrade do cluster antes de adotar esses drivers."},
+            {"from": "DocumentDB 4.0", "to": "majores mais novos (Java >=5.5, PyMongo >=4.14)", "verdict": "needs_bump", "min_driver_required": {"java": "Java driver 5.5+ dropa server 4.0 (min 4.2) -> upgrade cluster p/ 5.0 antes", "go": "n/a (4.0 nao afetado; floor 4.2 exclui so 3.6)", "python": "PyMongo 4.14+ dropa server 4.0 -> upgrade cluster p/ 5.0 antes", "node": "6.x ainda suporta 4.0"}, "reason": "Para adotar o driver Java (>=5.5) ou PyMongo (>=4.14) mais novos, que dropam server 4.0, o cluster DocumentDB 4.0 precisa subir para 5.0 antes. Go e Node atuais ainda lidam com 4.0."}
+          ]
+        }
+      ],
+      "sources": ["https://aws.amazon.com/blogs/developer/announcing-end-of-support-for-aws-sdk-for-java-v1-x-on-december-31-2025/", "https://aws.amazon.com/blogs/developer/announcing-end-of-support-for-aws-sdk-for-go-v1-on-july-31-2025/", "https://aws.amazon.com/blogs/developer/announcing-end-of-support-for-aws-sdk-for-javascript-v2/", "https://docs.aws.amazon.com/documentdb/latest/developerguide/compatibility.html", "https://www.mongodb.com/docs/drivers/documentdb-support/", "https://www.mongodb.com/docs/drivers/java/sync/v5.2/upgrade/", "https://www.mongodb.com/docs/languages/python/pymongo-driver/current/reference/upgrade/", "https://docs.aws.amazon.com/documentdb/latest/developerguide/java-pg-connect-mongo-driver.html"]
+    }
+  ]
+}
