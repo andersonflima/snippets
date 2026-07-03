@@ -5,10 +5,16 @@ import uuid
 
 from .aws import ActionError, assumed_session
 from .models import ActionAccepted, ReplicateRequest
+from .rules import enforce_allowed, enforce_common, load_rules
 
 
 def execute(req: ReplicateRequest) -> ActionAccepted:
     p = req.params
+    rules = load_rules({})
+    enforce_common(rules, req)
+    enforce_allowed(rules, "allowedResourceTypes", p.resourceType, "resourceType")
+    enforce_allowed(rules, "allowedDestinationAccounts", p.destinationAccount, "conta destino")
+    enforce_allowed(rules, "allowedDestinationRegions", p.destinationRegion, "região destino")
     session = assumed_session(req.account, req.roleArn, req.region)
 
     if req.dryRun:

@@ -16,6 +16,7 @@ router = APIRouter(prefix="/api", tags=["actions"])
 SUPPORTED_SERVICES = frozenset({
     "create", "destroy", "modify", "start-stop", "storage", "restore",
     "replicate", "kms", "vpc-link", "db-password", "rds-data", "servicenow",
+    "finops",
 })
 
 

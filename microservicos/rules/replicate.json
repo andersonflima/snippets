@@ -1,0 +1,16 @@
+{
+  "allowedRegions": [
+    "sa-east-1"
+  ],
+  "allowedResourceTypes": [
+    "db-snapshot",
+    "db-instance",
+    "ami",
+    "kms-key",
+    "parameter-group"
+  ],
+  "allowedDestinationAccounts": [],
+  "allowedDestinationRegions": [
+    "sa-east-1"
+  ]
+}

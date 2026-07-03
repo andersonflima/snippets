@@ -5,10 +5,17 @@ import uuid
 
 from .aws import ActionError, assumed_session
 from .models import ActionAccepted, DestroyRequest
+from .rules import enforce_allowed, enforce_common, enforce_denied, load_rules
 
 
 def execute(req: DestroyRequest) -> ActionAccepted:
     p = req.params
+    rules = load_rules({})
+    enforce_common(rules, req)
+    enforce_allowed(rules, "allowedResourceTypes", p.resourceType, "resourceType")
+    enforce_denied(rules, "deniedResourceTypes", p.resourceType, "resourceType")
+    if rules.get("requireFinalSnapshot") and getattr(p, "skipFinalSnapshot", False):
+        raise ActionError("rule_violation", "snapshot final obrigatório por regra (skipFinalSnapshot bloqueado)", 403)
     session = assumed_session(req.account, req.roleArn, req.region)
 
     if req.dryRun:

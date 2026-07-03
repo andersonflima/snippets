@@ -1,0 +1,82 @@
+# Deploy do microserviço modify (padrão pdi-portal, imagem ECR sa-east-1).
+# Substitua <ACCOUNT_ID> pela conta da plataforma (a esteira de deploy sobrescreve
+# a tag da imagem). Defina RULES_BACKEND (s3|dynamodb) e as chaves no ConfigMap.
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: modify
+  namespace: microservicos
+  annotations:
+    eks.amazonaws.com/role-arn: arn:aws:iam::<ACCOUNT_ID>:role/microservicos-modify-irsa
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: modify-config
+  namespace: microservicos
+data:
+  AWS_REGION: sa-east-1
+  RULES_REGION: sa-east-1
+  RULES_CACHE_TTL: "60"
+  RULES_BACKEND: dynamodb
+  RULES_TABLE: microservicos-rules
+  RULES_PK: service
+  RULES_ATTR: rules
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: modify
+  namespace: microservicos
+  labels:
+    app: modify
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: modify
+  template:
+    metadata:
+      labels:
+        app: modify
+    spec:
+      serviceAccountName: modify
+      containers:
+        - name: modify
+          image: <ACCOUNT_ID>.dkr.ecr.sa-east-1.amazonaws.com/microservicos-modify:latest
+          ports:
+            - containerPort: 8080
+          envFrom:
+            - configMapRef:
+                name: modify-config
+          resources:
+            requests:
+              cpu: 50m
+              memory: 128Mi
+            limits:
+              cpu: 500m
+              memory: 256Mi
+          readinessProbe:
+            httpGet:
+              path: /readyz
+              port: 8080
+          livenessProbe:
+            httpGet:
+              path: /healthz
+              port: 8080
+          securityContext:
+            runAsNonRoot: true
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: modify
+  namespace: microservicos
+spec:
+  selector:
+    app: modify
+  ports:
+    - port: 8080
+      targetPort: 8080

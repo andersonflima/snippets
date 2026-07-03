@@ -34,10 +34,30 @@ Fontes: [`architecture.svg`](./architecture.svg) (gerada por
 | `destroy`      | remove recursos (cleanup) |
 | `start`/`stop` | liga/desliga recursos com power |
 | `storage`      | altera storage — **tipo** (gp3/io1/…) e **aumento de tamanho** |
+| `servicenow`   | integra com o ServiceNow para GMUD e autorização de execução produtiva |
+| `rds-data`     | wrapper seguro do RDS Data API — avalia o SQL contra regras antes de executar |
+| `finops`       | varredura **read-only** de desperdício e recomendações de economia (RDS/EC2/EBS/EIP/ELB/snapshots) |
 
 > As ações "alterar instance class", "engine version", "alterar tipo de storage"
 > e "aumentar storage" **não viram microserviços novos**: as duas primeiras já são
 > `modify` e as duas últimas já são `storage`.
+
+## Regras de negócio externalizadas
+
+Todo serviço carrega suas **regras de negócio** de um backend externo — **S3 ou
+DynamoDB**, escolhido por `RULES_BACKEND` (obrigatório, sem default) —, atualizáveis
+**sem redeploy**. A leitura usa a identidade da plataforma (IRSA), com cache TTL
+(`RULES_CACHE_TTL`, default 60s) e **fallback resiliente**: se a regra não existir
+ou o backend falhar, os defaults embutidos do serviço continuam valendo. O provedor
+(`app/rules.py`) é **duplicado por serviço** (sem package compartilhada), como o
+resto do scaffold. Env por backend:
+
+- **s3**: `RULES_BUCKET` (+ `RULES_KEY_PREFIX`, default `rules`) → chave `<prefix>/<serviço>.json`
+- **dynamodb**: `RULES_TABLE` (+ `RULES_PK`=`service`, `RULES_ATTR`=`rules`)
+
+Exemplos de schema por serviço em [`../rules/`](../rules/). O `finops`, por exemplo,
+externaliza thresholds de ociosidade, a tabela de preços (sa-east-1) e a idade de
+snapshot considerada órfã.
 
 ## Fluxo (ordem de execução)
 
@@ -123,19 +143,24 @@ microservicos/
   api-gateway/
     openapi.yaml          # contrato consolidado do API Gateway (REST)
     gen_contracts.py      # gerador dos contratos OpenAPI
-  <serviço>/              # restore, db-password, kms, replicate, vpc-link,
-    Dockerfile            #   modify, create, destroy, start-stop, storage
-    requirements.txt
+  rules/                  # exemplos de regras externalizadas por serviço
+  <serviço>/              # restore, db-password, kms, replicate, vpc-link, modify,
+    Dockerfile            #   create, destroy, start-stop, storage, servicenow,
+    requirements.txt      #   rds-data, finops
     .dockerignore
     README.md
     contract/openapi.yaml # contrato do path no API Gateway
+    infra/k8s/            # manifestos de deploy (namespace + Deployment + Service)
     app/
       main.py             # FastAPI: POST /<serviço>/execute + /healthz /readyz
       aws.py              # STS:AssumeRole -> boto3.Session
+      rules.py            # provedor de regras externalizadas (S3/DynamoDB)
       models.py           # envelope + params (pydantic, espelha o contrato)
       handler.py          # execute(): a ação via boto3
 ```
 
-Cada serviço é **autocontido** (sem packages compartilhadas): `aws.py`/modelos
-são duplicados por design. O scaffold é regenerável por
-[`../gen_services.py`](../gen_services.py).
+Cada serviço é **autocontido** (sem packages compartilhadas): `aws.py`, `rules.py`
+e modelos são duplicados por design. O scaffold é regenerável por
+[`../gen_services.py`](../gen_services.py). Os manifestos em `infra/k8s/` espelham
+o padrão do `pdi-portal`: a **imagem** é construída/publicada (ECR) por uma esteira
+e o **deploy** no EKS é feito por outra (GitOps), que atualiza a tag da imagem.
