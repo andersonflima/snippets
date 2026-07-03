@@ -417,6 +417,101 @@ CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8080"]
 
 DOCKERIGNORE = "__pycache__/\n*.pyc\n.venv/\n.git/\n*.md\n"
 
+# --- deploy (padrão pdi-portal): infra/k8s por serviço -----------------------
+# A IMAGEM é construída/publicada (ECR) por uma esteira; estes manifestos são
+# aplicados no EKS por outra (GitOps), que atualiza a tag da imagem.
+NAMESPACE_YAML = '''\
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: microservicos
+'''
+
+K8S_API_YAML = '''\
+# Deploy do microserviço __SVC__ (padrão pdi-portal, imagem ECR sa-east-1).
+# Substitua <ACCOUNT_ID> pela conta da plataforma (a esteira de deploy sobrescreve
+# a tag da imagem). Defina RULES_BACKEND (s3|dynamodb) e as chaves no ConfigMap.
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: __SVC__
+  namespace: microservicos
+  annotations:
+    eks.amazonaws.com/role-arn: arn:aws:iam::<ACCOUNT_ID>:role/microservicos-__SVC__-irsa
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: __SVC__-config
+  namespace: microservicos
+data:
+  AWS_REGION: sa-east-1
+  RULES_REGION: sa-east-1
+  RULES_CACHE_TTL: "60"
+  RULES_BACKEND: dynamodb
+  RULES_TABLE: microservicos-rules
+  RULES_PK: service
+  RULES_ATTR: rules
+__EXTRA_ENV__---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: __SVC__
+  namespace: microservicos
+  labels:
+    app: __SVC__
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: __SVC__
+  template:
+    metadata:
+      labels:
+        app: __SVC__
+    spec:
+      serviceAccountName: __SVC__
+      containers:
+        - name: __SVC__
+          image: <ACCOUNT_ID>.dkr.ecr.sa-east-1.amazonaws.com/microservicos-__SVC__:latest
+          ports:
+            - containerPort: 8080
+          envFrom:
+            - configMapRef:
+                name: __SVC__-config
+          resources:
+            requests:
+              cpu: 50m
+              memory: 128Mi
+            limits:
+              cpu: 500m
+              memory: 256Mi
+          readinessProbe:
+            httpGet:
+              path: /readyz
+              port: 8080
+          livenessProbe:
+            httpGet:
+              path: /healthz
+              port: 8080
+          securityContext:
+            runAsNonRoot: true
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: __SVC__
+  namespace: microservicos
+spec:
+  selector:
+    app: __SVC__
+  ports:
+    - port: 8080
+      targetPort: 8080
+'''
+
 REQS_BASE = [
     "fastapi==0.115.6",
     "uvicorn[standard]==0.34.0",
@@ -1243,6 +1338,7 @@ def execute(req: ServicenowRequest) -> ActionAccepted:
     {
         "name": "rds-data",
         "summary": "Wrapper seguro do RDS Data API: avalia o SQL contra regras (S3) antes de executar.",
+        "k8s_extra_env": {"RULES_BUCKET": "microservicos-rds-data-rules", "RULES_KEY": "rds-data/rules.json"},
         "fields": [
             ("sql", "str", True, None, "SQL a executar (validado contra as regras)."),
             ("secretArn", "str", True, None, "ARN do segredo com credenciais do banco."),
@@ -1839,6 +1935,12 @@ def main() -> None:
         write(
             os.path.join(root, "README.md"),
             README_TMPL.replace("__SVC__", name).replace("__SUMMARY__", svc["summary"]),
+        )
+        extra_env = "".join(f'  {k}: "{v}"\n' for k, v in svc.get("k8s_extra_env", {}).items())
+        write(os.path.join(root, "infra", "k8s", "namespace.yaml"), NAMESPACE_YAML)
+        write(
+            os.path.join(root, "infra", "k8s", "api.yaml"),
+            K8S_API_YAML.replace("__EXTRA_ENV__", extra_env).replace("__SVC__", name),
         )
         count += 1
         print("scaffolded", name)
