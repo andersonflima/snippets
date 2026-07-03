@@ -17,19 +17,27 @@ export function renderReport(cfg, results) {
   lines.push(`- File patterns (${matchScope}): ${cfg.files.length ? cfg.files.join(", ") : "(all files under dir)"}`);
   lines.push(`- Search dir: \`${cfg.dir}\``);
   lines.push(`- Branch pattern: \`${cfg.pattern.source}\``);
-  lines.push(`- Branches matched: ${results.length}`, "");
+  lines.push(`- Branches matched: ${results.length}`);
+  if (cfg.changedOnly) {
+    lines.push(`- Filter: changed-only (branches/files with an impact)`);
+  }
+  lines.push("");
 
   for (const b of results) {
+    if (cfg.changedOnly && b.err === "" && changedCount(b.files) === 0) {
+      continue;
+    }
     lines.push(`## ${b.branch} (${b.source})`);
     if (b.err !== "") {
       lines.push(`- ERROR: ${b.err}`, "");
       continue;
     }
-    if (b.files.length === 0) {
+    const files = cfg.changedOnly ? b.files.filter((f) => f.changed) : b.files;
+    if (files.length === 0) {
       lines.push(`- no file matched under \`${cfg.dir}\` (skipped)`, "");
       continue;
     }
-    for (const f of b.files) {
+    for (const f of files) {
       lines.push(`- ${renderFile(cfg, f)}`);
     }
     lines.push(`- changed files: ${changedCount(b.files)}`);

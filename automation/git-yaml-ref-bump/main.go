@@ -30,6 +30,7 @@ type config struct {
 	Fetch         bool
 	ReportPath    string
 	Quiet         bool
+	ChangedOnly   bool
 }
 
 // progress writes a step line to stderr unless the run is quiet, keeping the
@@ -67,6 +68,7 @@ func parseFlags() (config, error) {
 		fetch    = flag.Bool("fetch", true, "run 'git fetch <remote>' before discovering branches")
 		report   = flag.String("report", "", "optional path to also write the Markdown report to")
 		quiet    = flag.Bool("quiet", false, "suppress the per-branch/per-file progress log on stderr")
+		changed  = flag.Bool("changed-only", false, "report only branches/files that will be impacted (have an occurrence of -from); errors are still shown")
 	)
 	flag.Parse()
 
@@ -98,6 +100,7 @@ func parseFlags() (config, error) {
 		Fetch:         *fetch,
 		ReportPath:    *report,
 		Quiet:         *quiet,
+		ChangedOnly:   *changed,
 	}, nil
 }
 
