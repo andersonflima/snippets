@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import shutil
 import sys
+import tempfile
 import zipfile
 import os
 import socket
@@ -71,23 +72,49 @@ def download_zip(url: str, zip_path: Path, token: str) -> None:
     )
 
 
-def extract_and_move(zip_path: Path, extract_root: Path, destination: Path, url: str) -> None:
-    with zipfile.ZipFile(zip_path, "r") as zipped:
-        zipped.extractall(extract_root)
-
-    entries = [path for path in extract_root.iterdir() if not path.name.startswith(".__")]
-    directories = [entry for entry in entries if entry.is_dir()]
-    if len(directories) != 1:
-        die(f"arquivo zip com formato inesperado: {url}")
-
-    source = directories[0]
+def extract_and_move(zip_path: Path, destination: Path, url: str) -> None:
+    # Extrai num diretorio temporario no MESMO filesystem do destino (irmao de
+    # destination.parent) e faz a troca com os.replace (rename atomico). So
+    # remove a copia antiga apos a nova estar no lugar.
     destination.parent.mkdir(parents=True, exist_ok=True)
-    if destination.exists() or destination.is_symlink():
-        if destination.is_dir() and not destination.is_symlink():
-            shutil.rmtree(destination)
-        else:
-            destination.unlink()
-    shutil.move(str(source), str(destination))
+    staging = Path(tempfile.mkdtemp(prefix=".gh-zip-", dir=str(destination.parent)))
+    try:
+        with zipfile.ZipFile(zip_path, "r") as zipped:
+            zipped.extractall(staging)
+
+        entries = [path for path in staging.iterdir() if not path.name.startswith(".__")]
+        directories = [entry for entry in entries if entry.is_dir()]
+        if len(directories) != 1:
+            die(f"arquivo zip com formato inesperado: {url}")
+
+        source = directories[0]
+        new_path = destination.parent / f"{destination.name}.new-{os.getpid()}"
+        if new_path.exists() or new_path.is_symlink():
+            if new_path.is_dir() and not new_path.is_symlink():
+                shutil.rmtree(new_path)
+            else:
+                new_path.unlink()
+        os.replace(str(source), str(new_path))  # mesmo fs -> rename atomico
+
+        old_path: Path | None = None
+        if destination.exists() or destination.is_symlink():
+            old_path = destination.parent / f"{destination.name}.old-{os.getpid()}"
+            if old_path.exists() or old_path.is_symlink():
+                if old_path.is_dir() and not old_path.is_symlink():
+                    shutil.rmtree(old_path)
+                else:
+                    old_path.unlink()
+            os.replace(str(destination), str(old_path))
+
+        os.replace(str(new_path), str(destination))
+
+        if old_path is not None:
+            if old_path.is_dir() and not old_path.is_symlink():
+                shutil.rmtree(old_path, ignore_errors=True)
+            else:
+                old_path.unlink()
+    finally:
+        shutil.rmtree(staging, ignore_errors=True)
 
 
 def main() -> None:
@@ -99,16 +126,17 @@ def main() -> None:
 
     url = sys.argv[1]
     zip_path = Path(sys.argv[2])
-    extract_root = Path(sys.argv[3])
+    # sys.argv[3] (extractRoot) mantido no contrato de CLI por compatibilidade,
+    # mas nao e mais usado: a extracao agora usa um staging no mesmo filesystem
+    # do destino (ver extract_and_move).
     destination = Path(sys.argv[4])
 
     zip_path.parent.mkdir(parents=True, exist_ok=True)
-    extract_root.mkdir(parents=True, exist_ok=True)
 
     token = os.environ.get("GITHUB_TOKEN", "").strip()
 
     download_zip(url, zip_path, token)
-    extract_and_move(zip_path, extract_root, destination, url)
+    extract_and_move(zip_path, destination, url)
 
 
 if __name__ == "__main__":
