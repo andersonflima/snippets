@@ -40,6 +40,14 @@ MANAGE_CONFIG="0"
 if [ -f "$STATE_FILE" ]; then
   # shellcheck source=/dev/null
   . "$STATE_FILE"
+elif [ -z "${BACKUP_DIR:-}" ]; then
+  # state.env ausente (ex.: setup abortado no meio): recupera pelo backup mais
+  # recente em ${STATE_ROOT}/backup_* para ainda permitir restauracao.
+  newest_backup="$(ls -dt "${STATE_ROOT}"/backup_* 2>/dev/null | head -n1 || true)"
+  if [ -n "$newest_backup" ] && [ -d "$newest_backup" ]; then
+    BACKUP_DIR="$newest_backup"
+    log "state.env ausente; usando backup mais recente: $BACKUP_DIR"
+  fi
 fi
 
 rm_path() {

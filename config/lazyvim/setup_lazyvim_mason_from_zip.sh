@@ -114,7 +114,7 @@ VENV_PYTHON="${VENV_DIR}/bin/python"
 WRAPPER_ROOT="${HOME}/.local/share/nvim/wrappers"
 WRAPPER_BIN_DIR="${WRAPPER_ROOT}/bin"
 TIMESTAMP="$(date +%Y%m%d_%H%M%S)"
-BACKUP_DIR="${STATE_ROOT}/backup_${TIMESTAMP}"
+BACKUP_DIR="${STATE_ROOT}/backup_${TIMESTAMP}_$$"
 TMP_DIR="$(mktemp -d)"
 
 cleanup() {
@@ -280,11 +280,30 @@ import os
 import ssl
 import sys
 import socket
+import tempfile
 from urllib.error import HTTPError, URLError
 from urllib.parse import urlparse
 from urllib.request import Request, urlopen
 
 RETRYABLE = {429, 500, 502, 503, 504}
+
+# Letras curtas que consomem valor (dentro de combos como -fsSLo /tmp/x).
+VALUE_LETTERS = set("oOHAdXTbeuCP")
+# Letras curtas sem valor (toggles ou aceitas-e-ignoradas).
+TOGGLE_LETTERS = set("fsSLkqg46Ic#")
+# Tokens curtos exatos aceitos e ignorados.
+SHORT_EXACT_IGNORE = {"-nv"}
+# Opcoes longas aceitas e ignoradas (sem valor).
+IGNORE_NOARG_LONG = {
+    "--insecure", "--no-check-certificate", "--head", "--globoff",
+    "--http1.1", "--compressed", "--content-disposition", "--create-dirs",
+    "--progress-bar", "--no-verbose", "--continue",
+}
+# Opcoes longas aceitas e ignoradas (com valor a descartar).
+IGNORE_VALUE_LONG = {
+    "--continue-at", "--cookie", "--referer", "--execute",
+    "--write-out", "--proxy", "--noproxy",
+}
 
 def die(msg: str, code: int = 2):
     print(msg, file=sys.stderr)
@@ -297,6 +316,7 @@ def parse_args(argv):
     silent = False
     show_error = False
     output = None
+    directory_prefix = None
     tries = 5
     timeout = 180
     headers = []
@@ -306,114 +326,150 @@ def parse_args(argv):
     url = None
     wants_version = False
     wants_help = False
+    argc = len(argv)
     i = 1
-    while i < len(argv):
+
+    def need_int(raw, opt):
+        try:
+            return int(raw)
+        except (TypeError, ValueError):
+            die(f"{mode}: option {opt} requires a numeric argument")
+
+    def long_value(key, val):
+        nonlocal i
+        if val is not None:
+            return val
+        i += 1
+        if i >= argc:
+            die(f"{mode}: option {key} requires an argument")
+        return argv[i]
+
+    while i < argc:
         a = argv[i]
-        if a in ("-L", "--location"):
-            follow = True
-        elif a in ("-f", "--fail"):
-            fail = True
-        elif a in ("-s", "--silent", "-q"):
-            silent = True
-        elif a in ("-S", "--show-error"):
-            show_error = True
-        elif a.startswith("-") and not a.startswith("--") and len(a) > 2:
-            # suporta flags curtas combinadas como -fsSL
-            combined_ok = {"f", "s", "S", "L"}
-            unknown = [flag for flag in a[1:] if flag not in combined_ok]
-            if unknown:
+
+        # "-" ou qualquer token sem "-" inicial e a URL/posicional.
+        if a == "-" or not a.startswith("-"):
+            url = a
+            i += 1
+            continue
+
+        # Opcoes longas (--xxx / --xxx=valor).
+        if a.startswith("--"):
+            if "=" in a:
+                key, val = a.split("=", 1)
+            else:
+                key, val = a, None
+            if key == "--location":
+                follow = True
+            elif key == "--fail":
+                fail = True
+            elif key == "--silent":
+                silent = True
+            elif key == "--show-error":
+                show_error = True
+            elif key == "--output":
+                output = long_value(key, val)
+            elif key == "--directory-prefix":
+                directory_prefix = long_value(key, val)
+            elif key in ("--retry", "--tries"):
+                tries = need_int(long_value(key, val), key)
+            elif key in ("--max-time", "--timeout", "--connect-timeout"):
+                timeout = need_int(long_value(key, val), key)
+            elif key == "--header":
+                headers.append(long_value(key, val))
+            elif key in ("--request", "--method"):
+                method = (long_value(key, val) or "GET").upper()
+            elif key == "--user-agent":
+                user_agent = long_value(key, val)
+            elif key in ("--data", "--data-raw", "--data-binary", "--post-data"):
+                data = long_value(key, val)
+                if method == "GET":
+                    method = "POST"
+            elif key == "--version":
+                wants_version = True
+            elif key == "--help":
+                wants_help = True
+            elif key in IGNORE_NOARG_LONG:
+                pass
+            elif key in IGNORE_VALUE_LONG:
+                long_value(key, val)
+            else:
                 die(f"{mode}: unsupported option {a}")
-            fail = fail or ("f" in a)
-            silent = silent or ("s" in a)
-            show_error = show_error or ("S" in a)
-            follow = follow or ("L" in a)
-        elif a in ("-o", "--output", "-O"):
-            if mode == "wget":
-                if a == "-o":
-                    i += 1
-                    if i >= len(argv):
-                        die(f"{mode}: option {a} requires an argument")
-                    # wget: -o define arquivo de log; ignorado no wrapper
-                    _ = argv[i]
+            i += 1
+            continue
+
+        # Tokens curtos exatos aceitos e ignorados (ex.: -nv).
+        if a in SHORT_EXACT_IGNORE:
+            i += 1
+            continue
+
+        # Token de opcoes curtas, possivelmente combinadas (ex.: -fsSLo /tmp/x).
+        letters = a[1:]
+        j = 0
+        while j < len(letters):
+            c = letters[j]
+            if c in TOGGLE_LETTERS:
+                if c == "f":
+                    fail = True
+                elif c in ("s", "q"):
+                    silent = True
+                elif c == "S":
+                    show_error = True
+                elif c == "L":
+                    follow = True
+                # k, g, 4, 6, I, c, # -> aceitos e ignorados
+                j += 1
+                continue
+            if c in VALUE_LETTERS:
+                remainder = letters[j + 1:]
+                if c == "O":
+                    # curl: remote-name (sem argumento); wget: arquivo de saida;
+                    # valor "-" (ex.: -qO-, -O -) => stdout.
+                    if remainder:
+                        val = remainder
+                    elif i + 1 < argc and argv[i + 1] == "-":
+                        i += 1
+                        val = "-"
+                    elif mode == "wget":
+                        i += 1
+                        if i >= argc:
+                            die(f"{mode}: option -O requires an argument")
+                        val = argv[i]
+                    else:
+                        val = "__remote__"
+                    output = val
+                    break
+                if remainder:
+                    val = remainder
                 else:
                     i += 1
-                    if i >= len(argv):
-                        die(f"{mode}: option {a} requires an argument")
-                    output = argv[i]
-            elif a == "-O":
-                output = "__remote__"
-            else:
-                i += 1
-                if i >= len(argv):
-                    die(f"{mode}: option {a} requires an argument")
-                output = argv[i]
-        elif a in ("--retry", "--tries"):
-            i += 1
-            tries = int(argv[i])
-        elif a.startswith("--retry="):
-            tries = int(a.split("=", 1)[1])
-        elif a.startswith("--tries="):
-            tries = int(a.split("=", 1)[1])
-        elif a in ("--max-time", "--timeout"):
-            i += 1
-            timeout = int(argv[i])
-        elif a in ("-T",):
-            i += 1
-            timeout = int(argv[i])
-        elif a in ("--connect-timeout",):
-            i += 1
-            timeout = int(argv[i])
-        elif a.startswith("--max-time="):
-            timeout = int(a.split("=", 1)[1])
-        elif a.startswith("--timeout="):
-            timeout = int(a.split("=", 1)[1])
-        elif a.startswith("--connect-timeout="):
-            timeout = int(a.split("=", 1)[1])
-        elif a in ("-H", "--header"):
-            i += 1
-            headers.append(argv[i])
-        elif a.startswith("--header="):
-            headers.append(a.split("=", 1)[1])
-        elif a in ("-X", "--request", "--method"):
-            i += 1
-            method = (argv[i] or "GET").upper()
-        elif a.startswith("--request="):
-            method = (a.split("=", 1)[1] or "GET").upper()
-        elif a.startswith("--method="):
-            method = (a.split("=", 1)[1] or "GET").upper()
-        elif a in ("-A", "--user-agent"):
-            i += 1
-            user_agent = argv[i]
-        elif a.startswith("--user-agent="):
-            user_agent = a.split("=", 1)[1]
-        elif a in ("-d", "--data", "--data-raw", "--data-binary", "--post-data"):
-            i += 1
-            if i >= len(argv):
-                die(f"{mode}: option {a} requires an argument")
-            data = argv[i]
-            if method == "GET":
-                method = "POST"
-        elif a.startswith("--data=") or a.startswith("--data-raw=") or a.startswith("--data-binary="):
-            data = a.split("=", 1)[1]
-            if method == "GET":
-                method = "POST"
-        elif a in ("--version", "-V"):
-            wants_version = True
-        elif a in ("--help", "-h"):
-            wants_help = True
-        elif a in ("--compressed", "--progress-bar", "-#", "-nv", "--no-verbose"):
-            pass
-        elif a in ("-w", "--write-out", "--proxy", "--noproxy"):
-            i += 1
-            # opcao ignorada por compatibilidade
-            _ = argv[i]
-        elif a.startswith("--write-out=") or a.startswith("--proxy=") or a.startswith("--noproxy="):
-            pass
-        elif a.startswith("-"):
-            die(f"{mode}: unsupported option {a}")
-        else:
-            url = a
+                    if i >= argc:
+                        die(f"{mode}: option -{c} requires an argument")
+                    val = argv[i]
+                if c == "o":
+                    if mode == "wget":
+                        pass  # wget: -o e arquivo de log; ignorado no wrapper
+                    else:
+                        output = val
+                elif c == "H":
+                    headers.append(val)
+                elif c == "A":
+                    user_agent = val
+                elif c == "d":
+                    data = val
+                    if method == "GET":
+                        method = "POST"
+                elif c == "X":
+                    method = (val or "GET").upper()
+                elif c == "T":
+                    timeout = need_int(val, "-T")
+                elif c == "P":
+                    directory_prefix = val
+                # b, e, u, C -> aceitos e ignorados (valor descartado)
+                break
+            die(f"{mode}: unsupported option -{c}")
         i += 1
+
     if wants_version:
         return {"meta_only": "version", "mode": mode}
     if wants_help:
@@ -421,7 +477,12 @@ def parse_args(argv):
     if not url:
         die(f"{mode}: missing URL")
     if output == "__remote__":
-        output = os.path.basename(urlparse(url).path) or "download.bin"
+        base = os.path.basename(urlparse(url).path) or "download.bin"
+        output = os.path.join(directory_prefix, base) if directory_prefix else base
+    elif output not in (None, "-") and directory_prefix and not os.path.isabs(output):
+        output = os.path.join(directory_prefix, output)
+    if output == "-":
+        output = None
     return {
         "mode": mode,
         "follow": follow,
@@ -473,8 +534,22 @@ def do_fetch(cfg):
                     raise HTTPError(cfg["url"], status, f"status {status}", resp.headers, None)
                 data = resp.read()
                 if cfg["output"]:
-                    with open(cfg["output"], "wb") as f:
-                        f.write(data)
+                    dest = cfg["output"]
+                    parent = os.path.dirname(dest)
+                    if parent:
+                        os.makedirs(parent, exist_ok=True)
+                    tmp_path = None
+                    try:
+                        fd, tmp_path = tempfile.mkstemp(
+                            dir=parent or ".", prefix=".http_fetch_"
+                        )
+                        with os.fdopen(fd, "wb") as handle:
+                            handle.write(data)
+                        os.replace(tmp_path, dest)
+                        tmp_path = None
+                    finally:
+                        if tmp_path is not None and os.path.exists(tmp_path):
+                            os.remove(tmp_path)
                 else:
                     sys.stdout.buffer.write(data)
                 return 0
@@ -528,8 +603,14 @@ if command -v which >/dev/null 2>&1; then
   done < <(which -a git 2>/dev/null || true)
 fi
 
-if [ -z "$real_git" ] && [ -x /usr/bin/git ]; then
-  real_git="/usr/bin/git"
+if [ -z "$real_git" ]; then
+  for candidate in /usr/bin/git /opt/homebrew/bin/git /home/linuxbrew/.linuxbrew/bin/git; do
+    [ -x "$candidate" ] || continue
+    candidate_dir="$(cd "$(dirname "$candidate")" && pwd)"
+    [ "$candidate_dir" != "$wrapper_dir" ] || continue
+    real_git="$candidate"
+    break
+  done
 fi
 
 if [ -z "$real_git" ]; then
@@ -552,7 +633,7 @@ for arg in "$@"; do
   args+=("$(rewrite_github_url "$arg")")
 done
 
-exec "$real_git" "${args[@]}"
+exec "$real_git" ${args[@]+"${args[@]}"}
 SH
   chmod +x "${WRAPPER_BIN_DIR}/git"
 
@@ -563,6 +644,7 @@ from __future__ import annotations
 import argparse
 import os
 import shutil
+import socket
 import ssl
 import sys
 import tempfile
@@ -615,7 +697,7 @@ def download_zip(url: str, zip_path: Path, token: str) -> None:
             last_error = error
             if error.code not in RETRYABLE_HTTP_STATUS or attempt == MAX_ATTEMPTS:
                 break
-        except (URLError, TimeoutError, ConnectionError) as error:
+        except (URLError, TimeoutError, socket.timeout, ConnectionError) as error:
             last_error = error
             if attempt == MAX_ATTEMPTS:
                 break
@@ -853,7 +935,7 @@ download_and_extract_branch_zip() {
     fi
 
     mkdir -p "$extract_root"
-    if "$VENV_PYTHON" "$(dirname "$0")/github_zip_download_extract.py" \
+    if "$VENV_PYTHON" "${SCRIPT_DIR}/github_zip_download_extract.py" \
       "$url" "$temp_zip" "$extract_root" "$destination_dir"; then
       resolved_branch="$candidate_branch"
       break
@@ -1247,9 +1329,11 @@ patch_lazy_transport_to_ssh() {
 
   # Ajusta bootstrap manual de lazy.nvim para SSH.
   if grep -Fq "https://github.com/folke/lazy.nvim.git" "$lazy_config_file"; then
-    sed -i '' \
-      's#https://github.com/folke/lazy.nvim.git#git@github.com:folke/lazy.nvim.git#g' \
-      "$lazy_config_file"
+    local tmp_file_url
+    tmp_file_url="$(mktemp)"
+    awk '{ gsub(/https:\/\/github\.com\/folke\/lazy\.nvim\.git/, "git@github.com:folke/lazy.nvim.git"); print }' \
+      "$lazy_config_file" > "$tmp_file_url"
+    mv "$tmp_file_url" "$lazy_config_file"
   fi
 
   # Garante url_format SSH no setup do lazy.nvim.
@@ -1272,9 +1356,11 @@ patch_lazy_transport_to_ssh() {
   fi
 
   # Em ambiente bloqueado para git externo, evita checks automáticos via git fetch.
-  sed -i '' \
-    's/checker = { enabled = true }/checker = { enabled = false }/g' \
-    "$lazy_config_file"
+  local tmp_file_checker
+  tmp_file_checker="$(mktemp)"
+  awk '{ gsub(/checker = \{ enabled = true \}/, "checker = { enabled = false }"); print }' \
+    "$lazy_config_file" > "$tmp_file_checker"
+  mv "$tmp_file_checker" "$lazy_config_file"
 
   if ! grep -Fq 'change_detection = { enabled = false' "$lazy_config_file"; then
     local tmp_file_2
@@ -1297,14 +1383,61 @@ install_plugins_from_manifest() {
   local lazy_dir="${NVIM_DATA_DIR}/lazy"
   mkdir -p "$lazy_dir"
 
+  local failed=()
+  local total=0
+  # Resiliencia por plugin: uma falha nao aborta a instalacao inteira
+  # (espelha o caminho Lua em runtime, que tolera erros por plugin).
   while IFS='|' read -r plugin_name repo branch; do
     [ -n "$plugin_name" ] || continue
     [ -n "$repo" ] || continue
     [ -n "$branch" ] || branch="main"
+    total=$((total + 1))
     log "plugin: $plugin_name (${repo}@${branch})"
-    download_and_extract_branch_zip "$repo" "$branch" "${lazy_dir}/${plugin_name}"
-    printf '%s\n' "${repo}@${branch}" > "${lazy_dir}/${plugin_name}/.zip-source"
+    if download_and_extract_branch_zip "$repo" "$branch" "${lazy_dir}/${plugin_name}"; then
+      printf '%s\n' "${repo}@${branch}" > "${lazy_dir}/${plugin_name}/.zip-source"
+    else
+      log "falha ao instalar plugin: $plugin_name (${repo}@${branch})"
+      failed+=("$plugin_name")
+    fi
   done < <(emit_lazy_plugin_manifest)
+
+  if [ "${#failed[@]}" -gt 0 ]; then
+    log "plugins com falha (${#failed[@]}/${total}): ${failed[*]}"
+    return 1
+  fi
+  log "todos os plugins instalados (${total})"
+  return 0
+}
+
+configure_git_insteadof() {
+  # Faz submodules/ls-remote (que o shim de argv nao alcanca) usarem SSH.
+  # Idempotente e opt-out-safe: so adiciona se ainda nao estiver presente.
+  command -v git >/dev/null 2>&1 || {
+    log "git nao encontrado; pulando configuracao insteadOf"
+    return 0
+  }
+  local https="https://github.com/"
+  local ssh="git@github.com:"
+  if ! git config --global --get-all "url.${ssh}.insteadOf" 2>/dev/null | grep -Fxq "$https"; then
+    git config --global "url.${ssh}.insteadOf" "$https"
+    log "git insteadOf configurado: ${https} -> ${ssh}"
+  fi
+  if ! git config --global --get-all "url.${ssh}.pushInsteadOf" 2>/dev/null | grep -Fxq "$https"; then
+    git config --global "url.${ssh}.pushInsteadOf" "$https"
+    log "git pushInsteadOf configurado: ${https} -> ${ssh}"
+  fi
+}
+
+write_state_file() {
+  cat > "$STATE_FILE" <<EOFSTATE
+NVIM_CONFIG_DIR='${NVIM_CONFIG_DIR}'
+NVIM_DATA_DIR='${NVIM_DATA_DIR}'
+NVIM_CACHE_DIR='${NVIM_CACHE_DIR}'
+BACKUP_DIR='${BACKUP_DIR}'
+SETUP_TIMESTAMP='${TIMESTAMP}'
+MANAGE_CONFIG='${MANAGE_CONFIG}'
+CONFIG_SOURCE_DIR='${CONFIG_SOURCE_DIR}'
+EOFSTATE
 }
 
 if [ "$WITH_HOMEBREW_PROXY" = "1" ]; then
@@ -1321,6 +1454,8 @@ if [ "$MANAGE_CONFIG" = "1" ]; then
 fi
 ensure_python_runtime
 install_http_wrappers
+log "configurando git insteadOf global (SSH para github.com)"
+configure_git_insteadof
 
 if [ "$FORCE" = "1" ]; then
   if [ "$MANAGE_CONFIG" = "1" ]; then
@@ -1329,6 +1464,10 @@ if [ "$FORCE" = "1" ]; then
   backup_if_exists "${NVIM_DATA_DIR}/lazy" "nvim-lazy"
   backup_if_exists "${NVIM_CACHE_DIR}/mason-registry-main" "mason-registry-main"
 fi
+
+# Registra o estado (BACKUP_DIR/MANAGE_CONFIG) imediatamente apos o backup,
+# antes de qualquer download/patch, para que um aborto no meio seja recuperavel.
+write_state_file
 
 if [ "$MANAGE_CONFIG" = "1" ]; then
   source_config_dir="$CONFIG_SOURCE_DIR"
@@ -1379,15 +1518,8 @@ if [ "$SKIP_PLUGINS" != "1" ]; then
   install_plugins_from_manifest
 fi
 
-cat > "$STATE_FILE" <<EOFSTATE
-NVIM_CONFIG_DIR='${NVIM_CONFIG_DIR}'
-NVIM_DATA_DIR='${NVIM_DATA_DIR}'
-NVIM_CACHE_DIR='${NVIM_CACHE_DIR}'
-BACKUP_DIR='${BACKUP_DIR}'
-SETUP_TIMESTAMP='${TIMESTAMP}'
-MANAGE_CONFIG='${MANAGE_CONFIG}'
-CONFIG_SOURCE_DIR='${CONFIG_SOURCE_DIR}'
-EOFSTATE
+# Reescreve o estado ao final (refresh apos conclusao bem-sucedida).
+write_state_file
 
 log "concluido"
 log "proximo passo: abrir o neovim e rodar :checkhealth e :Mason"
