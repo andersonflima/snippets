@@ -13,22 +13,34 @@ die() {
 usage() {
   cat <<'USAGE'
 Uso:
-  bash config/lazyvim/undo_lazyvim_mason_from_zip.sh
+  bash config/lazyvim/undo_lazyvim_mason_from_zip.sh [opcoes]
+
+Opcoes:
+  --purge     Remove tambem o STATE_ROOT inteiro, incluindo os backups
+              (~/.local/share/nvim-zip-bootstrap). Sem isso, os backups sao
+              preservados.
+  -h, --help  Mostra ajuda.
 
 Comportamento:
-- Remove instalacao aplicada pelo setup de ZIP.
-- Restaura backup, quando existir.
-- Limpa legado dos scripts antigos (wrappers/shims/PATH e caches do Mason).
+- Remove instalacao aplicada pelo setup de ZIP e restaura backup quando existir.
+- Limpa wrappers/shims/PATH, caches do Mason e a venv de bootstrap.
+- Reverte o git insteadOf (https -> ssh) e o bloco homebrew-proxy nos rc.
+- Remove a fonte Crowquill Mono instalada por --install-crowquill.
 USAGE
 }
 
-if [ "${1:-}" = "-h" ] || [ "${1:-}" = "--help" ]; then
-  usage
-  exit 0
-fi
+PURGE=0
+while [ "$#" -gt 0 ]; do
+  case "$1" in
+    -h|--help) usage; exit 0 ;;
+    --purge) PURGE=1; shift ;;
+    *) die "parametro invalido: $1" ;;
+  esac
+done
 
 STATE_ROOT="${HOME}/.local/share/nvim-zip-bootstrap"
 STATE_FILE="${STATE_ROOT}/state.env"
+VENV_DIR="${STATE_ROOT}/.venv"
 
 NVIM_CONFIG_DIR="${XDG_CONFIG_HOME:-$HOME/.config}/nvim"
 NVIM_DATA_DIR="${XDG_DATA_HOME:-$HOME/.local/share}/nvim"
@@ -68,10 +80,11 @@ restore_backup() {
   fi
 }
 
-remove_path_block_from_rc() {
+remove_managed_rc_block() {
   local rc_file="$1"
-  local marker_begin="# >>> nvim-wrappers PATH >>>"
-  local marker_end="# <<< nvim-wrappers PATH <<<"
+  local marker_begin="$2"
+  local marker_end="$3"
+  local label="$4"
 
   [ -f "$rc_file" ] || return 0
   local tmp_file
@@ -85,9 +98,45 @@ remove_path_block_from_rc() {
 
   if ! cmp -s "$rc_file" "$tmp_file"; then
     mv "$tmp_file" "$rc_file"
-    log "limpo bloco PATH de wrappers: $rc_file"
+    log "limpo bloco ${label}: $rc_file"
   else
     rm -f "$tmp_file"
+  fi
+}
+
+remove_path_block_from_rc() {
+  remove_managed_rc_block "$1" \
+    "# >>> nvim-wrappers PATH >>>" "# <<< nvim-wrappers PATH <<<" "PATH de wrappers"
+}
+
+remove_homebrew_proxy_block_from_rc() {
+  remove_managed_rc_block "$1" \
+    "# >>> homebrew-proxy (managed) >>>" "# <<< homebrew-proxy (managed) <<<" "homebrew-proxy"
+}
+
+remove_git_insteadof() {
+  command -v git >/dev/null 2>&1 || return 0
+  local ssh="git@github.com:"
+  git config --global --unset "url.${ssh}.insteadOf" '^https://github\.com/$' 2>/dev/null || true
+  git config --global --unset "url.${ssh}.pushInsteadOf" '^https://github\.com/$' 2>/dev/null || true
+  log "git insteadOf revertido (https://github.com/ -> ${ssh})"
+}
+
+remove_crowquill_font() {
+  local removed=0 d f
+  for d in "${HOME}/Library/Fonts" "${HOME}/.local/share/fonts"; do
+    [ -d "$d" ] || continue
+    for f in "$d"/CrowquillMono-*.ttf; do
+      [ -e "$f" ] || continue
+      rm -f "$f"
+      removed=$((removed + 1))
+    done
+  done
+  if [ "$removed" -gt 0 ]; then
+    log "removidas ${removed} face(s) da fonte Crowquill Mono"
+    if command -v fc-cache >/dev/null 2>&1; then
+      fc-cache -f >/dev/null 2>&1 || true
+    fi
   fi
 }
 
@@ -110,6 +159,10 @@ cleanup_legacy_wrappers() {
   remove_path_block_from_rc "${HOME}/.zshrc"
   remove_path_block_from_rc "${HOME}/.bashrc"
   remove_path_block_from_rc "${HOME}/.profile"
+
+  remove_homebrew_proxy_block_from_rc "${HOME}/.zshrc"
+  remove_homebrew_proxy_block_from_rc "${HOME}/.bashrc"
+  remove_homebrew_proxy_block_from_rc "${HOME}/.profile"
 }
 
 cleanup_legacy_mason_state() {
@@ -128,6 +181,10 @@ rm_path "${NVIM_CACHE_DIR}/mason-registry-main"
 cleanup_legacy_mason_state
 cleanup_legacy_wrappers
 
+# Reverte config global aplicada pelo setup e artefatos do --install-crowquill.
+remove_git_insteadof
+remove_crowquill_font
+
 if [ -n "${BACKUP_DIR:-}" ] && [ -d "$BACKUP_DIR" ]; then
   if [ "${MANAGE_CONFIG:-0}" = "1" ]; then
     restore_backup "$BACKUP_DIR/nvim-config" "$NVIM_CONFIG_DIR"
@@ -136,5 +193,14 @@ if [ -n "${BACKUP_DIR:-}" ] && [ -d "$BACKUP_DIR" ]; then
   restore_backup "$BACKUP_DIR/mason-registry-main" "${NVIM_CACHE_DIR}/mason-registry-main"
 fi
 
-rm -f "$STATE_FILE" 2>/dev/null || true
+# Remove a venv de bootstrap (nao e backup).
+rm_path "$VENV_DIR"
+
+if [ "$PURGE" = "1" ]; then
+  rm_path "$STATE_ROOT"
+  log "purge: STATE_ROOT removido (incluindo backups)"
+else
+  rm -f "$STATE_FILE" 2>/dev/null || true
+  rmdir "$STATE_ROOT" 2>/dev/null || true
+fi
 log "concluido"
