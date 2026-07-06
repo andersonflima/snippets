@@ -125,7 +125,7 @@ return {
 
 			options = {
 
-				theme = "neon",
+				theme = "auto",
 			},
 
 			sections = {

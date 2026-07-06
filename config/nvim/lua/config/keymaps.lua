@@ -1,11 +1,43 @@
 local keymap = vim.keymap
 local opts = { noremap = true, silent = true }
+local claude_terminal = nil
+
+local function toggle_claude_terminal()
+	local loaded = pcall(function()
+		require("lazy").load({ plugins = { "toggleterm.nvim" } })
+	end)
+
+	local ok, Terminal = pcall(function()
+		return require("toggleterm.terminal").Terminal
+	end)
+
+	if not loaded or not ok then
+		vim.cmd("botright split")
+		vim.cmd("terminal claude")
+		vim.cmd("startinsert")
+		return
+	end
+
+	if not claude_terminal then
+		claude_terminal = Terminal:new({
+			cmd = "claude",
+			direction = "float",
+			hidden = true,
+		})
+	end
+
+	claude_terminal:toggle()
+end
 
 local function is_substitute_command(cmdline)
 	return cmdline:match("^%%?s$") ~= nil or cmdline:match("^['<>,%d%.$%+%-]*s$") ~= nil
 end
 
 keymap.set("n", "x", '"_x')
+
+keymap.set("n", "<C-]>", toggle_claude_terminal, { desc = "Toggle Claude terminal", noremap = true, silent = true })
+keymap.set("n", "<C-[>", toggle_claude_terminal, { desc = "Toggle Claude terminal", noremap = true, silent = true })
+vim.api.nvim_create_user_command("ClaudeToggle", toggle_claude_terminal, {})
 
 -- Increment/decrement
 keymap.set("n", "+", "<C-a>")

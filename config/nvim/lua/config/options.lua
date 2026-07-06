@@ -1,10 +1,12 @@
 vim.g.mapleader = " "
 
+vim.opt.timeoutlen = 1000
+
 vim.opt.encoding = "utf-8"
 vim.opt.fileencoding = "utf-8"
 
 vim.opt.number = true
-vim.o.guifont = "Crowquill Mono:h16"
+vim.o.guifont = "Crowquill Mono:h16" -- (era vim.guifont, que e no-op; o certo p/ Neovide e vim.o.guifont)
 
 vim.opt.title = true
 vim.opt.autoindent = true
@@ -17,16 +19,7 @@ vim.opt.cmdheight = 1
 vim.opt.laststatus = 2
 vim.opt.expandtab = true
 vim.opt.scrolloff = 10
-
-local preferred_shell = vim.env.SHELL
-if preferred_shell and preferred_shell ~= "" and vim.fn.executable(preferred_shell) == 1 then
-	vim.opt.shell = preferred_shell
-elseif vim.fn.executable("zsh") == 1 then
-	vim.opt.shell = "zsh"
-elseif vim.fn.executable("bash") == 1 then
-	vim.opt.shell = "bash"
-end
-
+vim.opt.shell = "fish"
 vim.opt.backupskip = { "/tmp/*", "/private/tmp/*" }
 vim.opt.inccommand = "split"
 vim.opt.ignorecase = true -- Case insensitive searching UNLESS /C or capital in search
