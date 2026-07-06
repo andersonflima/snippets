@@ -21,6 +21,9 @@ Opcoes:
   --with-homebrew-proxy  Aplica antes o bloco de proxy/Homebrew no shell rc
                          (chama setup_homebrew_proxy.sh --apply).
   --manage-config        Permite alterar ~/.config/nvim (opt-in).
+  --install-crowquill    Instala a fonte Crowquill Mono (macOS: ~/Library/Fonts;
+                         Linux: ~/.local/share/fonts). O tema Crowquill Ink ja vem
+                         versionado em config/nvim e e aplicado com --manage-config.
   --config-source-dir    Copia config nvim de origem para --config-dir (requer --manage-config).
   --config-dir <dir>     Default: ${XDG_CONFIG_HOME:-$HOME/.config}/nvim
   --data-dir <dir>       Default: ${XDG_DATA_HOME:-$HOME/.local/share}/nvim
@@ -40,6 +43,7 @@ FORCE=0
 SKIP_PLUGINS=0
 WITH_HOMEBREW_PROXY=0
 MANAGE_CONFIG=0
+INSTALL_CROWQUILL=0
 CONFIG_SOURCE_DIR=""
 NVIM_CONFIG_DIR="${XDG_CONFIG_HOME:-$HOME/.config}/nvim"
 NVIM_DATA_DIR="${XDG_DATA_HOME:-$HOME/.local/share}/nvim"
@@ -66,6 +70,10 @@ while [ "$#" -gt 0 ]; do
       ;;
     --manage-config)
       MANAGE_CONFIG=1
+      shift
+      ;;
+    --install-crowquill)
+      INSTALL_CROWQUILL=1
       shift
       ;;
     --config-source-dir)
@@ -228,7 +236,7 @@ mini.icons|nvim-mini/mini.icons|default
 mini.pairs|nvim-mini/mini.pairs|default
 neogen|danymat/neogen|default
 neo-tree.nvim|nvim-neo-tree/neo-tree.nvim|default
-neon-theme-neovim|andersonflima/neon-theme-neovim|default
+crowquill-theme|andersonflima/crowquill-theme|default
 noice.nvim|folke/noice.nvim|default
 nui.nvim|MunifTanjim/nui.nvim|default
 nvim-cmp|hrsh7th/nvim-cmp|default
@@ -948,6 +956,38 @@ download_and_extract_branch_zip() {
   fi
 }
 
+install_crowquill_font() {
+  local font_dir
+  if [ -d "$HOME/Library/Fonts" ]; then
+    font_dir="$HOME/Library/Fonts"
+  else
+    font_dir="$HOME/.local/share/fonts"
+  fi
+  mkdir -p "$font_dir"
+
+  if ls "$font_dir"/CrowquillMono-*.ttf >/dev/null 2>&1; then
+    log "fonte Crowquill Mono ja presente em ${font_dir} (pulando download)"
+  else
+    local src_dir="${TMP_DIR}/crowquill-mono"
+    mkdir -p "$src_dir"
+    log "baixando Crowquill Mono (andersonflima/crowquill-mono) por ZIP"
+    download_and_extract_branch_zip "andersonflima/crowquill-mono" "default" "$src_dir" \
+      || die "falha ao baixar a fonte Crowquill Mono"
+    local installed=0
+    for ttf in "$src_dir"/dist/*.ttf; do
+      [ -e "$ttf" ] || continue
+      cp "$ttf" "$font_dir/"
+      installed=$((installed + 1))
+    done
+    [ "$installed" -gt 0 ] || die "nenhum .ttf encontrado em dist/ do crowquill-mono"
+    log "instaladas ${installed} face(s) da Crowquill Mono em ${font_dir}"
+  fi
+
+  if command -v fc-cache >/dev/null 2>&1; then
+    fc-cache -f "$font_dir" >/dev/null 2>&1 || true
+  fi
+}
+
 write_mason_local_registry_override() {
   local plugin_dir="${NVIM_CONFIG_DIR}/lua/plugins"
   local target_file="${plugin_dir}/mason_local_registry.lua"
@@ -1516,6 +1556,11 @@ fi
 if [ "$SKIP_PLUGINS" != "1" ]; then
   log "instalando plugins do LazyVim por ZIP"
   install_plugins_from_manifest
+fi
+
+if [ "$INSTALL_CROWQUILL" = "1" ]; then
+  log "instalando fonte Crowquill Mono"
+  install_crowquill_font
 fi
 
 # Reescreve o estado ao final (refresh apos conclusao bem-sucedida).
