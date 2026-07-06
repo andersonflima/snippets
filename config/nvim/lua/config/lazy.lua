@@ -1,17 +1,15 @@
 -- Documenta lazypath para reduzir ambiguidade neste modulo Lua.
 -- Calcula lazypath para suportar o restante do fluxo.
-local wrapper_bin = vim.fn.expand("~/.local/share/nvim/wrappers/bin")
-if vim.fn.isdirectory(wrapper_bin) == 1 then
-	local current_path = vim.env.PATH or ""
-	if not string.find(current_path, wrapper_bin, 1, true) then
-		vim.env.PATH = wrapper_bin .. ":" .. current_path
-	end
-end
-
 local lazypath = vim.fn.stdpath("data") .. "/lazy/lazy.nvim"
 if not vim.loop.fs_stat(lazypath) then
-	vim.notify("lazy.nvim nao encontrado. Execute config/lazyvim/setup_lazyvim_mason_from_zip.sh.", vim.log.levels.ERROR)
-	return
+	vim.fn.system({
+		"git",
+		"clone",
+		"--filter=blob:none",
+		"https://github.com/folke/lazy.nvim.git",
+		"--branch=stable", -- latest stable release
+		lazypath,
+	})
 end
 vim.opt.rtp:prepend(lazypath)
 
@@ -24,7 +22,7 @@ require("lazy").setup({
 			"LazyVim/LazyVim",
 			import = "lazyvim.plugins",
 			opts = {
-				colorscheme = "neon",
+				colorscheme = "crowquill-light",
 				news = {
 					lazyvim = true,
 					neovim = true,
@@ -77,9 +75,7 @@ require("lazy").setup({
 	dev = {
 		path = "~/.ghq/github.com",
 	},
-	install = { missing = false },
-	checker = { enabled = false },
-	change_detection = { enabled = false, notify = false },
+	checker = { enabled = true }, -- automatically check for plugin updates
 	performance = {
 		cache = {
 			enabled = true,
@@ -109,3 +105,4 @@ require("lazy").setup({
 	},
 	debug = false,
 })
+

@@ -18,8 +18,23 @@ local markdown_preview_options = {
 
 local open_mermaid_preview = function()
 	local source_file = vim.api.nvim_buf_get_name(0)
-	local output_file = vim.fn.fnamemodify(source_file, ":r") .. ".svg"
+	local has_source_file = source_file ~= ""
+	local input_file = has_source_file and source_file or (vim.fn.tempname() .. ".mmd")
+	local output_file = has_source_file and (vim.fn.fnamemodify(source_file, ":r") .. ".svg")
+		or (vim.fn.tempname() .. ".svg")
 	local stderr = {}
+	local lines = vim.api.nvim_buf_get_lines(0, 0, -1, false)
+
+	if #lines == 0 then
+		vim.notify("Mermaid preview requires a non-empty buffer", vim.log.levels.WARN)
+		return
+	end
+
+	local write_ok = pcall(vim.fn.writefile, lines, input_file)
+	if not write_ok then
+		vim.notify("Failed to prepare Mermaid preview input", vim.log.levels.ERROR)
+		return
+	end
 
 	vim.fn.jobstart({
 		"npm",
@@ -30,7 +45,7 @@ local open_mermaid_preview = function()
 		"mmdc",
 		"--",
 		"-i",
-		source_file,
+		input_file,
 		"-o",
 		output_file,
 	}, {
@@ -45,6 +60,10 @@ local open_mermaid_preview = function()
 		end,
 		on_exit = function(_, exit_code)
 			vim.schedule(function()
+				if not has_source_file then
+					pcall(vim.fn.delete, input_file)
+				end
+
 				if exit_code ~= 0 then
 					local error_message = table.concat(stderr, "\n")
 					vim.notify(

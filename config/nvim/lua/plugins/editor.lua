@@ -527,16 +527,6 @@ return {
 		lazy = false,
 		event = { "BufReadPost", "BufNewFile" },
 		cmd = { "Codex", "CodexToggle" },
-		keys = {
-			{
-				"<C-]>", -- Change this to your preferred keybinding
-				function()
-					require("codex").toggle()
-				end,
-				desc = "Toggle Codex popup or side-panel",
-				mode = { "n" },
-			},
-		},
 		opts = {
 			keymaps = {
 				toggle = nil, -- Keybind to toggle Codex window (Disabled by default, watch out for conflicts)
