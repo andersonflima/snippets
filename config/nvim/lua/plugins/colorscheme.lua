@@ -1,17 +1,11 @@
 return {
 	{
-		"andersonflima/neon-theme-neovim",
+		"andersonflima/crowquill-theme",
 		lazy = false,
 		priority = 1000,
-		opts = {
-			transparent = false,
-			terminal_colors = true,
-			style = "atom",
-		},
-		config = function(_, opts)
-			require("neon").setup(opts)
-			vim.cmd.colorscheme("neon")
+		config = function()
+			vim.o.background = "light"
+			vim.cmd.colorscheme("crowquill-light")
 		end,
 	},
 }
-
