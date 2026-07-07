@@ -25,6 +25,9 @@ class Settings:
 
     # --- M2M para o API Gateway (client_credentials no Cognito) --------------
     gateway_base_url: str = ""
+    # M2M ligado por padrão (produção). Desligar só em ambientes sem Cognito
+    # (dev/local): o BFF encaminha ao gateway sem Bearer, apenas com o ator.
+    m2m_enabled: bool = True
     m2m_token_url: str = ""
     m2m_client_id: str = ""
     m2m_client_secret: str = ""
@@ -52,6 +55,7 @@ def load_settings() -> Settings:
         cookie_domain=os.getenv("BFF_COOKIE_DOMAIN") or None,
         users_json=os.getenv("BFF_USERS", "[]"),
         gateway_base_url=os.getenv("API_GATEWAY_BASE_URL", "").rstrip("/"),
+        m2m_enabled=os.getenv("BFF_M2M_ENABLED", "true").lower() != "false",
         m2m_token_url=os.getenv("BFF_M2M_TOKEN_URL", ""),
         m2m_client_id=os.getenv("BFF_M2M_CLIENT_ID", ""),
         m2m_client_secret=os.getenv("BFF_M2M_CLIENT_SECRET", ""),

@@ -2,3 +2,5 @@ __pycache__/
 *.py[cod]
 .venv/
 .nvimlog
+# segredos locais do stack (use .env.example como base)
+.env
