@@ -9,6 +9,10 @@ import {
   HeatCell,
   Insight,
   Kpi,
+  KpiBreakdownItem,
+  KpiDetail,
+  KpiSeriesPoint,
+  KpiStat,
   ServiceCount,
   SERVICES,
   StatusSlice,
@@ -176,6 +180,239 @@ export class AnalyticsDataService {
     };
   }
 
+  /**
+   * Rich per-KPI detail for the drill-down modal. Built from the SAME
+   * {@link snapshot} so it stays consistent with the cards. Deterministic:
+   * reuses snapshot data (and its seeded sparks) plus a locally seeded PRNG for
+   * the breakdown splits that aren't already in the mock.
+   */
+  kpiDetail(key: string, days: number): KpiDetail {
+    const data = this.snapshot(days);
+    const kpi = data.kpis.find((k) => k.key === key) ?? data.kpis[0];
+    const series = data.actionsOverTime;
+
+    const base = {
+      key: kpi.key,
+      title: kpi.label,
+      valueLabel: fmtKpiValue(kpi),
+      deltaPct: kpi.deltaPct,
+      higherIsBetter: kpi.higherIsBetter,
+      tone: kpi.tone,
+    };
+
+    switch (kpi.key) {
+      case 'success':
+        return { ...base, ...this.successDetail(kpi, series, data.statusBreakdown) };
+      case 'cost':
+        return { ...base, ...this.costDetail(data.costTrend, days) };
+      case 'savings':
+        return { ...base, ...this.savingsDetail(data.costTrend, days) };
+      case 'resources':
+        return { ...base, ...this.resourcesDetail(kpi, series, data.byService) };
+      case 'latency':
+        return { ...base, ...this.latencyDetail(kpi, series) };
+      case 'actions':
+      default:
+        return { ...base, ...this.actionsDetail(series, data.byService) };
+    }
+  }
+
+  private actionsDetail(
+    series: DayPoint[],
+    byService: ServiceCount[],
+  ): Omit<KpiDetail, keyof KpiDetailBase> {
+    const totals = series.map((d) => d.success + d.failed);
+    const total = sum(totals);
+    const success = sum(series.map((d) => d.success));
+    const successRate = total ? (success / total) * 100 : 0;
+    const primary: KpiSeriesPoint[] = series.map((d) => ({
+      t: d.date,
+      value: d.success + d.failed,
+    }));
+    const secondary: KpiBreakdownItem[] = byService
+      .slice(0, 8)
+      .map((s) => ({ label: s.service, value: s.count }));
+    return {
+      description:
+        `No período foram executadas ${n0(total)} ações, com média de ` +
+        `${n0(total / Math.max(1, series.length))} por dia e pico de ${n0(max(totals))}. ` +
+        `A taxa de sucesso agregada ficou em ${pctStr(successRate)}, indicando volume ` +
+        `saudável e tendência estável de operação.`,
+      stats: [
+        stat('Total', n0(total)),
+        stat('Média/dia', n0(total / Math.max(1, series.length))),
+        stat('Pico', n0(max(totals))),
+        stat('Sucesso', pctStr(successRate)),
+      ],
+      primaryTitle: 'Ações por dia',
+      primaryUnit: '',
+      primary,
+      secondaryTitle: 'Volume por serviço',
+      secondary,
+    };
+  }
+
+  private successDetail(
+    kpi: Kpi,
+    series: DayPoint[],
+    statusBreakdown: StatusSlice[],
+  ): Omit<KpiDetail, keyof KpiDetailBase> {
+    const rates = series.map((d) =>
+      d.success + d.failed ? (d.success / (d.success + d.failed)) * 100 : 0,
+    );
+    const primary: KpiSeriesPoint[] = series.map((d, i) => ({ t: d.date, value: rates[i] }));
+    const secondary: KpiBreakdownItem[] = statusBreakdown.map((s) => ({
+      label: s.name,
+      value: s.value,
+    }));
+    const avg = rates.length ? sum(rates) / rates.length : 0;
+    return {
+      description:
+        `A taxa de sucesso está em ${pctStr(kpi.value)}, com média diária de ${pctStr(avg)}. ` +
+        `O melhor dia atingiu ${pctStr(max(rates))} e o pior ${pctStr(min(rates))}. ` +
+        `Falhas se concentram em ambientes de teste, sem impacto relevante em produção.`,
+      stats: [
+        stat('Atual', pctStr(kpi.value)),
+        stat('Média', pctStr(avg)),
+        stat('Melhor dia', pctStr(max(rates))),
+        stat('Pior dia', pctStr(min(rates))),
+      ],
+      primaryTitle: 'Taxa de sucesso por dia',
+      primaryUnit: '%',
+      primary,
+      secondaryTitle: 'Distribuição por status',
+      secondary,
+    };
+  }
+
+  private costDetail(costTrend: CostPoint[], days: number): Omit<KpiDetail, keyof KpiDetailBase> {
+    const costs = costTrend.map((c) => c.cost);
+    const monthCost = costs[costs.length - 1];
+    const prevCost = costs[costs.length - 2];
+    const avg = costs.length ? sum(costs) / costs.length : 0;
+    const primary: KpiSeriesPoint[] = costTrend.map((c) => ({ t: c.month, value: c.cost }));
+    const secondary = this.resourceSplit(monthCost, 0x0057 + days);
+    return {
+      description:
+        `O custo do mês corrente é ${usd(monthCost)}, ${pct(monthCost, prevCost) <= 0 ? 'abaixo' : 'acima'} ` +
+        `do mês anterior (${signedPct(pct(monthCost, prevCost))}). A média dos últimos 12 meses é ` +
+        `${usd(avg)}, com máximo de ${usd(max(costs))}. Maior parte concentrada em banco de dados e computação.`,
+      stats: [
+        stat('Mês atual', usd(monthCost)),
+        stat('Média 12m', usd(avg)),
+        stat('Máx', usd(max(costs))),
+        stat('Δ vs anterior', signedPct(pct(monthCost, prevCost))),
+      ],
+      primaryTitle: 'Custo por mês',
+      primaryUnit: 'US$',
+      primary,
+      secondaryTitle: 'Custo por tipo de recurso',
+      secondary,
+    };
+  }
+
+  private savingsDetail(
+    costTrend: CostPoint[],
+    days: number,
+  ): Omit<KpiDetail, keyof KpiDetailBase> {
+    const savings = costTrend.map((c) => c.savings);
+    const monthSavings = savings[savings.length - 1];
+    const accrued = sum(savings);
+    const avg = savings.length ? accrued / savings.length : 0;
+    const primary: KpiSeriesPoint[] = costTrend.map((c) => ({ t: c.month, value: c.savings }));
+    const secondary = this.resourceSplit(monthSavings, 0x00a5 + days);
+    return {
+      description:
+        `A economia FinOps do mês é ${usd(monthSavings)}, acumulando ${usd(accrued)} em 12 meses ` +
+        `(média de ${usd(avg)}/mês). O melhor mês economizou ${usd(max(savings))}. ` +
+        `Ganhos vêm de rightsizing, agendamento de start-stop e ajustes de storage.`,
+      stats: [
+        stat('Mês atual', usd(monthSavings)),
+        stat('Acumulado 12m', usd(accrued)),
+        stat('Média', usd(avg)),
+        stat('Melhor mês', usd(max(savings))),
+      ],
+      primaryTitle: 'Economia por mês',
+      primaryUnit: 'US$',
+      primary,
+      secondaryTitle: 'Economia por produto',
+      secondary,
+    };
+  }
+
+  private resourcesDetail(
+    kpi: Kpi,
+    series: DayPoint[],
+    byService: ServiceCount[],
+  ): Omit<KpiDetail, keyof KpiDetailBase> {
+    // Reuse the deterministic resources-over-time spark from the KPI.
+    const values = kpi.spark.map((v) => Math.round(v));
+    const primary: KpiSeriesPoint[] = series.map((d, i) => ({
+      t: d.date,
+      value: values[i] ?? Math.round(kpi.value),
+    }));
+    const active = Math.round(kpi.value);
+    const newLast7 =
+      values.length > 7 ? Math.max(0, values[values.length - 1] - values[values.length - 8]) : 0;
+    const avg = values.length ? sum(values) / values.length : active;
+    const secondary: KpiBreakdownItem[] = byService
+      .slice(0, 8)
+      .map((s) => ({ label: s.service, value: s.count }));
+    return {
+      description:
+        `São ${n0(active)} recursos ativos, com ${n0(newLast7)} novos nos últimos 7 dias e ` +
+        `média de ${n0(avg)} no período. O pico foi de ${n0(max(values))}. ` +
+        `A distribuição por serviço mostra concentração nos fluxos de provisionamento.`,
+      stats: [
+        stat('Ativos', n0(active)),
+        stat('Novos (7d)', n0(newLast7)),
+        stat('Média', n0(avg)),
+        stat('Pico', n0(max(values))),
+      ],
+      primaryTitle: 'Recursos ativos por dia',
+      primaryUnit: '',
+      primary,
+      secondaryTitle: 'Distribuição por serviço',
+      secondary,
+    };
+  }
+
+  private latencyDetail(kpi: Kpi, series: DayPoint[]): Omit<KpiDetail, keyof KpiDetailBase> {
+    // Reuse the deterministic per-day duration spark from the KPI.
+    const values = kpi.spark.map((v) => v);
+    const primary: KpiSeriesPoint[] = series.map((d, i) => ({
+      t: d.date,
+      value: values[i] ?? kpi.value,
+    }));
+    const avg = values.length ? sum(values) / values.length : kpi.value;
+    return {
+      description:
+        `A duração média atual é ${secStr(kpi.value)}, com média de ${secStr(avg)} no período. ` +
+        `O P95 fica em ${secStr(percentile(values, 95))} e o máximo em ${secStr(max(values))}. ` +
+        `Tempos estáveis indicam boa saúde das automações.`,
+      stats: [
+        stat('Atual', secStr(kpi.value)),
+        stat('Média', secStr(avg)),
+        stat('P95', secStr(percentile(values, 95))),
+        stat('Máx', secStr(max(values))),
+      ],
+      primaryTitle: 'Duração média por dia',
+      primaryUnit: 's',
+      primary,
+    };
+  }
+
+  /** Deterministic split of a total across resource-type buckets. */
+  private resourceSplit(totalValue: number, seed: number): KpiBreakdownItem[] {
+    const rng = mulberry32(seed);
+    const types = ['RDS', 'EC2', 'S3', 'Lambda', 'EBS', 'KMS', 'VPC'];
+    const weights = types.map(() => 0.4 + rng());
+    const wsum = sum(weights);
+    return types
+      .map((label, i) => ({ label, value: Math.round((weights[i] / wsum) * totalValue) }))
+      .sort((a, b) => b.value - a.value);
+  }
+
   private dailySeries(days: number, rng: () => number): DayPoint[] {
     const out: DayPoint[] = [];
     const today = new Date();
@@ -309,4 +546,64 @@ function pct(now: number, prev: number): number {
 
 function fmtDay(d: Date): string {
   return `${String(d.getDate()).padStart(2, '0')}/${String(d.getMonth() + 1).padStart(2, '0')}`;
+}
+
+/** Fields of {@link KpiDetail} filled generically from the source {@link Kpi}. */
+type KpiDetailBase = Pick<
+  KpiDetail,
+  'key' | 'title' | 'valueLabel' | 'deltaPct' | 'higherIsBetter' | 'tone'
+>;
+
+function max(xs: number[]): number {
+  return xs.length ? Math.max(...xs) : 0;
+}
+
+function min(xs: number[]): number {
+  return xs.length ? Math.min(...xs) : 0;
+}
+
+function percentile(xs: number[], p: number): number {
+  if (!xs.length) {
+    return 0;
+  }
+  const sorted = [...xs].sort((a, b) => a - b);
+  const idx = Math.min(sorted.length - 1, Math.floor((p / 100) * (sorted.length - 1)));
+  return sorted[idx];
+}
+
+function stat(label: string, value: string): KpiStat {
+  return { label, value };
+}
+
+function n0(x: number): string {
+  return Math.round(x).toLocaleString('pt-BR');
+}
+
+function n1(x: number): string {
+  return x.toLocaleString('pt-BR', { minimumFractionDigits: 1, maximumFractionDigits: 1 });
+}
+
+function pctStr(x: number): string {
+  return `${n1(x)}%`;
+}
+
+function signedPct(x: number): string {
+  return `${x >= 0 ? '+' : ''}${n1(x)}%`;
+}
+
+function usd(x: number): string {
+  return `US$ ${n0(x)}`;
+}
+
+function secStr(x: number): string {
+  return `${n1(x)}s`;
+}
+
+/** Formats a {@link Kpi} value the same way the cards render it. */
+function fmtKpiValue(k: Kpi): string {
+  const num = k.value.toLocaleString('pt-BR', {
+    minimumFractionDigits: k.decimals,
+    maximumFractionDigits: k.decimals,
+  });
+  return `${k.prefix ?? ''}${num}${k.suffix ?? ''}`;
 }
