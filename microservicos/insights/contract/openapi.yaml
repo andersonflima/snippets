@@ -1,0 +1,239 @@
+openapi: 3.0.3
+info:
+  title: insights — contrato (API Gateway path)
+  version: 1.0.0
+  description: "Analytics read-only por produto: inventário de recursos, métricas, logs, metadados (perf. de BD) e rightsizing/FinOps. Sem GMUD. Exposto via API Gateway -> VPC Link -> NLB interno -> EKS."
+servers:
+  - url: "https://${stageVariables.apiDomain}/${stageVariables.basePath}"
+x-amazon-apigateway-request-validators:
+  all:
+    validateRequestBody: true
+    validateRequestParameters: true
+paths:
+  /insights:
+    post:
+      summary: "Analytics read-only por produto: inventário de recursos, métricas, logs, metadados (perf. de BD) e rightsizing/FinOps. Sem GMUD."
+      operationId: insights_execute
+      tags:
+        - insights
+      security:
+        - CognitoJWT: []
+      x-amazon-apigateway-request-validator: all
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/InsightsRequest"
+      responses:
+        202:
+          description: Ação aceita (assíncrona).
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ActionAccepted"
+        400:
+          description: Requisição inválida.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        403:
+          description: AssumeRole negado / sem permissão.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        404:
+          description: Recurso não encontrado.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        409:
+          description: Conflito / estado inválido do recurso.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        422:
+          description: Payload inválido (validação do schema).
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        500:
+          description: Erro interno inesperado.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        502:
+          description: Falha no upstream (EKS/NLB).
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+      x-amazon-apigateway-integration:
+        type: http_proxy
+        httpMethod: POST
+        connectionType: VPC_LINK
+        connectionId: "${stageVariables.vpcLinkId}"
+        uri: "http://${stageVariables.nlbDns}/insights/execute"
+        passthroughBehavior: when_no_match
+        timeoutInMillis: 29000
+        requestParameters:
+          integration.request.header.X-Request-Id: context.requestId
+        responses:
+          default:
+            statusCode: 200
+components:
+  securitySchemes:
+    CognitoJWT:
+      type: apiKey
+      name: Authorization
+      in: header
+      x-amazon-apigateway-authtype: cognito_user_pools
+      x-amazon-apigateway-authorizer:
+        type: cognito_user_pools
+        providerARNs:
+          - "${COGNITO_USER_POOL_ARN}"
+  schemas:
+    InsightsRequest:
+      type: object
+      additionalProperties: false
+      required:
+        - account
+        - roleArn
+        - region
+        - environment
+        - params
+      properties:
+        account:
+          type: string
+          description: Conta AWS alvo (12 dígitos).
+          pattern: "^\\d{12}$"
+        resource:
+          type: string
+          description: Nome ou ARN do recurso alvo da ação.
+        roleArn:
+          type: string
+          description: "Role para STS:AssumeRole na conta alvo."
+          pattern: "^arn:aws:iam::\\d{12}:role/.+$"
+        region:
+          type: string
+          description: Região AWS.
+          pattern: "^[a-z]{2}-[a-z]+-\\d$"
+        environment:
+          type: string
+          enum:
+            - dev
+            - homol
+            - staging
+            - prod
+          description: "Ambiente target da ação. 'prod' exige GMUD aprovada (ServiceNow)."
+        changeNumber:
+          type: string
+          description: Número da GMUD/change no ServiceNow (obrigatório p/ produção).
+        requestId:
+          type: string
+          description: Idempotency key opcional (correlação do pipeline).
+        dryRun:
+          type: boolean
+          default: false
+          description: Valida sem executar.
+        params:
+          type: object
+          description: Parâmetros específicos da ação insights.
+          properties:
+            action:
+              type: string
+              enum:
+                - resources
+                - metrics
+                - logs
+                - metadata
+                - finops
+              description: Tipo de análise solicitada.
+            product:
+              type: string
+              enum:
+                - rds
+                - ec2
+                - ebs
+                - elb
+                - eip
+                - snapshot
+                - kms
+                - vpc-endpoint
+                - all
+              default: all
+              description: Produto AWS alvo.
+            resourceId:
+              type: string
+              description: Recurso alvo (obrigatório p/ metrics/logs/metadata).
+            filters:
+              type: object
+              description: Filtros da listagem (search/status/env/type).
+              additionalProperties: true
+            metric:
+              type: string
+              description: "Métrica (cpu|memory|connections|iops|storageUsed|latency)."
+            lookback:
+              type: integer
+              description: "Janela: minutos (metrics/logs) ou dias (finops)."
+            level:
+              type: string
+              description: "Nível de log (error|warn|info)."
+            limit:
+              type: integer
+              description: Máximo de itens retornados.
+          required:
+            - action
+          additionalProperties: false
+    ActionAccepted:
+      type: object
+      required:
+        - operationId
+        - status
+      properties:
+        operationId:
+          type: string
+          description: ID da operação assíncrona.
+        status:
+          type: string
+          enum:
+            - accepted
+            - in-progress
+        resource:
+          type: string
+          description: Recurso alvo.
+        account:
+          type: string
+          description: Conta alvo.
+        links:
+          type: object
+          properties:
+            status:
+              type: string
+              description: URL de consulta de status.
+    Error:
+      type: object
+      required:
+        - code
+        - message
+      properties:
+        code:
+          type: string
+          enum:
+            - validation_error
+            - assume_role_denied
+            - not_found
+            - conflict
+            - upstream_error
+        message:
+          type: string
+          description: Descrição do erro.
+        requestId:
+          type: string
+          description: Correlação.

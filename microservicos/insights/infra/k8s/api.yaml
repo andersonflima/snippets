@@ -1,0 +1,80 @@
+# Deploy do microserviço insights (read-only analytics por produto).
+# Substitua <ACCOUNT_ID> pela conta da plataforma (a esteira sobrescreve a tag).
+# INSIGHTS_MODE: 'mock' (default, sem AWS) ou 'aws' (usa a IRSA abaixo p/ dados reais).
+# O modo 'aws' também assume a role informada no request (STS AssumeRole) e, para
+# metadados de RDS, lê a senha via Secrets Manager e conecta com psycopg.
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: insights
+  namespace: microservicos
+  annotations:
+    eks.amazonaws.com/role-arn: arn:aws:iam::<ACCOUNT_ID>:role/microservicos-insights-irsa
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: insights-config
+  namespace: microservicos
+data:
+  AWS_REGION: sa-east-1
+  # Alterne para "aws" quando a IRSA/credenciais estiverem prontas.
+  INSIGHTS_MODE: mock
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: insights
+  namespace: microservicos
+  labels:
+    app: insights
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: insights
+  template:
+    metadata:
+      labels:
+        app: insights
+    spec:
+      serviceAccountName: insights
+      containers:
+        - name: insights
+          image: <ACCOUNT_ID>.dkr.ecr.sa-east-1.amazonaws.com/microservicos-insights:latest
+          ports:
+            - containerPort: 8080
+          envFrom:
+            - configMapRef:
+                name: insights-config
+          resources:
+            requests:
+              cpu: 50m
+              memory: 128Mi
+            limits:
+              cpu: 500m
+              memory: 256Mi
+          readinessProbe:
+            httpGet:
+              path: /readyz
+              port: 8080
+          livenessProbe:
+            httpGet:
+              path: /healthz
+              port: 8080
+          securityContext:
+            runAsNonRoot: true
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: insights
+  namespace: microservicos
+spec:
+  selector:
+    app: insights
+  ports:
+    - port: 8080
+      targetPort: 8080

@@ -2,6 +2,7 @@ import {
   ChangeDetectionStrategy,
   Component,
   computed,
+  effect,
   inject,
   signal,
 } from '@angular/core';
@@ -105,6 +106,17 @@ export class RunActionComponent {
     { initialValue: { contractId: '', opId: '' } },
   );
 
+  /** Prefill hints passed by the resource-detail quick actions (optional). */
+  private readonly prefillParams = toSignal(
+    this.route.queryParamMap.pipe(
+      map((q) => ({
+        resource: q.get('resource') ?? '',
+        region: q.get('region') ?? '',
+      })),
+    ),
+    { initialValue: { resource: '', region: '' } },
+  );
+
   readonly integration = computed<Integration | undefined>(() => {
     const { contractId, opId } = this.params();
     return this.registry.findIntegration(contractId, opId);
@@ -123,6 +135,48 @@ export class RunActionComponent {
 
   readonly submitting = signal(false);
   readonly result = signal<ActionResult | null>(null);
+
+  constructor() {
+    // Prefill each time the form is (re)created for a route, without clobbering
+    // values the operator already typed. Reads `form()` and the query params so
+    // it re-runs when the integration or the prefill hints change.
+    effect(() => {
+      const form = this.form();
+      const hints = this.prefillParams();
+      this.prefill(form, hints);
+    });
+  }
+
+  /**
+   * Prefill the AWS envelope + resource fields when the matching controls exist
+   * and are still empty. Region prefers the query param, then the settings
+   * profile. Standalone navigation (no query params) keeps working.
+   */
+  private prefill(form: FormGroup, hints: { resource: string; region: string }): void {
+    const envelope = this.settings.awsEnvelope();
+    this.patchIfEmpty(form, 'account', envelope.account);
+    this.patchIfEmpty(form, 'roleArn', envelope.roleArn);
+    this.patchIfEmpty(form, 'environment', envelope.environment);
+    this.patchIfEmpty(form, 'region', hints.region || envelope.region);
+    this.patchIfEmpty(form, 'resource', hints.resource);
+  }
+
+  /** Patch a control only when it exists, is empty, and a value is available. */
+  private patchIfEmpty(form: FormGroup, name: string, value: string): void {
+    if (!value) {
+      return;
+    }
+    const control = form.get(name);
+    if (!control) {
+      return;
+    }
+    const current = control.value;
+    const isEmpty =
+      current === null || current === undefined || String(current).trim() === '';
+    if (isEmpty) {
+      control.patchValue(value);
+    }
+  }
 
   toggleDryRun(event: Event): void {
     const checked = (event.target as HTMLInputElement).checked;
