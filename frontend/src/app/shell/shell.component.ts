@@ -28,8 +28,10 @@ interface NavItem {
 
 const NAV: NavItem[] = [
   { path: '/', label: 'Dashboard', icon: 'dashboard', exact: true },
-  { path: '/integrations', label: 'Integrações', icon: 'layers' },
+  { path: '/resources', label: 'Recursos', icon: 'server' },
+  { path: '/db-performance', label: 'Performance BD', icon: 'database' },
   { path: '/finops', label: 'FinOps', icon: 'chart' },
+  { path: '/integrations', label: 'Integrações', icon: 'layers' },
   { path: '/admin', label: 'Admin', icon: 'shield' },
   { path: '/settings', label: 'Configurações', icon: 'gear' },
 ];

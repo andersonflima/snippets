@@ -33,6 +33,15 @@ services:
   servicenow:  { <<: *micro, build: ./microservicos/servicenow }
   rds-data:    { <<: *micro, build: ./microservicos/rds-data }
 
+  # ---- insights: analytics/metadata/métricas/logs por produto (mock por padrão) ----
+  insights:
+    build: ./microservicos/insights
+    restart: unless-stopped
+    networks: [actions]
+    environment:
+      AWS_DEFAULT_REGION: ${AWS_DEFAULT_REGION:-sa-east-1}
+      INSIGHTS_MODE: ${INSIGHTS_MODE:-mock}   # mock | aws (aws exige credencial/role)
+
   # ---- API Gateway local (roteia /<service>/execute por prefixo) ----
   api-gateway:
     image: nginx:1.27-alpine
@@ -43,7 +52,7 @@ services:
       - ./deploy/local/proxy_common.conf:/etc/nginx/proxy_common.conf:ro
     depends_on:
       [create, destroy, modify, start-stop, storage, replicate, restore,
-       db-password, vpc-link, kms, finops, servicenow, rds-data]
+       db-password, vpc-link, kms, finops, servicenow, rds-data, insights]
 
   # ---- BFF (FastAPI, :8081) ----
   bff:

@@ -115,7 +115,38 @@ export class AuthService {
     const user: AuthUser = { username: 'admin', roles: ['admin'] };
     localStorage.setItem(MOCK_SESSION_KEY, JSON.stringify(user));
     this.currentUserSig.set(user);
+    // Best-effort: also open a real BFF session so authenticated /api/* proxy
+    // calls (insights, finops, actions) work locally. Ignored if BFF is down —
+    // the mock UI still works, API-backed panels just show their error state.
+    await this.ensureBffSession();
     return user;
+  }
+
+  /**
+   * Ensures a valid BFF cookie session exists (probe /auth/me, log in with the
+   * local admin/admin if missing). Signal-safe: it never mutates `currentUser`,
+   * so the mock session stays intact even when the BFF is unreachable.
+   */
+  private async ensureBffSession(): Promise<void> {
+    try {
+      await firstValueFrom(
+        this.http.get(this.url('/auth/me'), { withCredentials: true }),
+      );
+      return; // cookie already valid
+    } catch {
+      /* no/expired cookie — try to establish one below */
+    }
+    try {
+      await firstValueFrom(
+        this.http.post(
+          this.url('/auth/login'),
+          { username: 'admin', password: 'admin' },
+          { withCredentials: true },
+        ),
+      );
+    } catch {
+      /* BFF unreachable — stay on the local mock session */
+    }
   }
 
   private async mockLogout(): Promise<void> {
@@ -126,6 +157,11 @@ export class AuthService {
   private async mockLoadMe(): Promise<AuthUser | null> {
     const user = this.readMockSession();
     this.currentUserSig.set(user);
+    // Refresh the BFF cookie in the background so API-backed panels keep working
+    // after a reload; does not gate the guard decision.
+    if (user) {
+      void this.ensureBffSession();
+    }
     return user;
   }
 
