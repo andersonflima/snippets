@@ -21,10 +21,13 @@ class GatewayClient:
         if not base:
             raise UpstreamError("API_GATEWAY_BASE_URL não configurado", code="gateway_not_configured")
         headers = {
-            "Authorization": f"Bearer {self._tokens.token()}",
             "X-Actor": actor.username,
             "X-Actor-Roles": ",".join(actor.roles),
         }
+        # Bearer M2M só quando habilitado (produção). Em dev/local sem Cognito,
+        # encaminha apenas com a identidade do ator, sem token de serviço.
+        if self._settings.m2m_enabled:
+            headers["Authorization"] = f"Bearer {self._tokens.token()}"
         if request_id:
             headers["X-Request-Id"] = request_id
         try:

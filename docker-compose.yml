@@ -1,0 +1,75 @@
+# Stack LOCAL do console de ações (frontend + BFF + microserviços + gateway local).
+#
+# Topologia:
+#   frontend (nginx:80) --/bff/*--> bff (8081) --/<service>/execute--> api-gateway
+#   (nginx local, 8080) --por prefixo--> microserviço FastAPI <service> (8080).
+#
+# O api-gateway substitui, para desenvolvimento, o AWS API Gateway -> VPC Link ->
+# NLB -> EKS. Ações que chamam AWS de verdade exigem credenciais/Cognito (M2M) e
+# não completam localmente; healthz/login/UI sobem e ficam saudáveis sem AWS.
+
+x-micro: &micro
+  restart: unless-stopped
+  networks: [actions]
+  environment:
+    AWS_DEFAULT_REGION: ${AWS_DEFAULT_REGION:-us-east-1}
+  # Para exercitar /execute contra AWS real, descomente e use um perfil válido:
+  # volumes:
+  #   - ${HOME}/.aws:/home/appuser/.aws:ro
+
+services:
+  # ---- microserviços action-driven (FastAPI, :8080, servem /<service>/execute) ----
+  create:      { <<: *micro, build: ./microservicos/create }
+  destroy:     { <<: *micro, build: ./microservicos/destroy }
+  modify:      { <<: *micro, build: ./microservicos/modify }
+  start-stop:  { <<: *micro, build: ./microservicos/start-stop }
+  storage:     { <<: *micro, build: ./microservicos/storage }
+  replicate:   { <<: *micro, build: ./microservicos/replicate }
+  restore:     { <<: *micro, build: ./microservicos/restore }
+  db-password: { <<: *micro, build: ./microservicos/db-password }
+  vpc-link:    { <<: *micro, build: ./microservicos/vpc-link }
+  kms:         { <<: *micro, build: ./microservicos/kms }
+  finops:      { <<: *micro, build: ./microservicos/finops }
+  servicenow:  { <<: *micro, build: ./microservicos/servicenow }
+  rds-data:    { <<: *micro, build: ./microservicos/rds-data }
+
+  # ---- API Gateway local (roteia /<service>/execute por prefixo) ----
+  api-gateway:
+    image: nginx:1.27-alpine
+    restart: unless-stopped
+    networks: [actions]
+    volumes:
+      - ./deploy/local/api-gateway.conf:/etc/nginx/conf.d/default.conf:ro
+      - ./deploy/local/proxy_common.conf:/etc/nginx/proxy_common.conf:ro
+    depends_on:
+      [create, destroy, modify, start-stop, storage, replicate, restore,
+       db-password, vpc-link, kms, finops, servicenow, rds-data]
+
+  # ---- BFF (FastAPI, :8081) ----
+  bff:
+    build: ./bff
+    restart: unless-stopped
+    networks: [actions]
+    env_file: [.env]                      # BFF_JWT_SECRET/BFF_USERS sem interpolação ($ do bcrypt)
+    environment:
+      BFF_COOKIE_SECURE: "false"          # local é HTTP; cookie sem flag Secure
+      BFF_COOKIE_SAMESITE: "lax"
+      API_GATEWAY_BASE_URL: http://api-gateway:8080
+      # Sem Cognito no local: BFF_M2M_ENABLED=false (no .env) faz o BFF encaminhar
+      # ao gateway sem token M2M, só com a identidade do ator.
+    depends_on: [api-gateway]
+
+  # ---- Frontend (Angular buildado, servido por nginx :80) ----
+  frontend:
+    build: ./frontend
+    restart: unless-stopped
+    networks: [actions]
+    ports:
+      - "${FRONTEND_PORT:-8088}:80"
+    environment:
+      BFF_UPSTREAM: http://bff:8081
+    depends_on: [bff]
+
+networks:
+  actions:
+    driver: bridge
