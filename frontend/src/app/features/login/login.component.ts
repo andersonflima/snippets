@@ -59,6 +59,8 @@ interface ErrorEnvelope {
             {{ submitting() ? 'Entrando…' : 'Entrar' }}
           </button>
         </div>
+
+        <p class="hint">Login de teste: <strong>admin</strong> / <strong>admin</strong></p>
       </form>
     </div>
   `,
@@ -67,8 +69,8 @@ export class LoginComponent {
   private readonly auth = inject(AuthService);
   private readonly router = inject(Router);
 
-  readonly username = signal('');
-  readonly password = signal('');
+  readonly username = signal('admin');
+  readonly password = signal('admin');
   readonly submitting = signal(false);
   readonly error = signal<string | null>(null);
 
@@ -94,6 +96,8 @@ export class LoginComponent {
       if (envelope?.message) {
         return envelope.message;
       }
+    } else if (err instanceof Error && err.message) {
+      return err.message;
     }
     return 'Não foi possível entrar. Tente novamente.';
   }

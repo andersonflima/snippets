@@ -1,4 +1,6 @@
 import { Routes } from '@angular/router';
+import { ShellComponent } from './shell/shell.component';
+import { DashboardComponent } from './dashboard/dashboard.component';
 import { IntegrationsComponent } from './features/integrations.component';
 import { RunActionComponent } from './features/run-action.component';
 import { AdminComponent } from './features/admin.component';
@@ -11,33 +13,16 @@ export const routes: Routes = [
   { path: 'login', component: LoginComponent, title: 'Entrar' },
   {
     path: '',
-    component: IntegrationsComponent,
-    title: 'Integrações',
+    component: ShellComponent,
     canActivate: [authGuard],
-  },
-  {
-    path: 'run/:contractId/:opId',
-    component: RunActionComponent,
-    title: 'Executar ação',
-    canActivate: [authGuard],
-  },
-  {
-    path: 'admin',
-    component: AdminComponent,
-    title: 'Admin',
-    canActivate: [authGuard],
-  },
-  {
-    path: 'settings',
-    component: SettingsComponent,
-    title: 'Settings',
-    canActivate: [authGuard],
-  },
-  {
-    path: 'finops',
-    component: FinOpsComponent,
-    title: 'FinOps',
-    canActivate: [authGuard],
+    children: [
+      { path: '', component: DashboardComponent, title: 'Dashboard' },
+      { path: 'integrations', component: IntegrationsComponent, title: 'Integrações' },
+      { path: 'run/:contractId/:opId', component: RunActionComponent, title: 'Executar ação' },
+      { path: 'admin', component: AdminComponent, title: 'Admin' },
+      { path: 'settings', component: SettingsComponent, title: 'Configurações' },
+      { path: 'finops', component: FinOpsComponent, title: 'FinOps' },
+    ],
   },
   { path: '**', redirectTo: '' },
 ];
