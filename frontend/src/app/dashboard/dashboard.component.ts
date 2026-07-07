@@ -2,6 +2,7 @@ import { ChangeDetectionStrategy, Component, computed, inject, signal } from '@a
 import { EChartComponent } from '../shared/echart.component';
 import { CountUpComponent } from '../shared/count-up.component';
 import { IconComponent } from '../shared/icon.component';
+import { ModalComponent } from '../shared/modal.component';
 import { ThemeService } from '../core/theme.service';
 import { AnalyticsDataService } from './analytics-data.service';
 import { ActionStatus, Kpi } from './analytics.model';
@@ -11,6 +12,8 @@ import {
   byServiceOptions,
   costOptions,
   heatmapOptions,
+  kpiDetailBreakdownOptions,
+  kpiDetailPrimaryOptions,
   palette,
   sparkOptions,
   statusOptions,
@@ -27,7 +30,7 @@ const PERIODS = [
   selector: 'app-dashboard',
   standalone: true,
   changeDetection: ChangeDetectionStrategy.OnPush,
-  imports: [EChartComponent, CountUpComponent, IconComponent],
+  imports: [EChartComponent, CountUpComponent, IconComponent, ModalComponent],
   template: `
     <div class="page-head anim-in">
       <div>
@@ -45,7 +48,16 @@ const PERIODS = [
 
     <section class="kpi-grid">
       @for (k of data().kpis; track k.key; let i = $index) {
-        <article class="kpi anim-in" [style.animation-delay.ms]="i * 60">
+        <article
+          class="kpi anim-in clickable"
+          [style.animation-delay.ms]="i * 60"
+          role="button"
+          tabindex="0"
+          [attr.aria-label]="'Ver detalhes: ' + k.label"
+          (click)="openKpi(k)"
+          (keydown.enter)="openKpi(k)"
+          (keydown.space)="openKpi(k)"
+        >
           <div class="kpi-top">
             <span class="kpi-ic" [attr.data-tone]="k.tone"><app-icon [name]="k.icon" /></span>
             <span class="kpi-delta" [attr.data-dir]="deltaDir(k)">
@@ -60,7 +72,10 @@ const PERIODS = [
               [suffix]="k.suffix ?? ''"
             />
           </div>
-          <div class="kpi-label">{{ k.label }}</div>
+          <div class="kpi-label">
+            {{ k.label }}
+            <app-icon name="expand" [size]="13" class="kpi-expand" />
+          </div>
           <div class="kpi-spark">
             <app-echart [options]="sparkFor(k)" height="38px" />
           </div>
@@ -141,7 +156,116 @@ const PERIODS = [
         </ul>
       </article>
     </section>
+
+    <app-modal
+      [open]="!!kpiDetail()"
+      [title]="kpiDetail()?.title ?? ''"
+      [subtitle]="'Detalhamento da métrica no período selecionado'"
+      (close)="closeKpi()"
+    >
+      @if (kpiDetail(); as d) {
+        <div class="kpi-detail">
+          <div class="kd-headline">
+            <span class="kd-value">{{ d.valueLabel }}</span>
+            <span class="kpi-delta" [attr.data-dir]="d.deltaPct >= 0 === d.higherIsBetter ? 'good' : 'bad'">
+              {{ d.deltaPct >= 0 ? '▲' : '▼' }} {{ absVal(d.deltaPct) }}% vs. período anterior
+            </span>
+          </div>
+
+          <div class="kd-stats">
+            @for (s of d.stats; track s.label) {
+              <div class="kd-stat">
+                <span class="kd-stat-val">{{ s.value }}</span>
+                <span class="muted">{{ s.label }}</span>
+              </div>
+            }
+          </div>
+
+          <div class="kd-chart">
+            <div class="panel-head"><h3>{{ d.primaryTitle }}</h3><span class="muted">passe o mouse / arraste para dar zoom</span></div>
+            <app-echart [options]="kpiPrimaryOpts()" height="340px" />
+          </div>
+
+          @if (d.secondary && d.secondary.length) {
+            <div class="kd-chart">
+              <div class="panel-head"><h3>{{ d.secondaryTitle }}</h3></div>
+              <app-echart [options]="kpiBreakdownOpts()" height="300px" />
+            </div>
+          }
+
+          <p class="kd-desc muted">{{ d.description }}</p>
+        </div>
+      }
+    </app-modal>
   `,
+  styles: [
+    `
+      .kpi.clickable {
+        cursor: pointer;
+      }
+      .kpi-expand {
+        opacity: 0;
+        color: var(--muted);
+        transition: opacity 0.15s;
+        vertical-align: middle;
+        margin-left: 0.25rem;
+      }
+      .kpi.clickable:hover .kpi-expand,
+      .kpi.clickable:focus-visible .kpi-expand {
+        opacity: 1;
+      }
+      .kpi-detail {
+        display: flex;
+        flex-direction: column;
+        gap: 1.1rem;
+      }
+      .kd-headline {
+        display: flex;
+        align-items: baseline;
+        gap: 0.75rem;
+        flex-wrap: wrap;
+      }
+      .kd-value {
+        font-size: 2rem;
+        font-weight: 700;
+        letter-spacing: -0.01em;
+      }
+      .kd-stats {
+        display: grid;
+        grid-template-columns: repeat(auto-fit, minmax(120px, 1fr));
+        gap: 0.6rem;
+      }
+      .kd-stat {
+        display: flex;
+        flex-direction: column;
+        gap: 0.15rem;
+        padding: 0.65rem 0.8rem;
+        background: var(--panel-2);
+        border: 1px solid var(--border);
+        border-radius: 10px;
+        font-size: 0.8rem;
+      }
+      .kd-stat-val {
+        font-size: 1.15rem;
+        font-weight: 700;
+      }
+      .kd-chart .panel-head {
+        display: flex;
+        align-items: baseline;
+        justify-content: space-between;
+        margin-bottom: 0.35rem;
+      }
+      .kd-chart h3 {
+        margin: 0;
+        font-size: 0.95rem;
+      }
+      .kd-desc {
+        font-size: 0.88rem;
+        line-height: 1.55;
+        margin: 0;
+      }
+    `,
+  ],
 })
 export class DashboardComponent {
   private readonly analytics = inject(AnalyticsDataService);
@@ -173,6 +297,33 @@ export class DashboardComponent {
 
   sparkFor(k: Kpi): EChartsOption {
     return this.sparkMap().get(k.key)!;
+  }
+
+  // --- KPI drill-down modal ---
+  readonly selectedKey = signal<string | null>(null);
+  readonly kpiDetail = computed(() => {
+    const key = this.selectedKey();
+    return key ? this.analytics.kpiDetail(key, this.period()) : null;
+  });
+  readonly kpiPrimaryOpts = computed<EChartsOption>(() => {
+    const d = this.kpiDetail();
+    return d ? kpiDetailPrimaryOptions(d, this.pal()) : {};
+  });
+  readonly kpiBreakdownOpts = computed<EChartsOption>(() => {
+    const d = this.kpiDetail();
+    return d ? kpiDetailBreakdownOptions(d, this.pal()) : {};
+  });
+
+  openKpi(k: Kpi): void {
+    this.selectedKey.set(k.key);
+  }
+
+  closeKpi(): void {
+    this.selectedKey.set(null);
+  }
+
+  absVal(n: number): string {
+    return Math.abs(n).toFixed(1);
   }
 
   deltaDir(k: Kpi): 'good' | 'bad' {

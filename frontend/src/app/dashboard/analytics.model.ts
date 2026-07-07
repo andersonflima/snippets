@@ -77,6 +77,43 @@ export interface DashboardData {
   insights: Insight[];
 }
 
+export interface KpiStat {
+  label: string;
+  value: string;
+}
+
+export interface KpiSeriesPoint {
+  t: string;
+  value: number;
+}
+
+export interface KpiBreakdownItem {
+  label: string;
+  value: number;
+}
+
+export interface KpiDetail {
+  key: string;
+  title: string;
+  /** Formatted current value (e.g. "US$ 42.874", "89,8%"). */
+  valueLabel: string;
+  deltaPct: number;
+  higherIsBetter: boolean;
+  tone: Tone;
+  /** One-paragraph pt-BR insight about the metric. */
+  description: string;
+  /** 3–4 chips (ex.: Média, Pico, Mínimo, Atual). */
+  stats: KpiStat[];
+  primaryTitle: string;
+  /** '%' | 'US$' | '' etc. for tooltip/axis. */
+  primaryUnit?: string;
+  /** Main time series to plot big. */
+  primary: KpiSeriesPoint[];
+  secondaryTitle?: string;
+  /** Optional breakdown for a bar chart. */
+  secondary?: KpiBreakdownItem[];
+}
+
 export const SERVICES = [
   'create',
   'destroy',

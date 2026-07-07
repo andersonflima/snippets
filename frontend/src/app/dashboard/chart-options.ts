@@ -5,6 +5,7 @@ import {
   DayPoint,
   ENVIRONMENTS,
   HeatCell,
+  KpiDetail,
   ServiceCount,
   SERVICES,
   StatusSlice,
@@ -328,6 +329,196 @@ export function heatmapOptions(cells: HeatCell[], p: Palette): EChartsOption {
       },
     ],
     animationDuration: 800,
+  };
+}
+
+function toneColor(p: Palette): Record<Tone, string> {
+  return { ok: p.ok, danger: p.danger, warn: p.warn, accent: p.accent };
+}
+
+/** Formats a value with the metric unit for tooltips/labels. */
+function fmtUnit(unit: string | undefined, v: number): string {
+  if (unit === 'US$') {
+    return 'US$ ' + Math.round(v).toLocaleString('pt-BR');
+  }
+  if (unit === '%') {
+    return v.toLocaleString('pt-BR', { maximumFractionDigits: 1 }) + '%';
+  }
+  if (unit === 's') {
+    return v.toLocaleString('pt-BR', { maximumFractionDigits: 1 }) + 's';
+  }
+  return Math.round(v).toLocaleString('pt-BR');
+}
+
+/** Compact axis-label formatter aware of the metric unit. */
+function fmtAxis(unit: string | undefined, v: number): string {
+  if (unit === 'US$') {
+    return v >= 1000 ? v / 1000 + 'k' : String(v);
+  }
+  if (unit === '%') {
+    return v + '%';
+  }
+  if (unit === 's') {
+    return v + 's';
+  }
+  return v >= 1000 ? v / 1000 + 'k' : String(v);
+}
+
+/**
+ * Polished large time-series chart for a KPI drill-down: smooth line + gradient
+ * area in the tone color, unit-aware tooltip/axes, an average markLine and
+ * inside+slider dataZoom for interactivity.
+ */
+export function kpiDetailPrimaryOptions(detail: KpiDetail, p: Palette): EChartsOption {
+  const color = toneColor(p)[detail.tone];
+  const unit = detail.primaryUnit ?? '';
+  const values = detail.primary.map((pt) => pt.value);
+  const avg = values.length ? values.reduce((a, b) => a + b, 0) / values.length : 0;
+  return {
+    grid: { left: 8, right: 20, top: 34, bottom: 70, containLabel: true },
+    tooltip: {
+      trigger: 'axis',
+      axisPointer: { type: 'line', lineStyle: { color: p.border } },
+      formatter: (params: any) => {
+        const arr = Array.isArray(params) ? params : [params];
+        const first = arr[0] ?? {};
+        const head = first.axisValueLabel ?? first.name ?? '';
+        const val = fmtUnit(unit, Number(first.value ?? 0));
+        return (
+          `<div style="font-weight:600;margin-bottom:2px">${head}</div>` +
+          `${first.marker ?? ''}${detail.primaryTitle}: <b>${val}</b>`
+        );
+      },
+      ...tooltipStyle(p),
+    },
+    xAxis: {
+      type: 'category',
+      data: detail.primary.map((pt) => pt.t),
+      boundaryGap: false,
+      axisLine: { lineStyle: { color: p.border } },
+      axisLabel: { color: p.muted, fontSize: 11 },
+    },
+    yAxis: {
+      type: 'value',
+      scale: unit !== '%',
+      splitLine: { lineStyle: { color: p.grid } },
+      axisLabel: {
+        color: p.muted,
+        fontSize: 11,
+        formatter: (v: number) => fmtAxis(unit, v),
+      },
+    },
+    dataZoom: [
+      { type: 'inside', throttle: 50 },
+      {
+        type: 'slider',
+        height: 18,
+        bottom: 26,
+        borderColor: p.border,
+        fillerColor: rgba(color, 0.12),
+        handleStyle: { color },
+        textStyle: { color: p.muted, fontSize: 10 },
+      },
+    ],
+    series: [
+      {
+        name: detail.primaryTitle,
+        type: 'line',
+        smooth: true,
+        symbol: 'circle',
+        symbolSize: 7,
+        showSymbol: false,
+        lineStyle: { width: 3, color },
+        itemStyle: { color },
+        areaStyle: { color: fade(color, 0.3, 0.02) as unknown as string },
+        emphasis: { focus: 'series' },
+        markLine: {
+          silent: true,
+          symbol: 'none',
+          lineStyle: { color, type: 'dashed', width: 1.5, opacity: 0.7 },
+          label: {
+            color: p.muted,
+            fontSize: 11,
+            formatter: () => 'Média ' + fmtUnit(unit, avg),
+          },
+          data: [{ yAxis: avg }],
+        },
+        data: values,
+      },
+    ],
+    animationDuration: 900,
+    animationEasing: 'cubicOut',
+  };
+}
+
+/**
+ * Horizontal bar chart for a KPI drill-down breakdown (sorted, rounded bars,
+ * value labels). Returns an empty option when there's no secondary data.
+ */
+export function kpiDetailBreakdownOptions(detail: KpiDetail, p: Palette): EChartsOption {
+  const rows = detail.secondary;
+  if (!rows || !rows.length) {
+    return {};
+  }
+  const color = toneColor(p)[detail.tone];
+  // Ascending so the largest bar renders on top.
+  const data = [...rows].sort((a, b) => a.value - b.value);
+  // Breakdowns are counts unless the metric is monetary.
+  const unit = detail.primaryUnit === 'US$' ? 'US$' : '';
+  return {
+    grid: { left: 8, right: 52, top: 12, bottom: 8, containLabel: true },
+    tooltip: {
+      trigger: 'axis',
+      axisPointer: { type: 'shadow' },
+      valueFormatter: (v) => fmtUnit(unit, Number(v)),
+      ...tooltipStyle(p),
+    },
+    xAxis: {
+      type: 'value',
+      splitLine: { lineStyle: { color: p.grid } },
+      axisLabel: {
+        color: p.muted,
+        fontSize: 11,
+        formatter: (v: number) => fmtAxis(unit, v),
+      },
+    },
+    yAxis: {
+      type: 'category',
+      data: data.map((d) => d.label),
+      axisLine: { lineStyle: { color: p.border } },
+      axisLabel: { color: p.muted, fontSize: 11 },
+    },
+    series: [
+      {
+        type: 'bar',
+        data: data.map((d) => d.value),
+        barWidth: '58%',
+        itemStyle: {
+          borderRadius: [0, 5, 5, 0],
+          color: {
+            type: 'linear',
+            x: 0,
+            y: 0,
+            x2: 1,
+            y2: 0,
+            colorStops: [
+              { offset: 0, color: rgba(color, 0.45) },
+              { offset: 1, color },
+            ],
+          } as unknown as string,
+        },
+        label: {
+          show: true,
+          position: 'right',
+          color: p.muted,
+          fontSize: 11,
+          formatter: (o: any) => fmtUnit(unit, Number(o?.value ?? 0)),
+        },
+        emphasis: { itemStyle: { color } },
+      },
+    ],
+    animationDuration: 900,
+    animationDelay: (i: number) => i * 40,
   };
 }
 
