@@ -278,6 +278,42 @@ SERVICES = [
         },
         "required": [],
     },
+    {
+        "name": "insights",
+        "summary": (
+            "Analytics read-only por produto: inventário de recursos, métricas, "
+            "logs, metadados (perf. de BD) e rightsizing/FinOps. Sem GMUD."
+        ),
+        # Read-only: não exige 'resource' no envelope (o alvo vai em params.resourceId).
+        "envelope_required": ["account", "roleArn", "region", "environment"],
+        "params": {
+            "action": {
+                "type": "string",
+                "enum": ["resources", "metrics", "logs", "metadata", "finops"],
+                "description": "Tipo de análise solicitada.",
+            },
+            "product": {
+                "type": "string",
+                "enum": ["rds", "ec2", "ebs", "elb", "eip", "snapshot", "kms", "vpc-endpoint", "all"],
+                "default": "all",
+                "description": "Produto AWS alvo.",
+            },
+            "resourceId": s_str("Recurso alvo (obrigatório p/ metrics/logs/metadata)."),
+            "filters": {
+                "type": "object",
+                "description": "Filtros da listagem (search/status/env/type).",
+                "additionalProperties": True,
+            },
+            "metric": s_str("Métrica (cpu|memory|connections|iops|storageUsed|latency)."),
+            "lookback": {
+                "type": "integer",
+                "description": "Janela: minutos (metrics/logs) ou dias (finops).",
+            },
+            "level": s_str("Nível de log (error|warn|info)."),
+            "limit": {"type": "integer", "description": "Máximo de itens retornados."},
+        },
+        "required": ["action"],
+    },
 ]
 
 
@@ -311,7 +347,8 @@ def request_schema(svc: dict) -> dict:
     return {
         "type": "object",
         "additionalProperties": False,
-        "required": ENVELOPE_REQUIRED + ["params"],
+        # Serviços read-only (ex.: insights) podem exigir um envelope menor.
+        "required": svc.get("envelope_required", ENVELOPE_REQUIRED) + ["params"],
         "properties": props,
     }
 

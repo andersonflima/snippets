@@ -20,10 +20,53 @@ import {
   MetricSeries,
   ProductScope,
   ResourceItem,
+  ResourceProduct,
   ResourcesService,
 } from './resources.service';
 
 type Tab = 'overview' | 'metrics' | 'logs' | 'actions';
+
+/** Registry contract that owns the action-driven operations. */
+const ACTION_CONTRACT = 'microservicos-actions';
+
+/** A single quick action wired to a registry operation. */
+interface QuickAction {
+  opId: string;
+  label: string;
+  hint: string;
+  icon: string;
+}
+
+/**
+ * Quick-action catalog keyed by a short action key. `opId` maps 1:1 to the
+ * registry operationIds of the `microservicos-actions` contract.
+ */
+const ACTIONS: Record<string, QuickAction> = {
+  'start-stop': { opId: 'start_stop_execute', label: 'Parar/Iniciar', hint: 'ligar ou desligar', icon: 'bolt' },
+  modify: { opId: 'modify_execute', label: 'Alterar classe', hint: 'ajustar configuração', icon: 'gear' },
+  storage: { opId: 'storage_execute', label: 'Ajustar storage', hint: 'redimensionar volume', icon: 'server' },
+  restore: { opId: 'restore_execute', label: 'Restaurar', hint: 'recuperar de backup', icon: 'clock' },
+  replicate: { opId: 'replicate_execute', label: 'Replicar', hint: 'criar réplica', icon: 'layers' },
+  destroy: { opId: 'destroy_execute', label: 'Remover', hint: 'excluir recurso', icon: 'logout' },
+  kms: { opId: 'kms_execute', label: 'Rotacionar KMS', hint: 'girar chave', icon: 'shield' },
+  'db-password': { opId: 'db_password_execute', label: 'Trocar senha', hint: 'rotacionar credencial', icon: 'database' },
+  'vpc-link': { opId: 'vpc_link_execute', label: 'VPC Link', hint: 'gerenciar endpoint', icon: 'server' },
+};
+
+/** Fallback used when a product has no specific mapping. */
+const FALLBACK_ACTIONS: readonly string[] = ['modify', 'destroy'];
+
+/** Per-product action keys (only operations that exist in the registry). */
+const PRODUCT_ACTIONS: Record<ResourceProduct, readonly string[]> = {
+  rds: ['start-stop', 'modify', 'storage', 'restore', 'replicate', 'destroy', 'kms', 'db-password'],
+  ec2: ['start-stop', 'modify', 'destroy'],
+  ebs: ['modify', 'storage', 'destroy'],
+  snapshot: ['restore', 'replicate', 'destroy'],
+  kms: ['kms', 'replicate'],
+  'vpc-endpoint': ['vpc-link', 'destroy'],
+  elb: ['destroy'],
+  eip: ['destroy'],
+};
 
 interface LookbackOption {
   minutes: number;
@@ -263,21 +306,35 @@ function rgba(hex: string, a: number): string {
     @if (tab() === 'actions') {
       <div class="card">
         <h3>Ações rápidas</h3>
-        <p class="muted">
-          Dispare operações action-driven para este recurso. As ações abrem o
-          catálogo de integrações — a execução direcionada por recurso chega em breve.
-        </p>
-        <div class="action-grid">
-          @for (a of quickActions(); track a.label) {
-            <a class="action" routerLink="/integrations">
-              <app-icon [name]="a.icon" [size]="18" />
-              <div>
-                <strong>{{ a.label }}</strong>
-                <span class="muted">{{ a.hint }}</span>
-              </div>
-            </a>
-          }
-        </div>
+        @if (resource(); as r) {
+          <p class="muted">
+            Dispare operações action-driven para este recurso. Cada ação abre o
+            formulário correspondente já preenchido com o recurso e o perfil AWS
+            das configurações.
+          </p>
+          <div class="action-grid">
+            @for (a of quickActions(); track a.opId) {
+              <a
+                class="action"
+                [routerLink]="['/run', actionContract, a.opId]"
+                [queryParams]="{
+                  resource: r.id,
+                  region: r.region,
+                  product: r.product,
+                  env: r.env
+                }"
+              >
+                <app-icon [name]="a.icon" [size]="18" />
+                <div>
+                  <strong>{{ a.label }}</strong>
+                  <span class="muted">{{ a.hint }}</span>
+                </div>
+              </a>
+            }
+          </div>
+        } @else {
+          <p class="muted" style="margin:0">Carregando recurso…</p>
+        }
       </div>
     }
   `,
@@ -585,7 +642,13 @@ export class ResourceDetailComponent {
     });
   });
 
-  readonly quickActions = computed(() => this.actionsFor(this.product()));
+  readonly actionContract = ACTION_CONTRACT;
+
+  /** Quick actions for the loaded resource's product (route scope as fallback). */
+  readonly quickActions = computed<QuickAction[]>(() => {
+    const product = this.resource()?.product ?? this.product();
+    return this.actionsFor(product);
+  });
 
   private resToken = 0;
   private metricToken = 0;
@@ -691,25 +754,14 @@ export class ResourceDetailComponent {
     return Object.entries(r.tags ?? {}).map(([key, value]) => ({ key, value }));
   }
 
-  private actionsFor(product: ProductScope): { label: string; hint: string; icon: string }[] {
-    const common = [
-      { label: 'Modificar', hint: 'alterar configuração', icon: 'gear' },
-      { label: 'Tags', hint: 'gerenciar etiquetas', icon: 'layers' },
-    ];
-    if (product === 'rds' || product === 'ec2') {
-      return [
-        { label: 'Start / Stop', hint: 'ligar ou desligar', icon: 'bolt' },
-        { label: 'Armazenamento', hint: 'ajustar volume', icon: 'server' },
-        ...common,
-      ];
-    }
-    if (product === 'ebs' || product === 'snapshot') {
-      return [
-        { label: 'Snapshot', hint: 'criar backup', icon: 'shield' },
-        ...common,
-      ];
-    }
-    return common;
+  private actionsFor(product: ProductScope): QuickAction[] {
+    const keys =
+      product !== 'all' && PRODUCT_ACTIONS[product]
+        ? PRODUCT_ACTIONS[product]
+        : FALLBACK_ACTIONS;
+    return keys
+      .map((key) => ACTIONS[key])
+      .filter((action): action is QuickAction => Boolean(action));
   }
 
   statusTone(status: string): 'ok' | 'warn' | 'danger' | 'muted' {
