@@ -152,21 +152,36 @@ components:
               enum:
                 - create-snapshot
                 - restore-snapshot
+                - create-cluster-snapshot
+                - restore-cluster-snapshot
             snapshotIdentifier:
               type: string
               description: Snapshot de origem (restore) ou destino (create).
             targetInstanceIdentifier:
               type: string
-              description: Identificador da instância resultante.
+              description: Identificador da instância resultante (restore de instância).
+            targetClusterIdentifier:
+              type: string
+              description: Identificador do cluster Aurora resultante (restore de cluster).
             dbInstanceClass:
               type: string
-              description: Classe da instância restaurada.
+              description: Classe da instância restaurada / dos membros do cluster.
             dbSubnetGroupName:
               type: string
               description: Subnet group de destino.
+            engine:
+              type: string
+              description: "Engine do cluster Aurora (ex.: aurora-mysql, aurora-postgresql)."
+            engineVersion:
+              type: string
+              description: Versão da engine no restore de cluster.
+            clusterInstanceCount:
+              type: integer
+              minimum: 1
+              description: Quantidade de membros a criar no cluster restaurado (default 1).
             kmsKeyId:
               type: string
-              description: KMS key para a instância/snapshot resultante.
+              description: KMS key para a instância/cluster/snapshot resultante.
           required:
             - operation
           additionalProperties: false

@@ -7,12 +7,18 @@ from pydantic import BaseModel, Field
 
 
 class RestoreParams(BaseModel):
-    operation: str = Field(description="create-snapshot | restore-snapshot")
+    operation: str = Field(
+        description="create-snapshot | restore-snapshot | create-cluster-snapshot | restore-cluster-snapshot"
+    )
     snapshotIdentifier: Optional[str] = Field(default=None, description="Snapshot origem (restore) ou destino (create).")
-    targetInstanceIdentifier: Optional[str] = Field(default=None, description="Instância resultante (restore).")
-    dbInstanceClass: Optional[str] = Field(default=None, description="Classe da instância restaurada.")
+    targetInstanceIdentifier: Optional[str] = Field(default=None, description="Instância resultante (restore de instância).")
+    targetClusterIdentifier: Optional[str] = Field(default=None, description="Cluster Aurora resultante (restore de cluster).")
+    dbInstanceClass: Optional[str] = Field(default=None, description="Classe da instância restaurada / dos membros do cluster.")
     dbSubnetGroupName: Optional[str] = Field(default=None, description="Subnet group de destino.")
-    kmsKeyId: Optional[str] = Field(default=None, description="KMS key da instância/snapshot resultante.")
+    engine: Optional[str] = Field(default=None, description="Engine do cluster Aurora (ex.: aurora-mysql, aurora-postgresql).")
+    engineVersion: Optional[str] = Field(default=None, description="Versão da engine no restore de cluster.")
+    clusterInstanceCount: Optional[int] = Field(default=None, ge=1, description="Membros a criar no cluster restaurado (default 1).")
+    kmsKeyId: Optional[str] = Field(default=None, description="KMS key da instância/cluster/snapshot resultante.")
 
 
 class RestoreRequest(BaseModel):

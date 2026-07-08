@@ -1,9 +1,23 @@
 # restore — microserviço action-driven
 
-Restaura snapshot → instância ou cria snapshot de uma instância.
+Snapshot/restore de **instância RDS** e de **cluster Aurora**.
 
 Autocontido (sem packages compartilhadas). Roda em EKS atrás do NLB interno;
 o acesso externo é pelo API Gateway (Cognito JWT) -> VPC Link -> NLB -> este pod.
+
+## Operações (`params.operation`)
+
+| operação | recurso | efeito |
+| --- | --- | --- |
+| `create-snapshot` | RDS instance | snapshot da instância `resource` |
+| `restore-snapshot` | RDS instance | cria instância nova (`targetInstanceIdentifier`) a partir do snapshot |
+| `create-cluster-snapshot` | Aurora cluster | snapshot do cluster `resource` |
+| `restore-cluster-snapshot` | Aurora cluster | cria cluster novo (`targetClusterIdentifier`) a partir do snapshot e seus membros de compute |
+
+O restore restaura os dados no estado do snapshot (cópia point-in-time), não é
+réplica contínua. Aurora nasce sem instâncias de compute: o
+`restore-cluster-snapshot` cria `clusterInstanceCount` membros (default 1) da
+classe `dbInstanceClass`.
 
 ## API
 
