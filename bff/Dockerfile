@@ -6,6 +6,12 @@ ENV PYTHONUNBUFFERED=1 \
 
 WORKDIR /app
 
+# strict-ssl do pip. Em rede corporativa com CA interna, buildar com
+# PIP_TRUSTED_HOST="pypi.org files.pythonhosted.org <host-do-indice>"
+# para pular a verificacao TLS desses indices. Vazio por padrao (SSL ligado).
+ARG PIP_TRUSTED_HOST=""
+ENV PIP_TRUSTED_HOST=${PIP_TRUSTED_HOST}
+
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 

@@ -17,25 +17,33 @@ x-micro: &micro
   # volumes:
   #   - ${HOME}/.aws:/home/appuser/.aws:ro
 
+# Build args compartilhados pelos serviços Python. PIP_TRUSTED_HOST desliga a
+# verificação TLS do pip no build (rede corporativa com CA interna). Vazio por
+# padrão = SSL ligado. Ative via env ou .env: PIP_TRUSTED_HOST="pypi.org files.pythonhosted.org".
+x-pip-args: &pip-args
+  PIP_TRUSTED_HOST: "${PIP_TRUSTED_HOST:-}"
+
 services:
   # ---- microserviços action-driven (FastAPI, :8080, servem /<service>/execute) ----
-  create:      { <<: *micro, build: ./microservicos/create }
-  destroy:     { <<: *micro, build: ./microservicos/destroy }
-  modify:      { <<: *micro, build: ./microservicos/modify }
-  start-stop:  { <<: *micro, build: ./microservicos/start-stop }
-  storage:     { <<: *micro, build: ./microservicos/storage }
-  replicate:   { <<: *micro, build: ./microservicos/replicate }
-  restore:     { <<: *micro, build: ./microservicos/restore }
-  db-password: { <<: *micro, build: ./microservicos/db-password }
-  vpc-link:    { <<: *micro, build: ./microservicos/vpc-link }
-  kms:         { <<: *micro, build: ./microservicos/kms }
-  finops:      { <<: *micro, build: ./microservicos/finops }
-  servicenow:  { <<: *micro, build: ./microservicos/servicenow }
-  rds-data:    { <<: *micro, build: ./microservicos/rds-data }
+  create:      { <<: *micro, build: { context: ./microservicos/create, args: *pip-args } }
+  destroy:     { <<: *micro, build: { context: ./microservicos/destroy, args: *pip-args } }
+  modify:      { <<: *micro, build: { context: ./microservicos/modify, args: *pip-args } }
+  start-stop:  { <<: *micro, build: { context: ./microservicos/start-stop, args: *pip-args } }
+  storage:     { <<: *micro, build: { context: ./microservicos/storage, args: *pip-args } }
+  replicate:   { <<: *micro, build: { context: ./microservicos/replicate, args: *pip-args } }
+  restore:     { <<: *micro, build: { context: ./microservicos/restore, args: *pip-args } }
+  db-password: { <<: *micro, build: { context: ./microservicos/db-password, args: *pip-args } }
+  vpc-link:    { <<: *micro, build: { context: ./microservicos/vpc-link, args: *pip-args } }
+  kms:         { <<: *micro, build: { context: ./microservicos/kms, args: *pip-args } }
+  finops:      { <<: *micro, build: { context: ./microservicos/finops, args: *pip-args } }
+  servicenow:  { <<: *micro, build: { context: ./microservicos/servicenow, args: *pip-args } }
+  rds-data:    { <<: *micro, build: { context: ./microservicos/rds-data, args: *pip-args } }
 
   # ---- insights: analytics/metadata/métricas/logs por produto (mock por padrão) ----
   insights:
-    build: ./microservicos/insights
+    build:
+      context: ./microservicos/insights
+      args: *pip-args
     restart: unless-stopped
     networks: [actions]
     environment:
@@ -55,7 +63,9 @@ services:
 
   # ---- BFF (FastAPI, :8081) ----
   bff:
-    build: ./bff
+    build:
+      context: ./bff
+      args: *pip-args
     restart: unless-stopped
     networks: [actions]
     env_file: [.env]                      # BFF_JWT_SECRET/BFF_USERS sem interpolação ($ do bcrypt)
