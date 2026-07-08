@@ -242,11 +242,34 @@ Legenda da coluna **Camada**:
 
 ## Políticas IAM de menor privilégio (exemplos)
 
-> Recursos abaixo aparecem como `"*"` para legibilidade. **Em produção, restrinja
-> por ARN e/ou por tag** (ex.: `Condition` com `aws:ResourceTag`, escopo de conta
-> e região, ARNs de bucket/tabela específicos).
+As policies abaixo já vêm **escopadas por ARN** (least-privilege). Cada ação que
+suporta resource-level permissions aponta para um ARN construído com placeholders;
+as ações que **não** suportam resource-level ficam isoladas num statement próprio
+com `"Resource": "*"` (com nota explicando o porquê e, quando aplicável, uma
+`Condition` recomendada).
+
+### Placeholders
+
+Substitua estes marcadores pelos valores reais ao materializar a policy:
+
+| Placeholder | Significado |
+| --- | --- |
+| `${account}` | ID da conta AWS (12 dígitos) da conta-cliente (o `account` do request) |
+| `${region}` | Região do recurso-alvo (o `region` do request) |
+| `${resource}` | Nome/identificador do recurso-alvo (ex.: `DBInstanceIdentifier`, `VpcEndpointId`, `GroupId`) |
+| `${RULES_BUCKET}` | Bucket do backend de regras (`RULES_BUCKET`, quando `RULES_BACKEND=s3`) |
+| `${RULES_PREFIX}` | Prefixo das chaves de regras (`RULES_KEY_PREFIX`, default `rules`) |
+| `${RULES_TABLE}` | Tabela do backend de regras (`RULES_TABLE`, quando `RULES_BACKEND=dynamodb`) |
+
+> Quando o recurso é dinâmico por request (nome variável), use `${resource}` como
+> curinga controlado (ex.: `db:*` restrito por tag) ou materialize a policy por
+> recurso/frota. Não deixe `Resource: "*"` amplo em ações de escrita.
 
 ### (a) Role de execução da plataforma (IRSA)
+
+Confirmado no código (`app/aws.py` + `app/rules.py`): apenas `sts:AssumeRole` +
+leitura do backend de regras (`s3:GetObject` na chave `${RULES_PREFIX}/<service>.json`,
+**ou** `dynamodb:GetItem`). Não há `s3:ListBucket` no código.
 
 ```json
 {
@@ -257,68 +280,103 @@ Legenda da coluna **Camada**:
       "Effect": "Allow",
       "Action": "sts:AssumeRole",
       "Resource": [
-        "arn:aws:iam::*:role/plataforma-rds-actions-*"
+        "arn:aws:iam::*:role/ms-actions-*"
       ]
     },
     {
       "Sid": "RulesBackendS3",
       "Effect": "Allow",
       "Action": "s3:GetObject",
-      "Resource": "arn:aws:s3:::RULES_BUCKET/rules/*"
+      "Resource": "arn:aws:s3:::${RULES_BUCKET}/${RULES_PREFIX}/*"
     },
     {
       "Sid": "RulesBackendDynamoDB",
       "Effect": "Allow",
       "Action": "dynamodb:GetItem",
-      "Resource": "arn:aws:dynamodb:*:*:table/RULES_TABLE"
+      "Resource": "arn:aws:dynamodb:${region}:${account}:table/${RULES_TABLE}"
     }
   ]
 }
 ```
 
-> Use **apenas** o statement `RulesBackendS3` **ou** o `RulesBackendDynamoDB`,
-> conforme `RULES_BACKEND`. Restrinja `Resource` do `sts:AssumeRole` aos ARNs
-> reais das roles-alvo (evite `role/*`).
+> - `AssumeCustomerRoles`: `sts:AssumeRole` só aceita ARN de role como `Resource`
+>   (a conta-alvo varia por request, por isso `iam::*`). Restrinja
+>   `*:role/ms-actions-*` à **convenção de nome real** das roles-alvo — evite
+>   `role/*`. Se quiser fixar também a conta, liste as contas-cliente conhecidas.
+> - Use **apenas** `RulesBackendS3` **ou** `RulesBackendDynamoDB`, conforme
+>   `RULES_BACKEND`. O código lê `${RULES_PREFIX}/<service>.json`, então
+>   `${RULES_PREFIX}/*` cobre exatamente os objetos de regra (só `s3:GetObject`).
 
 ### (b) Role-alvo na conta-cliente (frota de ações)
 
 Agrupada por serviço. Inclua apenas os blocos correspondentes aos microserviços
-que a role precisa atender.
+que a role precisa atender. Statements de escrita/leitura por recurso usam ARN de
+recurso; statements de `Describe*`/`List*` ficam separados em `"Resource": "*"`
+(ver bloco e nota adiante).
 
 ```json
 {
   "Version": "2012-10-17",
   "Statement": [
     {
-      "Sid": "RdsWrite",
+      "Sid": "RdsInstanceWrite",
       "Effect": "Allow",
       "Action": [
         "rds:CreateDBInstance",
-        "rds:CreateDBSubnetGroup",
         "rds:DeleteDBInstance",
-        "rds:DeleteDBSnapshot",
         "rds:ModifyDBInstance",
         "rds:StartDBInstance",
         "rds:StopDBInstance",
+        "rds:CreateDBSnapshot",
+        "rds:RestoreDBInstanceFromDBSnapshot"
+      ],
+      "Resource": [
+        "arn:aws:rds:${region}:${account}:db:${resource}"
+      ]
+    },
+    {
+      "Sid": "RdsSubnetGroup",
+      "Effect": "Allow",
+      "Action": "rds:CreateDBSubnetGroup",
+      "Resource": [
+        "arn:aws:rds:${region}:${account}:subgrp:${resource}"
+      ]
+    },
+    {
+      "Sid": "RdsClusterWrite",
+      "Effect": "Allow",
+      "Action": [
         "rds:StartDBCluster",
         "rds:StopDBCluster",
-        "rds:CreateDBSnapshot",
         "rds:CreateDBClusterSnapshot",
-        "rds:RestoreDBInstanceFromDBSnapshot",
-        "rds:RestoreDBClusterFromSnapshot",
+        "rds:RestoreDBClusterFromSnapshot"
+      ],
+      "Resource": [
+        "arn:aws:rds:${region}:${account}:cluster:${resource}"
+      ]
+    },
+    {
+      "Sid": "RdsSnapshotWrite",
+      "Effect": "Allow",
+      "Action": [
+        "rds:DeleteDBSnapshot",
         "rds:CopyDBSnapshot",
         "rds:ModifyDBSnapshotAttribute"
       ],
-      "Resource": "*"
+      "Resource": [
+        "arn:aws:rds:${region}:${account}:snapshot:${resource}"
+      ]
     },
     {
-      "Sid": "RdsRead",
+      "Sid": "RdsClusterSnapshotWrite",
       "Effect": "Allow",
       "Action": [
-        "rds:DescribeDBInstances",
-        "rds:DescribeDBSnapshots"
+        "rds:CreateDBClusterSnapshot",
+        "rds:RestoreDBClusterFromSnapshot"
       ],
-      "Resource": "*"
+      "Resource": [
+        "arn:aws:rds:${region}:${account}:cluster-snapshot:${resource}"
+      ]
     },
     {
       "Sid": "Ec2Write",
@@ -332,52 +390,27 @@ que a role precisa atender.
         "ec2:StopInstances",
         "ec2:ModifyVpcEndpointServicePermissions"
       ],
-      "Resource": "*"
+      "Resource": [
+        "arn:aws:ec2:${region}:${account}:instance/${resource}",
+        "arn:aws:ec2:${region}:${account}:volume/${resource}",
+        "arn:aws:ec2:${region}:${account}:security-group/${resource}",
+        "arn:aws:ec2:${region}:${account}:vpc-endpoint/${resource}",
+        "arn:aws:ec2:${region}:${account}:vpc-endpoint-service/*"
+      ]
     },
     {
-      "Sid": "Ec2Read",
+      "Sid": "KmsKeyWrite",
       "Effect": "Allow",
       "Action": [
-        "ec2:DescribeInstances",
-        "ec2:DescribeVolumes",
-        "ec2:DescribeAddresses",
-        "ec2:DescribeSnapshots",
-        "ec2:DescribeVpcEndpoints"
-      ],
-      "Resource": "*"
-    },
-    {
-      "Sid": "Kms",
-      "Effect": "Allow",
-      "Action": [
-        "kms:CreateKey",
         "kms:CreateAlias",
         "kms:PutKeyPolicy",
-        "kms:ListKeys",
         "kms:DescribeKey",
         "kms:Decrypt"
       ],
-      "Resource": "*"
-    },
-    {
-      "Sid": "ElbRead",
-      "Effect": "Allow",
-      "Action": [
-        "elasticloadbalancing:DescribeLoadBalancers",
-        "elasticloadbalancing:DescribeTargetGroups",
-        "elasticloadbalancing:DescribeTargetHealth"
-      ],
-      "Resource": "*"
-    },
-    {
-      "Sid": "Observability",
-      "Effect": "Allow",
-      "Action": [
-        "cloudwatch:GetMetricStatistics",
-        "cloudwatch:GetMetricData",
-        "logs:FilterLogEvents"
-      ],
-      "Resource": "*"
+      "Resource": [
+        "arn:aws:kms:${region}:${account}:key/*",
+        "arn:aws:kms:${region}:${account}:alias/*"
+      ]
     },
     {
       "Sid": "Secrets",
@@ -385,7 +418,9 @@ que a role precisa atender.
       "Action": [
         "secretsmanager:GetSecretValue"
       ],
-      "Resource": "*"
+      "Resource": [
+        "arn:aws:secretsmanager:${region}:${account}:secret:${secretName}-*"
+      ]
     },
     {
       "Sid": "RdsDataApi",
@@ -393,20 +428,100 @@ que a role precisa atender.
       "Action": [
         "rds-data:ExecuteStatement"
       ],
-      "Resource": "*"
+      "Resource": [
+        "arn:aws:rds:${region}:${account}:cluster:${cluster}"
+      ]
+    },
+    {
+      "Sid": "Logs",
+      "Effect": "Allow",
+      "Action": [
+        "logs:FilterLogEvents"
+      ],
+      "Resource": [
+        "arn:aws:logs:${region}:${account}:log-group:${resource}:*"
+      ]
+    }
+  ]
+}
+```
+
+#### Statement separado — ações SEM resource-level (`Resource: "*"`)
+
+As ações abaixo **não suportam resource-level permissions na AWS**, então precisam
+ficar num statement próprio com `"Resource": "*"`. Reduza o risco com `Condition`
+(região e, para RDS/EC2, tag).
+
+```json
+{
+  "Version": "2012-10-17",
+  "Statement": [
+    {
+      "Sid": "DescribeListNoResourceLevel",
+      "Effect": "Allow",
+      "Action": [
+        "rds:DescribeDBInstances",
+        "rds:DescribeDBSnapshots",
+        "ec2:DescribeInstances",
+        "ec2:DescribeVolumes",
+        "ec2:DescribeAddresses",
+        "ec2:DescribeSnapshots",
+        "ec2:DescribeVpcEndpoints",
+        "elasticloadbalancing:DescribeLoadBalancers",
+        "elasticloadbalancing:DescribeTargetGroups",
+        "elasticloadbalancing:DescribeTargetHealth",
+        "cloudwatch:GetMetricStatistics",
+        "cloudwatch:GetMetricData",
+        "cloudwatch:ListMetrics",
+        "kms:ListKeys",
+        "kms:CreateKey",
+        "sts:GetCallerIdentity"
+      ],
+      "Resource": "*",
+      "Condition": {
+        "StringEquals": { "aws:RequestedRegion": "${region}" }
+      }
     }
   ]
 }
 ```
 
 > Notas de escopo:
-> - Prefira dividir esta role por conjunto de microserviços em vez de conceder
->   tudo a uma única role (ex.: role de leitura para `finops`/`insights`, role de
+> - **`Resource: "*"` é obrigatório** para o statement `DescribeListNoResourceLevel`:
+>   `rds:Describe*`, `ec2:Describe*`, `elasticloadbalancing:Describe*` e
+>   `cloudwatch:GetMetric*`/`ListMetrics` não aceitam ARN de recurso; `kms:CreateKey`
+>   também não (a key ainda não existe no momento da chamada), `kms:ListKeys` é uma
+>   listagem global e `sts:GetCallerIdentity` não tem recurso-alvo. Inclua no
+>   `Action` só as ações realmente usadas pelos serviços que a role atende. O
+>   `sts:AssumeRole` da role de plataforma segue a mesma lógica de não ter escopo
+>   por recurso próprio.
+> - **`Condition` recomendada:** `aws:RequestedRegion` limita as chamadas à região
+>   do request. Para RDS/EC2, se os recursos forem etiquetados, adicione também
+>   `aws:ResourceTag/<chave>` (ex.: `"aws:ResourceTag/managed-by": "plataforma"`)
+>   como filtro extra — recomendação a validar conforme a estratégia de tags do
+>   cliente. `elasticloadbalancing:Describe*` e `cloudwatch:GetMetric*` não filtram
+>   por tag de recurso, então ficam limitados só pela região.
+> - `${resource}` no bloco EC2 (`Ec2Write`) deve casar com o tipo real usado por
+>   cada request: `instance/*` (`modify_instance_attribute`, `start/stop_instances`),
+>   `volume/*` (`modify_volume`), `security-group/*` (`delete_security_group`),
+>   `vpc-endpoint/*` (`delete_vpc_endpoints`). `vpc-endpoint-service/*` cobre
+>   `ec2:ModifyVpcEndpointServicePermissions` (vpc-link).
+> - `KmsKeyWrite` cobre apenas as ações **com** resource-level (`CreateAlias`,
+>   `PutKeyPolicy`, `DescribeKey`, `Decrypt`); `kms:CreateKey` fica no statement `*`.
+> - `Secrets` (`secretsmanager:GetSecretValue`): troque `${secretName}` pelo nome
+>   real do secret (Secrets Manager anexa um sufixo aleatório, daí o `-*`). Cobre o
+>   `MasterUserSecret`/`newPasswordSecretArn` do `db-password`, o secret lido pelo
+>   `insights` e o secret do Data API do `rds-data` **(confirmar)**.
+> - `RdsDataApi` (`rds-data:ExecuteStatement`) escopa ao cluster Aurora
+>   (`${cluster}` = `resourceArn` do request). O `rds-data` também depende, na
+>   prática, de leitura do `secretArn` via Secrets Manager (statement `Secrets`) e
+>   possivelmente `kms:Decrypt` no CMK do secret/cluster **(confirmar)**.
+> - `kms:Decrypt` e `secretsmanager:GetSecretValue` estão marcados como
+>   **(confirmar)** nas tabelas — inclua conforme o uso real de CMK e do secret do
+>   Data API.
+> - Prefira dividir esta role por conjunto de microserviços em vez de conceder tudo
+>   a uma única role (ex.: role somente-leitura para `finops`/`insights`, role de
 >   escrita para `create`/`modify`/`restore`).
-> - `kms:Decrypt`, `secretsmanager:GetSecretValue` e `rds-data`
->   (`secretsmanager`/`kms`) estão marcados como **(confirmar)** nas tabelas —
->   inclua conforme o uso real de CMK e do secret do Data API.
-> - Restrinja `Resource` por ARN/tag e por região em produção.
 
 ---
 
