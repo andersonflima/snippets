@@ -260,10 +260,41 @@ Substitua estes marcadores pelos valores reais ao materializar a policy:
 | `${RULES_BUCKET}` | Bucket do backend de regras (`RULES_BUCKET`, quando `RULES_BACKEND=s3`) |
 | `${RULES_PREFIX}` | Prefixo das chaves de regras (`RULES_KEY_PREFIX`, default `rules`) |
 | `${RULES_TABLE}` | Tabela do backend de regras (`RULES_TABLE`, quando `RULES_BACKEND=dynamodb`) |
+| `${TAG_KEY}` | Chave da tag de contenção (default `managed-by`) |
+| `${TAG_VALUE}` | Valor da tag de contenção (default `actions-platform`) |
 
 > Quando o recurso é dinâmico por request (nome variável), use `${resource}` como
 > curinga controlado (ex.: `db:*` restrito por tag) ou materialize a policy por
 > recurso/frota. Não deixe `Resource: "*"` amplo em ações de escrita.
+
+### Estratégia de tags (defense-in-depth)
+
+Além do escopo por ARN, as ações **mutantes** ganham uma segunda barreira baseada
+em tag: só operam sobre recursos que carreguem a tag de contenção. Isto é
+defense-in-depth — se um ARN vazar ou um curinga (`${resource}` = `*`) for amplo
+demais, a tag ainda limita o alcance real da role aos recursos geridos pela
+plataforma.
+
+- **Chave/valor:** `${TAG_KEY}` (default `managed-by`) = `${TAG_VALUE}`
+  (default `actions-platform`). Substitua pelos valores reais ao materializar a
+  policy e mantenha a convenção consistente entre provisionamento e operação.
+- **Ações sobre recursos existentes** (`Modify`, `Start`/`Stop`, `Delete`,
+  `CreateDBSnapshot`, `Restore*`, `Copy*`, `GetSecretValue`, `ExecuteStatement`,
+  `FilterLogEvents`, `sts:AssumeRole` etc.) usam
+  `aws:ResourceTag/${TAG_KEY}` — o recurso-alvo **precisa já carregar** a tag,
+  senão a chamada é negada.
+- **Ações de `Create`** (o recurso ainda não existe) não podem usar
+  `aws:ResourceTag`; em vez disso exigem que a criação já venha marcada, via
+  `aws:RequestTag/${TAG_KEY}` + `aws:TagKeys`. Isto **depende** de o serviço
+  propagar a tag no momento do create e requer também a permissão de tagueamento
+  correspondente (`rds:AddTagsToResource`, `ec2:CreateTags`, `kms:TagResource`
+  conforme o serviço) — por isso ficam marcadas **(confirmar)**.
+- **Ações de leitura sem resource-level** (`Describe*`, `List*`,
+  `GetMetric*`/`ListMetrics`, `kms:ListKeys`, `kms:CreateKey`,
+  `sts:GetCallerIdentity`) **não suportam** `aws:ResourceTag` e por isso **não**
+  recebem condição de tag (ver nota no statement `DescribeListNoResourceLevel`).
+  A contenção real vem do statement mutante taggeado somado ao escopo por
+  conta/OU/região aplicado à leitura.
 
 ### (a) Role de execução da plataforma (IRSA)
 
@@ -281,7 +312,10 @@ leitura do backend de regras (`s3:GetObject` na chave `${RULES_PREFIX}/<service>
       "Action": "sts:AssumeRole",
       "Resource": [
         "arn:aws:iam::*:role/ms-actions-*"
-      ]
+      ],
+      "Condition": {
+        "StringEquals": { "aws:ResourceTag/${TAG_KEY}": "${TAG_VALUE}" }
+      }
     },
     {
       "Sid": "RulesBackendS3",
@@ -319,10 +353,23 @@ recurso; statements de `Describe*`/`List*` ficam separados em `"Resource": "*"`
   "Version": "2012-10-17",
   "Statement": [
     {
+      "Sid": "RdsInstanceCreate",
+      "Effect": "Allow",
+      "Action": [
+        "rds:CreateDBInstance"
+      ],
+      "Resource": [
+        "arn:aws:rds:${region}:${account}:db:${resource}"
+      ],
+      "Condition": {
+        "StringEquals": { "aws:RequestTag/${TAG_KEY}": "${TAG_VALUE}" },
+        "ForAllValues:StringEquals": { "aws:TagKeys": ["${TAG_KEY}"] }
+      }
+    },
+    {
       "Sid": "RdsInstanceWrite",
       "Effect": "Allow",
       "Action": [
-        "rds:CreateDBInstance",
         "rds:DeleteDBInstance",
         "rds:ModifyDBInstance",
         "rds:StartDBInstance",
@@ -332,15 +379,22 @@ recurso; statements de `Describe*`/`List*` ficam separados em `"Resource": "*"`
       ],
       "Resource": [
         "arn:aws:rds:${region}:${account}:db:${resource}"
-      ]
+      ],
+      "Condition": {
+        "StringEquals": { "aws:ResourceTag/${TAG_KEY}": "${TAG_VALUE}" }
+      }
     },
     {
-      "Sid": "RdsSubnetGroup",
+      "Sid": "RdsSubnetGroupCreate",
       "Effect": "Allow",
       "Action": "rds:CreateDBSubnetGroup",
       "Resource": [
         "arn:aws:rds:${region}:${account}:subgrp:${resource}"
-      ]
+      ],
+      "Condition": {
+        "StringEquals": { "aws:RequestTag/${TAG_KEY}": "${TAG_VALUE}" },
+        "ForAllValues:StringEquals": { "aws:TagKeys": ["${TAG_KEY}"] }
+      }
     },
     {
       "Sid": "RdsClusterWrite",
@@ -353,7 +407,10 @@ recurso; statements de `Describe*`/`List*` ficam separados em `"Resource": "*"`
       ],
       "Resource": [
         "arn:aws:rds:${region}:${account}:cluster:${resource}"
-      ]
+      ],
+      "Condition": {
+        "StringEquals": { "aws:ResourceTag/${TAG_KEY}": "${TAG_VALUE}" }
+      }
     },
     {
       "Sid": "RdsSnapshotWrite",
@@ -365,7 +422,10 @@ recurso; statements de `Describe*`/`List*` ficam separados em `"Resource": "*"`
       ],
       "Resource": [
         "arn:aws:rds:${region}:${account}:snapshot:${resource}"
-      ]
+      ],
+      "Condition": {
+        "StringEquals": { "aws:ResourceTag/${TAG_KEY}": "${TAG_VALUE}" }
+      }
     },
     {
       "Sid": "RdsClusterSnapshotWrite",
@@ -376,7 +436,10 @@ recurso; statements de `Describe*`/`List*` ficam separados em `"Resource": "*"`
       ],
       "Resource": [
         "arn:aws:rds:${region}:${account}:cluster-snapshot:${resource}"
-      ]
+      ],
+      "Condition": {
+        "StringEquals": { "aws:ResourceTag/${TAG_KEY}": "${TAG_VALUE}" }
+      }
     },
     {
       "Sid": "Ec2Write",
@@ -396,7 +459,10 @@ recurso; statements de `Describe*`/`List*` ficam separados em `"Resource": "*"`
         "arn:aws:ec2:${region}:${account}:security-group/${resource}",
         "arn:aws:ec2:${region}:${account}:vpc-endpoint/${resource}",
         "arn:aws:ec2:${region}:${account}:vpc-endpoint-service/*"
-      ]
+      ],
+      "Condition": {
+        "StringEquals": { "aws:ResourceTag/${TAG_KEY}": "${TAG_VALUE}" }
+      }
     },
     {
       "Sid": "KmsKeyWrite",
@@ -410,7 +476,10 @@ recurso; statements de `Describe*`/`List*` ficam separados em `"Resource": "*"`
       "Resource": [
         "arn:aws:kms:${region}:${account}:key/*",
         "arn:aws:kms:${region}:${account}:alias/*"
-      ]
+      ],
+      "Condition": {
+        "StringEquals": { "aws:ResourceTag/${TAG_KEY}": "${TAG_VALUE}" }
+      }
     },
     {
       "Sid": "Secrets",
@@ -420,7 +489,10 @@ recurso; statements de `Describe*`/`List*` ficam separados em `"Resource": "*"`
       ],
       "Resource": [
         "arn:aws:secretsmanager:${region}:${account}:secret:${secretName}-*"
-      ]
+      ],
+      "Condition": {
+        "StringEquals": { "aws:ResourceTag/${TAG_KEY}": "${TAG_VALUE}" }
+      }
     },
     {
       "Sid": "RdsDataApi",
@@ -430,7 +502,10 @@ recurso; statements de `Describe*`/`List*` ficam separados em `"Resource": "*"`
       ],
       "Resource": [
         "arn:aws:rds:${region}:${account}:cluster:${cluster}"
-      ]
+      ],
+      "Condition": {
+        "StringEquals": { "aws:ResourceTag/${TAG_KEY}": "${TAG_VALUE}" }
+      }
     },
     {
       "Sid": "Logs",
@@ -440,7 +515,41 @@ recurso; statements de `Describe*`/`List*` ficam separados em `"Resource": "*"`
       ],
       "Resource": [
         "arn:aws:logs:${region}:${account}:log-group:${resource}:*"
-      ]
+      ],
+      "Condition": {
+        "StringEquals": { "aws:ResourceTag/${TAG_KEY}": "${TAG_VALUE}" }
+      }
+    }
+  ]
+}
+```
+
+#### Statement de CREATE de KMS key (marcação na criação)
+
+`kms:CreateKey` não aceita ARN de recurso (a key ainda não existe), então não
+suporta `aws:ResourceTag`. Mas a criação **pode** ser forçada a nascer marcada
+via `aws:RequestTag`, o que exige que a chamada de create já passe as tags e
+requer também `kms:TagResource`. Fica isolada num statement próprio e marcada
+**(confirmar)** porque depende do serviço aplicar a tag no create.
+
+```json
+{
+  "Version": "2012-10-17",
+  "Statement": [
+    {
+      "Sid": "KmsCreateKey",
+      "Effect": "Allow",
+      "Action": [
+        "kms:CreateKey"
+      ],
+      "Resource": "*",
+      "Condition": {
+        "StringEquals": {
+          "aws:RequestTag/${TAG_KEY}": "${TAG_VALUE}",
+          "aws:RequestedRegion": "${region}"
+        },
+        "ForAllValues:StringEquals": { "aws:TagKeys": ["${TAG_KEY}"] }
+      }
     }
   ]
 }
@@ -448,9 +557,10 @@ recurso; statements de `Describe*`/`List*` ficam separados em `"Resource": "*"`
 
 #### Statement separado — ações SEM resource-level (`Resource: "*"`)
 
-As ações abaixo **não suportam resource-level permissions na AWS**, então precisam
-ficar num statement próprio com `"Resource": "*"`. Reduza o risco com `Condition`
-(região e, para RDS/EC2, tag).
+As ações abaixo **não suportam resource-level permissions na AWS** e **também
+não suportam `aws:ResourceTag`**, então precisam ficar num statement próprio com
+`"Resource": "*"` e **sem** condição de tag. A única contenção possível aqui é
+por região (`aws:RequestedRegion`).
 
 ```json
 {
@@ -474,7 +584,6 @@ ficar num statement próprio com `"Resource": "*"`. Reduza o risco com `Conditio
         "cloudwatch:GetMetricData",
         "cloudwatch:ListMetrics",
         "kms:ListKeys",
-        "kms:CreateKey",
         "sts:GetCallerIdentity"
       ],
       "Resource": "*",
@@ -489,25 +598,38 @@ ficar num statement próprio com `"Resource": "*"`. Reduza o risco com `Conditio
 > Notas de escopo:
 > - **`Resource: "*"` é obrigatório** para o statement `DescribeListNoResourceLevel`:
 >   `rds:Describe*`, `ec2:Describe*`, `elasticloadbalancing:Describe*` e
->   `cloudwatch:GetMetric*`/`ListMetrics` não aceitam ARN de recurso; `kms:CreateKey`
->   também não (a key ainda não existe no momento da chamada), `kms:ListKeys` é uma
->   listagem global e `sts:GetCallerIdentity` não tem recurso-alvo. Inclua no
->   `Action` só as ações realmente usadas pelos serviços que a role atende. O
->   `sts:AssumeRole` da role de plataforma segue a mesma lógica de não ter escopo
->   por recurso próprio.
-> - **`Condition` recomendada:** `aws:RequestedRegion` limita as chamadas à região
->   do request. Para RDS/EC2, se os recursos forem etiquetados, adicione também
->   `aws:ResourceTag/<chave>` (ex.: `"aws:ResourceTag/managed-by": "plataforma"`)
->   como filtro extra — recomendação a validar conforme a estratégia de tags do
->   cliente. `elasticloadbalancing:Describe*` e `cloudwatch:GetMetric*` não filtram
->   por tag de recurso, então ficam limitados só pela região.
+>   `cloudwatch:GetMetric*`/`ListMetrics` não aceitam ARN de recurso; `kms:ListKeys`
+>   é uma listagem global e `sts:GetCallerIdentity` não tem recurso-alvo. `kms:CreateKey`
+>   também não aceita ARN, mas foi movida para o statement `KmsCreateKey` por poder ser
+>   marcada na criação via `aws:RequestTag`. Inclua no `Action` só as ações realmente
+>   usadas pelos serviços que a role atende.
+> - **Sem condição de tag no `DescribeListNoResourceLevel` (limitação da AWS):**
+>   `rds:Describe*`, `ec2:Describe*`, `elasticloadbalancing:Describe*`,
+>   `cloudwatch:GetMetric*`/`ListMetrics`, `kms:ListKeys` e `sts:GetCallerIdentity`
+>   **não suportam** `aws:ResourceTag` — adicionar essa condição as negaria
+>   silenciosamente ou não teria efeito. Por isso essas leituras **não** podem ser
+>   restringidas por tag; a única `Condition` aplicável é `aws:RequestedRegion`. A
+>   contenção real do blast radius vem do statement mutante taggeado
+>   (`aws:ResourceTag/${TAG_KEY} = ${TAG_VALUE}`) somado ao escopo por
+>   conta/OU/região aplicado à leitura. Aceite que a leitura enxerga o inventário
+>   da conta/região; a escrita é que fica presa aos recursos marcados.
+> - **Ações mutantes taggeadas:** todos os statements de escrita/leitura por
+>   recurso (`RdsInstanceWrite`, `RdsClusterWrite`, `RdsSnapshotWrite`,
+>   `RdsClusterSnapshotWrite`, `Ec2Write`, `KmsKeyWrite`, `Secrets`, `RdsDataApi`,
+>   `Logs`) carregam `aws:ResourceTag/${TAG_KEY} = ${TAG_VALUE}` — o recurso-alvo
+>   precisa já estar marcado. Os statements de create (`RdsInstanceCreate`,
+>   `RdsSubnetGroupCreate`, `KmsCreateKey`) usam `aws:RequestTag` + `aws:TagKeys`
+>   e exigem a permissão de tagueamento do serviço (`rds:AddTagsToResource`,
+>   `kms:TagResource`; para EC2, `ec2:CreateTags`), por isso ficam **(confirmar)**.
 > - `${resource}` no bloco EC2 (`Ec2Write`) deve casar com o tipo real usado por
 >   cada request: `instance/*` (`modify_instance_attribute`, `start/stop_instances`),
 >   `volume/*` (`modify_volume`), `security-group/*` (`delete_security_group`),
 >   `vpc-endpoint/*` (`delete_vpc_endpoints`). `vpc-endpoint-service/*` cobre
 >   `ec2:ModifyVpcEndpointServicePermissions` (vpc-link).
 > - `KmsKeyWrite` cobre apenas as ações **com** resource-level (`CreateAlias`,
->   `PutKeyPolicy`, `DescribeKey`, `Decrypt`); `kms:CreateKey` fica no statement `*`.
+>   `PutKeyPolicy`, `DescribeKey`, `Decrypt`), todas com
+>   `aws:ResourceTag/${TAG_KEY} = ${TAG_VALUE}`; `kms:CreateKey` fica no statement
+>   `KmsCreateKey` (marcação via `aws:RequestTag`, **(confirmar)**).
 > - `Secrets` (`secretsmanager:GetSecretValue`): troque `${secretName}` pelo nome
 >   real do secret (Secrets Manager anexa um sufixo aleatório, daí o `-*`). Cobre o
 >   `MasterUserSecret`/`newPasswordSecretArn` do `db-password`, o secret lido pelo
