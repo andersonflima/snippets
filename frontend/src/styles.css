@@ -1517,3 +1517,49 @@ body {
     transform: rotate(360deg);
   }
 }
+
+/* =========================================================================
+   Detail modal building blocks — shared across every drill-down pop-up so
+   all screens (dashboard, resources, finops, …) render consistent detail
+   content projected into <app-modal>.
+   ========================================================================= */
+.kd-headline {
+  display: flex;
+  align-items: baseline;
+  gap: 0.75rem;
+  flex-wrap: wrap;
+}
+
+.kd-value {
+  font-size: 2rem;
+  font-weight: 700;
+  letter-spacing: -0.01em;
+}
+
+.kd-stats {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(120px, 1fr));
+  gap: 0.6rem;
+}
+
+.kd-stat {
+  display: flex;
+  flex-direction: column;
+  gap: 0.15rem;
+  padding: 0.65rem 0.8rem;
+  background: var(--panel-2);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  font-size: 0.8rem;
+}
+
+.kd-stat-val {
+  font-size: 1.15rem;
+  font-weight: 700;
+}
+
+.kd-desc {
+  font-size: 0.88rem;
+  line-height: 1.55;
+  margin: 0;
+}

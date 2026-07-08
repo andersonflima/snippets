@@ -11,6 +11,7 @@ import { SettingsService } from '../core/settings.service';
 import { ThemeService } from '../core/theme.service';
 import { EChartComponent } from '../shared/echart.component';
 import { IconComponent } from '../shared/icon.component';
+import { ModalComponent } from '../shared/modal.component';
 import { SkeletonComponent } from '../shared/skeleton.component';
 import { ToastService } from '../shared/toast.service';
 import { palette } from '../dashboard/chart-options';
@@ -51,7 +52,13 @@ const PERIODS = [
   selector: 'app-finops',
   standalone: true,
   changeDetection: ChangeDetectionStrategy.OnPush,
-  imports: [FormsModule, EChartComponent, IconComponent, SkeletonComponent],
+  imports: [
+    FormsModule,
+    EChartComponent,
+    IconComponent,
+    ModalComponent,
+    SkeletonComponent,
+  ],
   template: `
     <div class="page-head anim-in">
       <div>
@@ -198,7 +205,13 @@ const PERIODS = [
               </thead>
               <tbody>
                 @for (r of opportunities(); track r.resourceId) {
-                  <tr>
+                  <tr
+                    class="fin-row"
+                    role="button"
+                    tabindex="0"
+                    (click)="openRow(r)"
+                    (keydown.enter)="openRow(r)"
+                  >
                     <td>
                       <div class="fin-res">
                         <strong>{{ r.name || r.resourceId }}</strong>
@@ -236,6 +249,62 @@ const PERIODS = [
           </p>
         }
       </article>
+
+      @if (selectedRow(); as r) {
+        <app-modal
+          [open]="true"
+          [title]="r.name || r.resourceId"
+          [subtitle]="r.resourceId"
+          (close)="selectedRow.set(null)"
+        >
+          <div class="fin-detail">
+            <div class="fin-detail-head">
+              <span class="badge">{{ r.product }}</span>
+              <span class="badge" [class]="verdictClass(r.verdict)">
+                {{ verdictLabel(r.verdict) }}
+              </span>
+            </div>
+
+            <div class="fin-detail-util">
+              <div class="fin-util fin-util-lg">
+                <span
+                  class="fin-util-bar"
+                  [attr.data-verdict]="r.verdict"
+                  [style.width.%]="clampPct(r.utilizationPct)"
+                ></span>
+                <span>{{ r.utilizationPct.toFixed(0) }}%</span>
+              </div>
+              <span class="muted">utilização</span>
+            </div>
+
+            <div class="kd-stats">
+              <div class="kd-stat">
+                <span class="kd-stat-val">
+                  {{ money(r.monthlySavings, a.summary.currency) }}
+                </span>
+                <span class="muted">Economia/mês</span>
+              </div>
+              @for (u of usedMetrics(r); track u.key) {
+                <div class="kd-stat">
+                  <span class="kd-stat-val">{{ u.value.toFixed(0) }}%</span>
+                  <span class="muted">{{ u.key }}</span>
+                </div>
+              }
+              @for (p of provisionedMetrics(r); track p.key) {
+                <div class="kd-stat">
+                  <span class="kd-stat-val">{{ p.value }}</span>
+                  <span class="muted">{{ p.key }}</span>
+                </div>
+              }
+            </div>
+
+            <div class="fin-detail-rec">
+              <span class="muted">Recomendação</span>
+              <p>{{ r.recommendation }}</p>
+            </div>
+          </div>
+        </app-modal>
+      }
     }
 
     <article class="card panel span-3 anim-in">
@@ -445,6 +514,57 @@ const PERIODS = [
       .fin-table tbody tr:hover {
         background: color-mix(in srgb, var(--accent) 6%, transparent);
       }
+      .fin-table tbody tr.fin-row {
+        cursor: pointer;
+      }
+      .fin-table tbody tr.fin-row:focus-visible {
+        outline: 2px solid var(--accent);
+        outline-offset: -2px;
+      }
+      .fin-detail {
+        display: flex;
+        flex-direction: column;
+        gap: 1rem;
+      }
+      .fin-detail-head {
+        display: flex;
+        gap: 0.5rem;
+        flex-wrap: wrap;
+      }
+      .fin-detail-util {
+        display: flex;
+        align-items: center;
+        gap: 0.75rem;
+      }
+      .fin-util-lg {
+        min-width: 180px;
+      }
+      .fin-util-lg .fin-util-bar {
+        height: 8px;
+      }
+      .fin-detail-rec p {
+        margin: 0.35rem 0 0;
+        line-height: 1.5;
+      }
+      .kd-stats {
+        display: grid;
+        grid-template-columns: repeat(auto-fit, minmax(120px, 1fr));
+        gap: 0.6rem;
+      }
+      .kd-stat {
+        display: flex;
+        flex-direction: column;
+        gap: 0.15rem;
+        padding: 0.65rem 0.8rem;
+        background: var(--panel-2);
+        border: 1px solid var(--border);
+        border-radius: 10px;
+        font-size: 0.8rem;
+      }
+      .kd-stat-val {
+        font-size: 1.15rem;
+        font-weight: 700;
+      }
       .fin-res {
         display: flex;
         flex-direction: column;
@@ -515,6 +635,7 @@ export class FinOpsComponent {
   readonly analyticsLoading = signal(false);
   readonly analyticsError = signal<string | null>(null);
   readonly sortDesc = signal(true);
+  readonly selectedRow = signal<FinopsUtilizationRow | null>(null);
 
   private readonly pal = computed(() => palette(this.themeSvc.theme()));
 
@@ -599,6 +720,28 @@ export class FinOpsComponent {
 
   toggleSort(): void {
     this.sortDesc.set(!this.sortDesc());
+  }
+
+  openRow(row: FinopsUtilizationRow): void {
+    this.selectedRow.set(row);
+  }
+
+  /** Measured usage percentages present on the row, ready for display. */
+  usedMetrics(row: FinopsUtilizationRow): FinopsDetailKeyValue[] {
+    const labels: Record<keyof FinopsUtilizationRow['used'], string> = {
+      cpuPct: 'CPU',
+      memoryPct: 'Memória',
+      storagePct: 'Armazenamento',
+      iopsPct: 'IOPS',
+    };
+    return (Object.entries(row.used) as [keyof FinopsUtilizationRow['used'], number | undefined][])
+      .filter(([, value]) => typeof value === 'number')
+      .map(([key, value]) => ({ key: labels[key], value: value as number }));
+  }
+
+  /** Provisioned capacity numbers present on the row, ready for display. */
+  provisionedMetrics(row: FinopsUtilizationRow): FinopsDetailKeyValue[] {
+    return Object.entries(row.provisioned).map(([key, value]) => ({ key, value }));
   }
 
   private async loadAnalytics(): Promise<void> {

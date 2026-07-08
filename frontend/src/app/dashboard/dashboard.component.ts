@@ -14,7 +14,7 @@ import { SkeletonComponent } from '../shared/skeleton.component';
 import { ThemeService } from '../core/theme.service';
 import { ToastService } from '../shared/toast.service';
 import { AnalyticsDataService } from './analytics-data.service';
-import { ActionStatus, Kpi, ServiceCount } from './analytics.model';
+import { ActionStatus, ActivityItem, Insight, Kpi, ServiceCount } from './analytics.model';
 import type { EChartsOption } from 'echarts';
 import {
   areaOptions,
@@ -192,12 +192,23 @@ const PERIODS = [
       <section class="bottom-grid">
         <div class="insight-grid">
           @for (ins of data().insights; track ins.title; let i = $index) {
-            <article class="card insight anim-in" [attr.data-tone]="ins.tone" [style.animation-delay.ms]="i * 60">
+            <article
+              class="card insight anim-in clickable"
+              [attr.data-tone]="ins.tone"
+              [style.animation-delay.ms]="i * 60"
+              role="button"
+              tabindex="0"
+              [attr.aria-label]="'Ver detalhe: ' + ins.title"
+              (click)="openInsight(ins)"
+              (keydown.enter)="openInsight(ins)"
+              (keydown.space)="openInsight(ins)"
+            >
               <span class="dot"></span>
               <div>
                 <strong>{{ ins.title }}</strong>
                 <p class="muted">{{ ins.detail }}</p>
               </div>
+              <app-icon name="expand" [size]="13" class="insight-expand" />
             </article>
           }
         </div>
@@ -209,7 +220,15 @@ const PERIODS = [
           </header>
           <ul class="activity">
             @for (a of data().activity; track a.id) {
-              <li>
+              <li
+                class="clickable"
+                role="button"
+                tabindex="0"
+                [attr.aria-label]="'Ver detalhe: ' + a.action + ' em ' + a.service"
+                (click)="openActivity(a)"
+                (keydown.enter)="openActivity(a)"
+                (keydown.space)="openActivity(a)"
+              >
                 <span class="act-ic" [attr.data-status]="a.status">
                   <app-icon [name]="statusIcon(a.status)" [size]="14" />
                 </span>
@@ -220,6 +239,7 @@ const PERIODS = [
                 <div class="act-meta">
                   <span class="badge" [attr.data-status]="a.status">{{ statusLabel(a.status) }}</span>
                   <span class="muted act-time">{{ timeAgo(a.at) }}</span>
+                  <app-icon name="expand" [size]="13" class="act-expand" />
                 </div>
               </li>
             }
@@ -266,6 +286,60 @@ const PERIODS = [
 
           <p class="kd-desc muted">{{ d.description }}</p>
         </div>
+      }
+    </app-modal>
+
+    <app-modal
+      [open]="!!selectedActivity()"
+      [title]="selectedActivity()?.action ?? ''"
+      [subtitle]="'Detalhe da atividade recente'"
+      (close)="selectedActivity.set(null)"
+    >
+      @if (selectedActivity(); as a) {
+        <div class="act-detail">
+          <div class="act-detail-head">
+            <span class="act-ic" [attr.data-status]="a.status">
+              <app-icon [name]="statusIcon(a.status)" [size]="16" />
+            </span>
+            <span class="badge" [attr.data-status]="a.status">{{ statusLabel(a.status) }}</span>
+          </div>
+
+          <div class="kd-stats">
+            <div class="kd-stat">
+              <span class="kd-stat-val">{{ a.service }}</span>
+              <span class="muted">Serviço</span>
+            </div>
+            <div class="kd-stat">
+              <span class="kd-stat-val">{{ a.env }}</span>
+              <span class="muted">Ambiente</span>
+            </div>
+            <div class="kd-stat">
+              <span class="kd-stat-val">{{ a.actor }}</span>
+              <span class="muted">Executor</span>
+            </div>
+            <div class="kd-stat">
+              <span class="kd-stat-val">{{ formatDuration(a.durationMs) }}</span>
+              <span class="muted">Duração</span>
+            </div>
+            <div class="kd-stat">
+              <span class="kd-stat-val">{{ timeAgo(a.at) }}</span>
+              <span class="muted">{{ absoluteDate(a.at) }}</span>
+            </div>
+          </div>
+
+          <p class="path act-detail-id">{{ a.id }}</p>
+        </div>
+      }
+    </app-modal>
+
+    <app-modal
+      [open]="!!selectedInsight()"
+      [title]="selectedInsight()?.title ?? ''"
+      [subtitle]="'Insight operacional'"
+      (close)="selectedInsight.set(null)"
+    >
+      @if (selectedInsight(); as ins) {
+        <p class="insight-detail">{{ ins.detail }}</p>
       }
     </app-modal>
   `,
@@ -352,6 +426,65 @@ const PERIODS = [
         line-height: 1.55;
         margin: 0;
       }
+      .insight.clickable {
+        position: relative;
+        cursor: pointer;
+        transition: border-color 0.15s, background 0.15s;
+      }
+      .insight.clickable:hover,
+      .insight.clickable:focus-visible {
+        border-color: var(--accent);
+        background: var(--hover);
+      }
+      .insight-expand {
+        position: absolute;
+        top: 0.75rem;
+        right: 0.75rem;
+        opacity: 0;
+        color: var(--muted);
+        transition: opacity 0.15s;
+      }
+      .insight.clickable:hover .insight-expand,
+      .insight.clickable:focus-visible .insight-expand {
+        opacity: 1;
+      }
+      .activity li.clickable {
+        cursor: pointer;
+        border-radius: 8px;
+        transition: background 0.15s;
+      }
+      .activity li.clickable:hover,
+      .activity li.clickable:focus-visible {
+        background: var(--hover);
+      }
+      .act-expand {
+        opacity: 0;
+        color: var(--muted);
+        transition: opacity 0.15s;
+      }
+      .activity li.clickable:hover .act-expand,
+      .activity li.clickable:focus-visible .act-expand {
+        opacity: 1;
+      }
+      .act-detail {
+        display: flex;
+        flex-direction: column;
+        gap: 1.1rem;
+      }
+      .act-detail-head {
+        display: flex;
+        align-items: center;
+        gap: 0.6rem;
+      }
+      .act-detail-id {
+        margin: 0;
+        word-break: break-all;
+      }
+      .insight-detail {
+        margin: 0;
+        font-size: 0.92rem;
+        line-height: 1.6;
+      }
     `,
   ],
 })
@@ -436,6 +569,35 @@ export class DashboardComponent {
 
   onServiceClick(s: ServiceCount): void {
     this.toast.info(`Serviço “${s.service}”`, `${s.count.toLocaleString('pt-BR')} execuções no período.`);
+  }
+
+  // --- Activity & insight detail modals ---
+  readonly selectedActivity = signal<ActivityItem | null>(null);
+  readonly selectedInsight = signal<Insight | null>(null);
+
+  openActivity(a: ActivityItem): void {
+    this.selectedActivity.set(a);
+  }
+
+  openInsight(ins: Insight): void {
+    this.selectedInsight.set(ins);
+  }
+
+  absoluteDate(iso: string): string {
+    return new Date(iso).toLocaleString('pt-BR');
+  }
+
+  formatDuration(ms: number): string {
+    if (ms < 1000) {
+      return `${ms}ms`;
+    }
+    const s = ms / 1000;
+    if (s < 60) {
+      return `${s.toLocaleString('pt-BR', { maximumFractionDigits: 1 })}s`;
+    }
+    const min = Math.floor(s / 60);
+    const rem = Math.round(s % 60);
+    return `${min}min ${rem}s`;
   }
 
   // --- KPI drill-down modal ---

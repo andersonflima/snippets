@@ -9,6 +9,7 @@ import {
 import { FormsModule } from '@angular/forms';
 import { RouterLink } from '@angular/router';
 import { IconComponent } from '../../shared/icon.component';
+import { ModalComponent } from '../../shared/modal.component';
 import { ToastService } from '../../shared/toast.service';
 import { SkeletonComponent } from '../../shared/skeleton.component';
 import { SettingsService } from '../../core/settings.service';
@@ -55,7 +56,7 @@ const ENVS = ['all', 'dev', 'homol', 'staging', 'prod'];
   selector: 'app-resources',
   standalone: true,
   changeDetection: ChangeDetectionStrategy.OnPush,
-  imports: [FormsModule, RouterLink, IconComponent, SkeletonComponent],
+  imports: [FormsModule, RouterLink, IconComponent, SkeletonComponent, ModalComponent],
   template: `
     <div class="page-head anim-in">
       <div>
@@ -144,7 +145,18 @@ const ENVS = ['all', 'dev', 'homol', 'staging', 'prod'];
                 <span class="res-name">{{ r.name }}</span>
                 <span class="path">{{ r.id }}</span>
               </div>
-              <span class="prod-badge">{{ r.product }}</span>
+              <div class="res-top-right">
+                <span class="prod-badge">{{ r.product }}</span>
+                <button
+                  type="button"
+                  class="peek-btn"
+                  aria-label="Ver detalhes rápidos"
+                  title="Detalhes rápidos"
+                  (click)="openPeek(r, $event)"
+                >
+                  <app-icon name="expand" [size]="15" />
+                </button>
+              </div>
             </div>
 
             <div class="res-meta">
@@ -175,6 +187,82 @@ const ENVS = ['all', 'dev', 'homol', 'staging', 'prod'];
         }
       </section>
     }
+
+    <app-modal
+      [open]="!!peek()"
+      [title]="peek()?.name ?? ''"
+      [subtitle]="peek() ? peek()!.product + ' · ' + peek()!.type : ''"
+      (close)="peek.set(null)"
+    >
+      @if (peek(); as r) {
+        <div class="peek">
+          <div class="peek-head">
+            <span class="prod-badge">{{ r.product }}</span>
+            <span class="badge" [attr.data-status]="statusTone(r.status)">{{ r.status }}</span>
+            <code class="path">{{ r.id }}</code>
+          </div>
+
+          <div class="kd-stats">
+            <div class="kd-stat">
+              <span class="kd-stat-val">{{ money(r.monthlyCost) }}</span>
+              <span class="muted">Custo / mês</span>
+            </div>
+            <div class="kd-stat">
+              <span class="kd-stat-val">{{ r.utilizationPct }}%</span>
+              <span class="muted">Utilização</span>
+            </div>
+            <div class="kd-stat">
+              <span class="kd-stat-val">{{ r.env }}</span>
+              <span class="muted">Ambiente</span>
+            </div>
+            <div class="kd-stat">
+              <span class="kd-stat-val">{{ r.region }}</span>
+              <span class="muted">Região</span>
+            </div>
+          </div>
+
+          <div class="util" [title]="r.utilizationPct + '% de utilização'">
+            <div class="util-bar">
+              <div
+                class="util-fill"
+                [attr.data-tone]="utilTone(r.utilizationPct)"
+                [style.width.%]="clamp(r.utilizationPct)"
+              ></div>
+            </div>
+            <span class="util-pct">{{ r.utilizationPct }}%</span>
+          </div>
+
+          <dl class="peek-list">
+            <div class="peek-row">
+              <dt>Tipo</dt>
+              <dd>{{ r.type }}</dd>
+            </div>
+            <div class="peek-row">
+              <dt>Tamanho</dt>
+              <dd>{{ r.size }}</dd>
+            </div>
+            <div class="peek-row">
+              <dt>Criado em</dt>
+              <dd>{{ formatDate(r.createdAt) }}</dd>
+            </div>
+          </dl>
+
+          @if (tagEntries(r).length) {
+            <div class="peek-tags">
+              <span class="peek-tags-head muted">Tags</span>
+              <dl class="peek-list">
+                @for (t of tagEntries(r); track t[0]) {
+                  <div class="peek-row">
+                    <dt>{{ t[0] }}</dt>
+                    <dd><code class="path">{{ t[1] }}</code></dd>
+                  </div>
+                }
+              </dl>
+            </div>
+          }
+        </div>
+      }
+    </app-modal>
   `,
   styles: [
     `
@@ -369,6 +457,82 @@ const ENVS = ['all', 'dev', 'homol', 'staging', 'prod'];
         color: var(--muted);
       }
 
+      .res-top-right {
+        display: flex;
+        align-items: center;
+        gap: 0.4rem;
+        flex: 0 0 auto;
+      }
+      .peek-btn {
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        width: 26px;
+        height: 26px;
+        padding: 0;
+        color: var(--muted);
+        background: transparent;
+        border: 1px solid transparent;
+        border-radius: 6px;
+        cursor: pointer;
+        transition: color 0.12s ease, background 0.12s ease, border-color 0.12s ease;
+      }
+      .peek-btn:hover {
+        color: var(--accent);
+        background: var(--hover);
+        border-color: var(--border);
+      }
+      .peek-btn:focus-visible {
+        outline: 2px solid var(--accent);
+        outline-offset: 2px;
+      }
+
+      .peek {
+        display: flex;
+        flex-direction: column;
+        gap: 1rem;
+      }
+      .peek-head {
+        display: flex;
+        align-items: center;
+        flex-wrap: wrap;
+        gap: 0.5rem;
+      }
+      .peek-list {
+        display: flex;
+        flex-direction: column;
+        gap: 0;
+        margin: 0;
+      }
+      .peek-row {
+        display: flex;
+        align-items: baseline;
+        justify-content: space-between;
+        gap: 1rem;
+        padding: 0.45rem 0;
+        border-bottom: 1px solid var(--border);
+      }
+      .peek-row:last-child {
+        border-bottom: none;
+      }
+      .peek-row dt {
+        color: var(--muted);
+        font-size: 0.82rem;
+      }
+      .peek-row dd {
+        margin: 0;
+        text-align: right;
+        min-width: 0;
+        word-break: break-word;
+      }
+      .peek-tags-head {
+        display: block;
+        font-size: 0.78rem;
+        text-transform: uppercase;
+        letter-spacing: 0.04em;
+        margin-bottom: 0.35rem;
+      }
+
       @media (max-width: 600px) {
         .res-grid {
           grid-template-columns: 1fr;
@@ -395,6 +559,9 @@ export class ResourcesComponent {
 
   readonly loading = signal(false);
   readonly error = signal<string | null>(null);
+
+  /** Resource shown in the quick-peek modal, or null when closed. */
+  readonly peek = signal<ResourceItem | null>(null);
   private readonly result = signal<{ items: ResourceItem[]; total: number } | null>(null);
 
   readonly loaded = computed(() => this.result());
@@ -449,6 +616,28 @@ export class ResourcesComponent {
         this.loading.set(false);
       }
     }
+  }
+
+  /** Opens the quick-peek modal without triggering the card's routerLink. */
+  openPeek(r: ResourceItem, ev: Event): void {
+    ev.stopPropagation();
+    ev.preventDefault();
+    this.peek.set(r);
+  }
+
+  tagEntries(r: ResourceItem): ReadonlyArray<readonly [string, string]> {
+    return Object.entries(r.tags);
+  }
+
+  formatDate(iso: string): string {
+    const date = new Date(iso);
+    if (Number.isNaN(date.getTime())) {
+      return iso;
+    }
+    return date.toLocaleString('pt-BR', {
+      dateStyle: 'medium',
+      timeStyle: 'short',
+    });
   }
 
   money(value: number): string {
