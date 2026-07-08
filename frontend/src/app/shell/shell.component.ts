@@ -33,6 +33,7 @@ const NAV: NavItem[] = [
   { path: '/db-performance', label: 'Performance BD', icon: 'database' },
   { path: '/finops', label: 'FinOps', icon: 'chart' },
   { path: '/integrations', label: 'Integrações', icon: 'layers' },
+  { path: '/gmud', label: 'GMUD', icon: 'shield' },
   { path: '/admin', label: 'Admin', icon: 'shield' },
   { path: '/settings', label: 'Configurações', icon: 'gear' },
 ];

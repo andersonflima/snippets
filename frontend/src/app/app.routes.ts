@@ -9,6 +9,7 @@ import { RunActionComponent } from './features/run-action.component';
 import { AdminComponent } from './features/admin.component';
 import { SettingsComponent } from './features/settings.component';
 import { FinOpsComponent } from './features/finops.component';
+import { GmudComponent } from './features/gmud/gmud.component';
 import { LoginComponent } from './features/login/login.component';
 import { authGuard } from './core/auth.guard';
 
@@ -28,6 +29,7 @@ export const routes: Routes = [
       { path: 'admin', component: AdminComponent, title: 'Admin' },
       { path: 'settings', component: SettingsComponent, title: 'Configurações' },
       { path: 'finops', component: FinOpsComponent, title: 'FinOps' },
+      { path: 'gmud', component: GmudComponent, title: 'GMUD' },
     ],
   },
   { path: '**', redirectTo: '' },
