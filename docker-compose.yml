@@ -25,25 +25,26 @@ x-pip-args: &pip-args
 
 services:
   # ---- microserviços action-driven (FastAPI, :8080, servem /<service>/execute) ----
-  create:      { <<: *micro, build: { context: ./microservicos/create, args: *pip-args } }
-  destroy:     { <<: *micro, build: { context: ./microservicos/destroy, args: *pip-args } }
-  modify:      { <<: *micro, build: { context: ./microservicos/modify, args: *pip-args } }
-  start-stop:  { <<: *micro, build: { context: ./microservicos/start-stop, args: *pip-args } }
-  storage:     { <<: *micro, build: { context: ./microservicos/storage, args: *pip-args } }
-  replicate:   { <<: *micro, build: { context: ./microservicos/replicate, args: *pip-args } }
-  restore:     { <<: *micro, build: { context: ./microservicos/restore, args: *pip-args } }
-  db-password: { <<: *micro, build: { context: ./microservicos/db-password, args: *pip-args } }
-  vpc-link:    { <<: *micro, build: { context: ./microservicos/vpc-link, args: *pip-args } }
-  kms:         { <<: *micro, build: { context: ./microservicos/kms, args: *pip-args } }
-  finops:      { <<: *micro, build: { context: ./microservicos/finops, args: *pip-args } }
-  servicenow:  { <<: *micro, build: { context: ./microservicos/servicenow, args: *pip-args } }
-  rds-data:    { <<: *micro, build: { context: ./microservicos/rds-data, args: *pip-args } }
+  create:      { <<: *micro, build: { context: ./microservicos/create, args: *pip-args, secrets: [pip_conf] } }
+  destroy:     { <<: *micro, build: { context: ./microservicos/destroy, args: *pip-args, secrets: [pip_conf] } }
+  modify:      { <<: *micro, build: { context: ./microservicos/modify, args: *pip-args, secrets: [pip_conf] } }
+  start-stop:  { <<: *micro, build: { context: ./microservicos/start-stop, args: *pip-args, secrets: [pip_conf] } }
+  storage:     { <<: *micro, build: { context: ./microservicos/storage, args: *pip-args, secrets: [pip_conf] } }
+  replicate:   { <<: *micro, build: { context: ./microservicos/replicate, args: *pip-args, secrets: [pip_conf] } }
+  restore:     { <<: *micro, build: { context: ./microservicos/restore, args: *pip-args, secrets: [pip_conf] } }
+  db-password: { <<: *micro, build: { context: ./microservicos/db-password, args: *pip-args, secrets: [pip_conf] } }
+  vpc-link:    { <<: *micro, build: { context: ./microservicos/vpc-link, args: *pip-args, secrets: [pip_conf] } }
+  kms:         { <<: *micro, build: { context: ./microservicos/kms, args: *pip-args, secrets: [pip_conf] } }
+  finops:      { <<: *micro, build: { context: ./microservicos/finops, args: *pip-args, secrets: [pip_conf] } }
+  servicenow:  { <<: *micro, build: { context: ./microservicos/servicenow, args: *pip-args, secrets: [pip_conf] } }
+  rds-data:    { <<: *micro, build: { context: ./microservicos/rds-data, args: *pip-args, secrets: [pip_conf] } }
 
   # ---- insights: analytics/metadata/métricas/logs por produto (mock por padrão) ----
   insights:
     build:
       context: ./microservicos/insights
       args: *pip-args
+      secrets: [pip_conf]
     restart: unless-stopped
     networks: [actions]
     environment:
@@ -66,6 +67,7 @@ services:
     build:
       context: ./bff
       args: *pip-args
+      secrets: [pip_conf]
     restart: unless-stopped
     networks: [actions]
     env_file: [.env]                      # BFF_JWT_SECRET/BFF_USERS sem interpolação ($ do bcrypt)
@@ -96,3 +98,11 @@ services:
 networks:
   actions:
     driver: bridge
+
+# pip.conf montado como secret no build dos serviços Python (index-url do
+# Artifactory). Fica disponível só durante o pip install, não é baked na imagem.
+# Local usa o placeholder; na máquina corporativa aponte para o seu pip.conf real:
+#   PIP_CONF="$HOME/.config/pip/pip.conf" docker compose build
+secrets:
+  pip_conf:
+    file: "${PIP_CONF:-./deploy/pip.conf.example}"

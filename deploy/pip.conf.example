@@ -1,0 +1,9 @@
+# Placeholder do build local (sem Artifactory).
+#
+# Na máquina corporativa, aponte o secret do compose para o seu pip.conf real
+# (que tem o index-url do Artifactory) sem editar arquivo nenhum:
+#
+#   PIP_CONF="$HOME/.config/pip/pip.conf" docker compose build
+#
+# Este arquivo fica sem configuração de propósito, para não alterar o
+# comportamento padrão do pip no build local.

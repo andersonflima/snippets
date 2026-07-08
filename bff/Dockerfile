@@ -13,7 +13,8 @@ ARG PIP_TRUSTED_HOST=""
 ENV PIP_TRUSTED_HOST=${PIP_TRUSTED_HOST}
 
 COPY requirements.txt .
-RUN pip install --no-cache-dir -r requirements.txt
+RUN --mount=type=secret,id=pip_conf,target=/etc/pip.conf,required=false \
+    pip install --no-cache-dir -r requirements.txt
 
 COPY app ./app
 
