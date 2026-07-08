@@ -9,6 +9,8 @@ import {
 import { FormsModule } from '@angular/forms';
 import { RouterLink } from '@angular/router';
 import { IconComponent } from '../../shared/icon.component';
+import { ToastService } from '../../shared/toast.service';
+import { SkeletonComponent } from '../../shared/skeleton.component';
 import { SettingsService } from '../../core/settings.service';
 import {
   ProductScope,
@@ -53,7 +55,7 @@ const ENVS = ['all', 'dev', 'homol', 'staging', 'prod'];
   selector: 'app-resources',
   standalone: true,
   changeDetection: ChangeDetectionStrategy.OnPush,
-  imports: [FormsModule, RouterLink, IconComponent],
+  imports: [FormsModule, RouterLink, IconComponent, SkeletonComponent],
   template: `
     <div class="page-head anim-in">
       <div>
@@ -108,13 +110,17 @@ const ENVS = ['all', 'dev', 'homol', 'staging', 'prod'];
           }
         </select>
       </label>
-      <button type="button" class="ghost" (click)="reload()" title="Recarregar">
-        <app-icon name="activity" [size]="16" />
+      <button type="button" class="ghost" (click)="manualReload()" [disabled]="loading()" title="Recarregar">
+        <app-icon name="refresh" [size]="16" [class.spin]="loading()" />
       </button>
     </div>
 
     @if (loading()) {
-      <div class="card muted">Carregando recursos…</div>
+      <section class="res-grid">
+        @for (s of skeletonCards; track s) {
+          <div class="card"><app-skeleton height="132px" /></div>
+        }
+      </section>
     } @else if (error(); as msg) {
       <div class="card">
         <h3>Falha ao carregar <span class="badge err">erro</span></h3>
@@ -374,8 +380,10 @@ const ENVS = ['all', 'dev', 'homol', 'staging', 'prod'];
 export class ResourcesComponent {
   private readonly resources = inject(ResourcesService);
   private readonly settings = inject(SettingsService);
+  private readonly toast = inject(ToastService);
 
   readonly products = PRODUCTS;
+  readonly skeletonCards = [1, 2, 3, 4, 5, 6];
   readonly statuses = STATUSES;
   readonly envs = ENVS;
   readonly activeEnv = this.settings.activeEnv;
@@ -409,8 +417,15 @@ export class ResourcesComponent {
     });
   }
 
-  reload(): void {
-    void this.load(this.product(), this.activeFilters());
+  async manualReload(): Promise<void> {
+    if (this.loading()) return;
+    await this.load(this.product(), this.activeFilters());
+    const err = this.error();
+    if (err) {
+      this.toast.error('Falha ao recarregar', err);
+    } else {
+      this.toast.success('Recursos atualizados', `${this.result()?.total ?? 0} recurso(s) encontrados.`);
+    }
   }
 
   private async load(product: ProductScope, filters: ResourceFilters): Promise<void> {

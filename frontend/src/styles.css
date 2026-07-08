@@ -1506,3 +1506,14 @@ body {
     transform: scaleX(0);
   }
 }
+
+/* Global spin utility — put on an element (e.g. an icon) while loading. */
+.spin {
+  animation: ui-spin 0.8s linear infinite;
+}
+
+@keyframes ui-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}

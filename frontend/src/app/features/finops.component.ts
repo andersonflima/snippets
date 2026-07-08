@@ -11,6 +11,8 @@ import { SettingsService } from '../core/settings.service';
 import { ThemeService } from '../core/theme.service';
 import { EChartComponent } from '../shared/echart.component';
 import { IconComponent } from '../shared/icon.component';
+import { SkeletonComponent } from '../shared/skeleton.component';
+import { ToastService } from '../shared/toast.service';
 import { palette } from '../dashboard/chart-options';
 import {
   savingsByTypeOptions,
@@ -49,7 +51,7 @@ const PERIODS = [
   selector: 'app-finops',
   standalone: true,
   changeDetection: ChangeDetectionStrategy.OnPush,
-  imports: [FormsModule, EChartComponent, IconComponent],
+  imports: [FormsModule, EChartComponent, IconComponent, SkeletonComponent],
   template: `
     <div class="page-head anim-in">
       <div>
@@ -87,10 +89,13 @@ const PERIODS = [
     @if (analyticsLoading() && !analytics()) {
       <section class="kpi-grid">
         @for (s of [1, 2, 3, 4]; track s) {
-          <article class="kpi skeleton"><span class="sk-line"></span></article>
+          <article class="kpi"><app-skeleton height="86px" /></article>
         }
       </section>
-      <div class="card muted">Analisando utilização dos recursos…</div>
+      <section class="chart-grid">
+        <div class="card panel span-2"><app-skeleton height="300px" /></div>
+        <div class="card panel"><app-skeleton height="300px" /></div>
+      </section>
     }
 
     @if (analytics(); as a) {
@@ -407,17 +412,6 @@ const PERIODS = [
         font-size: 1.6rem;
         font-weight: 700;
       }
-      .kpi.skeleton {
-        min-height: 118px;
-      }
-      .sk-line {
-        display: block;
-        height: 1rem;
-        width: 60%;
-        border-radius: 4px;
-        background: var(--border);
-        opacity: 0.6;
-      }
       .scan-form {
         display: grid;
         grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
@@ -500,6 +494,7 @@ export class FinOpsComponent {
   private readonly finops = inject(FinopsService);
   private readonly settings = inject(SettingsService);
   private readonly themeSvc = inject(ThemeService);
+  private readonly toast = inject(ToastService);
 
   readonly baseUrl = this.settings.baseUrl;
   readonly region = FINOPS_REGION;
@@ -615,10 +610,15 @@ export class FinOpsComponent {
         lookbackDays: this.lookbackDays(),
       });
       this.analytics.set(data);
-    } catch (err) {
-      this.analyticsError.set(
-        err instanceof Error ? err.message : 'Erro inesperado ao carregar a análise.',
+      this.toast.success(
+        'Análise atualizada',
+        `Economia estimada: ${this.money(data.summary.estimatedMonthlySavings, data.summary.currency)}/mês.`,
       );
+    } catch (err) {
+      const message =
+        err instanceof Error ? err.message : 'Erro inesperado ao carregar a análise.';
+      this.analyticsError.set(message);
+      this.toast.error('Falha na análise', message);
     } finally {
       this.analyticsLoading.set(false);
     }
@@ -638,6 +638,11 @@ export class FinOpsComponent {
         lookbackDays: this.scanLookbackDays(),
       });
       this.result.set(res);
+      if (res.ok) {
+        this.toast.success('Análise concluída', 'Findings de economia carregados.');
+      } else {
+        this.toast.error('Falha na análise', `${res.status} ${res.statusText}`);
+      }
     } finally {
       this.loading.set(false);
     }
