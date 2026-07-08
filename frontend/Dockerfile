@@ -3,6 +3,12 @@ FROM node:22-alpine AS build
 
 WORKDIR /app
 
+# strict-ssl do npm. Em ambiente corporativo com CA interna/proxy que quebra a
+# verificação TLS, buildar com NPM_CONFIG_STRICT_SSL=false. Default true (seguro);
+# o ENV fica só neste estágio de build (não vaza para a imagem final de runtime).
+ARG NPM_CONFIG_STRICT_SSL=true
+ENV NPM_CONFIG_STRICT_SSL=${NPM_CONFIG_STRICT_SSL}
+
 # instala deps com lockfile (cache de camada enquanto package*.json não mudar)
 COPY package.json package-lock.json ./
 RUN npm ci

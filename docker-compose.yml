@@ -69,7 +69,12 @@ services:
 
   # ---- Frontend (Angular buildado, servido por nginx :80) ----
   frontend:
-    build: ./frontend
+    build:
+      context: ./frontend
+      # NPM_STRICT_SSL=false no ambiente (ou .env) desliga a verificação TLS do
+      # npm no build — necessário em rede corporativa com CA interna. Default true.
+      args:
+        NPM_CONFIG_STRICT_SSL: "${NPM_STRICT_SSL:-true}"
     restart: unless-stopped
     networks: [actions]
     ports:
