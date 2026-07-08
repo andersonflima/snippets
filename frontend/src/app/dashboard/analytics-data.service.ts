@@ -80,6 +80,13 @@ export class AnalyticsDataService {
     const avgDuration = 3.4 + rng() * 2.2;
     const pendingApprovals = 4 + Math.floor(rng() * 8);
 
+    const dailyTotals = series.map((d) => d.success + d.failed);
+    const peak = max(dailyTotals);
+    const prevPeak = max(prevSeries.map((d) => d.success + d.failed));
+    const pendingSpark = series.map(() =>
+      Math.max(0, pendingApprovals + Math.round(rng() * 6 - 3)),
+    );
+
     const kpis: Kpi[] = [
       {
         key: 'actions',
@@ -153,6 +160,28 @@ export class AnalyticsDataService {
         tone: 'accent',
         icon: 'clock',
       },
+      {
+        key: 'peak',
+        label: 'Pico diário',
+        value: peak,
+        decimals: 0,
+        deltaPct: pct(peak, prevPeak),
+        higherIsBetter: true,
+        spark: dailyTotals,
+        tone: 'accent',
+        icon: 'chart',
+      },
+      {
+        key: 'pending',
+        label: 'Aprovações pendentes',
+        value: pendingApprovals,
+        decimals: 0,
+        deltaPct: pct(pendingApprovals, pendingApprovals + 3),
+        higherIsBetter: false,
+        spark: pendingSpark,
+        tone: 'warn',
+        icon: 'bell',
+      },
     ];
 
     const statusBreakdown: StatusSlice[] = [
@@ -211,10 +240,48 @@ export class AnalyticsDataService {
         return { ...base, ...this.resourcesDetail(kpi, series, data.byService) };
       case 'latency':
         return { ...base, ...this.latencyDetail(kpi, series) };
+      case 'peak':
+        return { ...base, ...this.genericDetail(kpi, series, data.byService) };
+      case 'pending':
+        return { ...base, ...this.genericDetail(kpi, series) };
       case 'actions':
       default:
         return { ...base, ...this.actionsDetail(series, data.byService) };
     }
+  }
+
+  /**
+   * Fallback drill-down for KPIs without a bespoke breakdown. Builds a per-day
+   * series from the KPI's own deterministic spark and formats stats using the
+   * KPI's own unit (prefix/suffix/decimals), so any new metric renders correctly.
+   */
+  private genericDetail(
+    kpi: Kpi,
+    series: DayPoint[],
+    byService?: ServiceCount[],
+  ): Omit<KpiDetail, keyof KpiDetailBase> {
+    const values = series.map((_, i) => kpi.spark[i] ?? kpi.value);
+    const primary: KpiSeriesPoint[] = series.map((d, i) => ({ t: d.date, value: values[i] }));
+    const avg = values.length ? sum(values) / values.length : kpi.value;
+    const secondary: KpiBreakdownItem[] | undefined = byService
+      ?.slice(0, 8)
+      .map((s) => ({ label: s.service, value: s.count }));
+    return {
+      description:
+        `${kpi.label} está em ${fmtKpiNum(kpi, kpi.value)}, com média de ` +
+        `${fmtKpiNum(kpi, avg)} no período. O pico foi de ${fmtKpiNum(kpi, max(values))} ` +
+        `e o mínimo de ${fmtKpiNum(kpi, min(values))}, indicando comportamento estável.`,
+      stats: [
+        stat('Atual', fmtKpiNum(kpi, kpi.value)),
+        stat('Média', fmtKpiNum(kpi, avg)),
+        stat('Pico', fmtKpiNum(kpi, max(values))),
+        stat('Mínimo', fmtKpiNum(kpi, min(values))),
+      ],
+      primaryTitle: `${kpi.label} por dia`,
+      primaryUnit: '',
+      primary,
+      ...(secondary ? { secondaryTitle: 'Distribuição por serviço', secondary } : {}),
+    };
   }
 
   private actionsDetail(
@@ -601,7 +668,12 @@ function secStr(x: number): string {
 
 /** Formats a {@link Kpi} value the same way the cards render it. */
 function fmtKpiValue(k: Kpi): string {
-  const num = k.value.toLocaleString('pt-BR', {
+  return fmtKpiNum(k, k.value);
+}
+
+/** Formats an arbitrary number using a {@link Kpi}'s prefix/suffix/decimals. */
+function fmtKpiNum(k: Kpi, value: number): string {
+  const num = value.toLocaleString('pt-BR', {
     minimumFractionDigits: k.decimals,
     maximumFractionDigits: k.decimals,
   });

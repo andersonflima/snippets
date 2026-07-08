@@ -10,6 +10,7 @@ import { Router } from '@angular/router';
 import { AuthService } from '../../core/auth.service';
 import { ThemeService } from '../../core/theme.service';
 import { IconComponent } from '../../shared/icon.component';
+import { ToastService } from '../../shared/toast.service';
 
 /** Error envelope returned by the BFF on a failed login. */
 interface ErrorEnvelope {
@@ -299,6 +300,7 @@ interface ErrorEnvelope {
 export class LoginComponent {
   private readonly auth = inject(AuthService);
   private readonly router = inject(Router);
+  private readonly toast = inject(ToastService);
   readonly theme = inject(ThemeService);
 
   readonly username = signal('admin');
@@ -315,6 +317,7 @@ export class LoginComponent {
     this.error.set(null);
     try {
       await this.auth.login(this.username(), this.password());
+      this.toast.success('Bem-vindo, ' + this.username(), 'Login realizado com sucesso.');
       await this.router.navigateByUrl('/');
     } catch (err) {
       this.error.set(this.toMessage(err));

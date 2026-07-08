@@ -1128,3 +1128,381 @@ pre.response {
     transform: none;
   }
 }
+
+/* =========================================================================
+   Visual identity refresh — gradients, brand glow, richer surfaces
+   ========================================================================= */
+:root {
+  --accent-grad: linear-gradient(135deg, var(--accent), var(--accent-2));
+  --glow: 0 8px 24px color-mix(in srgb, var(--accent) 34%, transparent);
+}
+
+/* Subtle ambient gradient behind the whole app */
+body {
+  background:
+    radial-gradient(48rem 32rem at 100% -8%, color-mix(in srgb, var(--accent) 8%, transparent), transparent 60%),
+    radial-gradient(42rem 34rem at -10% 108%, color-mix(in srgb, var(--accent-2) 7%, transparent), transparent 60%),
+    var(--bg);
+  background-attachment: fixed;
+}
+
+/* Gradient brand mark with a soft glow + hover pop */
+.logo {
+  background: var(--accent-grad);
+  box-shadow: var(--glow);
+  transition: transform 0.2s ease, box-shadow 0.2s ease;
+}
+
+.brand:hover .logo {
+  transform: translateY(-1px) rotate(-4deg) scale(1.05);
+}
+
+.brand-text b {
+  background: var(--accent-grad);
+  -webkit-background-clip: text;
+  background-clip: text;
+  -webkit-text-fill-color: transparent;
+}
+
+/* Panels reveal a gradient accent bar on hover */
+.card.panel {
+  position: relative;
+  overflow: hidden;
+}
+
+.card.panel::before {
+  content: '';
+  position: absolute;
+  inset: 0 0 auto 0;
+  height: 3px;
+  background: var(--accent-grad);
+  transform: scaleX(0);
+  transform-origin: left;
+  transition: transform 0.28s ease;
+}
+
+.card.panel:hover::before {
+  transform: scaleX(1);
+}
+
+/* KPI cards: accent border + moving sheen on hover */
+.kpi {
+  position: relative;
+  overflow: hidden;
+}
+
+.kpi::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  background: radial-gradient(
+    24rem 14rem at var(--mx, 120%) -30%,
+    color-mix(in srgb, var(--accent) 12%, transparent),
+    transparent 70%
+  );
+  opacity: 0;
+  transition: opacity 0.3s ease;
+  pointer-events: none;
+}
+
+.kpi:hover::after {
+  opacity: 1;
+}
+
+.kpi-ic {
+  transition: transform 0.2s ease;
+}
+
+.kpi:hover .kpi-ic {
+  transform: translateY(-1px) scale(1.06);
+}
+
+/* =========================================================================
+   Live indicator + indeterminate top progress bar (dashboard)
+   ========================================================================= */
+.live {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.4rem;
+  font-size: 0.75rem;
+  font-weight: 600;
+  color: var(--muted);
+  padding: 0.25rem 0.6rem;
+  border-radius: 999px;
+  border: 1px solid var(--border);
+  background: var(--panel-2);
+}
+
+.live-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--muted);
+}
+
+.live.on {
+  color: var(--ok);
+}
+
+.live.on .live-dot {
+  background: var(--ok);
+  box-shadow: 0 0 0 0 color-mix(in srgb, var(--ok) 60%, transparent);
+  animation: live-pulse 1.8s ease-out infinite;
+}
+
+@keyframes live-pulse {
+  0% {
+    box-shadow: 0 0 0 0 color-mix(in srgb, var(--ok) 55%, transparent);
+  }
+  70% {
+    box-shadow: 0 0 0 7px color-mix(in srgb, var(--ok) 0%, transparent);
+  }
+  100% {
+    box-shadow: 0 0 0 0 color-mix(in srgb, var(--ok) 0%, transparent);
+  }
+}
+
+.dash-progress {
+  position: relative;
+  height: 3px;
+  margin: -0.25rem 0 1rem;
+  border-radius: 999px;
+  overflow: hidden;
+  background: color-mix(in srgb, var(--accent) 14%, transparent);
+}
+
+.dash-progress::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  width: 40%;
+  border-radius: 999px;
+  background: var(--accent-grad);
+  animation: dash-indeterminate 1.05s ease-in-out infinite;
+}
+
+@keyframes dash-indeterminate {
+  0% {
+    left: -40%;
+  }
+  100% {
+    left: 100%;
+  }
+}
+
+/* =========================================================================
+   Top services — interactive ranked bars
+   ========================================================================= */
+.svc-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0.15rem;
+}
+
+.svc-row {
+  display: grid;
+  grid-template-columns: 1.4rem 8.5rem 1fr auto;
+  align-items: center;
+  gap: 0.75rem;
+  padding: 0.55rem 0.5rem;
+  border-radius: 10px;
+  cursor: pointer;
+  transition: background-color 0.15s ease, transform 0.12s ease;
+}
+
+.svc-row:hover,
+.svc-row:focus-visible {
+  background: var(--hover);
+  outline: none;
+  transform: translateX(2px);
+}
+
+.svc-rank {
+  font-size: 0.75rem;
+  font-weight: 700;
+  color: var(--muted);
+  text-align: center;
+}
+
+.svc-name {
+  font-size: 0.85rem;
+  font-weight: 600;
+  font-family: ui-monospace, "SF Mono", Menlo, monospace;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.svc-track {
+  height: 8px;
+  border-radius: 999px;
+  background: var(--panel-2);
+  overflow: hidden;
+}
+
+.svc-bar {
+  display: block;
+  height: 100%;
+  border-radius: 999px;
+  background: var(--accent-grad);
+  transform-origin: left;
+  animation: svc-grow 0.7s cubic-bezier(0.22, 1, 0.36, 1) both;
+}
+
+.svc-row:hover .svc-bar {
+  filter: brightness(1.12);
+}
+
+@keyframes svc-grow {
+  from {
+    transform: scaleX(0);
+  }
+}
+
+.svc-count {
+  font-size: 0.85rem;
+  font-weight: 700;
+  color: var(--text);
+  min-width: 2.5rem;
+  text-align: right;
+}
+
+@media (max-width: 560px) {
+  .svc-row {
+    grid-template-columns: 1.2rem 6rem 1fr auto;
+    gap: 0.5rem;
+  }
+}
+
+/* =========================================================================
+   Toasts — global notification stack (bottom-right)
+   ========================================================================= */
+.toast-host {
+  position: fixed;
+  right: 1rem;
+  bottom: 1rem;
+  z-index: 2000;
+  display: flex;
+  flex-direction: column;
+  gap: 0.6rem;
+  max-width: min(92vw, 380px);
+  pointer-events: none;
+}
+
+.toast {
+  --tone: var(--accent);
+  position: relative;
+  display: flex;
+  align-items: flex-start;
+  gap: 0.65rem;
+  padding: 0.75rem 0.85rem 0.8rem;
+  background: color-mix(in srgb, var(--panel) 94%, transparent);
+  border: 1px solid var(--border);
+  border-left: 3px solid var(--tone);
+  border-radius: 12px;
+  box-shadow: var(--shadow-lg);
+  backdrop-filter: saturate(1.4) blur(8px);
+  -webkit-backdrop-filter: saturate(1.4) blur(8px);
+  overflow: hidden;
+  pointer-events: auto;
+  animation: toast-in 0.28s cubic-bezier(0.22, 1, 0.36, 1) both;
+}
+
+.toast[data-kind='success'] {
+  --tone: var(--ok);
+}
+.toast[data-kind='info'] {
+  --tone: var(--accent);
+}
+.toast[data-kind='warn'] {
+  --tone: var(--warn);
+}
+.toast[data-kind='error'] {
+  --tone: var(--danger);
+}
+
+.toast-ic {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex: 0 0 auto;
+  width: 30px;
+  height: 30px;
+  border-radius: 9px;
+  color: var(--tone);
+  background: color-mix(in srgb, var(--tone) 16%, transparent);
+}
+
+.toast-body {
+  display: flex;
+  flex-direction: column;
+  gap: 0.1rem;
+  min-width: 0;
+  flex: 1;
+}
+
+.toast-title {
+  font-size: 0.88rem;
+  font-weight: 700;
+  line-height: 1.25;
+}
+
+.toast-msg {
+  font-size: 0.8rem;
+  color: var(--muted);
+  line-height: 1.35;
+}
+
+.toast-close {
+  flex: 0 0 auto;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 24px;
+  height: 24px;
+  padding: 0;
+  margin: -0.15rem -0.15rem 0 0;
+  border: none;
+  background: transparent;
+  color: var(--muted);
+  border-radius: 7px;
+}
+
+.toast-close:hover {
+  color: var(--text);
+  background: var(--hover);
+  border: none;
+}
+
+.toast-bar {
+  position: absolute;
+  left: 0;
+  bottom: 0;
+  height: 2px;
+  width: 100%;
+  transform-origin: left;
+  background: var(--tone);
+  opacity: 0.65;
+  animation-name: toast-drain;
+  animation-timing-function: linear;
+  animation-fill-mode: forwards;
+}
+
+@keyframes toast-in {
+  from {
+    opacity: 0;
+    transform: translateX(16px) scale(0.98);
+  }
+}
+
+@keyframes toast-drain {
+  from {
+    transform: scaleX(1);
+  }
+  to {
+    transform: scaleX(0);
+  }
+}

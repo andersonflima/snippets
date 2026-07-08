@@ -18,6 +18,7 @@ import { filter } from 'rxjs';
 import { IconComponent } from '../shared/icon.component';
 import { ThemeService } from '../core/theme.service';
 import { AuthService } from '../core/auth.service';
+import { ToastService } from '../shared/toast.service';
 
 interface NavItem {
   path: string;
@@ -84,13 +85,13 @@ const NAV: NavItem[] = [
           </div>
 
           <div class="appbar-actions">
-            <button type="button" class="ghost icon-btn" title="Notificações">
+            <button type="button" class="ghost icon-btn" title="Notificações" (click)="notifications()">
               <app-icon name="bell" [size]="18" />
             </button>
             <button
               type="button"
               class="ghost icon-btn"
-              (click)="theme.toggle()"
+              (click)="toggleTheme()"
               [title]="theme.theme() === 'dark' ? 'Tema claro' : 'Tema escuro'"
             >
               <app-icon [name]="theme.theme() === 'dark' ? 'sun' : 'moon'" [size]="18" />
@@ -118,6 +119,7 @@ const NAV: NavItem[] = [
 export class ShellComponent {
   private readonly router = inject(Router);
   private readonly auth = inject(AuthService);
+  private readonly toast = inject(ToastService);
   readonly theme = inject(ThemeService);
 
   readonly nav = NAV;
@@ -146,8 +148,19 @@ export class ShellComponent {
     return name.slice(0, 2).toUpperCase();
   }
 
+  toggleTheme(): void {
+    this.theme.toggle();
+    const mode = this.theme.theme();
+    this.toast.info(mode === 'dark' ? 'Tema escuro ativado' : 'Tema claro ativado');
+  }
+
+  notifications(): void {
+    this.toast.info('Notificações', 'Você está em dia — nada novo por aqui.');
+  }
+
   async logout(): Promise<void> {
     await this.auth.logout();
+    this.toast.success('Sessão encerrada', 'Você saiu com segurança.');
     await this.router.navigateByUrl('/login');
   }
 }

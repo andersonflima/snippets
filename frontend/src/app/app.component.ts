@@ -1,14 +1,18 @@
 import { ChangeDetectionStrategy, Component, inject } from '@angular/core';
 import { RouterOutlet } from '@angular/router';
 import { ThemeService } from './core/theme.service';
+import { ToastHostComponent } from './shared/toast.component';
 
-/** Root: hosts the router outlet. Layout (sidebar/header) lives in ShellComponent. */
+/** Root: hosts the router outlet + global toast stack. Layout lives in ShellComponent. */
 @Component({
   selector: 'app-root',
   standalone: true,
   changeDetection: ChangeDetectionStrategy.OnPush,
-  imports: [RouterOutlet],
-  template: `<router-outlet />`,
+  imports: [RouterOutlet, ToastHostComponent],
+  template: `
+    <router-outlet />
+    <app-toast-host />
+  `,
 })
 export class AppComponent {
   constructor() {
