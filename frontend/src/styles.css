@@ -1650,3 +1650,121 @@ body {
   line-height: 1.55;
   margin: 0;
 }
+
+/* =========================================================================
+   Shell redesign — bolder rail, sectioned nav, live system-status footer,
+   command-style appbar eyebrow. Applies across every screen.
+   ========================================================================= */
+.shell {
+  grid-template-columns: 264px 1fr;
+}
+
+.shell.collapsed {
+  grid-template-columns: 76px 1fr;
+}
+
+.sidebar {
+  gap: 0.3rem;
+  padding: 1.1rem 0.85rem;
+  background:
+    linear-gradient(180deg, color-mix(in srgb, var(--accent) 6%, var(--sidebar-bg)), var(--sidebar-bg) 42%),
+    var(--sidebar-bg);
+}
+
+.sidebar .brand {
+  margin: 0.1rem 0.1rem 0.5rem;
+  padding: 0.7rem 0.75rem;
+  border: 1px solid var(--sidebar-border);
+  border-radius: 14px;
+  background: color-mix(in srgb, var(--panel) 60%, transparent);
+  font-size: 1.02rem;
+}
+
+.shell.collapsed .sidebar .brand {
+  padding: 0.6rem;
+  justify-content: center;
+}
+
+.nav-section {
+  font-family: var(--font-mono);
+  font-size: 0.64rem;
+  font-weight: 600;
+  letter-spacing: 0.18em;
+  text-transform: uppercase;
+  color: var(--faint);
+  padding: 0.35rem 0.85rem 0.15rem;
+}
+
+.shell.collapsed .nav-section {
+  display: none;
+}
+
+.nav a {
+  font-size: 0.92rem;
+}
+
+.side-foot {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+}
+
+.sys-status {
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+  padding: 0.6rem 0.7rem;
+  border: 1px solid color-mix(in srgb, var(--ok) 30%, var(--sidebar-border));
+  border-radius: 12px;
+  background: var(--soft-ok);
+}
+
+.sys-dot {
+  flex: 0 0 auto;
+  width: 9px;
+  height: 9px;
+  border-radius: 50%;
+  background: var(--ok);
+  box-shadow: 0 0 0 0 color-mix(in srgb, var(--ok) 55%, transparent);
+  animation: live-pulse 1.8s ease-out infinite;
+}
+
+.sys-text {
+  display: flex;
+  flex-direction: column;
+  line-height: 1.25;
+  min-width: 0;
+  overflow: hidden;
+}
+
+.sys-text b {
+  font-size: 0.8rem;
+  color: var(--text);
+  white-space: nowrap;
+}
+
+.sys-text span {
+  font-size: 0.72rem;
+  color: var(--muted);
+  white-space: nowrap;
+}
+
+.shell.collapsed .sys-status {
+  justify-content: center;
+  padding: 0.6rem;
+}
+
+/* Command-style appbar heading */
+.appbar-title {
+  display: flex;
+  flex-direction: column;
+  gap: 0.04rem;
+}
+
+.appbar-eyebrow {
+  font-family: var(--font-mono);
+  font-size: 0.6rem;
+  font-weight: 600;
+  letter-spacing: 0.2em;
+  color: var(--faint);
+}
