@@ -52,6 +52,7 @@ const NAV: NavItem[] = [
           <span class="brand-text">Actions<b>Console</b></span>
         </div>
 
+        <span class="nav-section nav-label">Navegação</span>
         <nav class="nav">
           @for (item of nav; track item.path) {
             <a
@@ -67,6 +68,13 @@ const NAV: NavItem[] = [
         </nav>
 
         <div class="side-foot">
+          <div class="sys-status">
+            <span class="sys-dot"></span>
+            <div class="sys-text nav-label">
+              <b>Sistema operacional</b>
+              <span>todos os serviços ativos</span>
+            </div>
+          </div>
           <button type="button" class="ghost collapse-btn" (click)="collapsed.set(!collapsed())">
             <app-icon [name]="collapsed() ? 'layers' : 'menu'" [size]="18" />
             <span class="nav-label">Recolher</span>
@@ -82,6 +90,7 @@ const NAV: NavItem[] = [
             <app-icon name="menu" [size]="20" />
           </button>
           <div class="appbar-title">
+            <span class="appbar-eyebrow">CONSOLE</span>
             <h2>{{ title() }}</h2>
           </div>
 

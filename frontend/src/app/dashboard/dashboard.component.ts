@@ -45,12 +45,13 @@ const PERIODS = [
       <div class="dash-progress" aria-hidden="true"></div>
     }
 
-    <div class="page-head anim-in">
-      <div>
+    <header class="cmd-head anim-in">
+      <div class="cmd-id">
+        <span class="cmd-eyebrow"><span class="cmd-blip"></span> CONSOLE · OPS</span>
         <h1>Visão geral</h1>
-        <p class="muted">Operações dos microserviços action-driven · dados de demonstração</p>
+        <p class="cmd-sub">Microserviços action-driven — telemetria de demonstração</p>
       </div>
-      <div class="head-controls">
+      <div class="cmd-controls">
         <span class="live" [class.on]="!loading()" title="Atualização contínua">
           <span class="live-dot"></span> Ao vivo
         </span>
@@ -73,26 +74,29 @@ const PERIODS = [
           <app-icon name="refresh" [size]="18" />
         </button>
       </div>
-    </div>
+    </header>
 
     @if (loading()) {
-      <section class="kpi-grid">
+      <section class="kpi-strip">
         @for (c of skeletonCells; track c) {
-          <div class="kpi"><app-skeleton height="94px" radius="8px" /></div>
+          <div class="kpi-cell"><app-skeleton height="104px" radius="14px" /></div>
         }
       </section>
-      <section class="chart-grid">
-        <div class="card panel span-2"><app-skeleton height="300px" /></div>
-        <div class="card panel"><app-skeleton height="300px" /></div>
-        <div class="card panel"><app-skeleton height="340px" /></div>
-        <div class="card panel span-2"><app-skeleton height="340px" /></div>
-        <div class="card panel span-3"><app-skeleton height="260px" /></div>
+      <section class="bento">
+        <div class="cell area-hero"><app-skeleton height="360px" /></div>
+        <div class="cell area-status"><app-skeleton height="360px" /></div>
+        <div class="cell area-cost"><app-skeleton height="320px" /></div>
+        <div class="cell area-svc"><app-skeleton height="320px" /></div>
+        <div class="cell area-heat"><app-skeleton height="260px" /></div>
+        <div class="cell area-top"><app-skeleton height="300px" /></div>
+        <div class="cell area-feed"><app-skeleton height="300px" /></div>
       </section>
     } @else {
-      <section class="kpi-grid">
+      <!-- KPI command strip ------------------------------------------------ -->
+      <section class="kpi-strip">
         @for (k of data().kpis; track k.key; let i = $index) {
           <article
-            class="kpi anim-in clickable"
+            class="kpi-cell anim-in"
             [style.animation-delay.ms]="i * 55"
             role="button"
             tabindex="0"
@@ -107,7 +111,7 @@ const PERIODS = [
                 {{ k.deltaPct >= 0 ? '▲' : '▼' }} {{ absPct(k) }}
               </span>
             </div>
-            <div class="kpi-val">
+            <div class="kv">
               <app-count-up
                 [value]="k.value"
                 [decimals]="k.decimals"
@@ -115,108 +119,105 @@ const PERIODS = [
                 [suffix]="k.suffix ?? ''"
               />
             </div>
-            <div class="kpi-label">
+            <div class="kl">
               {{ k.label }}
-              <app-icon name="expand" [size]="13" class="kpi-expand" />
+              <app-icon name="expand" [size]="12" class="kpi-expand" />
             </div>
             <div class="kpi-spark">
-              <app-echart [options]="sparkFor(k)" height="38px" />
+              <app-echart [options]="sparkFor(k)" height="34px" />
             </div>
           </article>
         }
       </section>
 
-      <section class="chart-grid">
-        <article class="card panel span-2 anim-in">
-          <header class="panel-head">
-            <h3>Ações ao longo do tempo</h3>
-            <span class="muted">sucesso vs. falha</span>
+      <!-- Bento command grid ----------------------------------------------- -->
+      <section class="bento">
+        <article class="cell area-hero glow anim-in">
+          <header class="cell-head">
+            <span class="tag">01 · série principal</span>
+            <div class="cell-title">
+              <h3>Ações ao longo do tempo</h3>
+              <span class="muted">sucesso vs. falha</span>
+            </div>
           </header>
-          <app-echart [options]="areaOpts()" height="300px" />
+          <app-echart [options]="areaOpts()" height="360px" />
         </article>
 
-        <article class="card panel anim-in">
-          <header class="panel-head"><h3>Status</h3></header>
-          <app-echart [options]="statusOpts()" height="300px" />
-        </article>
-
-        <article class="card panel anim-in">
-          <header class="panel-head"><h3>Ações por serviço</h3></header>
-          <app-echart [options]="byServiceOpts()" height="340px" />
-        </article>
-
-        <article class="card panel span-2 anim-in">
-          <header class="panel-head">
-            <h3>Custo & economia</h3>
-            <span class="muted">12 meses (US$)</span>
+        <article class="cell area-status anim-in">
+          <header class="cell-head">
+            <span class="tag">02 · status</span>
+            <div class="cell-title"><h3>Distribuição</h3></div>
           </header>
-          <app-echart [options]="costOpts()" height="340px" />
+          <app-echart [options]="statusOpts()" height="360px" />
         </article>
 
-        <article class="card panel span-3 anim-in">
-          <header class="panel-head">
-            <h3>Intensidade por serviço × ambiente</h3>
-            <span class="muted">volume de execuções</span>
+        <article class="cell area-cost anim-in">
+          <header class="cell-head">
+            <span class="tag">03 · finops</span>
+            <div class="cell-title">
+              <h3>Custo &amp; economia</h3>
+              <span class="muted">12 meses (US$)</span>
+            </div>
+          </header>
+          <app-echart [options]="costOpts()" height="300px" />
+        </article>
+
+        <article class="cell area-svc anim-in">
+          <header class="cell-head">
+            <span class="tag">04 · serviços</span>
+            <div class="cell-title"><h3>Ações por serviço</h3></div>
+          </header>
+          <app-echart [options]="byServiceOpts()" height="300px" />
+        </article>
+
+        <article class="cell area-heat glow anim-in">
+          <header class="cell-head">
+            <span class="tag">05 · matriz de intensidade</span>
+            <div class="cell-title">
+              <h3>Serviço × ambiente</h3>
+              <span class="muted">volume de execuções</span>
+            </div>
           </header>
           <app-echart [options]="heatmapOpts()" height="260px" />
         </article>
-      </section>
 
-      <article class="card panel svc-panel anim-in">
-        <header class="panel-head">
-          <h3>Top serviços por volume</h3>
-          <span class="muted">clique para inspecionar</span>
-        </header>
-        <ul class="svc-list">
-          @for (s of topServices(); track s.service; let i = $index) {
-            <li
-              class="svc-row anim-in"
-              [style.animation-delay.ms]="i * 50"
-              role="button"
-              tabindex="0"
-              [attr.aria-label]="s.service + ': ' + s.count + ' execuções'"
-              (click)="onServiceClick(s)"
-              (keydown.enter)="onServiceClick(s)"
-            >
-              <span class="svc-rank">{{ i + 1 }}</span>
-              <span class="svc-name">{{ s.service }}</span>
-              <span class="svc-track">
-                <span class="svc-bar" [style.width.%]="s.pct"></span>
-              </span>
-              <span class="svc-count">{{ s.count }}</span>
-            </li>
-          }
-        </ul>
-      </article>
+        <article class="cell area-top anim-in">
+          <header class="cell-head">
+            <span class="tag">06 · ranking</span>
+            <div class="cell-title">
+              <h3>Top serviços por volume</h3>
+              <span class="muted">clique para inspecionar</span>
+            </div>
+          </header>
+          <ul class="svc-list">
+            @for (s of topServices(); track s.service; let i = $index) {
+              <li
+                class="svc-row anim-in"
+                [style.animation-delay.ms]="i * 50"
+                role="button"
+                tabindex="0"
+                [attr.aria-label]="s.service + ': ' + s.count + ' execuções'"
+                (click)="onServiceClick(s)"
+                (keydown.enter)="onServiceClick(s)"
+              >
+                <span class="svc-rank">{{ i + 1 }}</span>
+                <span class="svc-name">{{ s.service }}</span>
+                <span class="svc-track">
+                  <span class="svc-bar" [style.width.%]="s.pct"></span>
+                </span>
+                <span class="svc-count">{{ s.count }}</span>
+              </li>
+            }
+          </ul>
+        </article>
 
-      <section class="bottom-grid">
-        <div class="insight-grid">
-          @for (ins of data().insights; track ins.title; let i = $index) {
-            <article
-              class="card insight anim-in clickable"
-              [attr.data-tone]="ins.tone"
-              [style.animation-delay.ms]="i * 60"
-              role="button"
-              tabindex="0"
-              [attr.aria-label]="'Ver detalhe: ' + ins.title"
-              (click)="openInsight(ins)"
-              (keydown.enter)="openInsight(ins)"
-              (keydown.space)="openInsight(ins)"
-            >
-              <span class="dot"></span>
-              <div>
-                <strong>{{ ins.title }}</strong>
-                <p class="muted">{{ ins.detail }}</p>
-              </div>
-              <app-icon name="expand" [size]="13" class="insight-expand" />
-            </article>
-          }
-        </div>
-
-        <article class="card panel anim-in">
-          <header class="panel-head">
-            <h3>Atividade recente</h3>
-            <app-icon name="activity" [size]="16" class="muted" />
+        <article class="cell area-feed anim-in">
+          <header class="cell-head">
+            <span class="tag">07 · stream</span>
+            <div class="cell-title">
+              <h3>Atividade recente</h3>
+              <app-icon name="activity" [size]="15" class="muted" />
+            </div>
           </header>
           <ul class="activity">
             @for (a of data().activity; track a.id) {
@@ -245,6 +246,31 @@ const PERIODS = [
             }
           </ul>
         </article>
+
+        <section class="cell area-insights bare anim-in">
+          <div class="insight-rail">
+            @for (ins of data().insights; track ins.title; let i = $index) {
+              <article
+                class="insight-card clickable"
+                [attr.data-tone]="ins.tone"
+                [style.animation-delay.ms]="i * 60"
+                role="button"
+                tabindex="0"
+                [attr.aria-label]="'Ver detalhe: ' + ins.title"
+                (click)="openInsight(ins)"
+                (keydown.enter)="openInsight(ins)"
+                (keydown.space)="openInsight(ins)"
+              >
+                <span class="dot"></span>
+                <div class="insight-body">
+                  <strong>{{ ins.title }}</strong>
+                  <p class="muted">{{ ins.detail }}</p>
+                </div>
+                <app-icon name="expand" [size]="13" class="insight-expand" />
+              </article>
+            }
+          </div>
+        </section>
       </section>
     }
 
@@ -345,7 +371,58 @@ const PERIODS = [
   `,
   styles: [
     `
-      .head-controls {
+      :host {
+        display: block;
+      }
+
+      /* Command header ---------------------------------------------------- */
+      .cmd-head {
+        display: flex;
+        align-items: flex-end;
+        justify-content: space-between;
+        gap: 1rem;
+        flex-wrap: wrap;
+        padding-bottom: 1.1rem;
+        margin-bottom: 1.4rem;
+        border-bottom: 1px solid var(--border);
+      }
+      .cmd-eyebrow {
+        display: inline-flex;
+        align-items: center;
+        gap: 0.45rem;
+        font-family: var(--font-mono);
+        font-size: 0.7rem;
+        font-weight: 600;
+        letter-spacing: 0.22em;
+        text-transform: uppercase;
+        color: var(--accent);
+      }
+      .cmd-blip {
+        width: 7px;
+        height: 7px;
+        border-radius: 50%;
+        background: var(--accent);
+        box-shadow: 0 0 0 0 color-mix(in srgb, var(--accent) 60%, transparent);
+        animation: cmd-blip 1.8s ease-out infinite;
+      }
+      @keyframes cmd-blip {
+        0% { box-shadow: 0 0 0 0 color-mix(in srgb, var(--accent) 55%, transparent); }
+        70% { box-shadow: 0 0 0 8px color-mix(in srgb, var(--accent) 0%, transparent); }
+        100% { box-shadow: 0 0 0 0 color-mix(in srgb, var(--accent) 0%, transparent); }
+      }
+      .cmd-id h1 {
+        margin: 0.5rem 0 0.2rem;
+        font-size: clamp(1.9rem, 3.6vw, 2.7rem);
+        font-weight: 800;
+        letter-spacing: -0.035em;
+        line-height: 1;
+      }
+      .cmd-sub {
+        margin: 0;
+        color: var(--muted);
+        font-size: 0.9rem;
+      }
+      .cmd-controls {
         display: flex;
         align-items: center;
         gap: 0.6rem;
@@ -355,107 +432,261 @@ const PERIODS = [
         animation: dash-spin 0.8s linear infinite;
       }
       @keyframes dash-spin {
-        to {
-          transform: rotate(360deg);
-        }
+        to { transform: rotate(360deg); }
       }
-      .kpi.clickable {
+
+      /* KPI command strip ------------------------------------------------- */
+      .kpi-strip {
+        display: grid;
+        grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+        gap: 0.9rem;
+        margin-bottom: 1.4rem;
+      }
+      .kpi-cell {
+        position: relative;
+        display: flex;
+        flex-direction: column;
+        gap: 0.4rem;
+        padding: 1.1rem 1.2rem 0.9rem;
+        border: 1px solid var(--border);
+        border-radius: 16px;
+        background:
+          linear-gradient(180deg, color-mix(in srgb, var(--panel-2) 55%, var(--panel)), var(--panel));
         cursor: pointer;
+        overflow: hidden;
+        transition: transform 0.18s ease, border-color 0.18s ease, box-shadow 0.18s ease;
+      }
+      .kpi-cell::after {
+        content: '';
+        position: absolute;
+        inset: 0 auto auto 0;
+        width: 42%;
+        height: 2px;
+        background: linear-gradient(90deg, var(--accent), transparent);
+        opacity: 0.7;
+      }
+      .kpi-cell:hover,
+      .kpi-cell:focus-visible {
+        transform: translateY(-4px);
+        border-color: color-mix(in srgb, var(--accent) 45%, var(--border));
+        box-shadow: 0 16px 34px color-mix(in srgb, var(--accent) 12%, transparent);
+        outline: none;
+      }
+      .kpi-top {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+      }
+      .kv {
+        font-family: var(--font-mono);
+        font-size: 2rem;
+        font-weight: 700;
+        line-height: 1;
+        letter-spacing: -0.03em;
+        font-variant-numeric: tabular-nums;
+      }
+      .kl {
+        font-size: 0.82rem;
+        color: var(--muted);
+        text-transform: uppercase;
+        letter-spacing: 0.06em;
       }
       .kpi-expand {
         opacity: 0;
         color: var(--muted);
         transition: opacity 0.15s;
         vertical-align: middle;
-        margin-left: 0.25rem;
+        margin-left: 0.2rem;
       }
-      .kpi.clickable:hover .kpi-expand,
-      .kpi.clickable:focus-visible .kpi-expand {
+      .kpi-cell:hover .kpi-expand,
+      .kpi-cell:focus-visible .kpi-expand {
         opacity: 1;
       }
-      .svc-panel {
-        margin-bottom: 1.25rem;
+      .kpi-spark {
+        margin-top: 0.1rem;
       }
-      .kpi-detail {
-        display: flex;
-        flex-direction: column;
-        gap: 1.1rem;
-      }
-      .kd-headline {
-        display: flex;
-        align-items: baseline;
-        gap: 0.75rem;
-        flex-wrap: wrap;
-      }
-      .kd-value {
-        font-size: 2rem;
-        font-weight: 700;
-        letter-spacing: -0.01em;
-      }
-      .kd-stats {
+
+      /* Bento command grid ------------------------------------------------ */
+      .bento {
         display: grid;
-        grid-template-columns: repeat(auto-fit, minmax(120px, 1fr));
-        gap: 0.6rem;
+        grid-template-columns: repeat(12, 1fr);
+        grid-auto-flow: dense;
+        gap: 1rem;
       }
-      .kd-stat {
+      .cell {
+        position: relative;
         display: flex;
         flex-direction: column;
-        gap: 0.15rem;
-        padding: 0.65rem 0.8rem;
-        background: var(--panel-2);
+        padding: 1.2rem 1.3rem 1.35rem;
         border: 1px solid var(--border);
-        border-radius: 10px;
-        font-size: 0.8rem;
+        border-radius: 18px;
+        background:
+          linear-gradient(180deg, color-mix(in srgb, var(--panel-2) 45%, var(--panel)), var(--panel));
+        box-shadow: var(--shadow-sm);
+        overflow: hidden;
+        transition: border-color 0.18s ease, box-shadow 0.18s ease, transform 0.18s ease;
       }
-      .kd-stat-val {
-        font-size: 1.15rem;
-        font-weight: 700;
+      /* Corner tick marks — command-console framing */
+      .cell::before {
+        content: '';
+        position: absolute;
+        top: 10px;
+        right: 10px;
+        width: 10px;
+        height: 10px;
+        border-top: 2px solid color-mix(in srgb, var(--accent) 55%, transparent);
+        border-right: 2px solid color-mix(in srgb, var(--accent) 55%, transparent);
+        border-radius: 0 4px 0 0;
+        opacity: 0.5;
+        transition: opacity 0.2s ease;
       }
-      .kd-chart .panel-head {
+      .cell:hover {
+        border-color: var(--border-strong);
+        box-shadow: var(--shadow-md);
+      }
+      .cell:hover::before {
+        opacity: 1;
+      }
+      .cell.glow {
+        border-color: color-mix(in srgb, var(--accent) 32%, var(--border));
+        box-shadow: 0 20px 46px color-mix(in srgb, var(--accent) 12%, transparent);
+      }
+      .cell.glow::after {
+        content: '';
+        position: absolute;
+        inset: -40% 40% 60% -10%;
+        background: radial-gradient(60% 60% at 20% 10%, color-mix(in srgb, var(--accent) 14%, transparent), transparent 70%);
+        pointer-events: none;
+      }
+      .cell.bare {
+        border: none;
+        background: none;
+        box-shadow: none;
+        padding: 0;
+        overflow: visible;
+      }
+      .cell.bare::before { display: none; }
+
+      .cell-head {
+        display: flex;
+        flex-direction: column;
+        gap: 0.35rem;
+        margin-bottom: 0.9rem;
+      }
+      .tag {
+        font-family: var(--font-mono);
+        font-size: 0.66rem;
+        font-weight: 600;
+        letter-spacing: 0.16em;
+        text-transform: uppercase;
+        color: var(--faint);
+      }
+      .cell-title {
         display: flex;
         align-items: baseline;
         justify-content: space-between;
-        margin-bottom: 0.35rem;
+        gap: 0.75rem;
       }
-      .kd-chart h3 {
+      .cell-title h3 {
         margin: 0;
-        font-size: 0.95rem;
+        font-size: 1.05rem;
+        font-weight: 700;
+        letter-spacing: -0.01em;
       }
-      .kd-desc {
-        font-size: 0.88rem;
-        line-height: 1.55;
-        margin: 0;
+      .cell-title .muted {
+        font-size: 0.8rem;
       }
-      .insight.clickable {
+
+      /* Grid placement */
+      .area-hero { grid-column: span 8; }
+      .area-status { grid-column: span 4; }
+      .area-cost { grid-column: span 7; }
+      .area-svc { grid-column: span 5; }
+      .area-heat { grid-column: span 12; }
+      .area-top { grid-column: span 5; }
+      .area-feed { grid-column: span 7; }
+      .area-insights { grid-column: span 12; }
+
+      .insight-rail {
+        display: grid;
+        grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+        gap: 1rem;
+      }
+      .insight-card {
         position: relative;
+        display: flex;
+        align-items: flex-start;
+        gap: 0.7rem;
+        padding: 1rem 1.15rem;
+        border: 1px solid var(--border);
+        border-left-width: 3px;
+        border-left-color: var(--accent);
+        border-radius: 14px;
+        background: var(--panel);
         cursor: pointer;
-        transition: border-color 0.15s, background 0.15s;
+        transition: border-color 0.15s, background 0.15s, transform 0.15s;
       }
-      .insight.clickable:hover,
-      .insight.clickable:focus-visible {
-        border-color: var(--accent);
-        background: var(--hover);
+      .insight-card[data-tone='ok'] { border-left-color: var(--ok); }
+      .insight-card[data-tone='warn'] { border-left-color: var(--warn); }
+      .insight-card[data-tone='danger'] { border-left-color: var(--danger); }
+      .insight-card[data-tone='accent'] { border-left-color: var(--accent); }
+      .insight-card:hover,
+      .insight-card:focus-visible {
+        transform: translateY(-3px);
+        border-color: var(--border-strong);
+        background: var(--panel-2);
+        outline: none;
+      }
+      .insight-card .dot {
+        flex: 0 0 auto;
+        width: 9px;
+        height: 9px;
+        margin-top: 0.35rem;
+        border-radius: 50%;
+        background: var(--accent);
+      }
+      .insight-card[data-tone='ok'] .dot { background: var(--ok); }
+      .insight-card[data-tone='warn'] .dot { background: var(--warn); }
+      .insight-card[data-tone='danger'] .dot { background: var(--danger); }
+      .insight-body strong {
+        display: block;
+        margin-bottom: 0.15rem;
+      }
+      .insight-body p {
+        margin: 0;
+        font-size: 0.84rem;
       }
       .insight-expand {
         position: absolute;
-        top: 0.75rem;
-        right: 0.75rem;
+        top: 0.7rem;
+        right: 0.7rem;
         opacity: 0;
         color: var(--muted);
         transition: opacity 0.15s;
       }
-      .insight.clickable:hover .insight-expand,
-      .insight.clickable:focus-visible .insight-expand {
+      .insight-card:hover .insight-expand,
+      .insight-card:focus-visible .insight-expand {
         opacity: 1;
+      }
+
+      /* Activity feed inside its cell */
+      .activity {
+        list-style: none;
+        margin: 0;
+        padding: 0;
+        display: flex;
+        flex-direction: column;
       }
       .activity li.clickable {
         cursor: pointer;
-        border-radius: 8px;
+        border-radius: 10px;
+        padding: 0.55rem 0.5rem;
         transition: background 0.15s;
       }
       .activity li.clickable:hover,
       .activity li.clickable:focus-visible {
         background: var(--hover);
+        outline: none;
       }
       .act-expand {
         opacity: 0;
@@ -466,6 +697,9 @@ const PERIODS = [
       .activity li.clickable:focus-visible .act-expand {
         opacity: 1;
       }
+
+      /* Modal detail blocks */
+      .kpi-detail,
       .act-detail {
         display: flex;
         flex-direction: column;
@@ -480,10 +714,40 @@ const PERIODS = [
         margin: 0;
         word-break: break-all;
       }
+      .kd-chart .panel-head {
+        display: flex;
+        align-items: baseline;
+        justify-content: space-between;
+        margin-bottom: 0.35rem;
+      }
+      .kd-chart h3 {
+        margin: 0;
+        font-size: 0.95rem;
+      }
       .insight-detail {
         margin: 0;
         font-size: 0.92rem;
         line-height: 1.6;
+      }
+
+      /* Responsive collapse ---------------------------------------------- */
+      @media (max-width: 1100px) {
+        .area-hero,
+        .area-status,
+        .area-cost,
+        .area-svc,
+        .area-top,
+        .area-feed {
+          grid-column: span 12;
+        }
+      }
+      @media (prefers-reduced-motion: reduce) {
+        .kpi-cell:hover,
+        .cell:hover,
+        .insight-card:hover {
+          transform: none;
+        }
+        .cmd-blip { animation: none; }
       }
     `,
   ],
