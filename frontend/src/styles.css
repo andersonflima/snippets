@@ -5,54 +5,77 @@
    are declared in BOTH themes so components can rely on them everywhere.
    ========================================================================= */
 :root {
-  --bg: #0f1419;
-  --bg-2: #0b0f14;
-  --panel: #1a212b;
-  --panel-2: #222c38;
-  --border: #2d3a48;
-  --text: #e3e8ee;
-  --muted: #8a99a8;
+  /* Surfaces — deep navy-slate with a hint of blue for a premium ops feel */
+  --bg: #0a0e16;
+  --bg-2: #070a11;
+  --panel: #131b28;
+  --panel-2: #1b2534;
+  --panel-3: #223046;
+  --border: #26313f;
+  --border-strong: #33445a;
+  --text: #e7edf6;
+  --muted: #93a1b5;
+  --faint: #616f84;
+
+  /* Brand — blue identity preserved, cyan added for gradient depth */
   --accent: #4ea1ff;
   --accent-2: #2f7fe0;
+  --accent-3: #34e2e2;
+  --on-accent: #ffffff;
   --danger: #ff6b6b;
-  --ok: #44d07b;
+  --ok: #40d982;
   --warn: #f5b942;
-  --radius: 8px;
+
+  /* Radius scale */
+  --radius-sm: 8px;
+  --radius: 12px;
+  --radius-lg: 16px;
+  --radius-xl: 22px;
+
+  /* Typography */
+  --font-sans: "Inter", -apple-system, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+  --font-mono: "JetBrains Mono", ui-monospace, "SF Mono", Menlo, monospace;
 
   /* Extended tokens */
-  --sidebar-bg: #141b24;
-  --sidebar-border: #232f3c;
+  --sidebar-bg: #0c131e;
+  --sidebar-border: #1e2a3a;
   --hover: rgba(78, 161, 255, 0.1);
   --hover-strong: rgba(78, 161, 255, 0.16);
   --active-bg: rgba(78, 161, 255, 0.14);
   --soft-accent: rgba(78, 161, 255, 0.14);
-  --soft-ok: rgba(68, 208, 123, 0.15);
+  --soft-ok: rgba(64, 217, 130, 0.15);
   --soft-warn: rgba(245, 185, 66, 0.15);
   --soft-danger: rgba(255, 107, 107, 0.15);
-  --scrim-bg: rgba(3, 6, 10, 0.6);
+  --scrim-bg: rgba(4, 7, 13, 0.66);
+  --ring: 0 0 0 3px color-mix(in srgb, var(--accent) 30%, transparent);
 
-  /* Shadows — near-none in dark to keep panels flat */
-  --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.3);
-  --shadow-md: 0 2px 8px rgba(0, 0, 0, 0.35);
-  --shadow-lg: 0 8px 24px rgba(0, 0, 0, 0.45);
+  /* Shadows — soft depth with a faint cool tint */
+  --shadow-sm: 0 1px 2px rgba(2, 6, 14, 0.4);
+  --shadow-md: 0 4px 16px rgba(2, 6, 14, 0.45);
+  --shadow-lg: 0 18px 48px rgba(2, 6, 14, 0.58);
 
   color-scheme: dark;
 }
 
 [data-theme="light"] {
-  --bg: #f4f6fb;
-  --bg-2: #eef1f7;
+  --bg: #f3f6fc;
+  --bg-2: #e9eef7;
   --panel: #ffffff;
-  --panel-2: #f7f9fc;
-  --border: #e6ebf3;
-  --text: #1a2230;
-  --muted: #5c6b7f;
+  --panel-2: #f5f8fd;
+  --panel-3: #eef3fb;
+  --border: #e2e8f2;
+  --border-strong: #cdd7e6;
+  --text: #17202f;
+  --muted: #58697e;
+  --faint: #8494a8;
+
   --accent: #2f7fe0;
-  --accent-2: #2f7fe0;
+  --accent-2: #2467c7;
+  --accent-3: #1aa5c4;
+  --on-accent: #ffffff;
   --danger: #e0484d;
   --ok: #1fa85a;
   --warn: #d99312;
-  --radius: 8px;
 
   /* Extended tokens */
   --sidebar-bg: #ffffff;
@@ -65,11 +88,12 @@
   --soft-warn: rgba(217, 147, 18, 0.14);
   --soft-danger: rgba(224, 72, 77, 0.12);
   --scrim-bg: rgba(26, 34, 48, 0.4);
+  --ring: 0 0 0 3px color-mix(in srgb, var(--accent) 22%, transparent);
 
   /* Shadows — subtle, visible depth for light panels */
   --shadow-sm: 0 1px 2px rgba(26, 34, 48, 0.06);
-  --shadow-md: 0 4px 14px rgba(26, 34, 48, 0.08);
-  --shadow-lg: 0 12px 32px rgba(26, 34, 48, 0.12);
+  --shadow-md: 0 6px 20px rgba(26, 34, 48, 0.09);
+  --shadow-lg: 0 20px 44px rgba(26, 34, 48, 0.14);
 
   color-scheme: light;
 }
@@ -91,7 +115,10 @@ html[data-theme="light"] {
 
 body {
   margin: 0;
-  font-family: -apple-system, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+  font-family: var(--font-sans);
+  font-feature-settings: "cv11", "ss01";
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
   background: var(--bg);
   color: var(--text);
   line-height: 1.5;
@@ -167,10 +194,12 @@ h3 {
    Cards, rows and API metadata (feature components depend on these)
    ========================================================================= */
 .card {
-  background: var(--panel);
+  position: relative;
+  background:
+    linear-gradient(180deg, color-mix(in srgb, var(--panel-2) 40%, var(--panel)), var(--panel));
   border: 1px solid var(--border);
   border-radius: var(--radius);
-  padding: 1rem 1.15rem;
+  padding: 1.15rem 1.25rem;
   margin-bottom: 1rem;
   box-shadow: var(--shadow-sm);
   transition:
@@ -182,6 +211,7 @@ h3 {
 
 .card:hover {
   box-shadow: var(--shadow-md);
+  border-color: var(--border-strong);
 }
 
 .row {
@@ -198,18 +228,19 @@ h3 {
 }
 
 .method {
-  font-family: ui-monospace, "SF Mono", Menlo, monospace;
+  font-family: var(--font-mono);
   font-size: 0.72rem;
   font-weight: 700;
-  padding: 0.1rem 0.45rem;
-  border-radius: 4px;
+  letter-spacing: 0.02em;
+  padding: 0.12rem 0.5rem;
+  border-radius: 6px;
   background: var(--accent-2);
-  color: #fff;
+  color: var(--on-accent);
   text-transform: uppercase;
 }
 
 .path {
-  font-family: ui-monospace, "SF Mono", Menlo, monospace;
+  font-family: var(--font-mono);
   color: var(--muted);
   font-size: 0.85rem;
 }
@@ -238,10 +269,10 @@ input[type="search"],
 select,
 textarea {
   width: 100%;
-  padding: 0.45rem 0.6rem;
+  padding: 0.55rem 0.7rem;
   background: var(--panel-2);
   border: 1px solid var(--border);
-  border-radius: 6px;
+  border-radius: 9px;
   color: var(--text);
   font-size: 0.9rem;
   font-family: inherit;
@@ -252,7 +283,7 @@ textarea {
 }
 
 textarea {
-  font-family: ui-monospace, "SF Mono", Menlo, monospace;
+  font-family: var(--font-mono);
   min-height: 5rem;
   resize: vertical;
 }
@@ -262,7 +293,7 @@ select:focus,
 textarea:focus {
   outline: none;
   border-color: var(--accent);
-  box-shadow: 0 0 0 3px var(--soft-accent);
+  box-shadow: var(--ring);
 }
 
 .field {
@@ -302,8 +333,8 @@ button {
   font-family: inherit;
   font-size: 0.85rem;
   font-weight: 600;
-  padding: 0.5rem 0.95rem;
-  border-radius: 6px;
+  padding: 0.55rem 1rem;
+  border-radius: 9px;
   border: 1px solid var(--border);
   background: var(--panel-2);
   color: var(--text);
@@ -311,25 +342,44 @@ button {
     border-color 0.15s ease,
     background-color 0.15s ease,
     color 0.15s ease,
+    transform 0.08s ease,
     box-shadow 0.15s ease;
 }
 
 button:hover:not(:disabled) {
-  border-color: var(--accent);
+  border-color: var(--border-strong);
+  background: var(--panel-3);
+}
+
+button:active:not(:disabled) {
+  transform: translateY(1px);
+}
+
+button:focus-visible {
+  outline: none;
+  box-shadow: var(--ring);
 }
 
 button.primary {
-  background: var(--accent-2);
-  border-color: var(--accent-2);
-  color: #fff;
+  background: linear-gradient(135deg, var(--accent-2), var(--accent));
+  border-color: transparent;
+  color: var(--on-accent);
+  box-shadow: 0 6px 16px color-mix(in srgb, var(--accent) 32%, transparent);
 }
 
 button.primary:hover:not(:disabled) {
-  background: var(--accent);
+  filter: brightness(1.08);
+  border-color: transparent;
+  background: linear-gradient(135deg, var(--accent-2), var(--accent));
 }
 
 button.danger {
   color: var(--danger);
+}
+
+button.danger:hover:not(:disabled) {
+  border-color: color-mix(in srgb, var(--danger) 55%, var(--border));
+  background: var(--soft-danger);
 }
 
 button:disabled {
@@ -470,7 +520,7 @@ pre.response {
   flex: 0 0 34px;
   border-radius: 9px;
   background: var(--accent-2);
-  color: #fff;
+  color: var(--on-accent);
   box-shadow: var(--shadow-sm);
 }
 
@@ -498,11 +548,12 @@ pre.response {
 }
 
 .nav a {
+  position: relative;
   display: flex;
   align-items: center;
   gap: 0.75rem;
   padding: 0.6rem 0.7rem;
-  border-radius: var(--radius);
+  border-radius: 10px;
   color: var(--muted);
   font-weight: 500;
   white-space: nowrap;
@@ -510,6 +561,19 @@ pre.response {
   transition:
     background-color 0.15s ease,
     color 0.15s ease;
+}
+
+.nav a::before {
+  content: '';
+  position: absolute;
+  left: 0;
+  top: 50%;
+  width: 3px;
+  height: 0;
+  border-radius: 0 3px 3px 0;
+  background: linear-gradient(180deg, var(--accent), var(--accent-2));
+  transform: translateY(-50%);
+  transition: height 0.2s ease;
 }
 
 .nav a:hover {
@@ -522,6 +586,14 @@ pre.response {
   background: var(--active-bg);
   color: var(--accent);
   font-weight: 600;
+}
+
+.nav a.active::before {
+  height: 60%;
+}
+
+.shell.collapsed .nav a.active::before {
+  height: 40%;
 }
 
 .nav-label {
@@ -584,9 +656,10 @@ pre.response {
   display: flex;
   align-items: center;
   gap: 0.75rem;
-  padding: 0.75rem 1.25rem;
-  background: color-mix(in srgb, var(--panel) 88%, transparent);
-  backdrop-filter: saturate(1.4) blur(8px);
+  padding: 0.8rem 1.35rem;
+  background: color-mix(in srgb, var(--panel) 78%, transparent);
+  backdrop-filter: saturate(1.5) blur(14px);
+  -webkit-backdrop-filter: saturate(1.5) blur(14px);
   border-bottom: 1px solid var(--border);
   transition:
     background-color 0.25s ease,
@@ -599,8 +672,9 @@ pre.response {
 
 .appbar-title h2 {
   margin: 0;
-  font-size: 1.15rem;
-  font-weight: 600;
+  font-size: 1.2rem;
+  font-weight: 700;
+  letter-spacing: -0.01em;
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -660,7 +734,7 @@ pre.response {
   height: 30px;
   border-radius: 50%;
   background: var(--accent-2);
-  color: #fff;
+  color: var(--on-accent);
   font-size: 0.75rem;
   font-weight: 700;
   letter-spacing: 0.02em;
@@ -694,7 +768,9 @@ pre.response {
 }
 
 .page-head h1 {
-  font-size: 1.5rem;
+  font-size: 1.6rem;
+  font-weight: 800;
+  letter-spacing: -0.025em;
   margin: 0 0 0.15rem;
 }
 
@@ -723,9 +799,9 @@ pre.response {
 }
 
 .segmented button.active {
-  background: var(--accent-2);
-  color: #fff;
-  box-shadow: var(--shadow-sm);
+  background: linear-gradient(135deg, var(--accent-2), var(--accent));
+  color: var(--on-accent);
+  box-shadow: 0 4px 12px color-mix(in srgb, var(--accent) 28%, transparent);
 }
 
 /* KPI grid -------------------------------------------------------------- */
@@ -809,10 +885,12 @@ pre.response {
 }
 
 .kpi-val {
-  font-size: 1.7rem;
+  font-family: var(--font-mono);
+  font-size: 1.75rem;
   font-weight: 700;
   line-height: 1.1;
-  letter-spacing: -0.01em;
+  letter-spacing: -0.02em;
+  font-variant-numeric: tabular-nums;
 }
 
 .kpi-label {
@@ -1133,15 +1211,20 @@ pre.response {
    Visual identity refresh — gradients, brand glow, richer surfaces
    ========================================================================= */
 :root {
-  --accent-grad: linear-gradient(135deg, var(--accent), var(--accent-2));
+  /* Under-fill gradient: darker blue leads (top-left, where white text/icons
+     sit) → lighter blue, keeping white content legible. */
+  --accent-grad: linear-gradient(135deg, var(--accent-2), var(--accent));
+  /* Brand wordmark gradient — colored TEXT only (contrast N/A), cyan pop. */
+  --brand-grad: linear-gradient(120deg, var(--accent-3), var(--accent) 55%, var(--accent-2));
   --glow: 0 8px 24px color-mix(in srgb, var(--accent) 34%, transparent);
 }
 
 /* Subtle ambient gradient behind the whole app */
 body {
   background:
-    radial-gradient(48rem 32rem at 100% -8%, color-mix(in srgb, var(--accent) 8%, transparent), transparent 60%),
-    radial-gradient(42rem 34rem at -10% 108%, color-mix(in srgb, var(--accent-2) 7%, transparent), transparent 60%),
+    radial-gradient(50rem 34rem at 100% -8%, color-mix(in srgb, var(--accent) 9%, transparent), transparent 60%),
+    radial-gradient(44rem 36rem at -10% 108%, color-mix(in srgb, var(--accent-3) 7%, transparent), transparent 60%),
+    radial-gradient(60rem 40rem at 50% 120%, color-mix(in srgb, var(--accent-2) 5%, transparent), transparent 65%),
     var(--bg);
   background-attachment: fixed;
 }
@@ -1158,7 +1241,7 @@ body {
 }
 
 .brand-text b {
-  background: var(--accent-grad);
+  background: var(--brand-grad);
   -webkit-background-clip: text;
   background-clip: text;
   -webkit-text-fill-color: transparent;
@@ -1363,11 +1446,13 @@ body {
 }
 
 .svc-count {
+  font-family: var(--font-mono);
   font-size: 0.85rem;
   font-weight: 700;
   color: var(--text);
   min-width: 2.5rem;
   text-align: right;
+  font-variant-numeric: tabular-nums;
 }
 
 @media (max-width: 560px) {
@@ -1531,9 +1616,11 @@ body {
 }
 
 .kd-value {
+  font-family: var(--font-mono);
   font-size: 2rem;
   font-weight: 700;
-  letter-spacing: -0.01em;
+  letter-spacing: -0.02em;
+  font-variant-numeric: tabular-nums;
 }
 
 .kd-stats {

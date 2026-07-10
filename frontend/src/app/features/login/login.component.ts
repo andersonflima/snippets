@@ -141,9 +141,10 @@ interface ErrorEnvelope {
       .auth-card {
         width: 100%;
         max-width: 400px;
-        background: var(--panel);
+        background:
+          linear-gradient(180deg, color-mix(in srgb, var(--panel-2) 45%, var(--panel)), var(--panel));
         border: 1px solid var(--border);
-        border-radius: 16px;
+        border-radius: var(--radius-lg);
         padding: 2rem 1.9rem 1.75rem;
         box-shadow: var(--shadow-lg, 0 24px 60px rgba(0, 0, 0, 0.4));
         animation: rise 0.5s ease-out both;
@@ -166,8 +167,8 @@ interface ErrorEnvelope {
         width: 40px;
         height: 40px;
         border-radius: 11px;
-        color: #fff;
-        background: linear-gradient(135deg, var(--accent), var(--accent-2));
+        color: var(--on-accent);
+        background: linear-gradient(135deg, var(--accent-2), var(--accent));
         box-shadow: 0 6px 18px color-mix(in srgb, var(--accent) 45%, transparent);
       }
       .brand-text {
@@ -253,10 +254,10 @@ interface ErrorEnvelope {
         padding: 0.7rem 1rem;
         font-size: 0.95rem;
         font-weight: 700;
-        color: #fff;
+        color: var(--on-accent);
         border: none;
         border-radius: 10px;
-        background: linear-gradient(135deg, var(--accent), var(--accent-2));
+        background: linear-gradient(135deg, var(--accent-2), var(--accent));
         box-shadow: 0 8px 20px color-mix(in srgb, var(--accent) 40%, transparent);
         transition: filter 0.15s, transform 0.05s;
       }

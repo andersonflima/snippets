@@ -28,29 +28,29 @@ export interface Palette {
 export function palette(theme: ThemeMode): Palette {
   if (theme === 'light') {
     return {
-      text: '#1a2230',
-      muted: '#5c6b7f',
-      border: '#e3e8f0',
+      text: '#17202f',
+      muted: '#58697e',
+      border: '#e2e8f2',
       accent: '#2f7fe0',
-      accent2: '#5aa0ff',
-      ok: '#1f9d57',
-      warn: '#d98a00',
-      danger: '#e5484d',
+      accent2: '#1aa5c4',
+      ok: '#1fa85a',
+      warn: '#d99312',
+      danger: '#e0484d',
       grid: 'rgba(20,30,45,0.07)',
       tooltipBg: '#ffffff',
     };
   }
   return {
-    text: '#e3e8ee',
-    muted: '#8a99a8',
-    border: '#2d3a48',
+    text: '#e7edf6',
+    muted: '#93a1b5',
+    border: '#26313f',
     accent: '#4ea1ff',
-    accent2: '#2f7fe0',
-    ok: '#44d07b',
+    accent2: '#34e2e2',
+    ok: '#40d982',
     warn: '#f5b942',
     danger: '#ff6b6b',
     grid: 'rgba(255,255,255,0.06)',
-    tooltipBg: '#1a212b',
+    tooltipBg: '#131b28',
   };
 }
 
@@ -59,7 +59,7 @@ function tooltipStyle(p: Palette) {
     backgroundColor: p.tooltipBg,
     borderColor: p.border,
     textStyle: { color: p.text, fontSize: 12 },
-    extraCssText: 'border-radius:8px;box-shadow:0 8px 24px rgba(0,0,0,0.25);',
+    extraCssText: 'border-radius:10px;box-shadow:0 12px 32px rgba(2,6,14,0.4);',
   };
 }
 
