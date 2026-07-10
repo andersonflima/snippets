@@ -425,9 +425,10 @@ function rgba(hex: string, a: number): string {
         color: var(--muted);
       }
       .chip.active {
-        background: var(--accent-2);
-        border-color: var(--accent-2);
-        color: #fff;
+        background: linear-gradient(135deg, var(--accent-2), var(--accent));
+        border-color: transparent;
+        color: var(--on-accent);
+        box-shadow: 0 4px 12px color-mix(in srgb, var(--accent) 26%, transparent);
       }
       .search-box {
         display: flex;
