@@ -1,0 +1,154 @@
+{
+  "_comment": "Regras de negócio do microserviço dynamodb — modelagem + configuração + o que cada ambiente pode/não pode. Editável sem redeploy (S3/DynamoDB). Listas vazias / chaves ausentes = sem restrição. As exceções liberam ações bloqueadas para uma conta + ambiente (+ recurso, se informado).",
+  "allowedRegions": [
+    "sa-east-1",
+    "us-east-1"
+  ],
+  "environments": {
+    "dev": {
+      "_comment": "Livre: qualquer operação, capacidade generosa, sem GMUD nem hardening.",
+      "allowedCategories": [],
+      "allowedOperations": [],
+      "deniedOperations": [],
+      "deniedCategories": [],
+      "allowedBillingModes": [
+        "PAY_PER_REQUEST",
+        "PROVISIONED"
+      ],
+      "maxReadCapacityUnits": 200,
+      "maxWriteCapacityUnits": 200,
+      "maxGlobalSecondaryIndexes": 10,
+      "tableNamePrefixes": [
+        "dev-"
+      ],
+      "requireEncryption": false,
+      "requireDeletionProtection": false,
+      "requirePITR": false,
+      "requireTags": [],
+      "requireGmudForMutations": false,
+      "gmudForCategories": []
+    },
+    "homol": {
+      "_comment": "Quase prod: destrutivas de estrutura bloqueadas por padrão (liberáveis por exceção), sem GMUD.",
+      "allowedCategories": [
+        "read",
+        "write",
+        "ddl",
+        "config",
+        "backup"
+      ],
+      "allowedOperations": [],
+      "deniedOperations": [
+        "DeleteTable"
+      ],
+      "deniedCategories": [],
+      "allowedBillingModes": [
+        "PAY_PER_REQUEST",
+        "PROVISIONED"
+      ],
+      "maxReadCapacityUnits": 100,
+      "maxWriteCapacityUnits": 100,
+      "maxGlobalSecondaryIndexes": 5,
+      "tableNamePrefixes": [
+        "homol-"
+      ],
+      "requireEncryption": true,
+      "requireDeletionProtection": false,
+      "requirePITR": false,
+      "requireTags": [
+        "Owner",
+        "Environment"
+      ],
+      "requireGmudForMutations": false,
+      "gmudForCategories": []
+    },
+    "staging": {
+      "_comment": "Espelha homol (o envelope aceita staging).",
+      "allowedCategories": [
+        "read",
+        "write",
+        "ddl",
+        "config",
+        "backup"
+      ],
+      "deniedOperations": [
+        "DeleteTable"
+      ],
+      "allowedBillingModes": [
+        "PAY_PER_REQUEST",
+        "PROVISIONED"
+      ],
+      "maxReadCapacityUnits": 100,
+      "maxWriteCapacityUnits": 100,
+      "maxGlobalSecondaryIndexes": 5,
+      "tableNamePrefixes": [
+        "staging-"
+      ],
+      "requireEncryption": true,
+      "requireDeletionProtection": true,
+      "requirePITR": false,
+      "requireTags": [
+        "Owner",
+        "Environment"
+      ],
+      "requireGmudForMutations": false,
+      "gmudForCategories": []
+    },
+    "prod": {
+      "_comment": "Bloqueado: leitura/escrita de itens liberadas; mudanças de estrutura (ddl/config/backup) exigem GMUD; destrutivas bloqueadas — só liberadas via exceção. Hardening obrigatório na criação.",
+      "allowedCategories": [
+        "read",
+        "write",
+        "ddl",
+        "config",
+        "backup"
+      ],
+      "allowedOperations": [],
+      "deniedOperations": [
+        "DeleteTable",
+        "DeleteBackup"
+      ],
+      "deniedCategories": [],
+      "allowedBillingModes": [
+        "PAY_PER_REQUEST"
+      ],
+      "maxReadCapacityUnits": 4000,
+      "maxWriteCapacityUnits": 4000,
+      "maxGlobalSecondaryIndexes": 5,
+      "tableNamePrefixes": [
+        "prod-"
+      ],
+      "requireEncryption": true,
+      "requireDeletionProtection": true,
+      "requirePITR": true,
+      "requireTags": [
+        "Owner",
+        "CostCenter",
+        "Environment"
+      ],
+      "requireGmudForMutations": false,
+      "gmudForCategories": [
+        "ddl",
+        "config",
+        "backup"
+      ]
+    }
+  },
+  "exceptions": [
+    {
+      "id": "EXC-EXEMPLO-001",
+      "description": "Exemplo: libera DeleteTable + UpdateTable na tabela prod-orders da conta 111111111111, sem GMUD, até a data. Preencha account + environment (+ resource se aplicável) e as ações liberadas.",
+      "account": "111111111111",
+      "environment": "prod",
+      "resource": "prod-orders",
+      "allowOperations": [
+        "DeleteTable",
+        "UpdateTable"
+      ],
+      "allowCategories": [],
+      "skipModeling": false,
+      "reason": "CHG0012345 — reestruturação emergencial aprovada",
+      "expiresAt": "2026-12-31T23:59:59Z"
+    }
+  ]
+}
