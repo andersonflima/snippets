@@ -38,6 +38,7 @@ services:
   finops:      { <<: *micro, build: { context: ./microservicos/finops, args: *pip-args, secrets: [pip_conf] } }
   servicenow:  { <<: *micro, build: { context: ./microservicos/servicenow, args: *pip-args, secrets: [pip_conf] } }
   rds-data:    { <<: *micro, build: { context: ./microservicos/rds-data, args: *pip-args, secrets: [pip_conf] } }
+  dynamodb:    { <<: *micro, build: { context: ./microservicos/dynamodb, args: *pip-args, secrets: [pip_conf] } }
 
   # ---- insights: analytics/metadata/métricas/logs por produto (mock por padrão) ----
   insights:
@@ -60,7 +61,7 @@ services:
     networks: [actions]
     depends_on:
       [create, destroy, modify, start-stop, storage, replicate, restore,
-       db-password, vpc-link, kms, finops, servicenow, rds-data, insights]
+       db-password, vpc-link, kms, finops, servicenow, rds-data, dynamodb, insights]
 
   # ---- BFF (FastAPI, :8081) ----
   bff:

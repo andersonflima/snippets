@@ -58,9 +58,25 @@ Chaves por serviço:
 | `vpc-link`    | `allowedConsumerAccounts` |
 | `kms`         | `allowedTargetResourceTypes` |
 | `db-password` | `allowedEngines`, `deniedUsernames` |
+| `dynamodb`    | modelo próprio por ambiente (`environments.<env>`) + `exceptions` — ver abaixo |
 
 > `rds-data` mantém suas próprias regras de SQL (loader S3 existente). `servicenow`
 > (gate de GMUD) e `finops` (read-only) não fazem enforcement de escrita.
+
+### `dynamodb` — política por ambiente + exceções
+
+Diferente dos serviços de RDS (allowlists planas), o `dynamodb` externaliza **toda**
+a política num modelo segregado por ambiente e com exceções:
+
+- `allowedRegions` (global).
+- `environments.<dev|homol|staging|prod>`: `allowedOperations`/`deniedOperations`,
+  `allowedCategories`/`deniedCategories` (read/write/ddl/config/backup),
+  `allowedBillingModes`, `maxRead/WriteCapacityUnits`, `maxGlobalSecondaryIndexes`,
+  `tableNamePrefixes`, `requireEncryption`, `requireDeletionProtection`,
+  `requirePITR`, `requireTags`, `requireGmudForMutations`, `gmudForCategories`.
+- `exceptions[]`: liberam ações **bloqueadas** casando `account` + `environment`
+  (+ `resource` opcional). Uma exceção casada autoriza a operação e **dispensa a
+  GMUD**; expira por `expiresAt`. Ver `dynamodb.json` para o schema completo.
 
 ## Exemplos
 
