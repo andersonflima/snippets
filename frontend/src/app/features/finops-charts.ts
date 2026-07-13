@@ -26,7 +26,7 @@ function tooltipStyle(p: Palette) {
     backgroundColor: p.tooltipBg,
     borderColor: p.border,
     textStyle: { color: p.text, fontSize: 12 },
-    extraCssText: 'border-radius:10px;box-shadow:0 12px 32px rgba(2,6,14,0.4);',
+    extraCssText: 'border-radius:10px;box-shadow:var(--shadow-lg);',
   };
 }
 
