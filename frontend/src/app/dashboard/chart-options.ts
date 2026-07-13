@@ -283,6 +283,107 @@ export function costOptions(rows: CostPoint[], p: Palette): EChartsOption {
   };
 }
 
+/** Donut of total execution volume per environment (aggregated from the heatmap). */
+export function envVolumeOptions(cells: HeatCell[], p: Palette): EChartsOption {
+  const byEnv = ENVIRONMENTS.map((env) => ({
+    name: env,
+    value: cells.filter((c) => c.env === env).reduce((a, c) => a + c.value, 0),
+  }));
+  // dev = teal, homol = sky, staging = amber, prod = red — matches the env badge.
+  const envColor: Record<string, string> = {
+    dev: p.accent,
+    homol: p.accent2,
+    staging: p.warn,
+    prod: p.danger,
+  };
+  return {
+    tooltip: { trigger: 'item', ...tooltipStyle(p) },
+    legend: {
+      bottom: 0,
+      textStyle: { color: p.muted },
+      icon: 'circle',
+      itemWidth: 9,
+      itemHeight: 9,
+    },
+    series: [
+      {
+        type: 'pie',
+        radius: ['58%', '82%'],
+        center: ['50%', '44%'],
+        avoidLabelOverlap: true,
+        padAngle: 2,
+        itemStyle: { borderRadius: 6 },
+        label: { show: false },
+        emphasis: {
+          scale: true,
+          scaleSize: 6,
+          label: { show: true, fontSize: 15, fontWeight: 700, color: p.text, formatter: '{c}' },
+        },
+        data: byEnv.map((e) => ({
+          name: e.name,
+          value: e.value,
+          itemStyle: { color: envColor[e.name] ?? p.accent },
+        })),
+      },
+    ],
+    animationDuration: 900,
+  };
+}
+
+/** Horizontal bars of a resource-type breakdown (RDS/EC2/S3/…). */
+export function resourceMixOptions(
+  rows: { label: string; value: number }[],
+  p: Palette,
+): EChartsOption {
+  const data = [...rows].sort((a, b) => a.value - b.value);
+  return {
+    grid: { left: 8, right: 44, top: 10, bottom: 8, containLabel: true },
+    tooltip: { trigger: 'axis', axisPointer: { type: 'shadow' }, ...tooltipStyle(p) },
+    xAxis: {
+      type: 'value',
+      splitLine: { lineStyle: { color: p.grid } },
+      axisLabel: { color: p.muted, fontSize: 11 },
+    },
+    yAxis: {
+      type: 'category',
+      data: data.map((d) => d.label),
+      axisLine: { lineStyle: { color: p.border } },
+      axisLabel: { color: p.muted, fontSize: 11 },
+    },
+    series: [
+      {
+        type: 'bar',
+        data: data.map((d) => d.value),
+        barWidth: '58%',
+        itemStyle: {
+          borderRadius: [0, 5, 5, 0],
+          color: {
+            type: 'linear',
+            x: 0,
+            y: 0,
+            x2: 1,
+            y2: 0,
+            colorStops: [
+              { offset: 0, color: rgba(p.ok, 0.5) },
+              { offset: 1, color: p.accent2 },
+            ],
+          } as unknown as string,
+        },
+        label: {
+          show: true,
+          position: 'right',
+          color: p.muted,
+          fontSize: 11,
+          formatter: (o: any) => Math.round(Number(o?.value ?? 0)).toLocaleString('pt-BR'),
+        },
+        emphasis: { itemStyle: { color: p.accent } },
+      },
+    ],
+    animationDuration: 900,
+    animationDelay: (i: number) => i * 40,
+  };
+}
+
 export function heatmapOptions(cells: HeatCell[], p: Palette): EChartsOption {
   const data = cells.map((c) => [
     SERVICES.indexOf(c.service as (typeof SERVICES)[number]),
