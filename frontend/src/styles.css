@@ -5,26 +5,26 @@
    are declared in BOTH themes so components can rely on them everywhere.
    ========================================================================= */
 :root {
-  /* Surfaces — deep navy-slate with a hint of blue for a premium ops feel */
-  --bg: #0a0e16;
-  --bg-2: #070a11;
-  --panel: #131b28;
-  --panel-2: #1b2534;
-  --panel-3: #223046;
-  --border: #26313f;
-  --border-strong: #33445a;
-  --text: #e7edf6;
-  --muted: #93a1b5;
-  --faint: #616f84;
+  /* Surfaces — near-black slate canvas for a cloud control-plane feel */
+  --bg: #070b12;
+  --bg-2: #04070d;
+  --panel: #0e1620;
+  --panel-2: #14202d;
+  --panel-3: #1b2a3a;
+  --border: #1f2d3d;
+  --border-strong: #2d4054;
+  --text: #e8eef7;
+  --muted: #8b9cb3;
+  --faint: #566a7f;
 
-  /* Brand — blue identity preserved, cyan added for gradient depth */
-  --accent: #4ea1ff;
-  --accent-2: #2f7fe0;
-  --accent-3: #34e2e2;
-  --on-accent: #ffffff;
-  --danger: #ff6b6b;
-  --ok: #40d982;
-  --warn: #f5b942;
+  /* Brand — teal-forward control plane: teal interactive, sky data pop */
+  --accent: #2dd4bf;
+  --accent-2: #14b8a6;
+  --accent-3: #38bdf8;
+  --on-accent: #04211d;
+  --danger: #f87171;
+  --ok: #4ade80;
+  --warn: #fbbf24;
 
   /* Radius scale */
   --radius-sm: 8px;
@@ -37,63 +37,63 @@
   --font-mono: "JetBrains Mono", ui-monospace, "SF Mono", Menlo, monospace;
 
   /* Extended tokens */
-  --sidebar-bg: #0c131e;
-  --sidebar-border: #1e2a3a;
-  --hover: rgba(78, 161, 255, 0.1);
-  --hover-strong: rgba(78, 161, 255, 0.16);
-  --active-bg: rgba(78, 161, 255, 0.14);
-  --soft-accent: rgba(78, 161, 255, 0.14);
-  --soft-ok: rgba(64, 217, 130, 0.15);
-  --soft-warn: rgba(245, 185, 66, 0.15);
-  --soft-danger: rgba(255, 107, 107, 0.15);
-  --scrim-bg: rgba(4, 7, 13, 0.66);
+  --sidebar-bg: #0a121b;
+  --sidebar-border: #172433;
+  --hover: rgba(45, 212, 191, 0.1);
+  --hover-strong: rgba(45, 212, 191, 0.16);
+  --active-bg: rgba(45, 212, 191, 0.14);
+  --soft-accent: rgba(45, 212, 191, 0.14);
+  --soft-ok: rgba(74, 222, 128, 0.15);
+  --soft-warn: rgba(251, 191, 36, 0.15);
+  --soft-danger: rgba(248, 113, 113, 0.15);
+  --scrim-bg: rgba(3, 6, 11, 0.68);
   --ring: 0 0 0 3px color-mix(in srgb, var(--accent) 30%, transparent);
 
   /* Shadows — soft depth with a faint cool tint */
-  --shadow-sm: 0 1px 2px rgba(2, 6, 14, 0.4);
-  --shadow-md: 0 4px 16px rgba(2, 6, 14, 0.45);
-  --shadow-lg: 0 18px 48px rgba(2, 6, 14, 0.58);
+  --shadow-sm: 0 1px 2px rgba(1, 4, 9, 0.45);
+  --shadow-md: 0 4px 18px rgba(1, 4, 9, 0.5);
+  --shadow-lg: 0 20px 50px rgba(1, 4, 9, 0.62);
 
   color-scheme: dark;
 }
 
 [data-theme="light"] {
-  --bg: #f3f6fc;
-  --bg-2: #e9eef7;
+  --bg: #f4f7fb;
+  --bg-2: #e9eef6;
   --panel: #ffffff;
-  --panel-2: #f5f8fd;
-  --panel-3: #eef3fb;
-  --border: #e2e8f2;
-  --border-strong: #cdd7e6;
-  --text: #17202f;
-  --muted: #58697e;
+  --panel-2: #f5f9fd;
+  --panel-3: #eef4fb;
+  --border: #e1e8f1;
+  --border-strong: #ccd6e4;
+  --text: #0f1a26;
+  --muted: #566579;
   --faint: #8494a8;
 
-  --accent: #2f7fe0;
-  --accent-2: #2467c7;
-  --accent-3: #1aa5c4;
+  --accent: #0d9488;
+  --accent-2: #0f766e;
+  --accent-3: #0284c7;
   --on-accent: #ffffff;
-  --danger: #e0484d;
-  --ok: #1fa85a;
-  --warn: #d99312;
+  --danger: #dc2626;
+  --ok: #16a34a;
+  --warn: #d97706;
 
   /* Extended tokens */
   --sidebar-bg: #ffffff;
   --sidebar-border: #e6ebf3;
-  --hover: rgba(47, 127, 224, 0.08);
-  --hover-strong: rgba(47, 127, 224, 0.12);
-  --active-bg: rgba(47, 127, 224, 0.1);
-  --soft-accent: rgba(47, 127, 224, 0.12);
-  --soft-ok: rgba(31, 168, 90, 0.12);
-  --soft-warn: rgba(217, 147, 18, 0.14);
-  --soft-danger: rgba(224, 72, 77, 0.12);
-  --scrim-bg: rgba(26, 34, 48, 0.4);
+  --hover: rgba(13, 148, 136, 0.08);
+  --hover-strong: rgba(13, 148, 136, 0.12);
+  --active-bg: rgba(13, 148, 136, 0.1);
+  --soft-accent: rgba(13, 148, 136, 0.12);
+  --soft-ok: rgba(22, 163, 74, 0.12);
+  --soft-warn: rgba(217, 119, 6, 0.14);
+  --soft-danger: rgba(220, 38, 38, 0.12);
+  --scrim-bg: rgba(15, 26, 38, 0.4);
   --ring: 0 0 0 3px color-mix(in srgb, var(--accent) 22%, transparent);
 
   /* Shadows — subtle, visible depth for light panels */
-  --shadow-sm: 0 1px 2px rgba(26, 34, 48, 0.06);
-  --shadow-md: 0 6px 20px rgba(26, 34, 48, 0.09);
-  --shadow-lg: 0 20px 44px rgba(26, 34, 48, 0.14);
+  --shadow-sm: 0 1px 2px rgba(15, 26, 38, 0.06);
+  --shadow-md: 0 6px 20px rgba(15, 26, 38, 0.09);
+  --shadow-lg: 0 20px 44px rgba(15, 26, 38, 0.14);
 
   color-scheme: light;
 }
@@ -1687,6 +1687,10 @@ body {
   text-transform: uppercase;
   color: var(--faint);
   padding: 0.35rem 0.85rem 0.15rem;
+}
+
+.nav-section:not(:first-child) {
+  margin-top: 0.6rem;
 }
 
 .shell.collapsed .nav-section {

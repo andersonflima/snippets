@@ -38,10 +38,10 @@ interface ErrorEnvelope {
 
       <form class="auth-card" (ngSubmit)="submit()">
         <div class="brand">
-          <span class="logo"><app-icon name="bolt" [size]="22" /></span>
-          <div class="brand-text">Actions<b>Console</b></div>
+          <span class="logo"><app-icon name="server" [size]="22" /></span>
+          <div class="brand-text">Cloud<b>Control</b></div>
         </div>
-        <p class="subtitle">Console de operações e análise dos produtos AWS</p>
+        <p class="subtitle">Plano de controle e operação dos recursos de cloud</p>
 
         <label class="field">
           <span class="field-label">Usuário</span>
