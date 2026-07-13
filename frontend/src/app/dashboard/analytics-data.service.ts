@@ -469,6 +469,16 @@ export class AnalyticsDataService {
     };
   }
 
+  /**
+   * Public resource-type breakdown (RDS/EC2/S3/…) of the active resources, for
+   * the dashboard "Distribuição por tipo de recurso" panel. Deterministic.
+   */
+  resourceMix(days: number): KpiBreakdownItem[] {
+    const data = this.snapshot(days);
+    const active = Math.round(data.kpis.find((k) => k.key === 'resources')?.value ?? 200);
+    return this.resourceSplit(active, 0x00d1 + days);
+  }
+
   /** Deterministic split of a total across resource-type buckets. */
   private resourceSplit(totalValue: number, seed: number): KpiBreakdownItem[] {
     const rng = mulberry32(seed);

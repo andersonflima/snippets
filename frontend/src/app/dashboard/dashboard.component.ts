@@ -16,17 +16,36 @@ import { ToastService } from '../shared/toast.service';
 import { AnalyticsDataService } from './analytics-data.service';
 import { ActionStatus, ActivityItem, Insight, Kpi, ServiceCount } from './analytics.model';
 import type { EChartsOption } from 'echarts';
+import { RouterLink } from '@angular/router';
 import {
   areaOptions,
   byServiceOptions,
   costOptions,
+  envVolumeOptions,
   heatmapOptions,
   kpiDetailBreakdownOptions,
   kpiDetailPrimaryOptions,
   palette,
+  resourceMixOptions,
   sparkOptions,
   statusOptions,
 } from './chart-options';
+
+interface QuickAction {
+  label: string;
+  hint: string;
+  icon: string;
+  link: string;
+}
+
+const QUICK_ACTIONS: QuickAction[] = [
+  { label: 'Recursos', hint: 'inventário & drill-down', icon: 'server', link: '/resources' },
+  { label: 'Nova ação', hint: 'executar integração', icon: 'bolt', link: '/integrations' },
+  { label: 'FinOps', hint: 'custo & rightsizing', icon: 'chart', link: '/finops' },
+  { label: 'Performance BD', hint: 'métricas & queries', icon: 'database', link: '/db-performance' },
+  { label: 'GMUD', hint: 'mudanças & aprovações', icon: 'shield', link: '/gmud' },
+  { label: 'Configurações', hint: 'ambiente & perfil AWS', icon: 'gear', link: '/settings' },
+];
 
 const PERIODS = [
   { d: 7, label: '7 dias' },
@@ -39,7 +58,7 @@ const PERIODS = [
   selector: 'app-dashboard',
   standalone: true,
   changeDetection: ChangeDetectionStrategy.OnPush,
-  imports: [EChartComponent, CountUpComponent, IconComponent, ModalComponent, SkeletonComponent],
+  imports: [EChartComponent, CountUpComponent, IconComponent, ModalComponent, SkeletonComponent, RouterLink],
   template: `
     @if (busy()) {
       <div class="dash-progress" aria-hidden="true"></div>
@@ -89,7 +108,10 @@ const PERIODS = [
         <div class="cell area-svc"><app-skeleton height="320px" /></div>
         <div class="cell area-heat"><app-skeleton height="260px" /></div>
         <div class="cell area-top"><app-skeleton height="300px" /></div>
+        <div class="cell area-env"><app-skeleton height="300px" /></div>
+        <div class="cell area-restype"><app-skeleton height="300px" /></div>
         <div class="cell area-feed"><app-skeleton height="300px" /></div>
+        <div class="cell area-quick"><app-skeleton height="300px" /></div>
       </section>
     } @else {
       <!-- KPI command strip ------------------------------------------------ -->
@@ -211,9 +233,31 @@ const PERIODS = [
           </ul>
         </article>
 
+        <article class="cell area-env anim-in">
+          <header class="cell-head">
+            <span class="tag">07 · ambientes</span>
+            <div class="cell-title">
+              <h3>Volume por ambiente</h3>
+              <span class="muted">execuções por env</span>
+            </div>
+          </header>
+          <app-echart [options]="envOpts()" height="240px" />
+        </article>
+
+        <article class="cell area-restype anim-in">
+          <header class="cell-head">
+            <span class="tag">08 · inventário</span>
+            <div class="cell-title">
+              <h3>Tipo de recurso</h3>
+              <span class="muted">recursos ativos por tipo</span>
+            </div>
+          </header>
+          <app-echart [options]="resTypeOpts()" height="240px" />
+        </article>
+
         <article class="cell area-feed anim-in">
           <header class="cell-head">
-            <span class="tag">07 · stream</span>
+            <span class="tag">09 · stream</span>
             <div class="cell-title">
               <h3>Atividade recente</h3>
               <app-icon name="activity" [size]="15" class="muted" />
@@ -245,6 +289,28 @@ const PERIODS = [
               </li>
             }
           </ul>
+        </article>
+
+        <article class="cell area-quick anim-in">
+          <header class="cell-head">
+            <span class="tag">10 · atalhos</span>
+            <div class="cell-title">
+              <h3>Ações rápidas</h3>
+              <span class="muted">ir direto ao ponto</span>
+            </div>
+          </header>
+          <div class="quick-grid">
+            @for (q of quickActions; track q.link) {
+              <a class="quick-tile" [routerLink]="q.link">
+                <span class="quick-ic"><app-icon [name]="q.icon" [size]="18" /></span>
+                <span class="quick-text">
+                  <strong>{{ q.label }}</strong>
+                  <span class="muted">{{ q.hint }}</span>
+                </span>
+                <app-icon name="expand" [size]="13" class="quick-arrow" />
+              </a>
+            }
+          </div>
         </article>
 
         <section class="cell area-insights bare anim-in">
@@ -603,9 +669,76 @@ const PERIODS = [
       .area-cost { grid-column: span 7; }
       .area-svc { grid-column: span 5; }
       .area-heat { grid-column: span 12; }
-      .area-top { grid-column: span 5; }
-      .area-feed { grid-column: span 7; }
+      .area-top { grid-column: span 4; }
+      .area-env { grid-column: span 4; }
+      .area-restype { grid-column: span 4; }
+      .area-feed { grid-column: span 8; }
+      .area-quick { grid-column: span 4; }
       .area-insights { grid-column: span 12; }
+
+      /* Quick actions */
+      .quick-grid {
+        display: grid;
+        grid-template-columns: repeat(2, 1fr);
+        gap: 0.7rem;
+      }
+      .quick-tile {
+        display: flex;
+        align-items: center;
+        gap: 0.7rem;
+        padding: 0.8rem 0.85rem;
+        border: 1px solid var(--border);
+        border-radius: var(--radius);
+        background: var(--panel-2);
+        color: var(--text);
+        transition:
+          transform 0.16s ease,
+          border-color 0.16s ease,
+          background-color 0.16s ease;
+      }
+      .quick-tile:hover {
+        text-decoration: none;
+        transform: translateY(-2px);
+        border-color: color-mix(in srgb, var(--accent) 45%, var(--border));
+        background: var(--hover);
+      }
+      .quick-ic {
+        display: grid;
+        place-items: center;
+        width: 34px;
+        height: 34px;
+        flex: none;
+        border-radius: 9px;
+        color: var(--accent);
+        background: var(--soft-accent);
+      }
+      .quick-text {
+        display: flex;
+        flex-direction: column;
+        gap: 0.1rem;
+        min-width: 0;
+        line-height: 1.2;
+      }
+      .quick-text strong {
+        font-size: 0.9rem;
+      }
+      .quick-text .muted {
+        font-size: 0.74rem;
+      }
+      .quick-arrow {
+        margin-left: auto;
+        color: var(--faint);
+        transition: transform 0.16s ease;
+      }
+      .quick-tile:hover .quick-arrow {
+        color: var(--accent);
+        transform: translate(2px, -2px);
+      }
+      @media (max-width: 560px) {
+        .quick-grid {
+          grid-template-columns: 1fr;
+        }
+      }
 
       .insight-rail {
         display: grid;
@@ -737,8 +870,18 @@ const PERIODS = [
         .area-cost,
         .area-svc,
         .area-top,
-        .area-feed {
+        .area-env,
+        .area-restype,
+        .area-feed,
+        .area-quick {
           grid-column: span 12;
+        }
+      }
+      @media (min-width: 1101px) and (max-width: 1360px) {
+        .area-top,
+        .area-env,
+        .area-restype {
+          grid-column: span 6;
         }
       }
       @media (prefers-reduced-motion: reduce) {
@@ -774,6 +917,12 @@ export class DashboardComponent {
   readonly statusOpts = computed(() => statusOptions(this.data().statusBreakdown, this.pal()));
   readonly costOpts = computed(() => costOptions(this.data().costTrend, this.pal()));
   readonly heatmapOpts = computed(() => heatmapOptions(this.data().heatmap, this.pal()));
+  readonly envOpts = computed(() => envVolumeOptions(this.data().heatmap, this.pal()));
+  readonly resTypeOpts = computed(() =>
+    resourceMixOptions(this.analytics.resourceMix(this.period()), this.pal()),
+  );
+
+  readonly quickActions = QUICK_ACTIONS;
 
   /** Top services with a bar width relative to the busiest one. */
   readonly topServices = computed(() => {
