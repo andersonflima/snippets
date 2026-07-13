@@ -18,9 +18,11 @@ import { palette } from '../dashboard/chart-options';
 import {
   savingsByTypeOptions,
   savingsTrendOptions,
+  usageRadarOptions,
   utilizationGaugeOptions,
   utilizationOptions,
 } from './finops-charts';
+import { demoFinopsAnalytics } from './finops-demo';
 import {
   FINOPS_REGION,
   FinopsAnalytics,
@@ -265,42 +267,84 @@ const PERIODS = [
               <span class="badge" [class]="verdictClass(r.verdict)">
                 {{ verdictLabel(r.verdict) }}
               </span>
+              <span class="badge">{{ region }}</span>
+              <span class="badge">janela {{ lookbackDays() }}d</span>
             </div>
 
-            <div class="fin-detail-util">
-              <div class="fin-util fin-util-lg">
-                <span
-                  class="fin-util-bar"
-                  [attr.data-verdict]="r.verdict"
-                  [style.width.%]="clampPct(r.utilizationPct)"
-                ></span>
-                <span>{{ r.utilizationPct.toFixed(0) }}%</span>
-              </div>
-              <span class="muted">utilização</span>
-            </div>
-
-            <div class="kd-stats">
+            <div class="kd-stats fin-highlights">
               <div class="kd-stat">
-                <span class="kd-stat-val">
-                  {{ money(r.monthlySavings, a.summary.currency) }}
-                </span>
-                <span class="muted">Economia/mês</span>
+                <span class="kd-stat-val">{{ money(r.monthlySavings, a.summary.currency) }}</span>
+                <span class="muted">Economia / mês</span>
               </div>
-              @for (u of usedMetrics(r); track u.key) {
-                <div class="kd-stat">
-                  <span class="kd-stat-val">{{ u.value.toFixed(0) }}%</span>
-                  <span class="muted">{{ u.key }}</span>
+              <div class="kd-stat">
+                <span class="kd-stat-val">{{ money(annualSavings(r), a.summary.currency) }}</span>
+                <span class="muted">Projeção / ano</span>
+              </div>
+              <div class="kd-stat">
+                <span class="kd-stat-val">{{ r.utilizationPct.toFixed(0) }}%</span>
+                <span class="muted">Utilização</span>
+              </div>
+              <div class="kd-stat">
+                <span class="kd-stat-val">{{ savingsShare(r) }}%</span>
+                <span class="muted">do total da conta</span>
+              </div>
+            </div>
+
+            <div class="fin-detail-charts">
+              <div class="fin-chart-card">
+                <div class="panel-head">
+                  <h3>Utilização</h3>
+                  <span class="muted">uso vs. provisionado</span>
                 </div>
-              }
-              @for (p of provisionedMetrics(r); track p.key) {
-                <div class="kd-stat">
-                  <span class="kd-stat-val">{{ p.value }}</span>
-                  <span class="muted">{{ p.key }}</span>
+                <app-echart [options]="rowGaugeOpts()" height="230px" />
+              </div>
+              @if (usedMetrics(r).length >= 3) {
+                <div class="fin-chart-card">
+                  <div class="panel-head">
+                    <h3>Perfil de uso</h3>
+                    <span class="muted">por dimensão</span>
+                  </div>
+                  <app-echart [options]="rowRadarOpts()" height="230px" />
                 </div>
               }
             </div>
 
-            <div class="fin-detail-rec">
+            <div class="fin-detail-block">
+              <div class="panel-head"><h3>Uso por dimensão</h3></div>
+              <div class="fin-metrics">
+                @for (u of usedMetrics(r); track u.key) {
+                  <div class="fin-metric">
+                    <div class="fin-metric-top">
+                      <span>{{ u.key }}</span>
+                      <span class="mono">{{ u.value.toFixed(0) }}%</span>
+                    </div>
+                    <div class="fin-metric-track">
+                      <span
+                        class="fin-metric-fill"
+                        [attr.data-verdict]="r.verdict"
+                        [style.width.%]="clampPct(u.value)"
+                      ></span>
+                    </div>
+                  </div>
+                }
+              </div>
+            </div>
+
+            @if (provisionedMetrics(r).length) {
+              <div class="fin-detail-block">
+                <div class="panel-head"><h3>Capacidade provisionada</h3></div>
+                <div class="kd-stats">
+                  @for (pm of provisionedMetrics(r); track pm.key) {
+                    <div class="kd-stat">
+                      <span class="kd-stat-val mono">{{ pm.value.toLocaleString('pt-BR') }}</span>
+                      <span class="muted">{{ pm.key }}</span>
+                    </div>
+                  }
+                </div>
+              </div>
+            }
+
+            <div class="fin-detail-rec" [attr.data-verdict]="r.verdict">
               <span class="muted">Recomendação</span>
               <p>{{ r.recommendation }}</p>
             </div>
@@ -548,6 +592,78 @@ const PERIODS = [
         margin: 0.35rem 0 0;
         line-height: 1.5;
       }
+      .fin-highlights .kd-stat-val {
+        color: var(--accent);
+      }
+      .fin-detail-charts {
+        display: grid;
+        grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+        gap: 0.8rem;
+        margin-top: 0.4rem;
+      }
+      .fin-chart-card {
+        border: 1px solid var(--border);
+        border-radius: var(--radius);
+        background: var(--panel-2);
+        padding: 0.7rem 0.8rem 0.3rem;
+      }
+      .fin-detail-block {
+        margin-top: 0.2rem;
+      }
+      .fin-detail-block .panel-head {
+        margin-bottom: 0.5rem;
+      }
+      .fin-metrics {
+        display: grid;
+        grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+        gap: 0.7rem 1rem;
+      }
+      .fin-metric-top {
+        display: flex;
+        justify-content: space-between;
+        font-size: 0.82rem;
+        margin-bottom: 0.3rem;
+      }
+      .fin-metric-track {
+        height: 8px;
+        border-radius: 999px;
+        background: var(--panel-3);
+        overflow: hidden;
+      }
+      .fin-metric-fill {
+        display: block;
+        height: 100%;
+        border-radius: 999px;
+        background: var(--accent);
+        transition: width 0.5s ease;
+      }
+      .fin-metric-fill[data-verdict='idle'] {
+        background: var(--danger);
+      }
+      .fin-metric-fill[data-verdict='oversized'] {
+        background: var(--warn);
+      }
+      .fin-metric-fill[data-verdict='ok'] {
+        background: var(--ok);
+      }
+      .mono {
+        font-family: var(--font-mono);
+        font-variant-numeric: tabular-nums;
+      }
+      .fin-detail-rec {
+        border-left: 3px solid var(--border-strong);
+        padding: 0.1rem 0 0.1rem 0.8rem;
+        margin-top: 0.3rem;
+      }
+      .fin-detail-rec[data-verdict='idle'] {
+        border-left-color: var(--danger);
+      }
+      .fin-detail-rec[data-verdict='oversized'] {
+        border-left-color: var(--warn);
+      }
+      .fin-detail-rec[data-verdict='ok'] {
+        border-left-color: var(--ok);
+      }
       .kd-stats {
         display: grid;
         grid-template-columns: repeat(auto-fit, minmax(120px, 1fr));
@@ -654,6 +770,17 @@ export class FinOpsComponent {
     utilizationGaugeOptions(this.avgUtilization(), this.pal()),
   );
 
+  /** Per-resource drill-down charts (recomputed when the selected row/theme change). */
+  readonly rowGaugeOpts = computed(() => {
+    const r = this.selectedRow();
+    return r ? utilizationGaugeOptions(r.utilizationPct, this.pal(), 'utilização') : {};
+  });
+  readonly rowRadarOpts = computed(() => {
+    const r = this.selectedRow();
+    return r ? usageRadarOptions(r.used, this.pal()) : {};
+  });
+  readonly demoMode = signal(false);
+
   private readonly avgUtilization = computed(() => {
     const rows = this.analytics()?.utilization ?? [];
     if (rows.length === 0) {
@@ -755,18 +882,48 @@ export class FinOpsComponent {
         lookbackDays: this.lookbackDays(),
       });
       this.analytics.set(data);
+      this.demoMode.set(false);
       this.toast.success(
         'Análise atualizada',
         `Economia estimada: ${this.money(data.summary.estimatedMonthlySavings, data.summary.currency)}/mês.`,
       );
     } catch (err) {
-      const message =
-        err instanceof Error ? err.message : 'Erro inesperado ao carregar a análise.';
-      this.analyticsError.set(message);
-      this.toast.error('Falha na análise', message);
+      // Demo mode (no AWS profile configured) falls back to deterministic sample
+      // data so the page and its drill-down stay explorable without a live BFF.
+      // With a real profile set, a failure keeps the honest error state.
+      if (this.isDemoMode()) {
+        const demo = demoFinopsAnalytics(this.lookbackDays());
+        this.analytics.set(demo);
+        this.demoMode.set(true);
+        this.toast.info(
+          'Modo demonstração',
+          'Sem perfil AWS configurado — exibindo dados de exemplo.',
+        );
+      } else {
+        const message =
+          err instanceof Error ? err.message : 'Erro inesperado ao carregar a análise.';
+        this.analyticsError.set(message);
+        this.toast.error('Falha na análise', message);
+      }
     } finally {
       this.analyticsLoading.set(false);
     }
+  }
+
+  /** Demo mode = no real AWS account configured for the active environment. */
+  private isDemoMode(): boolean {
+    return this.settings.activeProfile().account.trim() === '';
+  }
+
+  /** Projected annual savings for a resource (monthly × 12). */
+  annualSavings(row: FinopsUtilizationRow): number {
+    return row.monthlySavings * 12;
+  }
+
+  /** Share of the account's total monthly savings this resource represents. */
+  savingsShare(row: FinopsUtilizationRow): number {
+    const total = this.analytics()?.summary.estimatedMonthlySavings ?? 0;
+    return total > 0 ? Math.round((row.monthlySavings / total) * 100) : 0;
   }
 
   async analyze(): Promise<void> {
