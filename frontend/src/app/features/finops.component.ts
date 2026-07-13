@@ -209,8 +209,10 @@ const PERIODS = [
                     class="fin-row"
                     role="button"
                     tabindex="0"
+                    [attr.aria-label]="'Ver detalhes: ' + (r.name || r.resourceId)"
                     (click)="openRow(r)"
                     (keydown.enter)="openRow(r)"
+                    (keydown.space)="openRow(r); $event.preventDefault()"
                   >
                     <td>
                       <div class="fin-res">

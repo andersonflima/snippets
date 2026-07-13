@@ -18,37 +18,45 @@ import { buildFormGroup } from '../dynamic-form/form-schema';
 import { buildPayload } from '../core/payload-builder';
 import { DynamicFormComponent } from '../dynamic-form/dynamic-form.component';
 import { SettingsService } from '../core/settings.service';
+import { IconComponent } from '../shared/icon.component';
 
 /** Renders one integration's dynamic form, a dry-run toggle, submit and response. */
 @Component({
   selector: 'app-run-action',
   standalone: true,
   changeDetection: ChangeDetectionStrategy.OnPush,
-  imports: [ReactiveFormsModule, RouterLink, DynamicFormComponent],
+  imports: [ReactiveFormsModule, RouterLink, DynamicFormComponent, IconComponent],
   template: `
     <div class="container">
       @if (integration(); as it) {
-        <p><a routerLink="/">← Integrações</a></p>
-        <h1>{{ it.name }}</h1>
-        <div class="toolbar" style="margin-bottom: 0.5rem">
-          <span class="method">{{ it.method }}</span>
-          <span class="path">{{ it.path }}</span>
+        <div class="page-head anim-in">
+          <div>
+            <a routerLink="/" class="back-link">
+              <app-icon name="close" [size]="14" /> Integrações
+            </a>
+            <h1>{{ it.name }}</h1>
+            <div class="method-line">
+              <span class="method" [attr.data-verb]="it.method">{{ it.method }}</span>
+              <span class="path">{{ it.path }}</span>
+            </div>
+            @if (it.summary) {
+              <p class="muted" style="margin: 0.35rem 0 0">{{ it.summary }}</p>
+            }
+          </div>
         </div>
-        @if (it.summary) {
-          <p class="muted">{{ it.summary }}</p>
-        }
 
-        <div class="note">
+        <div class="note anim-in" style="animation-delay: 40ms">
+          <app-icon name="shield" [size]="15" class="muted" />
           Dry run valida a ação sem executá-la (envia <code>dryRun: true</code>).
           Confirme antes de desligar o dry run em produção.
         </div>
 
         <form [formGroup]="form()" (ngSubmit)="submit()">
-          <div class="card">
+          <div class="card anim-in" style="animation-delay: 90ms">
             <app-dynamic-form [schema]="it.requestSchema" [group]="form()" />
           </div>
 
-          <div class="card toolbar">
+          <div class="card toolbar anim-in" style="animation-delay: 140ms">
             <label class="toggle">
               <input
                 type="checkbox"
@@ -62,14 +70,18 @@ import { SettingsService } from '../core/settings.service';
               class="primary"
               [disabled]="form().invalid || submitting()"
             >
-              {{ submitting() ? 'Enviando…' : 'Submeter' }}
+              @if (submitting()) {
+                <span class="spin" aria-hidden="true"></span> Enviando…
+              } @else {
+                <app-icon name="bolt" [size]="15" /> Submeter
+              }
             </button>
-            <span class="muted">POST {{ baseUrl() }}{{ it.path }}</span>
+            <span class="muted mono-hint">POST {{ baseUrl() }}{{ it.path }}</span>
           </div>
         </form>
 
         @if (result(); as r) {
-          <div class="card">
+          <div class="card anim-in" aria-live="polite">
             <h3>
               Resposta
               <span class="badge" [class.ok]="r.ok" [class.err]="!r.ok">
@@ -80,13 +92,87 @@ import { SettingsService } from '../core/settings.service';
           </div>
         }
       } @else {
-        <div class="container">
-          <p>Integração não encontrada.</p>
-          <p><a routerLink="/">← Voltar para Integrações</a></p>
+        <div class="empty-state anim-in" role="status">
+          <app-icon name="close" [size]="28" class="muted" />
+          <h2>Integração não encontrada</h2>
+          <p class="muted">O contrato ou operação não existe no registro atual.</p>
+          <a routerLink="/" class="back-link">
+            <app-icon name="close" [size]="14" /> Voltar para Integrações
+          </a>
         </div>
       }
     </div>
   `,
+  styles: [
+    `
+      .back-link {
+        display: inline-flex;
+        align-items: center;
+        gap: 0.3rem;
+        font-size: 0.82rem;
+        color: var(--muted);
+        margin-bottom: 0.4rem;
+      }
+      .back-link:hover {
+        color: var(--accent);
+        text-decoration: none;
+      }
+      .back-link app-icon {
+        transform: rotate(45deg);
+      }
+      .method-line {
+        display: flex;
+        align-items: center;
+        gap: 0.55rem;
+        margin-top: 0.35rem;
+      }
+      .note app-icon {
+        vertical-align: -2px;
+        margin-right: 0.2rem;
+      }
+      button app-icon {
+        vertical-align: -2px;
+      }
+      .mono-hint {
+        font-family: var(--font-mono);
+        font-size: 0.78rem;
+      }
+      .spin {
+        display: inline-block;
+        width: 13px;
+        height: 13px;
+        border: 2px solid color-mix(in srgb, var(--on-accent) 40%, transparent);
+        border-top-color: var(--on-accent);
+        border-radius: 50%;
+        animation: ra-spin 0.7s linear infinite;
+        vertical-align: -1px;
+      }
+      @keyframes ra-spin {
+        to {
+          transform: rotate(360deg);
+        }
+      }
+      .empty-state {
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        gap: 0.5rem;
+        padding: 3rem 1rem;
+        text-align: center;
+      }
+      .empty-state h2 {
+        margin: 0.3rem 0 0;
+      }
+      .empty-state p {
+        margin: 0;
+      }
+      @media (prefers-reduced-motion: reduce) {
+        .spin {
+          animation: none;
+        }
+      }
+    `,
+  ],
 })
 export class RunActionComponent {
   private readonly route = inject(ActivatedRoute);
