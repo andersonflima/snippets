@@ -28,29 +28,29 @@ export interface Palette {
 export function palette(theme: ThemeMode): Palette {
   if (theme === 'light') {
     return {
-      text: '#17202f',
-      muted: '#58697e',
-      border: '#e2e8f2',
-      accent: '#2f7fe0',
-      accent2: '#1aa5c4',
-      ok: '#1fa85a',
-      warn: '#d99312',
-      danger: '#e0484d',
-      grid: 'rgba(20,30,45,0.07)',
+      text: '#0f1a26',
+      muted: '#566579',
+      border: '#e1e8f1',
+      accent: '#0d9488',
+      accent2: '#0284c7',
+      ok: '#16a34a',
+      warn: '#d97706',
+      danger: '#dc2626',
+      grid: 'rgba(15,26,38,0.07)',
       tooltipBg: '#ffffff',
     };
   }
   return {
-    text: '#e7edf6',
-    muted: '#93a1b5',
-    border: '#26313f',
-    accent: '#4ea1ff',
-    accent2: '#34e2e2',
-    ok: '#40d982',
-    warn: '#f5b942',
-    danger: '#ff6b6b',
+    text: '#e8eef7',
+    muted: '#8b9cb3',
+    border: '#1f2d3d',
+    accent: '#2dd4bf',
+    accent2: '#38bdf8',
+    ok: '#4ade80',
+    warn: '#fbbf24',
+    danger: '#f87171',
     grid: 'rgba(255,255,255,0.06)',
-    tooltipBg: '#131b28',
+    tooltipBg: '#0e1620',
   };
 }
 
@@ -59,7 +59,7 @@ function tooltipStyle(p: Palette) {
     backgroundColor: p.tooltipBg,
     borderColor: p.border,
     textStyle: { color: p.text, fontSize: 12 },
-    extraCssText: 'border-radius:10px;box-shadow:0 12px 32px rgba(2,6,14,0.4);',
+    extraCssText: 'border-radius:10px;box-shadow:0 16px 40px rgba(1,4,9,0.5);',
   };
 }
 
@@ -117,7 +117,9 @@ export function areaOptions(series: DayPoint[], p: Palette): EChartsOption {
         stack: 'total',
         smooth: true,
         symbol: 'none',
+        color: p.accent,
         lineStyle: { width: 2, color: p.accent },
+        itemStyle: { color: p.accent },
         areaStyle: { color: fade(p.accent) as unknown as string },
         emphasis: { focus: 'series' },
         data: series.map((d) => d.success),
@@ -128,7 +130,9 @@ export function areaOptions(series: DayPoint[], p: Palette): EChartsOption {
         stack: 'total',
         smooth: true,
         symbol: 'none',
+        color: p.danger,
         lineStyle: { width: 2, color: p.danger },
+        itemStyle: { color: p.danger },
         areaStyle: { color: fade(p.danger) as unknown as string },
         emphasis: { focus: 'series' },
         data: series.map((d) => d.failed),
