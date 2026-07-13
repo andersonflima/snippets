@@ -234,8 +234,58 @@ export function utilizationOptions(
   };
 }
 
+/**
+ * Radar of a single resource's usage profile across the dimensions present
+ * (CPU / Memory / Storage / IOPS), each on a 0–100% axis. Best with ≥3 dims.
+ */
+export function usageRadarOptions(
+  used: FinopsUtilizationRow['used'],
+  p: Palette,
+): EChartsOption {
+  const dims: { key: keyof FinopsUtilizationRow['used']; name: string }[] = [
+    { key: 'cpuPct', name: 'CPU' },
+    { key: 'memoryPct', name: 'Memória' },
+    { key: 'storagePct', name: 'Armazenamento' },
+    { key: 'iopsPct', name: 'IOPS' },
+  ];
+  const present = dims.filter((d) => typeof used[d.key] === 'number');
+  return {
+    tooltip: { ...tooltipStyle(p) },
+    radar: {
+      indicator: present.map((d) => ({ name: d.name, max: 100 })),
+      radius: '64%',
+      center: ['50%', '54%'],
+      splitNumber: 4,
+      axisName: { color: p.muted, fontSize: 11 },
+      splitLine: { lineStyle: { color: p.grid } },
+      splitArea: { areaStyle: { color: ['transparent', 'transparent'] } },
+      axisLine: { lineStyle: { color: p.border } },
+    },
+    series: [
+      {
+        type: 'radar',
+        data: [
+          {
+            value: present.map((d) => Math.round(used[d.key] as number)),
+            name: 'uso %',
+            symbolSize: 5,
+            areaStyle: { color: rgba(p.accent, 0.22) },
+            lineStyle: { color: p.accent, width: 2 },
+            itemStyle: { color: p.accent },
+          },
+        ],
+      },
+    ],
+    animationDuration: 800,
+  };
+}
+
 /** Gauge of the overall (average) utilization across analyzed resources. */
-export function utilizationGaugeOptions(pct: number, p: Palette): EChartsOption {
+export function utilizationGaugeOptions(
+  pct: number,
+  p: Palette,
+  title = 'utilização média',
+): EChartsOption {
   const value = Math.max(0, Math.min(100, Math.round(pct)));
   return {
     series: [
@@ -247,7 +297,12 @@ export function utilizationGaugeOptions(pct: number, p: Palette): EChartsOption 
         max: 100,
         radius: '92%',
         center: ['50%', '58%'],
-        progress: { show: true, width: 14, roundCap: true },
+        progress: {
+          show: true,
+          width: 14,
+          roundCap: true,
+          itemStyle: { color: p.accent },
+        },
         pointer: { show: false },
         axisLine: {
           lineStyle: {
@@ -272,7 +327,7 @@ export function utilizationGaugeOptions(pct: number, p: Palette): EChartsOption 
           color: p.text,
           formatter: '{value}%',
         },
-        data: [{ value, name: 'utilização média' }],
+        data: [{ value, name: title }],
       },
     ],
     animationDuration: 900,
