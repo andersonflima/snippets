@@ -27,8 +27,7 @@ import { IconComponent } from '../shared/icon.component';
   changeDetection: ChangeDetectionStrategy.OnPush,
   imports: [ReactiveFormsModule, RouterLink, DynamicFormComponent, IconComponent],
   template: `
-    <div class="container">
-      @if (integration(); as it) {
+    @if (integration(); as it) {
         <div class="page-head anim-in">
           <div>
             <a routerLink="/" class="back-link">
@@ -101,7 +100,6 @@ import { IconComponent } from '../shared/icon.component';
           </a>
         </div>
       }
-    </div>
   `,
   styles: [
     `
