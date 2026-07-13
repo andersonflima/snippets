@@ -174,12 +174,6 @@ a:hover {
   font-family: ui-monospace, "SF Mono", Menlo, monospace;
 }
 
-.container {
-  max-width: 920px;
-  margin: 0 auto;
-  padding: 1.5rem;
-}
-
 h1,
 h2,
 h3 {

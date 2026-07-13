@@ -22,8 +22,7 @@ interface UploadPreview {
   changeDetection: ChangeDetectionStrategy.OnPush,
   imports: [IconComponent],
   template: `
-    <div class="container">
-      <div class="page-head anim-in">
+    <div class="page-head anim-in">
         <div>
           <h1>Admin de contratos</h1>
           <p class="muted">
@@ -120,7 +119,6 @@ interface UploadPreview {
         registry.json</strong> e faça commit do arquivo baixado em
         <code>src/assets/registry.json</code> para versionar os contratos.
       </div>
-    </div>
   `,
   styles: [
     `

@@ -28,8 +28,7 @@ const ENV_OPTIONS: readonly Env[] = ['dev', 'homol', 'staging', 'prod'];
   changeDetection: ChangeDetectionStrategy.OnPush,
   imports: [FormsModule, IconComponent],
   template: `
-    <div class="container">
-      <div class="page-head anim-in">
+    <div class="page-head anim-in">
         <div>
           <h1>Configurações</h1>
           <p class="muted">
@@ -181,7 +180,6 @@ const ENV_OPTIONS: readonly Env[] = ['dev', 'homol', 'staging', 'prod'];
         emite o JWT e o guarda num cookie httpOnly. As chamadas vão com
         <code>withCredentials</code>; o navegador nunca vê o token.
       </div>
-    </div>
   `,
   styles: [
     `
