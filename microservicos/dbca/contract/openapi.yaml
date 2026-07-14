@@ -1,0 +1,149 @@
+openapi: 3.0.3
+info:
+  title: dbca — contrato (API Gateway path)
+  version: 1.0.0
+  description: >
+    Analytics de metadados de banco por button-actions. Queries configuradas por
+    admin viram botões; o usuário informa conta + recurso + ambiente e o serviço
+    descobre tipo (Aurora/DynamoDB), VPC e credencial automaticamente, executa a
+    query read-only e devolve {columns, rows}. Exposto via API Gateway -> VPC Link
+    -> NLB interno -> EKS.
+servers:
+  - url: "https://${stageVariables.apiDomain}/${stageVariables.basePath}"
+x-amazon-apigateway-request-validators:
+  all:
+    validateRequestBody: true
+    validateRequestParameters: true
+paths:
+  /dbca/queries:
+    get:
+      summary: Catálogo de queries (o frontend monta os botões-ação daqui).
+      operationId: dbca_queries
+      tags: [dbca]
+      security:
+        - CognitoJWT: []
+      responses:
+        200:
+          description: Lista de queries disponíveis.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  queries:
+                    type: array
+                    items:
+                      $ref: "#/components/schemas/QueryInfo"
+      x-amazon-apigateway-integration:
+        type: http_proxy
+        httpMethod: GET
+        connectionType: VPC_LINK
+        connectionId: "${stageVariables.vpcLinkId}"
+        uri: "http://${stageVariables.nlbDns}/dbca/queries"
+        passthroughBehavior: when_no_match
+        timeoutInMillis: 29000
+        responses:
+          default:
+            statusCode: 200
+  /dbca:
+    post:
+      summary: Executa uma query de metadados (button-action) no recurso.
+      operationId: dbca_execute
+      tags: [dbca]
+      security:
+        - CognitoJWT: []
+      x-amazon-apigateway-request-validator: all
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/DbcaRequest"
+      responses:
+        202:
+          description: Resultado da query.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ActionAccepted"
+        400: { description: Requisição inválida / query desconhecida., content: { application/json: { schema: { $ref: "#/components/schemas/Error" } } } }
+        403: { description: AssumeRole negado / SQL não read-only., content: { application/json: { schema: { $ref: "#/components/schemas/Error" } } } }
+        404: { description: Recurso não encontrado (nem Aurora nem DynamoDB)., content: { application/json: { schema: { $ref: "#/components/schemas/Error" } } } }
+        422: { description: Payload inválido., content: { application/json: { schema: { $ref: "#/components/schemas/Error" } } } }
+        500: { description: Erro interno., content: { application/json: { schema: { $ref: "#/components/schemas/Error" } } } }
+        502: { description: Falha no upstream., content: { application/json: { schema: { $ref: "#/components/schemas/Error" } } } }
+      x-amazon-apigateway-integration:
+        type: http_proxy
+        httpMethod: POST
+        connectionType: VPC_LINK
+        connectionId: "${stageVariables.vpcLinkId}"
+        uri: "http://${stageVariables.nlbDns}/dbca/execute"
+        passthroughBehavior: when_no_match
+        timeoutInMillis: 29000
+        requestParameters:
+          integration.request.header.X-Request-Id: context.requestId
+        responses:
+          default:
+            statusCode: 200
+components:
+  securitySchemes:
+    CognitoJWT:
+      type: apiKey
+      name: Authorization
+      in: header
+      x-amazon-apigateway-authtype: cognito_user_pools
+      x-amazon-apigateway-authorizer:
+        type: cognito_user_pools
+        providerARNs:
+          - "${COGNITO_USER_POOL_ARN}"
+  schemas:
+    QueryInfo:
+      type: object
+      properties:
+        id: { type: string }
+        label: { type: string }
+        description: { type: string }
+        category: { type: string }
+        engines:
+          type: array
+          items: { type: string }
+    DbcaRequest:
+      type: object
+      additionalProperties: false
+      required: [account, resource, environment, params]
+      properties:
+        account: { type: string, pattern: "^\\d{12}$", description: "Conta AWS alvo (12 dígitos)." }
+        resource: { type: string, description: "Cluster Aurora ou tabela DynamoDB (nome/id/ARN)." }
+        roleArn: { type: string, pattern: "^arn:aws:iam::\\d{12}:role/.+$", description: "Opcional: derivada da conta se ausente." }
+        region: { type: string, pattern: "^[a-z]{2}-[a-z]+-\\d$", description: "Opcional: default do serviço." }
+        environment: { type: string, enum: [dev, homol, staging, prod] }
+        requestId: { type: string }
+        dryRun: { type: boolean, default: false, description: "Descobre e resolve sem executar." }
+        params:
+          type: object
+          additionalProperties: false
+          required: [queryId]
+          properties:
+            queryId: { type: string, description: "Id da query (button-action)." }
+            database: { type: string }
+            parameters: { type: object }
+    ActionAccepted:
+      type: object
+      required: [operationId, status]
+      properties:
+        operationId: { type: string }
+        status: { type: string, enum: [accepted] }
+        resource: { type: string }
+        account: { type: string }
+        detail:
+          type: object
+          description: "Metadados + resultado: query, engine, resourceType, vpcId, columns, rows, rowCount."
+    Error:
+      type: object
+      required: [code, message]
+      properties:
+        code:
+          type: string
+          enum: [validation_error, sql_forbidden, assume_role_denied, not_found, conflict, upstream_error, internal_error]
+        message: { type: string }
+        requestId: { type: string }

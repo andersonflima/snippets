@@ -43,6 +43,7 @@ const NAV_GROUPS: NavGroup[] = [
     items: [
       { path: '/resources', label: 'Recursos', icon: 'server' },
       { path: '/db-performance', label: 'Performance BD', icon: 'database' },
+      { path: '/dbca', label: 'DBCA', icon: 'spark' },
       { path: '/finops', label: 'FinOps', icon: 'chart' },
     ],
   },

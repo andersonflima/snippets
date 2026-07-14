@@ -10,6 +10,7 @@ import { AdminComponent } from './features/admin.component';
 import { SettingsComponent } from './features/settings.component';
 import { FinOpsComponent } from './features/finops.component';
 import { GmudComponent } from './features/gmud/gmud.component';
+import { DbcaComponent } from './features/dbca/dbca.component';
 import { LoginComponent } from './features/login/login.component';
 import { authGuard } from './core/auth.guard';
 
@@ -24,6 +25,7 @@ export const routes: Routes = [
       { path: 'resources', component: ResourcesComponent, title: 'Recursos' },
       { path: 'resources/:product/:id', component: ResourceDetailComponent, title: 'Recurso' },
       { path: 'db-performance', component: DbPerformanceComponent, title: 'Performance BD' },
+      { path: 'dbca', component: DbcaComponent, title: 'DBCA' },
       { path: 'integrations', component: IntegrationsComponent, title: 'Integrações' },
       { path: 'run/:contractId/:opId', component: RunActionComponent, title: 'Executar ação' },
       { path: 'admin', component: AdminComponent, title: 'Admin' },
