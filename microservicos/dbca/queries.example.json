@@ -1,0 +1,42 @@
+{
+  "_comment": "Catálogo de queries de metadados do dbca — configurado por admin, publicado em S3 (QUERIES_BUCKET/QUERIES_KEY) e atualizável sem redeploy. O label vira o botão-ação no frontend. SQL deve ser 100% read-only (o serviço rejeita escrita). `queries` externo substitui o catálogo default por completo.",
+  "queries": [
+    {
+      "id": "db-overview",
+      "label": "Visão geral do banco",
+      "description": "Versão, tamanho total e conexões ativas.",
+      "category": "Visão geral",
+      "engines": {
+        "aurora-postgresql": {
+          "sql": "SELECT current_setting('server_version') AS versao, pg_size_pretty(pg_database_size(current_database())) AS tamanho, (SELECT count(*) FROM pg_stat_activity) AS conexoes"
+        },
+        "aurora-mysql": {
+          "sql": "SELECT VERSION() AS versao, (SELECT ROUND(SUM(data_length+index_length)/1024/1024,1) FROM information_schema.tables) AS tamanho_mb, (SELECT COUNT(*) FROM information_schema.processlist) AS conexoes"
+        },
+        "dynamodb": { "op": "overview" }
+      }
+    },
+    {
+      "id": "table-sizes",
+      "label": "Tamanho das tabelas",
+      "description": "Top tabelas por tamanho em disco.",
+      "category": "Storage",
+      "engines": {
+        "aurora-postgresql": {
+          "sql": "SELECT schemaname AS schema, relname AS tabela, pg_size_pretty(pg_total_relation_size(relid)) AS tamanho, n_live_tup AS linhas_estimadas FROM pg_stat_user_tables ORDER BY pg_total_relation_size(relid) DESC LIMIT 20"
+        },
+        "dynamodb": { "op": "table-metadata" }
+      }
+    }
+  ],
+  "environments": {
+    "dev": { "readOnly": true },
+    "homol": { "readOnly": true },
+    "staging": { "readOnly": true },
+    "prod": { "readOnly": true }
+  },
+  "secretMap": {
+    "_comment": "Fallback recurso -> secretArn, usado quando o cluster Aurora NÃO tem a tag dbca:secretArn. Preferir a tag.",
+    "meu-cluster-aurora": "arn:aws:secretsmanager:sa-east-1:111111111111:secret:rds/meu-cluster-XXXX"
+  }
+}
