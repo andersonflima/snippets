@@ -1,0 +1,106 @@
+%%{init: {"look":"handDrawn","theme":"neutral","flowchart":{"htmlLabels":true,"nodeSpacing":34,"rankSpacing":48}}}%%
+flowchart TB
+  %% ===== Ingress =====
+  U["Time / Cliente"] --> FE["Frontend web<br/>Angular"] --> AGW["API Gateway<br/>REST · Cognito JWT · 1 path/ação"]
+  AGW -->|VPC Link privado| NLB["NLB interno"] --> EKS_IN["EKS · Service → pod da ação"]
+
+  EKS_IN --> RDS
+  EKS_IN --> AUR
+  EKS_IN --> DDB
+
+  subgraph EKS["EKS Cluster · 1 Deployment por ação · IRSA por pod"]
+    direction LR
+
+    %% ---------- namespace rds ----------
+    subgraph RDS["namespace rds · boto3 client rds"]
+      direction TB
+      r_create["create<br/><small>create_db_instance · create_db_subnet_group</small>"]:::create
+      subgraph r_modify["modify · sub-pods (1 pod por capacidade)"]
+        direction LR
+        rm1["instance-class"]:::modify
+        rm2["engine-version"]:::modify
+        rm3["parameter-group"]:::modify
+        rm4["backup-retention"]:::modify
+        rm5["multi-az"]:::modify
+        rm6["security-group"]:::modify
+        rm7["maint-window"]:::modify
+        rm8["deletion-protect"]:::modify
+      end
+      subgraph r_storage["storage · sub-pods"]
+        direction LR
+        rs1["size"]:::storage
+        rs2["type gp2→gp3"]:::storage
+        rs3["iops"]:::storage
+        rs4["throughput"]:::storage
+      end
+      r_snap["snapshot / restore<br/><small>create/restore/copy_db_snapshot</small>"]:::snap
+      r_power["start / stop / reboot"]:::power
+      r_sec["replicate · vpc-link · db-password"]:::sec
+      r_tags["tags<br/><small>add/remove/list_tags_for_resource</small>"]:::tags
+      r_destroy["destroy<br/><small>delete_db_instance · delete_db_snapshot</small>"]:::destroy
+      r_desc["describe / finops / insights"]:::read
+    end
+
+    %% ---------- namespace aurora ----------
+    subgraph AUR["namespace aurora · rds + rds-data"]
+      direction TB
+      a_create["create<br/><small>create_db_cluster · create_db_instance</small>"]:::create
+      subgraph a_modify["modify · sub-pods"]
+        direction LR
+        am1["cluster-class"]:::modify
+        am2["engine-version"]:::modify
+        am3["cluster-param"]:::modify
+        am4["backup-retention"]:::modify
+        am5["serverless-cap"]:::modify
+      end
+      a_snap["snapshot / restore / pitr<br/><small>*_db_cluster_snapshot</small>"]:::snap
+      a_data["data-api · dbca<br/><small>execute/batch/begin/commit/rollback</small>"]:::data
+      a_power["start / stop cluster"]:::power
+      a_sec["replicate · vpc-link · db-password"]:::sec
+      a_tags["tags"]:::tags
+      a_destroy["destroy<br/><small>delete_db_cluster(_snapshot)</small>"]:::destroy
+      a_desc["describe"]:::read
+    end
+
+    %% ---------- namespace dynamodb ----------
+    subgraph DDB["namespace dynamodb · boto3 client dynamodb"]
+      direction TB
+      d_create["create ddl<br/><small>CreateTable · CreateGlobalTable</small>"]:::create
+      subgraph d_modify["modify ddl · sub-pods"]
+        direction LR
+        dm1["update-table"]:::modify
+        dm2["update-ttl"]:::modify
+        dm3["global-table"]:::modify
+        dm4["streaming"]:::modify
+      end
+      d_write["data · write<br/><small>Put/Update/Delete/BatchWrite/TxnWrite</small>"]:::data
+      d_read["data · read + PartiQL<br/><small>Get/Query/Scan/ExecuteStatement</small>"]:::data
+      d_backup["backup + export<br/><small>CreateBackup · RestorePITR · Export/Import</small>"]:::snap
+      d_config["config<br/><small>UpdateContinuousBackups · ContributorInsights</small>"]:::modify
+      d_tags["tags<br/><small>Tag/Untag/ListTagsOfResource</small>"]:::tags
+      d_destroy["destroy ddl<br/><small>DeleteTable · DeleteBackup</small>"]:::destroy
+      d_desc["describe"]:::read
+    end
+  end
+
+  %% ===== Access chain + resources =====
+  RDS -.->|IRSA → STS:AssumeRole<br/>microservicos-actions-role| RES_RDS[("RDS instance<br/>PRD · Time · HOMOL")]:::resR
+  AUR -.->|AssumeRole| RES_AUR[("Aurora cluster<br/>writer+readers · Data API")]:::resA
+  DDB -.->|AssumeRole| RES_DDB[("DynamoDB table<br/>control + data plane")]:::resD
+
+  OUT["Fora de escopo: SSM e KMS · somente bancos"]:::warn
+
+  classDef create fill:#b2f2bb,stroke:#2f9e44,color:#173d1f;
+  classDef modify fill:#a5d8ff,stroke:#1971c2,color:#0b3a63;
+  classDef storage fill:#d0bfff,stroke:#6741d9,color:#2c1a63;
+  classDef destroy fill:#ffc9c9,stroke:#e03131,color:#6a1414;
+  classDef power fill:#99e9f2,stroke:#0c8599,color:#083c45;
+  classDef snap fill:#ffd8a8,stroke:#e8590c,color:#5c2708;
+  classDef data fill:#96f2d7,stroke:#099268,color:#0a3d30;
+  classDef tags fill:#e9ecef,stroke:#495057,color:#212529;
+  classDef read fill:#dee2e6,stroke:#5c7080,color:#212529;
+  classDef sec fill:#bac8ff,stroke:#3b5bdb,color:#1a2a7a;
+  classDef resR fill:#e7f5ff,stroke:#1971c2,color:#0b3a63;
+  classDef resA fill:#e6fcf5,stroke:#099268,color:#0a3d30;
+  classDef resD fill:#fff4e6,stroke:#e8590c,color:#5c2708;
+  classDef warn fill:#fff3d6,stroke:#e8a13a,color:#8a5a00;
