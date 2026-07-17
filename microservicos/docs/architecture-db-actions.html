@@ -1,0 +1,307 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+<meta charset="utf-8">
+<style>
+  :root{
+    --bg:#f5f8fd; --panel:#ffffff; --ink:#0f1b2d; --muted:#5b6b82; --line:#d9e2ef;
+    --eks:#1f6feb; --rds:#2563eb; --aurora:#0d9488; --ddb:#b45309;
+    --create:#16a34a; --destroy:#dc2626; --modify:#2563eb; --storage:#7c3aed;
+    --power:#0891b2; --snap:#ea580c; --tags:#64748b; --read:#475569; --data:#0d9488; --sec:#4f46e5;
+  }
+  *{box-sizing:border-box;margin:0;padding:0}
+  html,body{width:3840px;height:2160px;background:
+     radial-gradient(1200px 600px at 20% -5%, #eaf1fb, transparent),
+     radial-gradient(1200px 600px at 90% 0%, #eefaf7, transparent), var(--bg);
+     font-family:-apple-system,"Segoe UI",Inter,Arial,sans-serif;color:var(--ink);overflow:hidden}
+  .wrap{width:3840px;height:2160px;padding:40px 48px 34px}
+
+  /* header */
+  header{display:flex;align-items:flex-start;justify-content:space-between;margin-bottom:20px}
+  h1{font-size:44px;letter-spacing:-.6px;font-weight:800;line-height:1.05}
+  h1 .accent{color:var(--eks)}
+  .sub{font-size:21px;color:var(--muted);margin-top:8px;max-width:2100px;line-height:1.35}
+  .scope{margin-top:10px;display:inline-flex;gap:10px;flex-wrap:wrap}
+  .pill{font-size:15px;font-weight:600;padding:5px 13px;border-radius:999px;border:1.5px solid var(--line);background:#fff;color:var(--muted)}
+  .pill.warn{border-color:#f0c36d;background:#fff8e8;color:#8a5a00}
+  .legend{background:#fff;border:1.5px solid var(--line);border-radius:16px;padding:16px 18px;min-width:560px}
+  .legend h4{font-size:15px;text-transform:uppercase;letter-spacing:.7px;color:var(--muted);margin-bottom:10px}
+  .legend .row{display:flex;gap:18px;flex-wrap:wrap}
+  .lg{display:flex;align-items:center;gap:8px;font-size:14.5px;color:#33445c}
+  .sw{width:16px;height:16px;border-radius:5px}
+  .chip-demo{font-size:13px;border:1.5px dashed #b9c6da;border-radius:8px;padding:3px 9px;color:#33445c;background:#fbfdff}
+  .mono{font-family:"SF Mono",Menlo,Consolas,monospace}
+
+  /* ingress */
+  .ingress{display:flex;align-items:center;gap:0;margin:6px 0 20px}
+  .node{background:#fff;border:2px solid var(--line);border-radius:14px;padding:13px 18px;font-weight:700;font-size:19px;display:flex;flex-direction:column;gap:3px;box-shadow:0 2px 10px rgba(20,40,80,.05)}
+  .node small{font-weight:500;font-size:13.5px;color:var(--muted)}
+  .node.eks{border-color:var(--eks);background:#f2f7ff}
+  .arrow{flex:0 0 54px;height:2px;background:linear-gradient(90deg,#c3d1e6,#9fb6d6);position:relative;margin:0 4px}
+  .arrow::after{content:"";position:absolute;right:-2px;top:-5px;border-left:10px solid #9fb6d6;border-top:6px solid transparent;border-bottom:6px solid transparent}
+  .arrow small{position:absolute;top:-24px;left:50%;transform:translateX(-50%);font-size:12.5px;color:var(--muted);white-space:nowrap}
+
+  /* eks cluster */
+  .cluster{border:2.5px solid var(--eks);border-radius:22px;background:linear-gradient(180deg,#f7fbff,#ffffff);padding:16px 18px 18px;position:relative;height:1470px}
+  .cluster>.tag{position:absolute;top:-16px;left:26px;background:var(--eks);color:#fff;font-weight:800;font-size:17px;letter-spacing:.3px;padding:5px 15px;border-radius:10px}
+  .cluster>.note{position:absolute;top:-13px;right:26px;font-size:14px;color:var(--muted);background:#fff;padding:3px 12px;border-radius:8px;border:1.5px solid var(--line)}
+  .ns-grid{display:grid;grid-template-columns:1fr 1fr 1fr;gap:18px;height:100%}
+
+  /* namespace */
+  .ns{border:2px solid var(--line);border-radius:16px;background:#fbfdff;display:flex;flex-direction:column;overflow:hidden}
+  .ns>.head{display:flex;align-items:center;justify-content:space-between;padding:12px 16px;color:#fff}
+  .ns.rds>.head{background:var(--rds)} .ns.aurora>.head{background:var(--aurora)} .ns.ddb>.head{background:var(--ddb)}
+  .ns>.head .n{font-size:23px;font-weight:800} .ns>.head .n .mono{font-weight:800}
+  .ns>.head .r{font-size:13.5px;opacity:.92;text-align:right;line-height:1.25}
+  .cards{padding:11px;display:flex;flex-direction:column;gap:9px;overflow:hidden}
+
+  .card{border:1.5px solid var(--line);border-radius:11px;background:#fff;padding:9px 11px 10px 14px;position:relative}
+  .card::before{content:"";position:absolute;left:0;top:0;bottom:0;width:5px;border-radius:11px 0 0 11px;background:var(--c)}
+  .card .ct{display:flex;align-items:center;justify-content:space-between;margin-bottom:6px}
+  .card .ct b{font-size:16.5px;font-weight:800;color:var(--ink)}
+  .card .ct .k{font-size:12px;font-weight:700;color:#fff;background:var(--c);padding:2px 8px;border-radius:999px;text-transform:uppercase;letter-spacing:.4px}
+  .pods{display:flex;flex-wrap:wrap;gap:5px;margin-bottom:5px}
+  .pod{font-size:12.8px;font-weight:650;color:#22344c;background:#f1f6fd;border:1.5px solid #d6e3f4;border-radius:8px;padding:2.5px 8px;display:inline-flex;align-items:center;gap:5px}
+  .pod::before{content:"";width:7px;height:7px;border-radius:2px;background:var(--c)}
+  .api{font-size:11.6px;color:#5b6b82;line-height:1.3}
+  .api b{color:#33445c;font-weight:700}
+
+  footer{display:flex;align-items:stretch;gap:16px;margin-top:16px;height:200px}
+  .fbox{background:#fff;border:2px solid var(--line);border-radius:16px;padding:14px 18px;display:flex;flex-direction:column;justify-content:center;gap:6px}
+  .fbox .t{font-size:17px;font-weight:800} .fbox .d{font-size:14px;color:var(--muted);line-height:1.35}
+  .chainflow{flex:1;display:flex;align-items:center;gap:0}
+  .res{display:flex;gap:12px}
+  .resbox{background:#fff;border:2px solid var(--c);border-radius:14px;padding:12px 16px;min-width:210px}
+  .resbox .t{font-size:18px;font-weight:800;color:var(--c)} .resbox .d{font-size:13px;color:var(--muted);margin-top:3px}
+  .foot-note{margin-top:10px;font-size:14px;color:var(--muted);text-align:right}
+</style>
+</head>
+<body>
+<div class="wrap">
+
+  <header>
+    <div>
+      <h1>Snippets — Plataforma <span class="accent">action-driven</span> em EKS · segregação por <span class="accent">ação × recurso de banco</span></h1>
+      <div class="sub">Um <b>namespace por produto</b> (recurso de banco) e <b>um pod/microserviço por ação</b>. Ações amplas como <b>modify</b> e <b>storage</b> são explodidas em <b>sub-pods por capacidade boto3</b> — nenhuma ação genérica concentra tudo. Cobre todo o espectro boto3 sobre cada recurso: create · destroy · modify · storage · start/stop · snapshot/restore · replicate · tags · describe · data · security.</div>
+      <div class="scope">
+        <span class="pill">Deployment stateless · 1 pod por ação</span>
+        <span class="pill">IRSA por pod → STS:AssumeRole na conta alvo</span>
+        <span class="pill warn">Escopo: somente bancos — SSM e KMS fora</span>
+      </div>
+    </div>
+    <div class="legend">
+      <h4>Legenda</h4>
+      <div class="row" style="margin-bottom:10px">
+        <span class="lg"><span class="sw" style="background:var(--rds)"></span>namespace = produto</span>
+        <span class="lg"><span class="chip-demo">pod: ação</span> Deployment (1 por ação/sub-ação)</span>
+        <span class="lg mono" style="font-size:13px;color:#5b6b82">create_db_instance = chamada boto3</span>
+      </div>
+      <div class="row">
+        <span class="lg"><span class="sw" style="background:var(--create)"></span>create</span>
+        <span class="lg"><span class="sw" style="background:var(--modify)"></span>modify</span>
+        <span class="lg"><span class="sw" style="background:var(--storage)"></span>storage</span>
+        <span class="lg"><span class="sw" style="background:var(--destroy)"></span>destroy</span>
+        <span class="lg"><span class="sw" style="background:var(--power)"></span>power</span>
+        <span class="lg"><span class="sw" style="background:var(--snap)"></span>snapshot</span>
+        <span class="lg"><span class="sw" style="background:var(--data)"></span>data</span>
+        <span class="lg"><span class="sw" style="background:var(--tags)"></span>tags</span>
+        <span class="lg"><span class="sw" style="background:var(--read)"></span>describe</span>
+        <span class="lg"><span class="sw" style="background:var(--sec)"></span>security</span>
+      </div>
+    </div>
+  </header>
+
+  <div class="ingress">
+    <div class="node">Time / Cliente<small>solicita a ação no console</small></div>
+    <div class="arrow"></div>
+    <div class="node">Frontend (web)<small>Angular · envelope de execução</small></div>
+    <div class="arrow"></div>
+    <div class="node">API Gateway<small>REST · edge · Cognito JWT · 1 path por ação</small></div>
+    <div class="arrow"><small>VPC Link (privado)</small></div>
+    <div class="node">NLB interno<small>internal-only</small></div>
+    <div class="arrow"></div>
+    <div class="node eks">EKS<small>Service → pod da ação</small></div>
+  </div>
+
+  <div class="cluster">
+    <div class="tag">EKS Cluster</div>
+    <div class="note">1 Deployment por ação · isolamento por namespace de produto · IRSA por pod</div>
+    <div class="ns-grid">
+
+      <!-- ================= RDS ================= -->
+      <div class="ns rds">
+        <div class="head"><div class="n">namespace <span class="mono">rds</span></div><div class="r">RDS instances (Postgres · MySQL · MariaDB · Oracle · SQL Server)<br>boto3 client: <b class="mono">rds</b></div></div>
+        <div class="cards">
+          <div class="card" style="--c:var(--create)"><div class="ct"><b>create</b><span class="k">create</span></div>
+            <div class="pods"><span class="pod">rds-create</span><span class="pod">create-subnet-group</span></div>
+            <div class="api"><span class="mono">create_db_instance · create_db_subnet_group</span></div></div>
+
+          <div class="card" style="--c:var(--modify)"><div class="ct"><b>modify</b><span class="k">modify · sub-pods</span></div>
+            <div class="pods"><span class="pod">instance-class</span><span class="pod">engine-version</span><span class="pod">parameter-group</span><span class="pod">backup-retention</span><span class="pod">multi-az</span><span class="pod">security-group</span><span class="pod">maintenance-window</span><span class="pod">deletion-protection</span></div>
+            <div class="api"><span class="mono">modify_db_instance</span> · kwargs: <b>DBInstanceClass · EngineVersion(+AllowMajorVersionUpgrade) · DBParameterGroupName · BackupRetentionPeriod · MultiAZ · VpcSecurityGroupIds · PreferredMaintenanceWindow · DeletionProtection</b></div></div>
+
+          <div class="card" style="--c:var(--storage)"><div class="ct"><b>storage</b><span class="k">storage · sub-pods</span></div>
+            <div class="pods"><span class="pod">storage-size</span><span class="pod">storage-type</span><span class="pod">iops</span><span class="pod">throughput</span></div>
+            <div class="api"><span class="mono">modify_db_instance</span> · <b>AllocatedStorage · StorageType(gp2→gp3) · Iops · StorageThroughput</b></div></div>
+
+          <div class="card" style="--c:var(--snap)"><div class="ct"><b>snapshot / restore</b><span class="k">snapshot</span></div>
+            <div class="pods"><span class="pod">create-snapshot</span><span class="pod">restore-snapshot</span><span class="pod">copy-snapshot</span></div>
+            <div class="api"><span class="mono">create_db_snapshot · restore_db_instance_from_db_snapshot · copy_db_snapshot</span></div></div>
+
+          <div class="card" style="--c:var(--power)"><div class="ct"><b>start / stop</b><span class="k">power</span></div>
+            <div class="pods"><span class="pod">start</span><span class="pod">stop</span><span class="pod">reboot</span></div>
+            <div class="api"><span class="mono">start_db_instance · stop_db_instance · reboot_db_instance</span></div></div>
+
+          <div class="card" style="--c:var(--sec)"><div class="ct"><b>replicate</b><span class="k">security · x-account</span></div>
+            <div class="pods"><span class="pod">replicate</span></div>
+            <div class="api"><span class="mono">modify_db_snapshot_attribute</span> (share) · <span class="mono">copy_db_snapshot</span> (cross-region/account)</div></div>
+
+          <div class="card" style="--c:var(--sec)"><div class="ct"><b>vpc-link</b><span class="k">security · privatelink</span></div>
+            <div class="pods"><span class="pod">vpc-link</span></div>
+            <div class="api"><span class="mono">create_vpc_endpoint_service_configuration · modify_vpc_endpoint_service_permissions</span></div></div>
+
+          <div class="card" style="--c:var(--sec)"><div class="ct"><b>db-password</b><span class="k">security · in-db</span></div>
+            <div class="pods"><span class="pod">db-password</span></div>
+            <div class="api"><span class="mono">secretsmanager:get_secret_value</span> → <b>ALTER ROLE/USER</b> (psycopg / pymysql)</div></div>
+
+          <div class="card" style="--c:var(--tags)"><div class="ct"><b>tags</b><span class="k">tags</span></div>
+            <div class="pods"><span class="pod">tag-add</span><span class="pod">tag-remove</span><span class="pod">tag-list</span></div>
+            <div class="api"><span class="mono">add_tags_to_resource · remove_tags_from_resource · list_tags_for_resource</span></div></div>
+
+          <div class="card" style="--c:var(--destroy)"><div class="ct"><b>destroy</b><span class="k">destroy</span></div>
+            <div class="pods"><span class="pod">rds-destroy</span><span class="pod">delete-snapshot</span></div>
+            <div class="api"><span class="mono">delete_db_instance (FinalSnapshot?) · delete_db_snapshot</span></div></div>
+
+          <div class="card" style="--c:var(--read)"><div class="ct"><b>describe / inventory</b><span class="k">describe · finops</span></div>
+            <div class="pods"><span class="pod">describe</span><span class="pod">finops</span><span class="pod">insights</span></div>
+            <div class="api"><span class="mono">describe_db_instances · describe_db_snapshots · describe_db_subnet_groups</span> · cloudwatch <span class="mono">get_metric_data</span></div></div>
+        </div>
+      </div>
+
+      <!-- ================= AURORA ================= -->
+      <div class="ns aurora">
+        <div class="head"><div class="n">namespace <span class="mono">aurora</span></div><div class="r">Aurora clusters (aurora-postgresql · aurora-mysql)<br>boto3: <b class="mono">rds</b> (cluster) + <b class="mono">rds-data</b></div></div>
+        <div class="cards">
+          <div class="card" style="--c:var(--create)"><div class="ct"><b>create</b><span class="k">create</span></div>
+            <div class="pods"><span class="pod">aurora-create-cluster</span><span class="pod">create-writer</span><span class="pod">create-subnet-group</span></div>
+            <div class="api"><span class="mono">create_db_cluster · create_db_instance (writer) · create_db_subnet_group</span></div></div>
+
+          <div class="card" style="--c:var(--modify)"><div class="ct"><b>modify</b><span class="k">modify · sub-pods</span></div>
+            <div class="pods"><span class="pod">cluster-class</span><span class="pod">engine-version</span><span class="pod">cluster-param-group</span><span class="pod">backup-retention</span><span class="pod">serverless-capacity</span><span class="pod">security-group</span></div>
+            <div class="api"><span class="mono">modify_db_cluster</span> · <b>DBClusterParameterGroupName · EngineVersion · BackupRetentionPeriod · ServerlessV2ScalingConfiguration · VpcSecurityGroupIds</b> · writer via <span class="mono">modify_db_instance</span></div></div>
+
+          <div class="card" style="--c:var(--snap)"><div class="ct"><b>snapshot / restore</b><span class="k">snapshot</span></div>
+            <div class="pods"><span class="pod">create-cluster-snapshot</span><span class="pod">restore-from-snapshot</span><span class="pod">restore-pitr</span><span class="pod">copy-cluster-snapshot</span></div>
+            <div class="api"><span class="mono">create_db_cluster_snapshot · restore_db_cluster_from_snapshot · restore_db_cluster_to_point_in_time · copy_db_cluster_snapshot</span></div></div>
+
+          <div class="card" style="--c:var(--data)"><div class="ct"><b>data-api (rds-data)</b><span class="k">data</span></div>
+            <div class="pods"><span class="pod">execute-statement</span><span class="pod">batch-execute</span><span class="pod">transaction</span></div>
+            <div class="api"><span class="mono">execute_statement · batch_execute_statement · begin_transaction · commit_transaction · rollback_transaction</span> — avaliado vs regras S3</div></div>
+
+          <div class="card" style="--c:var(--data)"><div class="ct"><b>dbca (metadata)</b><span class="k">data · analytics</span></div>
+            <div class="pods"><span class="pod">dbca</span></div>
+            <div class="api">auto-discover via <span class="mono">describe_db_clusters</span> → queries admin (pg_catalog / pg_stat) via Data API</div></div>
+
+          <div class="card" style="--c:var(--power)"><div class="ct"><b>start / stop</b><span class="k">power</span></div>
+            <div class="pods"><span class="pod">start-cluster</span><span class="pod">stop-cluster</span></div>
+            <div class="api"><span class="mono">start_db_cluster · stop_db_cluster</span></div></div>
+
+          <div class="card" style="--c:var(--sec)"><div class="ct"><b>replicate</b><span class="k">security · x-account</span></div>
+            <div class="pods"><span class="pod">replicate-cluster</span></div>
+            <div class="api"><span class="mono">modify_db_cluster_snapshot_attribute · copy_db_cluster_snapshot</span></div></div>
+
+          <div class="card" style="--c:var(--sec)"><div class="ct"><b>vpc-link + db-password</b><span class="k">security</span></div>
+            <div class="pods"><span class="pod">vpc-link</span><span class="pod">db-password</span></div>
+            <div class="api"><span class="mono">*_vpc_endpoint_service_*</span> · <span class="mono">get_secret_value</span> → ALTER ROLE via Data API/conn</div></div>
+
+          <div class="card" style="--c:var(--tags)"><div class="ct"><b>tags</b><span class="k">tags</span></div>
+            <div class="pods"><span class="pod">tag-add</span><span class="pod">tag-remove</span><span class="pod">tag-list</span></div>
+            <div class="api"><span class="mono">add_tags_to_resource · remove_tags_from_resource · list_tags_for_resource</span></div></div>
+
+          <div class="card" style="--c:var(--destroy)"><div class="ct"><b>destroy</b><span class="k">destroy</span></div>
+            <div class="pods"><span class="pod">delete-cluster</span><span class="pod">delete-cluster-snapshot</span></div>
+            <div class="api"><span class="mono">delete_db_cluster · delete_db_cluster_snapshot</span></div></div>
+
+          <div class="card" style="--c:var(--read)"><div class="ct"><b>describe / inventory</b><span class="k">describe</span></div>
+            <div class="pods"><span class="pod">describe</span><span class="pod">insights</span></div>
+            <div class="api"><span class="mono">describe_db_clusters · describe_db_cluster_snapshots</span></div></div>
+        </div>
+      </div>
+
+      <!-- ================= DYNAMODB ================= -->
+      <div class="ns ddb">
+        <div class="head"><div class="n">namespace <span class="mono">dynamodb</span></div><div class="r">DynamoDB tables (control + data plane)<br>boto3 client: <b class="mono">dynamodb</b></div></div>
+        <div class="cards">
+          <div class="card" style="--c:var(--create)"><div class="ct"><b>create (ddl)</b><span class="k">create</span></div>
+            <div class="pods"><span class="pod">create-table</span><span class="pod">create-global-table</span></div>
+            <div class="api"><span class="mono">CreateTable · CreateGlobalTable</span></div></div>
+
+          <div class="card" style="--c:var(--modify)"><div class="ct"><b>modify (ddl)</b><span class="k">modify · sub-pods</span></div>
+            <div class="pods"><span class="pod">update-table</span><span class="pod">update-ttl</span><span class="pod">update-global-table</span><span class="pod">streaming</span></div>
+            <div class="api"><span class="mono">UpdateTable · UpdateTimeToLive · UpdateGlobalTable · UpdateGlobalTableSettings · Enable/DisableKinesisStreamingDestination</span></div></div>
+
+          <div class="card" style="--c:var(--data)"><div class="ct"><b>data · write</b><span class="k">data</span></div>
+            <div class="pods"><span class="pod">put</span><span class="pod">update</span><span class="pod">delete</span><span class="pod">batch-write</span><span class="pod">txn-write</span></div>
+            <div class="api"><span class="mono">PutItem · UpdateItem · DeleteItem · BatchWriteItem · TransactWriteItems</span></div></div>
+
+          <div class="card" style="--c:var(--data)"><div class="ct"><b>data · read</b><span class="k">data</span></div>
+            <div class="pods"><span class="pod">get</span><span class="pod">query</span><span class="pod">scan</span><span class="pod">batch-get</span><span class="pod">txn-get</span></div>
+            <div class="api"><span class="mono">GetItem · Query · Scan · BatchGetItem · TransactGetItems</span></div></div>
+
+          <div class="card" style="--c:var(--data)"><div class="ct"><b>data · PartiQL</b><span class="k">data</span></div>
+            <div class="pods"><span class="pod">execute-statement</span><span class="pod">batch-execute</span><span class="pod">execute-txn</span></div>
+            <div class="api"><span class="mono">ExecuteStatement · BatchExecuteStatement · ExecuteTransaction</span></div></div>
+
+          <div class="card" style="--c:var(--snap)"><div class="ct"><b>backup / restore</b><span class="k">snapshot</span></div>
+            <div class="pods"><span class="pod">create-backup</span><span class="pod">restore-from-backup</span><span class="pod">restore-pitr</span></div>
+            <div class="api"><span class="mono">CreateBackup · RestoreTableFromBackup · RestoreTableToPointInTime</span></div></div>
+
+          <div class="card" style="--c:var(--snap)"><div class="ct"><b>export / import</b><span class="k">snapshot · s3</span></div>
+            <div class="pods"><span class="pod">export-pitr</span><span class="pod">import-table</span></div>
+            <div class="api"><span class="mono">ExportTableToPointInTime · ImportTable · ListExports · ListImports</span></div></div>
+
+          <div class="card" style="--c:var(--modify)"><div class="ct"><b>config</b><span class="k">modify · config</span></div>
+            <div class="pods"><span class="pod">pitr</span><span class="pod">contributor-insights</span></div>
+            <div class="api"><span class="mono">UpdateContinuousBackups · UpdateContributorInsights</span></div></div>
+
+          <div class="card" style="--c:var(--tags)"><div class="ct"><b>tags</b><span class="k">tags</span></div>
+            <div class="pods"><span class="pod">tag-resource</span><span class="pod">untag-resource</span><span class="pod">list-tags</span></div>
+            <div class="api"><span class="mono">TagResource · UntagResource · ListTagsOfResource</span></div></div>
+
+          <div class="card" style="--c:var(--destroy)"><div class="ct"><b>destroy (ddl)</b><span class="k">destroy</span></div>
+            <div class="pods"><span class="pod">delete-table</span><span class="pod">delete-backup</span></div>
+            <div class="api"><span class="mono">DeleteTable · DeleteBackup</span></div></div>
+
+          <div class="card" style="--c:var(--read)"><div class="ct"><b>describe / inventory</b><span class="k">describe</span></div>
+            <div class="pods"><span class="pod">describe</span><span class="pod">insights</span></div>
+            <div class="api"><span class="mono">DescribeTable · ListTables · DescribeTimeToLive · DescribeContinuousBackups · DescribeLimits</span></div></div>
+        </div>
+      </div>
+
+    </div>
+  </div>
+
+  <footer>
+    <div class="fbox" style="max-width:520px">
+      <div class="t">Cadeia de acesso (por pod)</div>
+      <div class="d">pod (IRSA · plataforma) → role de plataforma → <b>STS:AssumeRole</b> → <span class="mono">microservicos-actions-role</span> na conta alvo → executa a chamada boto3. Cada pod é um Deployment stateless, self-contained (Dockerfile + requirements próprios).</div>
+    </div>
+    <div class="chainflow">
+      <div class="arrow" style="flex:0 0 60px"><small>AssumeRole</small></div>
+      <div class="res">
+        <div class="resbox" style="--c:var(--rds)"><div class="t">RDS instance</div><div class="d">conta PRD · Time · HOMOL</div></div>
+        <div class="resbox" style="--c:var(--aurora)"><div class="t">Aurora cluster</div><div class="d">writer + readers · Data API</div></div>
+        <div class="resbox" style="--c:var(--ddb)"><div class="t">DynamoDB table</div><div class="d">control + data plane</div></div>
+      </div>
+      <div style="flex:1"></div>
+      <div class="fbox warn" style="border-color:#f0c36d;background:#fff8e8;max-width:430px">
+        <div class="t" style="color:#8a5a00">Fora de escopo</div>
+        <div class="d" style="color:#8a5a00">Somente recursos de <b>banco de dados</b>. <b>SSM</b> e <b>KMS</b> não entram nesta segregação. Redshift/ElastiCache/DocumentDB/Neptune: não mapeados hoje.</div>
+      </div>
+    </div>
+  </footer>
+  <div class="foot-note">Snippets · andersonflima/snippets · arquitetura action-driven por ação × recurso de banco · gerado 2026-07-17</div>
+
+</div>
+</body>
+</html>
