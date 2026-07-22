@@ -345,6 +345,43 @@ def evaluate(rules: dict, req, op: Operation, args: dict) -> Decision:
     return Decision(resource, resource_type, None, _gmud_required(rules, req, op))
 '''
 
+VALIDATE_PY = '''"""Validação dos args contra o input shape real da operação (botocore, offline).
+
+Sem rede e sem credenciais: usa apenas os service models locais do botocore
+(embarcado no boto3) para checar tipos e campos obrigatórios ANTES do dispatch.
+Assim o dryRun também valida os params, não só o caminho real.
+"""
+from __future__ import annotations
+
+from botocore.session import get_session
+from botocore.validate import ParamValidator
+
+from .aws import ActionError
+from .operations import Operation
+
+_session = get_session()
+_shapes: dict[tuple[str, str], object] = {}
+
+
+def _input_shape(client: str, op_name: str):
+    key = (client, op_name)
+    if key not in _shapes:
+        model = _session.get_service_model(client).operation_model(op_name)
+        _shapes[key] = model.input_shape
+    return _shapes[key]
+
+
+def validate_args(op: Operation, args: dict) -> None:
+    shape = _input_shape(op.client, op.name)
+    if shape is None:
+        if args:
+            raise ActionError("validation_error", f"{op.key} não aceita argumentos", 400)
+        return
+    report = ParamValidator().validate(args, shape)
+    if report.has_errors():
+        raise ActionError("validation_error", f"args inválidos p/ {op.key}: {report.generate_report()}", 400)
+'''
+
 GMUD_PY = '''"""Gate de GMUD (ServiceNow) para ambiente produtivo."""
 from __future__ import annotations
 
@@ -431,6 +468,7 @@ from .models import ActionAccepted, __CLS__Request
 from .operations import resolve
 from .policy import evaluate
 from .rules import load_rules
+from .validate import validate_args
 __GMUD_IMPORT__
 
 def _jsonable(value: Any) -> Any:
@@ -452,6 +490,7 @@ def execute(req: __CLS__Request) -> ActionAccepted:
         raise ActionError("validation_error", f"operação não suportada por este serviço: {p.operation}", 400)
 
     args = dict(p.args or {})
+    validate_args(op, args)
     rules = load_rules({})
     decision = evaluate(rules, req, op, args)
 
@@ -783,6 +822,7 @@ def gen_service(svc: str, ops: list[dict], meta: dict) -> None:
     _write(os.path.join(app, "rules.py"), RULES_PY.replace("__SVC__", svc))
     _write(os.path.join(app, "policy.py"), POLICY_PY)
     _write(os.path.join(app, "models.py"), MODELS_PY.replace("__CLS__", cls))
+    _write(os.path.join(app, "validate.py"), VALIDATE_PY)
 
     gmud_import = "from .gmud import ensure_change_authorized\n" if gated else ""
     gmud_call = ("    ensure_change_authorized(op.name, req, decision.gmud_required)\n" if gated else "")
