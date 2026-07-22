@@ -2,27 +2,30 @@
   "allowedRegions": [
     "sa-east-1"
   ],
-  "allowedResourceTypes": [
-    "db-instance",
-    "db-cluster"
-  ],
-  "allowedInstanceClasses": [
-    "db.t3.medium",
-    "db.t3.large",
-    "db.m5.large",
-    "db.m5.xlarge",
-    "db.r5.large"
-  ],
-  "allowedEngineVersions": [],
-  "maxBackupRetentionDays": 35,
-  "allowedInstanceClassesByEnv": {
-    "dev": [
-      "db.t3.medium",
-      "db.t3.large"
-    ],
-    "homol": [
-      "db.t3.large",
-      "db.m5.large"
-    ]
-  }
+  "environments": {
+    "dev": {
+      "requireGmudForMutations": false
+    },
+    "homol": {
+      "requireGmudForMutations": false,
+      "deniedOperations": [
+        "ModifyGlobalCluster",
+        "ModifyGlobalReplicationGroup"
+      ]
+    },
+    "staging": {
+      "requireGmudForMutations": false,
+      "deniedOperations": [
+        "ModifyGlobalCluster",
+        "ModifyGlobalReplicationGroup"
+      ]
+    },
+    "prod": {
+      "requireGmudForMutations": true,
+      "deniedOperations": [
+        "ModifyCustomDBEngineVersion"
+      ]
+    }
+  },
+  "exceptions": []
 }

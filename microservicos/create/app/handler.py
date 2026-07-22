@@ -1,38 +1,60 @@
-"""Ação create: provisiona um recurso a partir da spec (kwargs do boto3)."""
+"""Dispatch genérico: resolve op -> regra externa -> assume role -> boto3."""
 from __future__ import annotations
 
 import uuid
+from decimal import Decimal
+from typing import Any
 
 from .aws import ActionError, assumed_session
 from .models import ActionAccepted, CreateRequest
-from .rules import enforce_allowed, enforce_common, load_rules
+from .operations import resolve
+from .policy import evaluate
+from .rules import load_rules
+from .gmud import ensure_change_authorized
+
+
+def _jsonable(value: Any) -> Any:
+    if isinstance(value, Decimal):
+        return int(value) if value == value.to_integral_value() else float(value)
+    if isinstance(value, bytes):
+        return value.decode("utf-8", "replace")
+    if isinstance(value, dict):
+        return {k: _jsonable(v) for k, v in value.items()}
+    if isinstance(value, (list, tuple, set)):
+        return [_jsonable(v) for v in value]
+    return value
 
 
 def execute(req: CreateRequest) -> ActionAccepted:
     p = req.params
-    spec = dict(p.spec or {})
+    op = resolve(p.operation)
+    if op is None:
+        raise ActionError("validation_error", f"operação não suportada por este serviço: {p.operation}", 400)
+
+    args = dict(p.args or {})
     rules = load_rules({})
-    enforce_common(rules, req)
-    enforce_allowed(rules, "allowedResourceTypes", p.resourceType, "resourceType")
-    enforce_allowed(rules, "allowedInstanceClasses", spec.get("DBInstanceClass") or spec.get("dbInstanceClass"), "instance class")
-    enforce_allowed(rules, "allowedEngines", spec.get("Engine") or spec.get("engine"), "engine")
-    session = assumed_session(req.account, req.roleArn, req.region)
+    decision = evaluate(rules, req, op, args)
 
     if req.dryRun:
         return ActionAccepted(
-            operationId=str(uuid.uuid4()), resource=req.resource, account=req.account,
-            detail={"dryRun": True, "resourceType": p.resourceType, "spec": spec},
+            operationId=str(uuid.uuid4()), resource=decision.resource or req.resource, account=req.account,
+            detail={
+                "dryRun": True, "operation": op.name, "client": op.client, "method": op.method,
+                "category": op.category, "mutating": op.mutating, "resourceType": decision.resource_type,
+                "gmudRequired": decision.gmud_required, "exceptionApplied": decision.exception_id,
+                "args": _jsonable(args),
+            },
         )
 
-    if p.resourceType == "db-instance":
-        rds = session.client("rds")
-        out = rds.create_db_instance(DBInstanceIdentifier=req.resource, **spec)
-        detail = {"status": out["DBInstance"]["DBInstanceStatus"]}
-    elif p.resourceType == "db-subnet-group":
-        rds = session.client("rds")
-        rds.create_db_subnet_group(DBSubnetGroupName=req.resource, **spec)
-        detail = {"created": req.resource}
-    else:
-        raise ActionError("validation_error", f"create de {p.resourceType} não suportado neste serviço", 400)
+    ensure_change_authorized(op.name, req, decision.gmud_required)
 
-    return ActionAccepted(operationId=str(uuid.uuid4()), resource=req.resource, account=req.account, detail=detail)
+    session = assumed_session(req.account, req.roleArn, req.region)
+    client = session.client(op.client)
+    result = getattr(client, op.method)(**args)
+    if isinstance(result, dict):
+        result.pop("ResponseMetadata", None)
+
+    return ActionAccepted(
+        operationId=str(uuid.uuid4()), resource=decision.resource or req.resource, account=req.account,
+        detail={"operation": op.name, "exceptionApplied": decision.exception_id, "result": _jsonable(result)},
+    )

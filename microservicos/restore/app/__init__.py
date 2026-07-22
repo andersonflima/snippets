@@ -1,1 +1,1 @@
-"""Microserviço action-driven (autocontido)."""
+"""Action microservice package."""

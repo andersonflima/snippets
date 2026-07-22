@@ -2,13 +2,46 @@
   "allowedRegions": [
     "sa-east-1"
   ],
-  "allowedResourceTypes": [
-    "db-instance",
-    "db-snapshot",
-    "vpc-endpoint",
-    "kms-grant",
-    "security-group"
-  ],
-  "deniedResourceTypes": [],
-  "requireFinalSnapshot": true
+  "environments": {
+    "dev": {
+      "requireGmudForMutations": false
+    },
+    "homol": {
+      "requireGmudForMutations": false,
+      "deniedOperations": [
+        "DeleteDBCluster",
+        "DeleteGlobalCluster"
+      ]
+    },
+    "staging": {
+      "requireGmudForMutations": false,
+      "deniedOperations": [
+        "DeleteDBCluster",
+        "DeleteGlobalCluster"
+      ]
+    },
+    "prod": {
+      "requireGmudForMutations": true,
+      "deniedOperations": [
+        "DeleteTable"
+      ],
+      "deniedResourceTypes": [
+        "global-cluster",
+        "global-replication-group"
+      ]
+    }
+  },
+  "exceptions": [
+    {
+      "account": "123456789012",
+      "environment": "prod",
+      "resource": "legacy-reporting-cluster",
+      "allowOperations": [
+        "DeleteDBCluster"
+      ],
+      "allowCategories": [],
+      "reason": "Descomissionamento aprovado do cluster legado de relatorios (CHG-4821)",
+      "expiresAt": "2026-12-31"
+    }
+  ]
 }

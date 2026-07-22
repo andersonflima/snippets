@@ -2,24 +2,30 @@
   "allowedRegions": [
     "sa-east-1"
   ],
-  "allowedOperations": [
-    "create-snapshot",
-    "restore-snapshot",
-    "create-cluster-snapshot",
-    "restore-cluster-snapshot"
-  ],
-  "allowedInstanceClasses": [
-    "db.t3.medium",
-    "db.t3.large",
-    "db.m5.large",
-    "db.m5.xlarge",
-    "db.r5.large",
-    "db.r5.xlarge",
-    "db.r6g.large",
-    "db.r6g.xlarge"
-  ],
-  "allowedEngines": [
-    "aurora-mysql",
-    "aurora-postgresql"
-  ]
+  "environments": {
+    "dev": {
+      "requireGmudForMutations": false
+    },
+    "homol": {
+      "requireGmudForMutations": false,
+      "deniedOperations": [
+        "RestoreDBClusterFromS3",
+        "RestoreDBInstanceFromS3"
+      ]
+    },
+    "staging": {
+      "requireGmudForMutations": false,
+      "deniedOperations": [
+        "RestoreDBClusterFromS3",
+        "RestoreDBInstanceFromS3"
+      ]
+    },
+    "prod": {
+      "requireGmudForMutations": true,
+      "deniedOperations": [
+        "ImportTable"
+      ]
+    }
+  },
+  "exceptions": []
 }
