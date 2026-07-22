@@ -101,11 +101,9 @@ Demais serviços mantêm suas chaves próprias:
 
 | Serviço       | Chaves de regra |
 |---------------|-----------------|
-| `storage`     | `allowedResourceTypes`, `allowedStorageTypes`, `maxAllocatedStorage`, `maxIops` |
 | `vpc-link`    | `allowedConsumerAccounts` |
 | `kms`         | `allowedTargetResourceTypes` |
 | `db-password` | `allowedEngines`, `deniedUsernames` |
-| `dynamodb`    | schema genérico por ambiente (`environments.<env>`) + `exceptions` — ver `dynamodb.json` |
 
 > `rds-data` mantém suas próprias regras de SQL (loader S3 existente). `servicenow`
 > (gate de GMUD) e `finops` (read-only) não fazem enforcement de escrita.
@@ -120,5 +118,5 @@ Demais serviços mantêm suas chaves próprias:
   `deniedOperations` para as operações mais destrutivas; `prod` com
   `requireGmudForMutations: true` + deny de exemplo). `destroy.json` inclui um
   exemplo de `exceptions[]`. Listas vazias/ausentes = sem restrição.
-- `storage.json`, `vpc-link.json`, `kms.json`, `db-password.json`, `dynamodb.json`
-  — schemas dos demais serviços prontos para revisão e publicação.
+- `vpc-link.json`, `kms.json`, `db-password.json` — schemas dos demais serviços
+  prontos para revisão e publicação.
