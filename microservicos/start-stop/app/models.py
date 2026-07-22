@@ -1,27 +1,27 @@
-"""Modelos do contrato (envelope + params da ação)."""
+"""Contrato do serviço: envelope + params {operation, args}."""
 from __future__ import annotations
 
-from typing import Literal, Optional
+from typing import Any, Literal, Optional
 
 from pydantic import BaseModel, Field
 
 
 class StartStopParams(BaseModel):
-    operation: str = Field(description="start | stop.")
-    resourceType: str = Field(description="db-instance | db-cluster | ec2-instance.")
+    operation: str = Field(description="Nome da operação (ver enum do contrato/catálogo).")
+    args: dict[str, Any] = Field(default_factory=dict, description="kwargs boto3 low-level, verbatim.")
 
 
 class StartStopRequest(BaseModel):
     account: str = Field(pattern=r"^\d{12}$", description="Conta AWS alvo (12 dígitos).")
-    resource: str = Field(description="Nome ou ARN do recurso alvo.")
-    roleArn: str = Field(pattern=r"^arn:aws:iam::\d{12}:role/.+$", description="Role para assume-role.")
+    resource: str = Field(default="*", description="Nome/ARN do recurso alvo ('*' p/ ops de conta).")
+    roleArn: str = Field(pattern=r"^arn:aws:iam::\d{12}:role/.+$", description="Role p/ assume-role.")
     region: str = Field(pattern=r"^[a-z]{2}-[a-z]+-\d$", description="Região AWS.")
     environment: Literal["dev", "homol", "staging", "prod"] = Field(
-        description="Ambiente target. 'prod' exige GMUD aprovada (ServiceNow)."
+        description="Ambiente alvo. 'prod' pode exigir GMUD conforme regra."
     )
-    changeNumber: Optional[str] = Field(default=None, description="Número da GMUD (obrigatório p/ produção).")
+    changeNumber: Optional[str] = Field(default=None, description="Número da GMUD (prod).")
     requestId: Optional[str] = Field(default=None, description="Idempotency key opcional.")
-    dryRun: bool = Field(default=False, description="Valida sem executar.")
+    dryRun: bool = Field(default=False, description="Valida/prevê sem executar.")
     params: StartStopParams
 
 

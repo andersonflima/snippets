@@ -1,39 +1,5 @@
-# modify — microserviço action-driven
+# modify
 
-Modify genérico — inclui instance class e engine version.
+Altera recursos (modify_/update_/tag/attach/enable/scaling/resource-policy).
 
-Autocontido (sem packages compartilhadas). Roda em EKS atrás do NLB interno;
-o acesso externo é pelo API Gateway (Cognito JWT) -> VPC Link -> NLB -> este pod.
-
-## API
-
-`POST /modify/execute` — executa a ação. Health: `GET /healthz`, `GET /readyz`.
-
-Corpo (envelope + params), conforme `contract/openapi.yaml`:
-
-```json
-{
-  "account": "123456789012",
-  "resource": "<nome-ou-arn-do-recurso>",
-  "roleArn": "arn:aws:iam::123456789012:role/<role-assumivel>",
-  "region": "us-east-1",
-  "dryRun": false,
-  "params": { }
-}
-```
-
-A ação roda na conta-alvo via `STS:AssumeRole` no `roleArn`.
-
-## Local
-
-```bash
-pip install -r requirements.txt
-uvicorn app.main:app --reload --port 8080
-```
-
-## Container
-
-```bash
-docker build -t modify .
-docker run -p 8080:8080 modify
-```
+Dispatcher genérico governado por regra externa (S3/DynamoDB). Contrato: `POST /modify/execute` com `params.operation` (`<client>:<Op>`) + `params.args` (kwargs boto3). Catálogo gerado de `catalog.json`. 68 operações.

@@ -16,31 +16,61 @@ Fontes: [`architecture.svg`](./architecture.svg) (gerada por
   `requirements.txt` e seu próprio `Dockerfile`.
 - **Entrada padrão de toda ação:** conta AWS + nome do recurso + role para
   `assume-role`. (Espelha o padrão já usado em `automation/aws/` deste repo.)
-- **Action-driven:** o serviço é a ação (`restore`, `modify`, `create`,
-  `destroy`, `replicate`, `start/stop`, `storage`, `db-password`, `kms`,
-  `vpc-link`), não o recurso.
+- **Action-driven, particionado por verbo:** os serviços de ação são **8
+  dispatchers genéricos** por verbo (`create`, `modify`, `destroy`,
+  `start-stop`, `restore`, `replicate`, `describe`, `data`), cada um cobrindo
+  **100% das APIs boto3** de RDS/Aurora, ElastiCache e DynamoDB para aquele
+  verbo. Ao lado ficam os **serviços especiais** com lógica própria
+  (`db-password`, `kms`, `vpc-link`, `servicenow`, `rds-data`, `finops`,
+  `insights`, `dbca`).
 
 ## Microserviços (ações)
 
+### Dispatchers genéricos por verbo (296 operações no total)
+
+Contrato único: `params = { operation, args }`, onde `operation` é
+`"<client>:<Op>"` (ex.: `"elasticache:CreateCacheCluster"`). O serviço valida a
+`operation` contra o **catálogo gerado** (`catalog.json`), aplica as **regras
+externas** (allow/deny + GMUD), assume a role na conta-alvo e chama
+`getattr(client, method)(**args)`.
+
+| Serviço | Verbo / categoria | Ops | Observações |
+|---------|-------------------|:---:|-------------|
+| `create` | provisionar | 37 | instâncias, clusters, cache, tabelas, groups, backups |
+| `modify` | configurar | 68 | modificações + tags/atributos; **absorveu o antigo `storage`** |
+| `destroy` | remover | 42 | deletes destrutivos (gate de GMUD conforme regra) |
+| `start-stop` | power | 20 | start/stop/reboot/failover |
+| `restore` | backup | 20 | snapshots e restores (RDS/Aurora/cache/DynamoDB PITR) |
+| `replicate` | replicate | 5 | read replicas, cross-region/global, share de snapshot |
+| `describe` | ler | 91 | **read-only**, sem gate de GMUD |
+| `data` | data-plane | 13 | DynamoDB: GetItem/PutItem/Query/Scan/PartiQL |
+
+### Serviços especiais (lógica própria)
+
 | Serviço        | Ação |
 |----------------|------|
-| `restore`      | restaura snapshot → instância; também cria snapshot (create-snapshot) |
 | `db-password`  | conecta no banco e troca a senha do usuário informado |
 | `kms`          | cria Custom KMS Key e vincula/re-encripta, substituindo a default/herdada |
-| `replicate`    | copia qualquer recurso cross-account, ou recria em outra region na mesma conta |
 | `vpc-link`     | cria acesso privado (PrivateLink/peering) da conta do time ao banco |
-| `modify`       | `modify` genérico em qualquer recurso que aceite a ação — inclui **instance class** (`--db-instance-class`) e **engine version** (`--engine-version`) |
-| `create`       | provisiona recursos |
-| `destroy`      | remove recursos (cleanup) |
-| `start`/`stop` | liga/desliga recursos com power |
-| `storage`      | altera storage — **tipo** (gp3/io1/…) e **aumento de tamanho** |
 | `servicenow`   | integra com o ServiceNow para GMUD e autorização de execução produtiva |
 | `rds-data`     | wrapper seguro do RDS Data API — avalia o SQL contra regras antes de executar |
 | `finops`       | varredura **read-only** de desperdício e recomendações de economia (RDS/EC2/EBS/EIP/ELB/snapshots) |
+| `insights`     | analytics multi-produto AWS (recursos, métricas, logs, metadados, FinOps) |
+| `dbca`         | analytics de metadados de banco (queries de catálogo em qualquer conta) |
 
-> As ações "alterar instance class", "engine version", "alterar tipo de storage"
-> e "aumentar storage" **não viram microserviços novos**: as duas primeiras já são
-> `modify` e as duas últimas já são `storage`.
+> **Serviços dissolvidos:** o serviço dedicado `dynamodb` foi distribuído entre
+> os dispatchers (`create`/`modify`/`destroy`/`restore`/`describe`) + o novo
+> `data`; o serviço `storage` foi absorvido por `modify`. Ações como "instance
+> class", "engine version" e "aumento de storage" são apenas `operation`s do
+> dispatcher `modify`.
+
+### Catálogo e geração
+
+- `gen_catalog.py` — introspecta o botocore → `catalog.json` (op → client,
+  método, categoria, `mutating`, `resourceType`).
+- `gen_action_services.py` — gera os **8 serviços por verbo** a partir do catálogo.
+- `gen_gateway.py` — gera o `api-gateway/openapi.yaml` **consolidado** mesclando
+  os contratos de todos os serviços.
 
 ## Regras de negócio externalizadas
 
@@ -83,7 +113,7 @@ snapshot considerada órfã.
 12. notifica os devs: "banco restaurado em HOMOL".
 
 **Fase 5 — Cleanup PRD**
-13. `destroy` (+ `stop`/`storage`) — apaga os recursos temporários em PRD
+13. `destroy` (+ `start-stop`/`modify`) — apaga os recursos temporários em PRD
     (DB Cópia, snapshot, grants/keys temporárias, vpc-link).
 
 ## Orquestração
@@ -139,14 +169,19 @@ específico da ação.
 ```
 microservicos/
   docs/                   # esta documentação + diagramas
-  gen_services.py         # scaffold dos serviços (FastAPI)
+  catalog.json            # catálogo de operações (op -> client/método/categoria)
+  gen_catalog.py          # introspecta botocore -> catalog.json
+  gen_action_services.py  # gera os 8 dispatchers por verbo a partir do catálogo
+  gen_gateway.py          # gera o api-gateway/openapi.yaml consolidado
+  gen_services.py         # scaffold dos serviços especiais (FastAPI)
   api-gateway/
     openapi.yaml          # contrato consolidado do API Gateway (REST)
     gen_contracts.py      # gerador dos contratos OpenAPI
-  rules/                  # exemplos de regras externalizadas por serviço
-  <serviço>/              # restore, db-password, kms, replicate, vpc-link, modify,
-    Dockerfile            #   create, destroy, start-stop, storage, servicenow,
-    requirements.txt      #   rds-data, finops
+  rules/                  # regras externalizadas por serviço (<serviço>.json)
+  <serviço>/              # dispatchers: create, modify, destroy, start-stop,
+    Dockerfile            #   restore, replicate, describe, data. especiais:
+    requirements.txt      #   db-password, kms, vpc-link, servicenow, rds-data,
+    .dockerignore         #   finops, insights, dbca
     .dockerignore
     README.md
     contract/openapi.yaml # contrato do path no API Gateway

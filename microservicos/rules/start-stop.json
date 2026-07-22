@@ -2,13 +2,28 @@
   "allowedRegions": [
     "sa-east-1"
   ],
-  "allowedOperations": [
-    "start",
-    "stop"
-  ],
-  "allowedResourceTypes": [
-    "db-instance",
-    "db-cluster",
-    "ec2-instance"
-  ]
+  "environments": {
+    "dev": {
+      "requireGmudForMutations": false
+    },
+    "homol": {
+      "requireGmudForMutations": false,
+      "deniedOperations": [
+        "FailoverGlobalCluster"
+      ]
+    },
+    "staging": {
+      "requireGmudForMutations": false,
+      "deniedOperations": [
+        "FailoverGlobalCluster"
+      ]
+    },
+    "prod": {
+      "requireGmudForMutations": true,
+      "deniedOperations": [
+        "FailoverGlobalReplicationGroup"
+      ]
+    }
+  },
+  "exceptions": []
 }

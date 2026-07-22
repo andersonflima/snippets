@@ -1,39 +1,5 @@
-# replicate — microserviço action-driven
+# replicate
 
-Copia recurso cross-account ou recria em outra region.
+Replicação/migração e share de snapshots cross-account.
 
-Autocontido (sem packages compartilhadas). Roda em EKS atrás do NLB interno;
-o acesso externo é pelo API Gateway (Cognito JWT) -> VPC Link -> NLB -> este pod.
-
-## API
-
-`POST /replicate/execute` — executa a ação. Health: `GET /healthz`, `GET /readyz`.
-
-Corpo (envelope + params), conforme `contract/openapi.yaml`:
-
-```json
-{
-  "account": "123456789012",
-  "resource": "<nome-ou-arn-do-recurso>",
-  "roleArn": "arn:aws:iam::123456789012:role/<role-assumivel>",
-  "region": "us-east-1",
-  "dryRun": false,
-  "params": { }
-}
-```
-
-A ação roda na conta-alvo via `STS:AssumeRole` no `roleArn`.
-
-## Local
-
-```bash
-pip install -r requirements.txt
-uvicorn app.main:app --reload --port 8080
-```
-
-## Container
-
-```bash
-docker build -t replicate .
-docker run -p 8080:8080 replicate
-```
+Dispatcher genérico governado por regra externa (S3/DynamoDB). Contrato: `POST /replicate/execute` com `params.operation` (`<client>:<Op>`) + `params.args` (kwargs boto3). Catálogo gerado de `catalog.json`. 5 operações.

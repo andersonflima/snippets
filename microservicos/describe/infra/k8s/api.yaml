@@ -1,0 +1,83 @@
+# Deploy do microserviço describe (imagem ECR sa-east-1).
+# Substitua <ACCOUNT_ID> pela conta da plataforma (a esteira sobrescreve a tag).
+# Regras externas via ConfigMap (RULES_BACKEND=dynamodb, tabela microservicos-rules).
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: describe
+  namespace: microservicos
+  annotations:
+    eks.amazonaws.com/role-arn: arn:aws:iam::<ACCOUNT_ID>:role/microservicos-describe-irsa
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: describe-config
+  namespace: microservicos
+data:
+  AWS_REGION: sa-east-1
+  RULES_REGION: sa-east-1
+  RULES_CACHE_TTL: "60"
+  RULES_BACKEND: dynamodb
+  RULES_TABLE: microservicos-rules
+  RULES_PK: service
+  RULES_ATTR: rules
+  SERVICENOW_SERVICE_URL: http://servicenow/servicenow/execute
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: describe
+  namespace: microservicos
+  labels:
+    app: describe
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: describe
+  template:
+    metadata:
+      labels:
+        app: describe
+    spec:
+      serviceAccountName: describe
+      containers:
+        - name: describe
+          image: <ACCOUNT_ID>.dkr.ecr.sa-east-1.amazonaws.com/microservicos-describe:latest
+          ports:
+            - containerPort: 8080
+          envFrom:
+            - configMapRef:
+                name: describe-config
+          resources:
+            requests:
+              cpu: 50m
+              memory: 128Mi
+            limits:
+              cpu: 500m
+              memory: 256Mi
+          readinessProbe:
+            httpGet:
+              path: /readyz
+              port: 8080
+          livenessProbe:
+            httpGet:
+              path: /healthz
+              port: 8080
+          securityContext:
+            runAsNonRoot: true
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: describe
+  namespace: microservicos
+spec:
+  selector:
+    app: describe
+  ports:
+    - port: 8080
+      targetPort: 8080

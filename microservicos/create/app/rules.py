@@ -1,21 +1,12 @@
-"""Provedor de regras de negócio externalizadas (S3 ou DynamoDB).
+"""Provedor de regras de bloqueio EXTERNAS (S3 ou DynamoDB).
 
-Regras ficam fora da imagem e são atualizáveis sem redeploy. O backend é
-escolhido por RULES_BACKEND (s3|dynamodb) — obrigatório, sem default. A leitura
-usa a identidade da plataforma (IRSA), com cache TTL e fallback resiliente: se a
-regra não existir ou o backend falhar, os defaults embutidos continuam valendo.
+As regras vivem fora da imagem e são atualizáveis sem redeploy. Backend por
+RULES_BACKEND (s3|dynamodb), obrigatório. Leitura com cache TTL e fallback
+resiliente: em miss/erro mantém o último valor válido (ou os defaults).
 
-Env:
-  RULES_BACKEND    s3 | dynamodb (obrigatório)
-  RULES_CACHE_TTL  segundos de cache (default 60)
-  RULES_REGION     região do backend (default AWS_REGION | sa-east-1)
-  # s3
-  RULES_BUCKET      bucket das regras (obrigatório p/ s3)
-  RULES_KEY_PREFIX  prefixo das chaves (default "rules") -> <prefix>/<service>.json
-  # dynamodb
-  RULES_TABLE  tabela (obrigatório p/ dynamodb)
-  RULES_PK     nome da partition key (default "service")
-  RULES_ATTR   atributo com as regras JSON/Map (default "rules")
+Env: RULES_BACKEND (s3|dynamodb), RULES_CACHE_TTL (60), RULES_REGION.
+  s3: RULES_BUCKET, RULES_KEY_PREFIX (default "rules") -> <prefix>/<service>.json
+  dynamodb: RULES_TABLE, RULES_PK (default "service"), RULES_ATTR (default "rules")
 """
 from __future__ import annotations
 
@@ -27,6 +18,7 @@ from typing import Any
 import boto3
 
 SERVICE = "create"
+DEFAULTS: dict[str, Any] = {"allowedRegions": [], "environments": {}, "exceptions": []}
 
 _CACHE: dict[str, tuple[float, dict]] = {}
 
@@ -114,13 +106,10 @@ def _merge(base: dict, override: dict) -> dict:
 
 
 def load_rules(defaults: dict | None = None, service: str | None = None) -> dict:
-    """Regras efetivas: defaults embutidos sobrepostos pelas regras externas.
-
-    Nunca levanta por regra ausente — em miss/falha retorna os defaults (ou o
-    último valor em cache), preservando a operação do serviço.
-    """
+    """Regras efetivas: DEFAULTS <- defaults <- documento externo. Nunca levanta
+    por regra ausente (retorna cache/defaults)."""
     svc = service or SERVICE
-    base = dict(defaults or {})
+    base = _merge(DEFAULTS, defaults or {})
     now = time.time()
     cached = _CACHE.get(svc)
     if cached and now - cached[0] < _ttl():
@@ -133,52 +122,3 @@ def load_rules(defaults: dict | None = None, service: str | None = None) -> dict
         if cached:
             return _merge(base, cached[1])
         return base
-
-
-def _deny(message: str) -> None:
-    from .aws import ActionError  # import tardio: evita acoplamento no load do módulo
-
-    raise ActionError("rule_violation", message, 403)
-
-
-def enforce_common(rules: dict, req) -> None:
-    """Enforcement genérico (opt-in por chave). Ausência de chave = sem restrição."""
-    allowed_regions = rules.get("allowedRegions")
-    if allowed_regions and req.region not in allowed_regions:
-        _deny(f"região não permitida: {req.region} (permitidas: {allowed_regions})")
-    allowed_envs = rules.get("allowedEnvironments")
-    if allowed_envs and req.environment not in allowed_envs:
-        _deny(f"ambiente não permitido: {req.environment} (permitidos: {allowed_envs})")
-    denied_envs = rules.get("deniedEnvironments")
-    if denied_envs and req.environment in denied_envs:
-        _deny(f"ambiente bloqueado por regra: {req.environment}")
-
-
-def enforce_allowed(rules: dict, key: str, value, label: str) -> None:
-    """Nega se `value` estiver definido e fora da allowlist `rules[key]`."""
-    allowed = rules.get(key)
-    if allowed and value is not None and value not in allowed:
-        _deny(f"{label} não permitido: {value} (permitidos: {allowed})")
-
-
-def enforce_denied(rules: dict, key: str, value, label: str) -> None:
-    """Nega se `value` estiver na denylist `rules[key]`."""
-    denied = rules.get(key)
-    if denied and value is not None and value in denied:
-        _deny(f"{label} bloqueado por regra: {value}")
-
-
-def enforce_max(rules: dict, key: str, value, label: str) -> None:
-    """Nega se `value` exceder o teto numérico `rules[key]`."""
-    cap = rules.get(key)
-    if cap is not None and value is not None and value > cap:
-        _deny(f"{label} acima do limite permitido: {value} > {cap}")
-
-
-def enforce_env_map(rules: dict, key: str, env: str, value, label: str) -> None:
-    """Allowlist por ambiente: rules[key] = {env: [permitidos]} (opt-in por env)."""
-    per_env = rules.get(key)
-    if isinstance(per_env, dict) and env in per_env:
-        allowed = per_env[env]
-        if allowed and value is not None and value not in allowed:
-            _deny(f"{label} não permitido em {env}: {value} (permitidos: {allowed})")

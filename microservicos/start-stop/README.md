@@ -1,39 +1,5 @@
-# start-stop — microserviço action-driven
+# start-stop
 
-Liga/desliga recursos que suportam power.
+Liga/desliga e failover (start_/stop_/reboot_/failover_).
 
-Autocontido (sem packages compartilhadas). Roda em EKS atrás do NLB interno;
-o acesso externo é pelo API Gateway (Cognito JWT) -> VPC Link -> NLB -> este pod.
-
-## API
-
-`POST /start-stop/execute` — executa a ação. Health: `GET /healthz`, `GET /readyz`.
-
-Corpo (envelope + params), conforme `contract/openapi.yaml`:
-
-```json
-{
-  "account": "123456789012",
-  "resource": "<nome-ou-arn-do-recurso>",
-  "roleArn": "arn:aws:iam::123456789012:role/<role-assumivel>",
-  "region": "us-east-1",
-  "dryRun": false,
-  "params": { }
-}
-```
-
-A ação roda na conta-alvo via `STS:AssumeRole` no `roleArn`.
-
-## Local
-
-```bash
-pip install -r requirements.txt
-uvicorn app.main:app --reload --port 8080
-```
-
-## Container
-
-```bash
-docker build -t start-stop .
-docker run -p 8080:8080 start-stop
-```
+Dispatcher genérico governado por regra externa (S3/DynamoDB). Contrato: `POST /start-stop/execute` com `params.operation` (`<client>:<Op>`) + `params.args` (kwargs boto3). Catálogo gerado de `catalog.json`. 20 operações.
