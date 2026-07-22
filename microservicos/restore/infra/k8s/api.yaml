@@ -1,6 +1,6 @@
-# Deploy do microserviço restore (padrão pdi-portal, imagem ECR sa-east-1).
-# Substitua <ACCOUNT_ID> pela conta da plataforma (a esteira de deploy sobrescreve
-# a tag da imagem). Defina RULES_BACKEND (s3|dynamodb) e as chaves no ConfigMap.
+# Deploy do microserviço restore (imagem ECR sa-east-1).
+# Substitua <ACCOUNT_ID> pela conta da plataforma (a esteira sobrescreve a tag).
+# Regras externas via ConfigMap (RULES_BACKEND=dynamodb, tabela microservicos-rules).
 apiVersion: v1
 kind: ServiceAccount
 metadata:
@@ -22,6 +22,7 @@ data:
   RULES_TABLE: microservicos-rules
   RULES_PK: service
   RULES_ATTR: rules
+  SERVICENOW_SERVICE_URL: http://servicenow/servicenow/execute
 ---
 apiVersion: apps/v1
 kind: Deployment

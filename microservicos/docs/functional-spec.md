@@ -17,6 +17,20 @@ uma cópia produtiva, troca credenciais, expõe o banco de forma privada para o
 time de mascaramento, gera snapshot mascarado com chave KMS própria, promove para
 Homologação e limpa os recursos temporários.
 
+**Modelo de serviço (refatoração atual):** as ações de mutação/leitura sobre
+recursos foram consolidadas em **8 serviços genéricos particionados por verbo**
+(`create`, `modify`, `destroy`, `start-stop`, `restore`, `replicate`,
+`describe`, `data`). Cada um é um **dispatcher genérico** que cobre **100% das
+APIs boto3** dos clients **RDS/Aurora, ElastiCache e DynamoDB** para aquele
+verbo: recebe `params = { operation, args }`, valida `operation` (no formato
+`"<client>:<Op>"`) contra um **catálogo gerado** (`catalog.json`), aplica as
+**regras externas** (S3/DynamoDB), assume a role na conta-alvo e chama
+`getattr(client, method)(**args)`. O padrão espelha o antigo serviço `dynamodb`.
+Ao lado deles ficam os **serviços especiais** com lógica própria (`kms`,
+`db-password`, `vpc-link`, `servicenow`, `rds-data`, `finops`, `insights`,
+`dbca`). Os serviços dedicados `dynamodb` e `storage` foram **dissolvidos** (ver
+§2.1).
+
 **Princípios:**
 
 - **Sem orquestrador central** (sem Step Functions). A sequência é dirigida por
@@ -31,9 +45,13 @@ Homologação e limpa os recursos temporários.
 - **Orientada a eventos**: EventBridge + SQS conectam produtores e consumidores;
   estado das operações em DynamoDB.
 
-**Estado atual (resumo):** os 10 microserviços existem como apps **FastAPI**
+**Estado atual (resumo):** os microserviços existem como apps **FastAPI**
 autocontidos com handlers **boto3** reais e contratos **OpenAPI** (integração
-API Gateway → VPC Link → NLB interno → EKS). A camada **assíncrona/eventos**
+API Gateway → VPC Link → NLB interno → EKS). Os **8 dispatchers por verbo**
+somam **296 operações** cobrindo integralmente RDS/Aurora, ElastiCache e
+DynamoDB; os **serviços especiais** (`kms`, `db-password`, `vpc-link`,
+`servicenow`, `rds-data`, `finops`, `insights`, `dbca`) mantêm handler próprio.
+A camada **assíncrona/eventos**
 (EventBridge, SQS, DynamoDB de status, Execution API, Status Service) e as
 integrações **ServiceNow**, **observabilidade** (X-Ray/Prometheus/Grafana) e
 **GitOps/CI-CD** estão **especificadas mas ainda não implementadas** — hoje a
@@ -73,7 +91,10 @@ seus **deltas**.
   conta-alvo), `region`, **`environment`** (`dev|homol|staging|prod`,
   **obrigatório**), `changeNumber` (GMUD, obrigatório p/ produção),
   `requestId` (chave de idempotência, opcional), `dryRun` (bool), `params`
-  (objeto específico da ação).
+  (objeto específico da ação). **Nos 8 dispatchers por verbo**, `params` tem a
+  forma canônica `{ operation, args }`, onde `operation` é `"<client>:<Op>"`
+  (ex.: `"elasticache:CreateCacheCluster"`) e `args` é repassado cru para o
+  método boto3 correspondente. Os serviços especiais mantêm `params` próprio.
 - **Gate de GMUD:** quando `environment == prod`, o `changeNumber` (código da
   GMUD) é **obrigatório** (faltando → `400 validation_error`); o serviço chama o
   microserviço **`servicenow`** (`operation=validate`) e só prossegue se a change
@@ -110,40 +131,109 @@ seus **deltas**.
 - **Escalabilidade:** HPA por CPU/【fila SQS】via KEDA; Karpenter para nós;
   serviços stateless → escala horizontal linear.
 - **IAM (na conta-alvo):** usa a `microservicos-actions-role` (trust na role de
-  plataforma; 73 ações em RDS/EC2/KMS/SecretsManager/iam:PassRole). O pod tem
-  uma role IRSA com permissão de `sts:AssumeRole` nessa role.
+  plataforma). A policy `iam/permissions-policy.json` foi estendida com listas
+  explícitas de ações **rds/elasticache/dynamodb** (incluindo o **PartiQL do
+  DynamoDB** — `dynamodb:PartiQLSelect/Insert/Update/Delete` — para o data-plane
+  do serviço `data`), além de `ec2/kms/secretsmanager/rds-data/cloudwatch/
+  elasticloadbalancing/iam:PassRole`. O pod tem uma role IRSA com permissão de
+  `sts:AssumeRole` nessa role.
+- **Contrato de operação (dispatchers):** a `operation` (`"<client>:<Op>"`) é
+  resolvida contra o **catálogo gerado** (`catalog.json`); operação fora do
+  catálogo do serviço → `400 validation_error`. Só então as **regras externas**
+  (§2.3) decidem allow/deny e se exige GMUD; por fim `getattr(client, method)
+  (**args)`.
 
 ---
 
-### 2.1 `restore`
+### 2.1 Serviços genéricos por verbo (dispatchers)
 
-- **Objetivo:** gerenciar o ciclo de snapshot: criar snapshot de um recurso e
-  restaurar um recurso a partir de um snapshot.
-- **Responsabilidades:** disparar `create-snapshot` e `restore-snapshot`;
-  retornar identificador/status do recurso resultante.
-- **Recursos AWS suportados:** RDS DB instance e (evolução) Aurora DB cluster.
-- **Operações:** `create-snapshot` (`CreateDBSnapshot`), `restore-snapshot`
-  (`RestoreDBInstanceFromDBSnapshot`).
-- **Fluxo interno:** assume-role → `rds` client → se `dryRun` retorna plano;
-  senão executa a operação escolhida → monta `detail` (snapshot/instância+status).
-- **Entradas:** `params.operation`, `snapshotIdentifier`,
-  `targetInstanceIdentifier`, `dbInstanceClass`, `dbSubnetGroupName`, `kmsKeyId`.
-  **Saídas:** `detail.snapshot|instance` + `status`.
-- **Validações:** `operation ∈ {create-snapshot, restore-snapshot}`; restore
-  exige `snapshotIdentifier` + `targetInstanceIdentifier`.
-- **Idempotência (delta):** `create-snapshot` colide por identificador
-  (`409`); usar `requestId` para nome determinístico evita duplicidade.
-- **Eventos/Obs/Retry/IAM/STS:** baseline. **IAM:** `rds:CreateDBSnapshot`,
-  `RestoreDBInstanceFromDBSnapshot`, `Describe*`, `CopyDBSnapshot`.
-- **Limitações:** hoje só instância (não cluster); restore não aguarda
-  `available` (assíncrono no RDS).
-- **Casos de uso:** criar cópia produtiva; gerar snapshot mascarado; restaurar
-  em HOMOL.
-- **Evoluções:** suporte a Aurora cluster
-  (`Create/RestoreDBClusterSnapshot`), espera opcional por `available`, restore
-  cross-region.
+As ações de mutação/leitura sobre recursos deixaram de ser handlers *bespoke*
+por operação e passaram a **8 serviços genéricos particionados por verbo**. Cada
+serviço é um **dispatcher** que cobre **100% das APIs boto3** dos clients
+**RDS/Aurora**, **ElastiCache** e **DynamoDB** para aquele verbo — **296
+operações** no total.
 
-### 2.2 `db-password`
+**Contrato único (`params = { operation, args }`):**
+
+- `operation`: string `"<client>:<Op>"` (ex.: `"elasticache:CreateCacheCluster"`,
+  `"rds:ModifyDBInstance"`, `"dynamodb:UpdateTable"`).
+- `args`: dicionário repassado **cru** ao método boto3 (`getattr(client,
+  method)(**args)`), com o nome de método derivado do catálogo (ex.:
+  `CreateCacheCluster` → `create_cache_cluster`).
+
+**Fluxo interno (idêntico nos 8):** `resolve(operation)` no catálogo → se não
+existe no serviço → `400`; carrega **regras externas** e `evaluate(...)`
+(allow/deny + região + categorias + GMUD) → se `dryRun`, devolve o **plano**
+(`operation`, `client`, `method`, `category`, `mutating`, `resourceType`,
+`gmudRequired`, `exceptionApplied`, `args`) sem mutar; senão, quando a regra
+exige, `ensure_change_authorized(...)` (gate de GMUD) → `assumed_session` na
+conta-alvo → `client = session.client(op.client)` →
+`getattr(client, op.method)(**args)` → `detail.result` (limpo de
+`ResponseMetadata`; valores `Decimal`/`bytes` serializados). O padrão espelha o
+antigo serviço `dynamodb`.
+
+| Serviço | Verbo / categoria | Ops | GMUD | Observações |
+|---------|-------------------|:---:|:----:|-------------|
+| `create` | provisionar (provision) | 37 | sim | Cria instâncias, clusters, cache, tabelas, subnet/parameter groups, backups. |
+| `modify` | configurar (config) | 68 | sim | Modificações + tags/atributos; **absorveu o antigo `storage`** (AllocatedStorage/StorageType/Iops/Throughput). |
+| `destroy` | remover (delete) | 42 | sim | Deletes destrutivos (instância/cluster/snapshot/cache/tabela/grupos). |
+| `start-stop` | power | 20 | sim | Start/Stop/Reboot/Failover de instâncias, clusters e cache. |
+| `restore` | backup | 20 | sim | Snapshots e restores (RDS/Aurora/cache/DynamoDB PITR e from-backup). |
+| `replicate` | replicate | 5 | sim | Read replicas, cross-region/global e share de snapshot. |
+| `describe` | ler (read) | 91 | **não** | **Read-only** — não passa pelo gate de GMUD; `Describe*`/`List*`. |
+| `data` | dados (data) | 13 | conforme regra | **Data-plane do DynamoDB** (`GetItem`/`PutItem`/`Query`/`Scan`/`BatchGetItem`/`PartiQL*`, etc.). |
+
+Clients cobertos: `rds`, `elasticache`, `dynamodb`. Categorias do catálogo:
+`provision | config | delete | power | backup | replicate | read | data`.
+
+**Serviços dissolvidos:** o serviço dedicado `dynamodb` deixou de existir — seu
+**control-plane** foi distribuído entre `create`/`modify`/`destroy`/`restore`/
+`describe` e seu **data-plane** virou o novo serviço `data`; o serviço `storage`
+foi **absorvido** por `modify`.
+
+### 2.2 Catálogo de operações e geração
+
+O comportamento dos dispatchers é **gerado a partir do botocore**, não escrito à
+mão:
+
+- **`gen_catalog.py`** — introspecta o botocore e produz **`catalog.json`**: para
+  cada operação, `key` (`"<client>:<Op>"`), `name`, `method` (snake_case),
+  `client`, `service` (verbo), `category`, `mutating`, `resourceArg` e
+  `resourceType`.
+- **`gen_action_services.py`** — gera os **8 serviços por verbo** (FastAPI +
+  `operations.py`/`policy.py`/`rules.py`/`handler.py`) a partir do catálogo,
+  cada um autocontido.
+- **`gen_gateway.py`** — gera o **contrato consolidado** do gateway
+  (`api-gateway/openapi.yaml`) **mesclando os contratos de todos os serviços**.
+
+(`gen_services.py` segue gerando/scaffoldando os serviços especiais.)
+
+### 2.3 Regras de negócio externas (schema por serviço)
+
+Cada serviço lê suas regras de um backend externo (**S3 ou DynamoDB**, ver §3 e
+`architecture.md`), em `rules/<serviço>.json`, atualizáveis sem redeploy. O
+schema é **opt-in**: **a ausência de uma chave = sem restrição** naquele eixo.
+
+- **`allowedRegions`**: lista de regiões permitidas (fora dela → negado).
+- **`environments.<dev|homol|staging|prod>`**, cada um com:
+  - `allowedOperations` / `deniedOperations` — allow/deny por nome de operação.
+  - `allowedCategories` / `deniedCategories` — allow/deny por **categoria**
+    (`provision | config | delete | power | backup | replicate | read | data`).
+  - `allowedResourceTypes` / `deniedResourceTypes` — allow/deny por tipo de
+    recurso (ex.: `cache-cluster`, `table`).
+  - `requireGmudForMutations` (bool) — exige GMUD para operações mutantes.
+  - `gmudForCategories` — lista de categorias que exigem GMUD.
+- **`exceptions[]`**: liberações pontuais com `account`, `environment`,
+  `resource`, `allowOperations`, `allowCategories`, `reason` e `expiresAt`
+  (exceção expirada não vale).
+
+A decisão (`evaluate`) devolve resolução de `resource`/`resourceType`, se **exige
+GMUD** e qual `exceptionId` foi aplicada. O gate de GMUD (§2.0) só é acionado
+quando a regra o exige (`describe`, read-only, nunca exige).
+
+---
+
+### 2.4 `db-password`
 
 - **Objetivo:** trocar a senha de um usuário **dentro do banco**, conectando nele.
 - **Responsabilidades:** descobrir endpoint/engine, obter credencial admin e a
@@ -168,7 +258,7 @@ seus **deltas**.
 - **Evoluções:** rotação via Secrets Manager nativo, suporte a IAM auth do RDS,
   pool de conexões, suporte a SQL Server/Oracle.
 
-### 2.3 `kms`
+### 2.5 `kms`
 
 - **Objetivo:** criar Custom KMS Key e vinculá-la a um recurso, substituindo a
   default/herdada (re-encriptação).
@@ -192,28 +282,7 @@ seus **deltas**.
 - **Evoluções:** rotação automática, key policies por template, multi-Region keys,
   *idempotency by alias*, limpeza de keys órfãs.
 
-### 2.4 `replicate`
-
-- **Objetivo:** copiar um recurso entre contas/regiões (compartilhar + copiar
-  re-encriptado).
-- **Recursos:** RDS DB snapshot (evolução: cluster snapshot, AMI, parameter
-  group).
-- **Operações:** `ModifyDBSnapshotAttribute` (share cross-account); a cópia
-  re-encriptada na conta de destino é um passo subsequente (na conta de destino).
-- **Fluxo interno:** assume-role na origem → compartilha snapshot com a conta de
-  destino → `detail` indica que o *copy/re-encrypt* roda na conta destino.
-- **Entradas:** `sourceAccount/Region`, `destinationAccount/Region`,
-  `resourceType`, `resourceId`, `kmsKeyId`, `shareThenCopy`.
-- **Validações:** `resourceType` suportado; destino informado.
-- **Idempotência:** compartilhar é idempotente (atributo set-based).
-- **IAM:** `rds:ModifyDBSnapshotAttribute`, `CopyDBSnapshot`, KMS grants.
-- **Limitações:** hoje só `db-snapshot` e só a etapa de *share*; a cópia em
-  destino requer execução com a role da conta de destino.
-- **Casos de uso:** promover snapshot mascarado PRD → HOMOL com a KMS de destino.
-- **Evoluções:** orquestrar share+copy nas duas contas, cross-region nativo,
-  outros tipos de recurso, verificação de conclusão da cópia.
-
-### 2.5 `privatelink` (atual: `vpc-link`)
+### 2.6 `privatelink` (atual: `vpc-link`)
 
 - **Objetivo:** dar acesso privado da conta consumidora (time) ao banco via
   PrivateLink/VPC Endpoint Service.
@@ -234,99 +303,7 @@ seus **deltas**.
 - **Evoluções:** criar o endpoint service do zero (NLB + targets), auto-aceitar
   conexões, integração RAM, limpeza no fim do fluxo.
 
-### 2.6 `modify`
-
-- **Objetivo:** aplicar modificações genéricas a um recurso que aceite `modify`.
-- **Recursos:** RDS DB instance, (evolução) DB cluster, EC2 instance.
-- **Operações:** `ModifyDBInstance` (instance class, engine version, parameter
-  group, retenção), `ModifyInstanceAttribute` (EC2 instance type).
-- **Fluxo interno:** assume-role → dispatch por `resourceType` → aplica os campos
-  presentes em `params.modifications` → `applyImmediately`.
-- **Entradas:** `resourceType`, `modifications{}`, `applyImmediately`.
-- **Validações:** `resourceType` suportado; `modifications` não vazio.
-- **Idempotência:** idempotente (set para o mesmo valor é no-op no RDS).
-- **IAM:** `rds:ModifyDBInstance/ModifyDBCluster`, `ec2:ModifyInstanceAttribute`,
-  `iam:PassRole` (Enhanced Monitoring).
-- **Limitações:** janela de manutenção / `applyImmediately` causa downtime;
-  upgrade de major version exige `AllowMajorVersionUpgrade`.
-- **Casos de uso:** alterar instance class e engine version (action-driven).
-- **Evoluções:** dry-run com *pending-modified-values*, validação de
-  compatibilidade de versão, suporte a cluster e a mais tipos.
-
-### 2.7 `create`
-
-- **Objetivo:** provisionar recursos a partir de uma `spec`.
-- **Recursos:** RDS DB instance, DB subnet group (evolução: security group,
-  parameter group).
-- **Operações:** `CreateDBInstance`, `CreateDBSubnetGroup`.
-- **Fluxo interno:** assume-role → dispatch por `resourceType` →
-  `create_*(**spec)`.
-- **Entradas:** `resourceType`, `spec{}`, `waitUntilAvailable`.
-- **Validações:** `resourceType` suportado; `spec` válido para o tipo.
-- **Idempotência (delta):** colisão por identificador → `409`. Usar checagem
-  prévia (`Describe`) + `requestId`.
-- **IAM:** `rds:CreateDBInstance/CreateDBSubnetGroup`, `AddTagsToResource`,
-  `iam:PassRole`.
-- **Limitações:** `spec` é repassado cru ao boto3 (poder x risco); não aguarda
-  `available` por padrão.
-- **Casos de uso:** criar recursos auxiliares do pipeline.
-- **Evoluções:** *waiters* opcionais, validação de schema da `spec` por tipo,
-  rollback em falha parcial.
-
-### 2.8 `destroy`
-
-- **Objetivo:** remover recursos (cleanup pós-fluxo).
-- **Recursos:** RDS DB instance/snapshot, EC2 VPC endpoint, security group.
-- **Operações:** `DeleteDBInstance` (com/sem snapshot final),
-  `DeleteDBSnapshot`, `DeleteVpcEndpoints`, `DeleteSecurityGroup`.
-- **Fluxo interno:** assume-role → dispatch por `resourceType` → delete.
-- **Entradas:** `resourceType`, `skipFinalSnapshot`, `finalSnapshotIdentifier`.
-- **Validações:** `resourceType` suportado; se `skipFinalSnapshot=false`, exige
-  `finalSnapshotIdentifier`.
-- **Idempotência:** apagar recurso inexistente → `404` (tratado).
-- **Erros (delta):** **destrutivo** — recomenda-se gate (GMUD) e `dryRun`.
-- **IAM:** `rds:DeleteDBInstance/DeleteDBSnapshot`, `ec2:DeleteVpcEndpoints/
-  DeleteSecurityGroup`.
-- **Limitações:** não resolve dependências (ex.: SG em uso); sem *soft-delete*.
-- **Casos de uso:** apagar DB cópia, snapshot temporário, endpoint, SG.
-- **Evoluções:** *dependency check*, quarentena/*soft delete*, *dry-run* com
-  cálculo de blast-radius, suporte a cluster/KMS grants.
-
-### 2.9 `start-stop`
-
-- **Objetivo:** ligar/desligar recursos com suporte a power.
-- **Recursos:** RDS DB instance/cluster, EC2 instance.
-- **Operações:** `Start/StopDBInstance`, `Start/StopDBCluster`,
-  `Start/StopInstances`.
-- **Fluxo interno:** assume-role → dispatch por `resourceType` + `operation`.
-- **Entradas:** `operation ∈ {start, stop}`, `resourceType`.
-- **Validações:** `operation` e `resourceType` válidos.
-- **Idempotência:** start de algo já `available`/stop de algo `stopped` → no-op
-  ou `409` (tratado).
-- **IAM:** `rds:Start/StopDBInstance/Cluster`, `ec2:Start/StopInstances`.
-- **Limitações:** RDS reinicia automaticamente após 7 dias parado; estados
-  intermediários não são aguardados.
-- **Casos de uso:** economia/janelas; pausar recursos temporários.
-- **Evoluções:** agendamento, espera por estado-alvo, *bulk* por tag.
-
-### 2.10 `storage`
-
-- **Objetivo:** alterar storage (tipo e tamanho).
-- **Recursos:** RDS DB instance, EC2 volume (EBS).
-- **Operações:** `ModifyDBInstance` (AllocatedStorage/StorageType/Iops/
-  Throughput), `ModifyVolume`.
-- **Fluxo interno:** assume-role → dispatch por `resourceType` → aplica campos.
-- **Entradas:** `resourceType`, `storageType`, `allocatedStorage`, `iops`,
-  `storageThroughput`, `applyImmediately`.
-- **Validações:** `resourceType` suportado; storage só aumenta (RDS).
-- **Idempotência:** set para o mesmo valor é no-op.
-- **IAM:** `rds:ModifyDBInstance`, `ec2:ModifyVolume`.
-- **Limitações:** RDS impõe janela de 6h entre mudanças de storage; redução não
-  é suportada.
-- **Casos de uso:** aumentar storage, migrar gp2→gp3.
-- **Evoluções:** checagem do cooldown de 6h, recomendação gp3, suporte a cluster.
-
-### 2.11 `servicenow` (GMUD)
+### 2.7 `servicenow` (GMUD)
 
 - **Objetivo:** integrar com o ServiceNow para **acompanhamento de GMUD** e
   **autorização de execução produtiva** — é a autoridade que os demais serviços
@@ -363,7 +340,7 @@ seus **deltas**.
   multinível. (A change continua sendo **criada no ServiceNow** — fora do escopo
   da plataforma.)
 
-### 2.12 `rds-data`
+### 2.8 `rds-data`
 
 - **Objetivo:** wrapper **seguro** do **RDS Data API** — uma camada extra que
   **avalia o SQL** contra regras de negócio antes de executar.
@@ -402,6 +379,19 @@ seus **deltas**.
 - **Evoluções:** parser AST completo p/ tabelas/colunas, limites de linhas,
   mascaramento de resultado, allowlist por usuário/role, auditoria do SQL
   avaliado, transações (Begin/Commit/Rollback).
+
+### 2.9 `finops` · `insights` · `dbca` (analytics read-only)
+
+Serviços especiais **read-only** que complementam os dispatchers, sem mutar
+recursos e sem gate de GMUD:
+
+- **`finops`** — varredura de **desperdício e recomendações de economia**
+  (RDS/EC2/EBS/EIP/ELB/snapshots). Externaliza thresholds de ociosidade, tabela
+  de preços (sa-east-1) e idade de snapshot órfão via regras (`rules/finops.json`).
+- **`insights`** — **analytics multi-produto AWS**: recursos, métricas, logs,
+  metadados profundos e FinOps agregados.
+- **`dbca`** — **analytics de metadados de banco**: conecta em qualquer recurso
+  de banco em qualquer conta e roda queries de metadados/catálogo.
 
 ---
 
@@ -452,7 +442,7 @@ seus **deltas**.
 `restore` (cópia em PRD) → `db-password` → `privatelink` → (time mascara) →
 `restore`/create-snapshot → `kms` → avaliação → `replicate` (PRD→HOMOL) →
 `restore` (em HOMOL) → `db-password` → notificação → `destroy`/`start-stop`/
-`storage` (cleanup em PRD).
+`modify` (cleanup em PRD).
 
 ---
 
@@ -491,11 +481,14 @@ event-driven que tolera falhas e picos.
   parcial. → **idempotency-by-alias/identifier + compensação/cleanup**.
 - **Observabilidade ausente:** sem métricas/tracing → cegueira operacional. →
   **OpenTelemetry → X-Ray + Prometheus/Grafana**.
-- **`spec`/`modifications` repassados crus ao boto3:** poder com risco. →
-  **validação por schema por tipo de recurso**.
-- **Acoplamento à AWS/RDS no detalhe:** apesar de action-driven, os handlers têm
-  *dispatch* por `resourceType` embutido. → **registry de provedores por
-  recurso (strategy) para reduzir acoplamento e facilitar novos tipos**.
+- **`args` repassado cru ao boto3:** os dispatchers validam a `operation` contra
+  o catálogo, mas `args` vai direto ao método (poder com risco). → **validação
+  de schema de `args` por operação** (o botocore já dá o shape; gerar validação a
+  partir do catálogo).
+- **Cobertura ampla = superfície ampla:** com 296 operações expostas, o controle
+  fino recai sobre as **regras externas** (allow/deny por categoria/op/tipo +
+  GMUD). → **manter as regras versionadas e auditadas** e defaults restritivos
+  por ambiente (deny-by-default em prod).
 - **Cross-account de 2 lados (replicate):** o *copy/re-encrypt* no destino não é
   orquestrado. → **fluxo de 2 etapas (origem+destino) coordenado por eventos**.
 - **Segurança:** `Resource:"*"` na policy (necessário p/ `kms:CreateKey`) →
@@ -520,24 +513,29 @@ OpenAPI + role IAM + arquitetura/diagrama) vs. a especificação-alvo acima.
 
 | Componente | Funcionalidade esperada | Impl. | Parc. | N/Impl. | Observações |
 |------------|-------------------------|:----:|:----:|:------:|-------------|
-| restore | create/restore snapshot, action-driven | ✅ | | | Só instância; sem espera por `available`; falta Aurora cluster. |
-| db-password | troca de senha in-database (PG/MySQL) | ✅ | | | Exige rota de rede ao banco e `MasterUserSecret`. |
-| kms | custom key + re-encrypt snapshot | ✅ | | | `db-instance` não re-encripta in-place; `CreateKey` não idempotente. |
-| replicate | copiar recurso cross-account/region | | ⚠️ | | Só *share* de snapshot; cópia no destino não orquestrada. |
-| privatelink | acesso privado ao banco | | ⚠️ | | Só autoriza principal em endpoint service existente; não cria NLB/serviço. |
-| modify | instance class, engine version, etc. | ✅ | | | `modifications` repassado cru; sem validação de compatibilidade. |
-| create | provisionar recursos via spec | ✅ | | | `spec` cru; sem waiter; sem validação de schema. |
-| destroy | remover recursos (cleanup) | ✅ | | | Sem dependency-check; destrutivo (recomenda gate/dry-run). |
-| start-stop | ligar/desligar | ✅ | | | Sem espera por estado-alvo. |
-| storage | tipo + tamanho de storage | ✅ | | | Sem checagem do cooldown de 6h do RDS. |
-| rds-data | wrapper seguro do RDS Data API + regras (S3) | ✅ | | | Avaliador (sqlparse) testado; extração de tabelas best-effort; requer Aurora Data API. |
-| Envelope/Contrato | account+resource+role+region+**environment**+params | ✅ | | | 11 contratos OpenAPI validados; `environment` obrigatório. |
+| create (dispatcher) | 37 ops · cobertura boto3 total (RDS/ElastiCache/DynamoDB) | ✅ | | | Provisiona via `operation`/`args`; governado por regras externas + GMUD. |
+| modify (dispatcher) | 68 ops · cobertura boto3 total | ✅ | | | Absorveu o antigo `storage`; `args` cru validado por catálogo + regras. |
+| destroy (dispatcher) | 42 ops · cobertura boto3 total | ✅ | | | Destrutivo; gate de GMUD conforme regra; `dryRun` disponível. |
+| start-stop (dispatcher) | 20 ops · cobertura boto3 total | ✅ | | | Start/Stop/Reboot/Failover de RDS/Aurora/cache. |
+| restore (dispatcher) | 20 ops · cobertura boto3 total | ✅ | | | Snapshots/restores RDS/Aurora/cache + PITR DynamoDB. |
+| replicate (dispatcher) | 5 ops · cobertura boto3 total | ✅ | | | Read replicas, cross-region/global, share de snapshot. |
+| describe (dispatcher) | 91 ops · cobertura boto3 total | ✅ | | | **Read-only**, sem gate de GMUD. |
+| data (dispatcher) | 13 ops · data-plane DynamoDB | ✅ | | | GetItem/PutItem/Query/Scan/Batch/**PartiQL**. |
+| db-password | troca de senha in-database (PG/MySQL) | ✅ | | | Serviço especial; exige rota de rede ao banco e `MasterUserSecret`. |
+| kms | custom key + re-encrypt snapshot | ✅ | | | Serviço especial; `db-instance` não re-encripta in-place; `CreateKey` não idempotente. |
+| privatelink | acesso privado ao banco | | ⚠️ | | Serviço especial; só autoriza principal em endpoint service existente; não cria NLB/serviço. |
+| rds-data | wrapper seguro do RDS Data API + regras (S3) | ✅ | | | Serviço especial; avaliador (sqlparse) testado; extração de tabelas best-effort; requer Aurora Data API. |
+| finops / insights / dbca | analytics read-only (FinOps/recursos/metadados) | ✅ | | | Serviços especiais read-only; sem mutação e sem GMUD. |
+| ~~dynamodb~~ / ~~storage~~ | serviços dedicados | | | — | **Dissolvidos**: dynamodb → create/modify/destroy/restore/describe + `data`; storage → `modify`. |
+| Regras externas (schema) | allow/deny por op/categoria/tipo + GMUD + exceptions | ✅ | | | `rules/<svc>.json` (S3/DynamoDB); enforcement opt-in (ausência de chave = sem restrição). |
+| Catálogo + geração | `gen_catalog`/`gen_action_services`/`gen_gateway` | ✅ | | | `catalog.json` (296 ops) gera os 8 serviços e o OpenAPI consolidado. |
+| Envelope/Contrato | account+resource+role+region+**environment**+params `{operation,args}` | ✅ | | | Contratos OpenAPI validados; `environment` obrigatório; gateway consolidado por `gen_gateway`. |
 | servicenow (microserviço) | validate/register/status de GMUD | | ⚠️ | | Implementado (ServiceNow Table API); integração real depende de credenciais/instância; não cria change automaticamente. |
 | Gate de GMUD (prod) | bloquear execução produtiva sem change aprovada | ✅ | | | Em `prod`, `changeNumber` obrigatório (400); `gmud.py` chama `servicenow validate` (Implement + janela). Change sempre criada no ServiceNow. |
 | dryRun | execução de teste sem efeito | ✅ | | | Presente em todos os handlers. |
 | STS AssumeRole | execução cross-account | ✅ | | | Implementado; sem cache de credenciais. |
 | IRSA | identidade do pod sem credencial estática | | | ❌ | Previsto na arquitetura; não há manifests/deploy. |
-| IAM role alvo | role + 73 ações (trust+perms) | ✅ | | | `microservicos/iam/` (JSON+Terraform); `Resource:"*"`. |
+| IAM role alvo | role + listas explícitas rds/elasticache/dynamodb (trust+perms) | ✅ | | | `microservicos/iam/`; inclui **PartiQL** do DynamoDB p/ data-plane; `Resource:"*"`. |
 | API Gateway | REST + VPC Link + validação | | ⚠️ | | Contrato OpenAPI pronto; **não deployado**; auth a definir (AD). |
 | ServiceNow (gatilho/governança) | início via change/GMUD | | ⚠️ | | Gate de produção implementado (prod exige Implement+janela); **disparo a partir do ServiceNow** ainda não. |
 | Execution API | aceitar, persistir intenção, enfileirar | | | ❌ | Não existe; execução é in-process. |
@@ -564,8 +562,13 @@ OpenAPI + role IAM + arquitetura/diagrama) vs. a especificação-alvo acima.
 
 ### Resumo da aderência
 
-- **Núcleo de execução das ações (boto3) + contratos + dryRun + STS + IAM +
-  Secrets/KMS:** **implementado**.
+- **Núcleo de execução das ações:** **implementado** — 8 dispatchers genéricos
+  por verbo com **cobertura boto3 total** de RDS/Aurora, ElastiCache e DynamoDB
+  (296 ops), governados por **regras externas** (allow/deny + categorias + GMUD +
+  exceptions) e gerados a partir do catálogo (`gen_catalog`/`gen_action_services`/
+  `gen_gateway`); + serviços especiais (`kms`, `db-password`, `vpc-link`,
+  `servicenow`, `rds-data`, `finops`, `insights`, `dbca`) + contratos + dryRun +
+  STS + IAM + Secrets/KMS.
 - **Camada assíncrona/event-driven (Execution API, SQS, EventBridge, DynamoDB,
   Status Service), governança ServiceNow, observabilidade (X-Ray/Prometheus/
   Grafana), IRSA/EKS deploy, CI-CD/GitOps, RAM:** **não implementada** (definida
@@ -578,5 +581,5 @@ OpenAPI + role IAM + arquitetura/diagrama) vs. a especificação-alvo acima.
 > assíncrona/event-driven faltam, em ordem de prioridade: **(1)** Execution API +
 > SQS + worker (assíncrono real e idempotência via DynamoDB); **(2)**
 > observabilidade (OTel→X-Ray/Prometheus/Grafana); **(3)** deploy EKS/IRSA +
-> GitOps/CI-CD; **(4)** integração ServiceNow e fechamento do `replicate`/
-> `privatelink` cross-account.
+> GitOps/CI-CD; **(4)** integração ServiceNow e orquestração cross-account de 2
+> lados (share+copy re-encriptado do `replicate`, `privatelink`).

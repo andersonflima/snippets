@@ -1,4 +1,4 @@
-"""API do microserviço create — exposto via API Gateway -> VPC Link -> NLB -> EKS."""
+"""FastAPI app do serviço `create` (POST /create/execute)."""
 from __future__ import annotations
 
 from botocore.exceptions import ClientError
@@ -8,7 +8,6 @@ from fastapi.responses import JSONResponse
 
 from .aws import ActionError
 from .handler import execute
-from .gmud import ensure_change_authorized
 from .models import ActionAccepted, ErrorResponse, CreateRequest
 
 app = FastAPI(title="create action microservice", version="1.0.0")
@@ -24,72 +23,37 @@ def readyz() -> dict:
     return {"status": "ready"}
 
 
-@app.exception_handler(RequestValidationError)
-async def on_validation_error(request: Request, exc: RequestValidationError) -> JSONResponse:
-    """Padroniza erros de validacao (Pydantic) no envelope ErrorResponse."""
-    errors = exc.errors()
-    message = "payload invalido"
-    if errors:
-        loc = ".".join(str(part) for part in errors[0].get("loc", []) if part != "body")
-        message = f"payload invalido: {loc}: {errors[0].get('msg', '')}".strip(": ")
-    return JSONResponse(
-        status_code=422,
-        content=ErrorResponse(
-            code="validation_error",
-            message=message,
-            requestId=request.headers.get("x-request-id"),
-        ).model_dump(),
-    )
-
-
-@app.exception_handler(Exception)
-async def on_unexpected_error(request: Request, exc: Exception) -> JSONResponse:
-    """Captura qualquer erro inesperado, garantindo 500 no envelope ErrorResponse."""
-    return JSONResponse(
-        status_code=500,
-        content=ErrorResponse(
-            code="internal_error",
-            message="erro interno inesperado",
-            requestId=request.headers.get("x-request-id"),
-        ).model_dump(),
-    )
+def _err(http: int, code: str, message: str, request_id: str | None) -> JSONResponse:
+    return JSONResponse(status_code=http, content=ErrorResponse(code=code, message=message, requestId=request_id).model_dump())
 
 
 def _client_error_to_http(exc: ClientError) -> tuple[int, str]:
     code = exc.response.get("Error", {}).get("Code", "")
     if "NotFound" in code or code.endswith("NotFoundFault"):
         return 404, "not_found"
-    if "AccessDenied" in code or "Forbidden" in code or "Unauthorized" in code:
+    if code in ("AccessDenied", "AccessDeniedException", "UnauthorizedOperation", "Forbidden"):
         return 403, "assume_role_denied"
     return 409, "conflict"
 
 
-@app.post(
-    "/create/execute",
-    response_model=ActionAccepted,
-    status_code=202,
-    responses={
-        400: {"model": ErrorResponse},
-        403: {"model": ErrorResponse},
-        404: {"model": ErrorResponse},
-        409: {"model": ErrorResponse},
-        422: {"model": ErrorResponse},
-        500: {"model": ErrorResponse},
-        502: {"model": ErrorResponse},
-    },
-)
-def run(req: CreateRequest):
+@app.exception_handler(RequestValidationError)
+async def _on_validation(request: Request, exc: RequestValidationError) -> JSONResponse:
+    loc = "; ".join(".".join(str(p) for p in e["loc"]) + ": " + e["msg"] for e in exc.errors())
+    return _err(422, "validation_error", loc, request.headers.get("x-request-id"))
+
+
+@app.exception_handler(Exception)
+async def _on_error(request: Request, exc: Exception) -> JSONResponse:
+    return _err(500, "internal_error", str(exc), request.headers.get("x-request-id"))
+
+
+@app.post("/create/execute", response_model=ActionAccepted, status_code=202,
+          responses={c: {"model": ErrorResponse} for c in (400, 403, 404, 409, 422, 500, 502)})
+def run(req: CreateRequest) -> ActionAccepted | JSONResponse:
     try:
-        ensure_change_authorized("create", req)
         return execute(req)
     except ActionError as exc:
-        return JSONResponse(
-            status_code=exc.http,
-            content=ErrorResponse(code=exc.code, message=exc.message, requestId=req.requestId).model_dump(),
-        )
+        return _err(exc.http, exc.code, exc.message, req.requestId)
     except ClientError as exc:
         http, code = _client_error_to_http(exc)
-        return JSONResponse(
-            status_code=http,
-            content=ErrorResponse(code=code, message=str(exc), requestId=req.requestId).model_dump(),
-        )
+        return _err(http, code, str(exc), req.requestId)

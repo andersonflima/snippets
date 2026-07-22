@@ -1,16 +1,13 @@
-"""Helper de credenciais: STS:AssumeRole -> boto3.Session na conta-alvo."""
+"""Assume-role helper (STS) + erro de ação. Idêntico entre serviços."""
 from __future__ import annotations
 
-import uuid
-
 import boto3
-from botocore.exceptions import ClientError
 
 
 class ActionError(Exception):
-    """Erro de ação mapeável para HTTP."""
+    """Erro de ação com código estável e status HTTP."""
 
-    def __init__(self, code: str, message: str, http: int) -> None:
+    def __init__(self, code: str, message: str, http: int = 400) -> None:
         super().__init__(message)
         self.code = code
         self.message = message
@@ -18,18 +15,13 @@ class ActionError(Exception):
 
 
 def assumed_session(account: str, role_arn: str, region: str) -> boto3.Session:
-    try:
-        sts = boto3.client("sts")
-        resp = sts.assume_role(
-            RoleArn=role_arn,
-            RoleSessionName=f"ms-{uuid.uuid4().hex[:12]}",
-        )
-    except ClientError as exc:  # assume-role negado / role inexistente
-        raise ActionError("assume_role_denied", str(exc), 403) from exc
-    cred = resp["Credentials"]
+    """Assume a role no account alvo e devolve uma Session com creds temporárias."""
+    sts = boto3.client("sts")
+    resp = sts.assume_role(RoleArn=role_arn, RoleSessionName=f"microservicos-{account}")
+    c = resp["Credentials"]
     return boto3.Session(
-        aws_access_key_id=cred["AccessKeyId"],
-        aws_secret_access_key=cred["SecretAccessKey"],
-        aws_session_token=cred["SessionToken"],
+        aws_access_key_id=c["AccessKeyId"],
+        aws_secret_access_key=c["SecretAccessKey"],
+        aws_session_token=c["SessionToken"],
         region_name=region,
     )

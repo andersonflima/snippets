@@ -6,8 +6,10 @@ Cada ação é um recurso/path. connectionId (VPC Link) e DNS do NLB vêm de sta
 variables, então o mesmo contrato serve para qualquer ambiente.
 
 Saídas:
-  api-gateway/openapi.yaml                 # contrato consolidado do gateway
   ../<service>/contract/openapi.yaml       # contrato por microserviço (autocontido)
+
+O contrato consolidado (api-gateway/openapi.yaml) é montado por gen_gateway.py,
+que agrega todos os */contract/openapi.yaml.
 """
 from __future__ import annotations
 
@@ -100,19 +102,6 @@ PRODUCTIVE_ENVIRONMENTS = ["prod"]
 # --- definição das ações (action-driven) ---------------------------------------
 SERVICES = [
     {
-        "name": "restore",
-        "summary": "Restaura snapshot → instância ou cria snapshot de uma instância.",
-        "params": {
-            "operation": {"type": "string", "enum": ["create-snapshot", "restore-snapshot"]},
-            "snapshotIdentifier": s_str("Snapshot de origem (restore) ou destino (create)."),
-            "targetInstanceIdentifier": s_str("Identificador da instância resultante."),
-            "dbInstanceClass": s_str("Classe da instância restaurada."),
-            "dbSubnetGroupName": s_str("Subnet group de destino."),
-            "kmsKeyId": s_str("KMS key para a instância/snapshot resultante."),
-        },
-        "required": ["operation"],
-    },
-    {
         "name": "db-password",
         "summary": "Conecta no banco e troca a senha do usuário informado.",
         "params": {
@@ -140,21 +129,6 @@ SERVICES = [
         "required": ["keyAlias", "targetResourceType", "targetResourceId"],
     },
     {
-        "name": "replicate",
-        "summary": "Copia qualquer recurso cross-account ou recria em outra region.",
-        "params": {
-            "sourceAccount": s_str("Conta de origem (default: account).", pattern=r"^\d{12}$"),
-            "sourceRegion": s_str("Região de origem."),
-            "destinationAccount": s_str("Conta de destino.", pattern=r"^\d{12}$"),
-            "destinationRegion": s_str("Região de destino."),
-            "resourceType": {"type": "string", "enum": ["db-snapshot", "db-instance", "ami", "kms-key", "parameter-group"]},
-            "resourceId": s_str("Recurso a replicar."),
-            "kmsKeyId": s_str("KMS key de destino p/ re-encriptar."),
-            "shareThenCopy": {"type": "boolean", "default": True, "description": "Compartilha cross-account e copia re-encriptando."},
-        },
-        "required": ["destinationAccount", "destinationRegion", "resourceType", "resourceId"],
-    },
-    {
         "name": "vpc-link",
         "summary": "Cria acesso privado (PrivateLink) da conta do time ao banco.",
         "params": {
@@ -165,67 +139,6 @@ SERVICES = [
             "ports": {"type": "array", "items": {"type": "integer"}, "description": "Portas expostas."},
         },
         "required": ["dbIdentifier", "consumerAccount"],
-    },
-    {
-        "name": "modify",
-        "summary": "Modify genérico — inclui instance class e engine version.",
-        "params": {
-            "resourceType": {"type": "string", "enum": ["db-instance", "db-cluster", "ec2-instance"]},
-            "modifications": {
-                "type": "object",
-                "description": "Campos a modificar (contrato por tipo de recurso).",
-                "properties": {
-                    "dbInstanceClass": s_str("Nova instance class."),
-                    "engineVersion": s_str("Nova engine version."),
-                    "parameterGroupName": s_str("Parameter group."),
-                    "backupRetentionPeriod": {"type": "integer"},
-                },
-            },
-            "applyImmediately": {"type": "boolean", "default": False},
-        },
-        "required": ["resourceType", "modifications"],
-    },
-    {
-        "name": "create",
-        "summary": "Provisiona recursos (contrato por tipo).",
-        "params": {
-            "resourceType": {"type": "string", "enum": ["db-instance", "db-subnet-group", "security-group", "parameter-group"]},
-            "spec": {"type": "object", "description": "Especificação do recurso (contrato por tipo)."},
-            "waitUntilAvailable": {"type": "boolean", "default": True},
-        },
-        "required": ["resourceType", "spec"],
-    },
-    {
-        "name": "destroy",
-        "summary": "Remove recursos (cleanup pós-fluxo).",
-        "params": {
-            "resourceType": {"type": "string", "enum": ["db-instance", "db-snapshot", "vpc-endpoint", "kms-grant", "security-group"]},
-            "skipFinalSnapshot": {"type": "boolean", "default": True},
-            "finalSnapshotIdentifier": s_str("Snapshot final, se skipFinalSnapshot=false."),
-        },
-        "required": ["resourceType"],
-    },
-    {
-        "name": "start-stop",
-        "summary": "Liga/desliga recursos que suportam power.",
-        "params": {
-            "operation": {"type": "string", "enum": ["start", "stop"]},
-            "resourceType": {"type": "string", "enum": ["db-instance", "db-cluster", "ec2-instance"]},
-        },
-        "required": ["operation", "resourceType"],
-    },
-    {
-        "name": "storage",
-        "summary": "Altera storage — tipo (gp3/io1/…) e aumento de tamanho.",
-        "params": {
-            "resourceType": {"type": "string", "enum": ["db-instance", "ec2-volume"]},
-            "storageType": {"type": "string", "enum": ["gp2", "gp3", "io1", "io2"]},
-            "allocatedStorage": {"type": "integer", "description": "Novo tamanho (GiB) — só aumento."},
-            "iops": {"type": "integer"},
-            "storageThroughput": {"type": "integer"},
-            "applyImmediately": {"type": "boolean", "default": False},
-        },
-        "required": ["resourceType"],
     },
     {
         "name": "servicenow",
@@ -455,23 +368,6 @@ def write(path: str, content: str) -> None:
     print("wrote", os.path.relpath(path, MS_ROOT))
 
 
-def build_gateway() -> dict:
-    paths = {f"/{svc['name']}": operation(svc) for svc in SERVICES}
-    schemas = dict(COMMON_SCHEMAS)
-    for svc in SERVICES:
-        schemas[schema_name(svc)] = request_schema(svc)
-    doc = base_doc(
-        "microservicos-actions — API Gateway (REST)",
-        "Front-door dos microserviços action-driven no EKS. API Gateway (edge, "
-        "Cognito JWT) -> VPC Link -> NLB interno -> EKS. Disparado pela ação do "
-        "cliente no frontend. Um path por ação.",
-    )
-    doc.update(gateway_extensions())
-    doc["paths"] = paths
-    doc["components"] = {"securitySchemes": SECURITY_SCHEME, "schemas": schemas}
-    return doc
-
-
 def build_service(svc: dict) -> dict:
     doc = base_doc(
         f"{svc['name']} — contrato (API Gateway path)",
@@ -487,7 +383,9 @@ def build_service(svc: dict) -> dict:
 
 
 def main() -> None:
-    write(os.path.join(HERE, "openapi.yaml"), dump_yaml(build_gateway()))
+    # O contrato consolidado (api-gateway/openapi.yaml) agora é montado por
+    # gen_gateway.py, que agrega todos os */contract/openapi.yaml. Aqui geramos
+    # apenas o contrato por microserviço (serviços especiais deste gerador).
     for svc in SERVICES:
         folder = svc["name"]
         write(os.path.join(MS_ROOT, folder, "contract", "openapi.yaml"), dump_yaml(build_service(svc)))
