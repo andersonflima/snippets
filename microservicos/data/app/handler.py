@@ -10,6 +10,7 @@ from .models import ActionAccepted, DataRequest
 from .operations import resolve
 from .policy import evaluate
 from .rules import load_rules
+from .validate import validate_args
 
 
 def _jsonable(value: Any) -> Any:
@@ -31,6 +32,7 @@ def execute(req: DataRequest) -> ActionAccepted:
         raise ActionError("validation_error", f"operação não suportada por este serviço: {p.operation}", 400)
 
     args = dict(p.args or {})
+    validate_args(op, args)
     rules = load_rules({})
     decision = evaluate(rules, req, op, args)
 

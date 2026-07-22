@@ -10,6 +10,7 @@ from .models import ActionAccepted, ModifyRequest
 from .operations import resolve
 from .policy import evaluate
 from .rules import load_rules
+from .validate import validate_args
 from .gmud import ensure_change_authorized
 
 
@@ -32,6 +33,7 @@ def execute(req: ModifyRequest) -> ActionAccepted:
         raise ActionError("validation_error", f"operação não suportada por este serviço: {p.operation}", 400)
 
     args = dict(p.args or {})
+    validate_args(op, args)
     rules = load_rules({})
     decision = evaluate(rules, req, op, args)
 

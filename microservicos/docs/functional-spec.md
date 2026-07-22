@@ -139,9 +139,12 @@ seus **deltas**.
   `sts:AssumeRole` nessa role.
 - **Contrato de operação (dispatchers):** a `operation` (`"<client>:<Op>"`) é
   resolvida contra o **catálogo gerado** (`catalog.json`); operação fora do
-  catálogo do serviço → `400 validation_error`. Só então as **regras externas**
-  (§2.3) decidem allow/deny e se exige GMUD; por fim `getattr(client, method)
-  (**args)`.
+  catálogo do serviço → `400 validation_error`. Em seguida os **args** são
+  validados contra o *input shape* real da operação via **botocore**
+  (`ParamValidator`, offline, sem rede/credenciais) — required faltando, tipo
+  errado ou campo desconhecido → `400 validation_error`; isso vale inclusive no
+  `dryRun`. Só então as **regras externas** (§2.3) decidem allow/deny e se exige
+  GMUD; por fim `getattr(client, method)(**args)`.
 
 ---
 
