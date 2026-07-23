@@ -199,6 +199,9 @@ SERVICES = [
         ),
         # Read-only: não exige 'resource' no envelope (o alvo vai em params.resourceId).
         "envelope_required": ["account", "roleArn", "region", "environment"],
+        "success_status": "200",
+        "success_description": "Resultado síncrono de analytics.",
+        "success_schema": "ActionResult",
         "params": {
             "action": {
                 "type": "string",
@@ -280,6 +283,23 @@ RESPONSES = {
     "502": {"description": "Falha no upstream (EKS/NLB).", "content": {"application/json": {"schema": {"$ref": "#/components/schemas/Error"}}}},
 }
 
+
+def success_response(svc: dict) -> dict:
+    status = svc.get("success_status", "202")
+    schema = svc.get("success_schema", "ActionAccepted")
+    description = svc.get("success_description", "Ação aceita (assíncrona).")
+    return {
+        status: {
+            "description": description,
+            "content": {"application/json": {"schema": {"$ref": f"#/components/schemas/{schema}"}}},
+        }
+    }
+
+
+def responses_for(svc: dict) -> dict:
+    errors = {code: spec for code, spec in RESPONSES.items() if code != "202"}
+    return {**success_response(svc), **errors}
+
 COMMON_SCHEMAS = {
     "ActionAccepted": {
         "type": "object",
@@ -290,6 +310,17 @@ COMMON_SCHEMAS = {
             "resource": s_str("Recurso alvo."),
             "account": s_str("Conta alvo."),
             "links": {"type": "object", "properties": {"status": s_str("URL de consulta de status.")}},
+        },
+    },
+    "ActionResult": {
+        "type": "object",
+        "required": ["operationId", "status", "product", "action", "detail"],
+        "properties": {
+            "operationId": s_str("ID da operação."),
+            "status": {"type": "string", "enum": ["ok"]},
+            "product": s_str("Produto AWS analisado."),
+            "action": s_str("Tipo de análise executada."),
+            "detail": {"type": "object", "additionalProperties": True},
         },
     },
     "Error": {
@@ -331,7 +362,7 @@ def operation(svc: dict) -> dict:
                 "required": True,
                 "content": {"application/json": {"schema": {"$ref": f"#/components/schemas/{schema_name(svc)}"}}},
             },
-            "responses": RESPONSES,
+            "responses": responses_for(svc),
             **integration(svc["name"]),
         }
     }

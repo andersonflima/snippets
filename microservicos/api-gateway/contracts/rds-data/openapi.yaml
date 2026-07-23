@@ -1,85 +1,87 @@
+# Gerado por gen_gateway.py — contrato API Gateway segregado por microserviço.
 openapi: 3.0.3
 info:
-  title: db-password — contrato (API Gateway path)
+  title: rds-data — contrato (API Gateway path)
   version: 1.0.0
-  description: "Conecta no banco e troca a senha do usuário informado. Exposto via API Gateway -> VPC Link -> NLB interno -> EKS."
+  description: 'Wrapper seguro do RDS Data API: avalia o SQL contra regras (S3) antes de executar. Exposto
+    via API Gateway -> VPC Link -> NLB interno -> EKS.'
 servers:
-  - url: "https://${stageVariables.apiDomain}/${stageVariables.basePath}"
+- url: https://${stageVariables.apiDomain}/${stageVariables.basePath}
 x-amazon-apigateway-request-validators:
   all:
     validateRequestBody: true
     validateRequestParameters: true
 paths:
-  /db-password:
+  /rds-data:
     post:
-      summary: Conecta no banco e troca a senha do usuário informado.
-      operationId: db_password_execute
+      summary: 'Wrapper seguro do RDS Data API: avalia o SQL contra regras (S3) antes de executar.'
+      operationId: rds_data_execute
       tags:
-        - db-password
+      - rds-data
       security:
-        - CognitoJWT: []
+      - CognitoJWT: []
       x-amazon-apigateway-request-validator: all
       requestBody:
         required: true
         content:
           application/json:
             schema:
-              $ref: "#/components/schemas/DbPasswordRequest"
+              $ref: '#/components/schemas/RdsDataRequest'
       responses:
         202:
           description: Ação aceita (assíncrona).
           content:
             application/json:
               schema:
-                $ref: "#/components/schemas/ActionAccepted"
+                $ref: '#/components/schemas/ActionAccepted'
         400:
           description: Requisição inválida.
           content:
             application/json:
               schema:
-                $ref: "#/components/schemas/Error"
+                $ref: '#/components/schemas/Error'
         403:
           description: AssumeRole negado / sem permissão.
           content:
             application/json:
               schema:
-                $ref: "#/components/schemas/Error"
+                $ref: '#/components/schemas/Error'
         404:
           description: Recurso não encontrado.
           content:
             application/json:
               schema:
-                $ref: "#/components/schemas/Error"
+                $ref: '#/components/schemas/Error'
         409:
           description: Conflito / estado inválido do recurso.
           content:
             application/json:
               schema:
-                $ref: "#/components/schemas/Error"
+                $ref: '#/components/schemas/Error'
         422:
           description: Payload inválido (validação do schema).
           content:
             application/json:
               schema:
-                $ref: "#/components/schemas/Error"
+                $ref: '#/components/schemas/Error'
         500:
           description: Erro interno inesperado.
           content:
             application/json:
               schema:
-                $ref: "#/components/schemas/Error"
+                $ref: '#/components/schemas/Error'
         502:
           description: Falha no upstream (EKS/NLB).
           content:
             application/json:
               schema:
-                $ref: "#/components/schemas/Error"
+                $ref: '#/components/schemas/Error'
       x-amazon-apigateway-integration:
         type: http_proxy
         httpMethod: POST
         connectionType: VPC_LINK
-        connectionId: "${stageVariables.vpcLinkId}"
-        uri: "http://${stageVariables.nlbDns}/db-password/execute"
+        connectionId: ${stageVariables.vpcLinkId}
+        uri: http://${stageVariables.nlbDns}/rds-data/execute
         passthroughBehavior: when_no_match
         timeoutInMillis: 29000
         requestParameters:
@@ -97,42 +99,42 @@ components:
       x-amazon-apigateway-authorizer:
         type: cognito_user_pools
         providerARNs:
-          - "${COGNITO_USER_POOL_ARN}"
+        - ${COGNITO_USER_POOL_ARN}
   schemas:
-    DbPasswordRequest:
+    RdsDataRequest:
       type: object
       additionalProperties: false
       required:
-        - account
-        - resource
-        - roleArn
-        - region
-        - environment
-        - params
+      - account
+      - resource
+      - roleArn
+      - region
+      - environment
+      - params
       properties:
         account:
           type: string
           description: Conta AWS alvo (12 dígitos).
-          pattern: "^\\d{12}$"
+          pattern: ^\d{12}$
         resource:
           type: string
           description: Nome ou ARN do recurso alvo da ação.
         roleArn:
           type: string
-          description: "Role para STS:AssumeRole na conta alvo."
-          pattern: "^arn:aws:iam::\\d{12}:role/.+$"
+          description: Role para STS:AssumeRole na conta alvo.
+          pattern: ^arn:aws:iam::\d{12}:role/.+$
         region:
           type: string
           description: Região AWS.
-          pattern: "^[a-z]{2}-[a-z]+-\\d$"
+          pattern: ^[a-z]{2}-[a-z]+-\d$
         environment:
           type: string
           enum:
-            - dev
-            - homol
-            - staging
-            - prod
-          description: "Ambiente target da ação. 'prod' exige GMUD aprovada (ServiceNow)."
+          - dev
+          - homol
+          - staging
+          - prod
+          description: Ambiente target da ação. 'prod' exige GMUD aprovada (ServiceNow).
         changeNumber:
           type: string
           description: Número da GMUD/change no ServiceNow (obrigatório p/ produção).
@@ -145,36 +147,45 @@ components:
           description: Valida sem executar.
         params:
           type: object
-          description: Parâmetros específicos da ação db-password.
+          description: Parâmetros específicos da ação rds-data.
           properties:
-            dbIdentifier:
+            sql:
               type: string
-              description: Identificador/endpoint da instância RDS.
-            username:
+              description: SQL a executar (validado contra as regras de negócio).
+            secretArn:
               type: string
-              description: Usuário cuja senha será trocada.
-            newPasswordSecretArn:
+              description: ARN do segredo (Secrets Manager) com as credenciais do banco.
+            resourceArn:
               type: string
-              description: ARN do segredo (Secrets Manager) com a nova senha — nunca plaintext.
-              pattern: "^arn:aws:secretsmanager:.+$"
-            engine:
+              description: 'ARN do cluster Aurora (default: campo resource).'
+            database:
               type: string
-              enum:
-                - postgres
-                - mysql
-                - mariadb
-                - aurora-postgresql
-                - aurora-mysql
+              description: Banco/Database alvo.
+            schema:
+              type: string
+              description: Schema alvo (opcional).
+            parameters:
+              type: object
+              description: Parâmetros nomeados (name -> value) p/ SQL parametrizado.
+              additionalProperties: true
+            includeResultMetadata:
+              type: boolean
+              default: false
+            rulesBucket:
+              type: string
+              description: 'Bucket S3 com as regras (default: env RULES_BUCKET).'
+            rulesKey:
+              type: string
+              description: 'Chave do .json de regras (default: env RULES_KEY).'
           required:
-            - dbIdentifier
-            - username
-            - newPasswordSecretArn
+          - sql
+          - secretArn
           additionalProperties: false
     ActionAccepted:
       type: object
       required:
-        - operationId
-        - status
+      - operationId
+      - status
       properties:
         operationId:
           type: string
@@ -182,8 +193,8 @@ components:
         status:
           type: string
           enum:
-            - accepted
-            - in-progress
+          - accepted
+          - in-progress
         resource:
           type: string
           description: Recurso alvo.
@@ -199,11 +210,11 @@ components:
     ActionResult:
       type: object
       required:
-        - operationId
-        - status
-        - product
-        - action
-        - detail
+      - operationId
+      - status
+      - product
+      - action
+      - detail
       properties:
         operationId:
           type: string
@@ -211,7 +222,7 @@ components:
         status:
           type: string
           enum:
-            - ok
+          - ok
         product:
           type: string
           description: Produto AWS analisado.
@@ -224,17 +235,17 @@ components:
     Error:
       type: object
       required:
-        - code
-        - message
+      - code
+      - message
       properties:
         code:
           type: string
           enum:
-            - validation_error
-            - assume_role_denied
-            - not_found
-            - conflict
-            - upstream_error
+          - validation_error
+          - assume_role_denied
+          - not_found
+          - conflict
+          - upstream_error
         message:
           type: string
           description: Descrição do erro.
