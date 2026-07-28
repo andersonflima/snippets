@@ -29,6 +29,10 @@ Opcoes:
   --data-dir <dir>       Default: ${XDG_DATA_HOME:-$HOME/.local/share}/nvim
   --cache-dir <dir>      Default: ${XDG_CACHE_HOME:-$HOME/.cache}/nvim
   --github-base <url>    Default: https://github.com
+  --github-transport <modo>
+                         Transporte GitHub para git/wrappers/patch da config:
+                         `ssh` (default, comportamento atual) ou `http`
+                         para ambientes corporativos HTTP-only.
   -h, --help             Mostra ajuda.
 
 Observacoes:
@@ -49,6 +53,7 @@ NVIM_CONFIG_DIR="${XDG_CONFIG_HOME:-$HOME/.config}/nvim"
 NVIM_DATA_DIR="${XDG_DATA_HOME:-$HOME/.local/share}/nvim"
 NVIM_CACHE_DIR="${XDG_CACHE_HOME:-$HOME/.cache}/nvim"
 GITHUB_BASE_URL="https://github.com"
+GITHUB_TRANSPORT="ssh"
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 # Estrutura do repo: config/lazyvim/<este script>, config/homebrew/, config/nvim/.
 CONFIG_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
@@ -96,6 +101,10 @@ while [ "$#" -gt 0 ]; do
       GITHUB_BASE_URL="${2:-}"
       shift 2
       ;;
+    --github-transport)
+      GITHUB_TRANSPORT="${2:-}"
+      shift 2
+      ;;
     -h|--help)
       usage
       exit 0
@@ -111,6 +120,8 @@ command -v python3 >/dev/null 2>&1 || die "python3 nao encontrado"
 [ -n "$NVIM_CONFIG_DIR" ] || die "--config-dir vazio"
 [ -n "$NVIM_DATA_DIR" ] || die "--data-dir vazio"
 [ -n "$NVIM_CACHE_DIR" ] || die "--cache-dir vazio"
+[ "$GITHUB_TRANSPORT" = "ssh" ] || [ "$GITHUB_TRANSPORT" = "http" ] \
+  || die "--github-transport deve ser 'ssh' ou 'http'"
 if [ -n "$CONFIG_SOURCE_DIR" ] && [ "$MANAGE_CONFIG" != "1" ]; then
   die "--config-source-dir requer --manage-config"
 fi
@@ -628,7 +639,8 @@ fi
 
 rewrite_github_url() {
   local value="$1"
-  if [[ "$value" == https://github.com/* ]]; then
+  local transport="${NVIM_GITHUB_TRANSPORT:-ssh}"
+  if [ "$transport" = "ssh" ] && [[ "$value" == https://github.com/* ]]; then
     local path="${value#https://github.com/}"
     printf 'git@github.com:%s' "$path"
     return 0
@@ -1025,6 +1037,7 @@ return {
         if not string.find(current_path, wrapper_bin, 1, true) then
           vim.env.PATH = wrapper_bin .. ":" .. current_path
         end
+        vim.env.NVIM_GITHUB_TRANSPORT = "${GITHUB_TRANSPORT}"
       end
     end,
   },
@@ -1363,36 +1376,61 @@ end, {
 LUA
 }
 
-patch_lazy_transport_to_ssh() {
+patch_lazy_transport() {
   local lazy_config_file="${NVIM_CONFIG_DIR}/lua/config/lazy.lua"
   [ -f "$lazy_config_file" ] || return 0
 
-  # Ajusta bootstrap manual de lazy.nvim para SSH.
-  if grep -Fq "https://github.com/folke/lazy.nvim.git" "$lazy_config_file"; then
-    local tmp_file_url
-    tmp_file_url="$(mktemp)"
-    awk '{ gsub(/https:\/\/github\.com\/folke\/lazy\.nvim\.git/, "git@github.com:folke/lazy.nvim.git"); print }' \
-      "$lazy_config_file" > "$tmp_file_url"
-    mv "$tmp_file_url" "$lazy_config_file"
-  fi
+  if [ "$GITHUB_TRANSPORT" = "ssh" ]; then
+    # Ajusta bootstrap manual de lazy.nvim para SSH.
+    if grep -Fq "https://github.com/folke/lazy.nvim.git" "$lazy_config_file"; then
+      local tmp_file_url
+      tmp_file_url="$(mktemp)"
+      awk '{ gsub(/https:\/\/github\.com\/folke\/lazy\.nvim\.git/, "git@github.com:folke/lazy.nvim.git"); print }' \
+        "$lazy_config_file" > "$tmp_file_url"
+      mv "$tmp_file_url" "$lazy_config_file"
+    fi
 
-  # Garante url_format SSH no setup do lazy.nvim.
-  if ! grep -Fq 'url_format = "git@github.com:%s.git"' "$lazy_config_file"; then
-    local tmp_file
-    tmp_file="$(mktemp)"
-    awk '
-      BEGIN { inserted=0 }
-      {
-        print
-        if (!inserted && $0 ~ /require\("lazy"\)\.setup\(\{/) {
-          print "\tgit = {"
-          print "\t\turl_format = \"git@github.com:%s.git\","
-          print "\t},"
-          inserted=1
+    # Garante url_format SSH no setup do lazy.nvim.
+    if ! grep -Fq 'url_format = "git@github.com:%s.git"' "$lazy_config_file"; then
+      local tmp_file
+      tmp_file="$(mktemp)"
+      awk '
+        BEGIN { inserted=0 }
+        {
+          print
+          if (!inserted && $0 ~ /require\("lazy"\)\.setup\(\{/) {
+            print "\tgit = {"
+            print "\t\turl_format = \"git@github.com:%s.git\","
+            print "\t},"
+            inserted=1
+          }
         }
-      }
-    ' "$lazy_config_file" > "$tmp_file"
-    mv "$tmp_file" "$lazy_config_file"
+      ' "$lazy_config_file" > "$tmp_file"
+      mv "$tmp_file" "$lazy_config_file"
+    else
+      local tmp_file_git
+      tmp_file_git="$(mktemp)"
+      awk '{ gsub(/url_format = "https:\/\/github\.com\/%s\.git"/, "url_format = \"git@github.com:%s.git\""); print }' \
+        "$lazy_config_file" > "$tmp_file_git"
+      mv "$tmp_file_git" "$lazy_config_file"
+    fi
+  else
+    # Ajusta bootstrap manual de lazy.nvim para HTTPS em ambiente HTTP-only.
+    if grep -Fq "git@github.com:folke/lazy.nvim.git" "$lazy_config_file"; then
+      local tmp_file_url_http
+      tmp_file_url_http="$(mktemp)"
+      awk '{ gsub(/git@github\.com:folke\/lazy\.nvim\.git/, "https://github.com/folke/lazy.nvim.git"); print }' \
+        "$lazy_config_file" > "$tmp_file_url_http"
+      mv "$tmp_file_url_http" "$lazy_config_file"
+    fi
+
+    if grep -Fq 'url_format = "git@github.com:%s.git"' "$lazy_config_file"; then
+      local tmp_file_url_format
+      tmp_file_url_format="$(mktemp)"
+      awk '{ gsub(/url_format = "git@github.com:%s.git"/, "url_format = \"https://github.com/%s.git\""); print }' \
+        "$lazy_config_file" > "$tmp_file_url_format"
+      mv "$tmp_file_url_format" "$lazy_config_file"
+    fi
   fi
 
   # Em ambiente bloqueado para git externo, evita checks automáticos via git fetch.
@@ -1449,9 +1487,13 @@ install_plugins_from_manifest() {
   return 0
 }
 
-configure_git_insteadof() {
+configure_git_transport() {
   # Faz submodules/ls-remote (que o shim de argv nao alcanca) usarem SSH.
   # Idempotente e opt-out-safe: so adiciona se ainda nao estiver presente.
+  if [ "$GITHUB_TRANSPORT" != "ssh" ]; then
+    log "modo GitHub HTTP-only: pulando git insteadOf global"
+    return 0
+  fi
   command -v git >/dev/null 2>&1 || {
     log "git nao encontrado; pulando configuracao insteadOf"
     return 0
@@ -1494,8 +1536,8 @@ if [ "$MANAGE_CONFIG" = "1" ]; then
 fi
 ensure_python_runtime
 install_http_wrappers
-log "configurando git insteadOf global (SSH para github.com)"
-configure_git_insteadof
+log "configurando transporte GitHub: ${GITHUB_TRANSPORT}"
+configure_git_transport
 
 if [ "$FORCE" = "1" ]; then
   if [ "$MANAGE_CONFIG" = "1" ]; then
@@ -1549,8 +1591,8 @@ if [ "$MANAGE_CONFIG" = "1" ]; then
   write_lazy_offline_mode_override
   log "forcando override global de :Lazy update/sync/check para ZIP"
   write_lazy_command_override_after_plugin
-  log "forcando transporte SSH no bootstrap/update do lazy.nvim"
-  patch_lazy_transport_to_ssh
+  log "forcando transporte ${GITHUB_TRANSPORT} no bootstrap/update do lazy.nvim"
+  patch_lazy_transport
 fi
 
 if [ "$SKIP_PLUGINS" != "1" ]; then
