@@ -302,9 +302,36 @@ import socket
 import tempfile
 from urllib.error import HTTPError, URLError
 from urllib.parse import urlparse
-from urllib.request import Request, urlopen
+from urllib.parse import urlsplit, urlunsplit
+from urllib.request import (
+    HTTPPasswordMgrWithDefaultRealm,
+    ProxyBasicAuthHandler,
+    ProxyHandler,
+    Request,
+    build_opener,
+    HTTPSHandler,
+)
 
 RETRYABLE = {429, 500, 502, 503, 504}
+PROXY_ENV_KEYS = {
+    "http": ("HTTP_PROXY", "http_proxy"),
+    "https": ("HTTPS_PROXY", "https_proxy"),
+    "all": ("ALL_PROXY", "all_proxy"),
+}
+PROXY_CREDENTIAL_ENV_KEYS = {
+    "http": (
+        ("HTTP_PROXY_USERNAME", "http_proxy_username"),
+        ("HTTP_PROXY_PASSWORD", "http_proxy_password"),
+    ),
+    "https": (
+        ("HTTPS_PROXY_USERNAME", "https_proxy_username"),
+        ("HTTPS_PROXY_PASSWORD", "https_proxy_password"),
+    ),
+    "all": (
+        ("PROXY_USERNAME", "proxy_username"),
+        ("PROXY_PASSWORD", "proxy_password"),
+    ),
+}
 
 # Letras curtas que consomem valor (dentro de combos como -fsSLo /tmp/x).
 VALUE_LETTERS = set("oOHAdXTbeuCP")
@@ -327,6 +354,67 @@ IGNORE_VALUE_LONG = {
 def die(msg: str, code: int = 2):
     print(msg, file=sys.stderr)
     raise SystemExit(code)
+
+def first_env(*keys: str) -> str:
+    for key in keys:
+        value = os.environ.get(key, "").strip()
+        if value:
+            return value
+    return ""
+
+def normalize_proxy_url(raw_url: str) -> str:
+    if "://" in raw_url:
+        return raw_url
+    return f"http://{raw_url}"
+
+def proxy_credentials_for(scheme: str) -> tuple[str, str]:
+    username_keys, password_keys = PROXY_CREDENTIAL_ENV_KEYS.get(
+        scheme, PROXY_CREDENTIAL_ENV_KEYS["all"]
+    )
+    username = first_env(*username_keys) or first_env(
+        *PROXY_CREDENTIAL_ENV_KEYS["all"][0]
+    )
+    password = first_env(*password_keys) or first_env(
+        *PROXY_CREDENTIAL_ENV_KEYS["all"][1]
+    )
+    return username, password
+
+def split_proxy_auth(proxy_url: str, scheme: str) -> tuple[str, str, str]:
+    normalized = normalize_proxy_url(proxy_url)
+    parsed = urlsplit(normalized)
+    username = parsed.username or ""
+    password = parsed.password or ""
+    if not username:
+        username, password = proxy_credentials_for(scheme)
+    hostname = parsed.hostname or ""
+    if not hostname:
+        return normalized, "", ""
+    netloc = hostname
+    if parsed.port is not None:
+        netloc = f"{netloc}:{parsed.port}"
+    sanitized = urlunsplit(
+        (parsed.scheme, netloc, parsed.path, parsed.query, parsed.fragment)
+    )
+    return sanitized, username, password
+
+def build_proxy_opener(url: str, ssl_context: ssl.SSLContext):
+    scheme = urlsplit(url).scheme or "https"
+    explicit_proxy = first_env(*PROXY_ENV_KEYS.get(scheme, ()))
+    fallback_proxy = first_env(*PROXY_ENV_KEYS["all"])
+    proxy_url = explicit_proxy or fallback_proxy
+    if not proxy_url:
+        return build_opener(HTTPSHandler(context=ssl_context))
+
+    sanitized_proxy, username, password = split_proxy_auth(proxy_url, scheme)
+    handlers = [
+        ProxyHandler({"http": sanitized_proxy, "https": sanitized_proxy}),
+        HTTPSHandler(context=ssl_context),
+    ]
+    if username:
+        password_manager = HTTPPasswordMgrWithDefaultRealm()
+        password_manager.add_password(None, sanitized_proxy, username, password)
+        handlers.append(ProxyBasicAuthHandler(password_manager))
+    return build_opener(*handlers)
 
 def parse_args(argv):
     mode = os.path.basename(argv[0])
@@ -537,6 +625,7 @@ def do_fetch(cfg):
             k, v = header.split(":", 1)
             req_headers[k.strip()] = v.strip()
     context = ssl._create_unverified_context()
+    opener = build_proxy_opener(cfg["url"], context)
     last = None
     for attempt in range(1, cfg["tries"] + 1):
         payload = None
@@ -547,7 +636,7 @@ def do_fetch(cfg):
                 payload = cfg["data"].encode("utf-8")
         req = Request(cfg["url"], headers=req_headers, method=cfg["method"], data=payload)
         try:
-            with urlopen(req, timeout=cfg["timeout"], context=context) as resp:
+            with opener.open(req, timeout=cfg["timeout"]) as resp:
                 status = getattr(resp, "status", 200)
                 if cfg["fail"] and (status < 200 or status >= 300):
                     raise HTTPError(cfg["url"], status, f"status {status}", resp.headers, None)
@@ -574,6 +663,12 @@ def do_fetch(cfg):
                 return 0
         except HTTPError as e:
             last = e
+            if e.code == 407:
+                die(
+                    f"{cfg['mode']}: proxy exige autenticacao. Configure HTTPS_PROXY/HTTP_PROXY "
+                    "com usuario:senha ou use *_PROXY_USERNAME/*_PROXY_PASSWORD.",
+                    22,
+                )
             if e.code not in RETRYABLE:
                 break
         except (URLError, TimeoutError, socket.timeout, ConnectionError) as e:
@@ -672,11 +767,38 @@ import time
 import zipfile
 from pathlib import Path
 from urllib.error import HTTPError, URLError
-from urllib.request import Request, urlopen
+from urllib.parse import urlsplit, urlunsplit
+from urllib.request import (
+    HTTPPasswordMgrWithDefaultRealm,
+    ProxyBasicAuthHandler,
+    ProxyHandler,
+    Request,
+    build_opener,
+    HTTPSHandler,
+)
 
 RETRYABLE_HTTP_STATUS = {429, 500, 502, 503, 504}
 MAX_ATTEMPTS = 5
 BACKOFF_SECONDS = 1.0
+PROXY_ENV_KEYS = {
+    "http": ("HTTP_PROXY", "http_proxy"),
+    "https": ("HTTPS_PROXY", "https_proxy"),
+    "all": ("ALL_PROXY", "all_proxy"),
+}
+PROXY_CREDENTIAL_ENV_KEYS = {
+    "http": (
+        ("HTTP_PROXY_USERNAME", "http_proxy_username"),
+        ("HTTP_PROXY_PASSWORD", "http_proxy_password"),
+    ),
+    "https": (
+        ("HTTPS_PROXY_USERNAME", "https_proxy_username"),
+        ("HTTPS_PROXY_PASSWORD", "https_proxy_password"),
+    ),
+    "all": (
+        ("PROXY_USERNAME", "proxy_username"),
+        ("PROXY_PASSWORD", "proxy_password"),
+    ),
+}
 
 
 def die(message: str) -> None:
@@ -696,16 +818,83 @@ def assert_zip_file(zip_path: Path, url: str) -> None:
     )
 
 
+def first_env(*keys: str) -> str:
+    for key in keys:
+        value = os.environ.get(key, "").strip()
+        if value:
+            return value
+    return ""
+
+
+def normalize_proxy_url(raw_url: str) -> str:
+    if "://" in raw_url:
+        return raw_url
+    return f"http://{raw_url}"
+
+
+def proxy_credentials_for(scheme: str) -> tuple[str, str]:
+    username_keys, password_keys = PROXY_CREDENTIAL_ENV_KEYS.get(
+        scheme, PROXY_CREDENTIAL_ENV_KEYS["all"]
+    )
+    username = first_env(*username_keys) or first_env(
+        *PROXY_CREDENTIAL_ENV_KEYS["all"][0]
+    )
+    password = first_env(*password_keys) or first_env(
+        *PROXY_CREDENTIAL_ENV_KEYS["all"][1]
+    )
+    return username, password
+
+
+def split_proxy_auth(proxy_url: str, scheme: str) -> tuple[str, str, str]:
+    normalized = normalize_proxy_url(proxy_url)
+    parsed = urlsplit(normalized)
+    username = parsed.username or ""
+    password = parsed.password or ""
+    if not username:
+        username, password = proxy_credentials_for(scheme)
+    hostname = parsed.hostname or ""
+    if not hostname:
+        return normalized, "", ""
+    netloc = hostname
+    if parsed.port is not None:
+        netloc = f"{netloc}:{parsed.port}"
+    sanitized = urlunsplit(
+        (parsed.scheme, netloc, parsed.path, parsed.query, parsed.fragment)
+    )
+    return sanitized, username, password
+
+
+def build_proxy_opener(url: str, ssl_context: ssl.SSLContext):
+    scheme = urlsplit(url).scheme or "https"
+    explicit_proxy = first_env(*PROXY_ENV_KEYS.get(scheme, ()))
+    fallback_proxy = first_env(*PROXY_ENV_KEYS["all"])
+    proxy_url = explicit_proxy or fallback_proxy
+    if not proxy_url:
+        return build_opener(HTTPSHandler(context=ssl_context))
+
+    sanitized_proxy, username, password = split_proxy_auth(proxy_url, scheme)
+    handlers = [
+        ProxyHandler({"http": sanitized_proxy, "https": sanitized_proxy}),
+        HTTPSHandler(context=ssl_context),
+    ]
+    if username:
+        password_manager = HTTPPasswordMgrWithDefaultRealm()
+        password_manager.add_password(None, sanitized_proxy, username, password)
+        handlers.append(ProxyBasicAuthHandler(password_manager))
+    return build_opener(*handlers)
+
+
 def download_zip(url: str, zip_path: Path, token: str) -> None:
     headers = {"User-Agent": "lazy-zip-sync/1.0"}
     if token:
         headers["Authorization"] = f"Bearer {token}"
-    request = Request(url=url, headers=headers, method="GET")
     context = ssl._create_unverified_context()
+    opener = build_proxy_opener(url, context)
     last_error: Exception | None = None
     for attempt in range(1, MAX_ATTEMPTS + 1):
+        request = Request(url=url, headers=headers, method="GET")
         try:
-            with urlopen(request, timeout=180, context=context) as response:
+            with opener.open(request, timeout=180) as response:
                 status = getattr(response, "status", 200)
                 if status < 200 or status >= 300:
                     raise HTTPError(url, status, f"status {status}", response.headers, None)
@@ -715,6 +904,11 @@ def download_zip(url: str, zip_path: Path, token: str) -> None:
                 return
         except HTTPError as error:
             last_error = error
+            if error.code == 407:
+                raise RuntimeError(
+                    "proxy exige autenticacao. Configure HTTPS_PROXY/HTTP_PROXY com usuario:senha "
+                    "ou use *_PROXY_USERNAME/*_PROXY_PASSWORD."
+                ) from error
             if error.code not in RETRYABLE_HTTP_STATUS or attempt == MAX_ATTEMPTS:
                 break
         except (URLError, TimeoutError, socket.timeout, ConnectionError) as error:
