@@ -44,8 +44,19 @@ python3 automation/misc/upgrade_resource_version.py --help
 
 # Configuração (exemplos)
 bash config/lazyvim/setup_lazyvim_mason_from_zip.sh --help
+bash config/lazyvim/setup_lazyvim_docker_toolchain.sh --help
 bash config/homebrew/setup_homebrew_proxy.sh --help
 ```
+
+## LazyVim/Mason com Docker
+
+Para máquinas corporativas onde o Neovim local é macOS mas os LSPs/ferramentas precisam rodar em Linux, existe um fluxo dedicado:
+
+- imagem Docker: `config/lazyvim/Dockerfile.nvim-toolchain`
+- bootstrap: `config/lazyvim/setup_lazyvim_docker_toolchain.sh`
+- documentação: `docs/lazyvim-docker-toolchain.md`
+
+Esse fluxo mantém o `nvim` no host e move `gopls`, `lua-language-server`, `pyright-langserver`, `stylua`, `shellcheck` e outros comandos para wrappers locais que executam via `docker exec`.
 
 ## Requisitos
 
