@@ -191,6 +191,31 @@ components:
             status:
               type: string
               description: URL de consulta de status.
+    ActionResult:
+      type: object
+      required:
+        - operationId
+        - status
+        - product
+        - action
+        - detail
+      properties:
+        operationId:
+          type: string
+          description: ID da operação.
+        status:
+          type: string
+          enum:
+            - ok
+        product:
+          type: string
+          description: Produto AWS analisado.
+        action:
+          type: string
+          description: Tipo de análise executada.
+        detail:
+          type: object
+          additionalProperties: true
     Error:
       type: object
       required:

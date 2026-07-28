@@ -592,12 +592,12 @@ paths:
             schema:
               $ref: '#/components/schemas/InsightsRequest'
       responses:
-        202:
-          description: Ação aceita (assíncrona).
+        200:
+          description: Resultado síncrono de analytics.
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/ActionAccepted'
+                $ref: '#/components/schemas/ActionResult'
         400:
           description: Requisição inválida.
           content:
@@ -1562,6 +1562,31 @@ components:
           - username
           - newPasswordSecretArn
           additionalProperties: false
+    ActionResult:
+      type: object
+      required:
+      - operationId
+      - status
+      - product
+      - action
+      - detail
+      properties:
+        operationId:
+          type: string
+          description: ID da operação.
+        status:
+          type: string
+          enum:
+          - ok
+        product:
+          type: string
+          description: Produto AWS analisado.
+        action:
+          type: string
+          description: Tipo de análise executada.
+        detail:
+          type: object
+          additionalProperties: true
     QueryInfo:
       type: object
       properties:
