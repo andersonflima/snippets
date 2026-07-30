@@ -145,7 +145,14 @@ copy_config_to_container_xdg() {
 
 build_image() {
   cp "${SCRIPT_DIR}/Dockerfile.nvim-toolchain" "${DOCKER_CONTEXT_DIR}/Dockerfile"
-  docker build -t "${IMAGE_NAME}" "${DOCKER_CONTEXT_DIR}" >/dev/null
+  # ~/.npmrc do host (proxy/registry corporativo) vai como secret de build:
+  # o npm do RUN enxerga o arquivo, mas ele nao persiste na imagem final.
+  set -- 
+  if [ -f "${HOME}/.npmrc" ]; then
+    set -- --secret "id=npmrc,src=${HOME}/.npmrc"
+    log "usando ~/.npmrc do host como secret de build (proxy/registry)"
+  fi
+  DOCKER_BUILDKIT=1 docker build "$@" -t "${IMAGE_NAME}" "${DOCKER_CONTEXT_DIR}" >/dev/null
   log "imagem atualizada: ${IMAGE_NAME}"
 }
 

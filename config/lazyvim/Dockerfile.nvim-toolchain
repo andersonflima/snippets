@@ -73,7 +73,12 @@ RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
 # npm global com cache persistente: sem `npm cache clean` (o cache mora no
 # mount do builder, não na camada da imagem) e com os mesmos timeouts/retries
 # usados nos outros Dockerfiles node do ecossistema.
+# ~/.npmrc do host (proxy/registry/CA/token corporativo) entra como SECRET:
+# disponível só durante este RUN, nunca persiste em camada da imagem (um COPY
+# assaria credenciais no histórico). required=false mantém o build funcionando
+# em máquinas sem o arquivo. O setup script passa --secret id=npmrc,src=~/.npmrc.
 RUN --mount=type=cache,target=/root/.npm \
+    --mount=type=secret,id=npmrc,target=/root/.npmrc,required=false \
     NPM_CONFIG_FETCH_RETRIES=5 \
     NPM_CONFIG_FETCH_RETRY_MINTIMEOUT=2000 \
     NPM_CONFIG_FETCH_RETRY_MAXTIMEOUT=10000 \
