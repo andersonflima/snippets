@@ -4,8 +4,9 @@
 # via docker exec. Node/npm vêm prontos da imagem (sem apt nodejs/npm) e não há
 # compilação Rust: stylua é instalado pelo pacote npm oficial (binário), e o
 # lint de Lua fica com luacheck — menos pontos de falha de rede corporativa.
-# Variante trixie (Debian 13) porque o LazyVim exige Neovim >= 0.9 e o gopls
-# atual exige Go recente — bookworm empacota nvim 0.7 / go 1.19.
+# Variante trixie (Debian 13) porque o LazyVim exige Neovim >= 0.9 —
+# bookworm empacota nvim 0.7. (Go/gopls removidos por ora: atrás do proxy
+# corporativo o go não tem bypass de TLS confiável; volta quando houver CA.)
 #
 # Cache de build (BuildKit): apt/npm/pip/go usam --mount=type=cache, então o
 # que já foi baixado sobrevive entre builds MESMO quando a camada invalida
@@ -19,9 +20,6 @@ FROM node:22-trixie-slim
 ENV DEBIAN_FRONTEND=noninteractive
 ENV NPM_CONFIG_UPDATE_NOTIFIER=false
 ENV PIP_DISABLE_PIP_VERSION_CHECK=1
-ENV GO111MODULE=on
-ENV GOBIN=/usr/local/bin
-
 # strict-ssl do npm, mesmo knob dos demais Dockerfiles do repo: em rede
 # corporativa com CA interna/proxy que quebra TLS, buildar com
 # --build-arg NPM_CONFIG_STRICT_SSL=false. Default true (seguro).
@@ -49,7 +47,6 @@ RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
     erlang-dev \
     g++ \
     gcc \
-    golang-go \
     openjdk-21-jre-headless \
     python3 \
     python3-pip \
@@ -66,6 +63,7 @@ RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
     ca-certificates \
     curl \
     git \
+    lua-check \
     lua5.1 \
     luarocks \
     make \
@@ -119,25 +117,6 @@ RUN --mount=type=cache,target=/root/.npm \
 RUN --mount=type=cache,target=/root/.cache/pip \
     --mount=type=secret,id=pip_conf,target=/etc/pip.conf,required=false \
     python3 -m pip install --break-system-packages black ruff
-
-# Go atrás de proxy corporativo: GOPROXY pode apontar o proxy Go interno
-# (Artifactory: https://<host>/artifactory/api/go/go). Sem CA e sem proxy
-# interno, GOINSECURE_ALL=1 busca direto pulando TLS/sumdb (equivalente ao
-# trusted-host do pip). Com a CA corporativa instalada acima, nada disso é
-# necessário — TLS valida normal.
-ARG GOPROXY=""
-ARG GOINSECURE_ALL=0
-RUN --mount=type=cache,target=/root/.cache/go-build \
-    --mount=type=cache,target=/root/go/pkg/mod \
-    sh -c 'if [ -n "$GOPROXY" ]; then export GOPROXY; fi; \
-    if [ "$GOINSECURE_ALL" = "1" ]; then \
-      export GOPROXY="${GOPROXY:-direct}" GOINSECURE="*" GONOSUMDB="*" GOSUMDB=off GOTOOLCHAIN=local; \
-      go install golang.org/x/tools/gopls@v0.20.0; \
-    else \
-      go install golang.org/x/tools/gopls@latest; \
-    fi'
-
-RUN luarocks install luacheck
 
 WORKDIR /workspace
 
