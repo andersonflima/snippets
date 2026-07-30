@@ -250,10 +250,10 @@ container_exec() {
   # clones do GitHub falham na verificação. Valores de proxy não têm espaço,
   # então a expansão ${VAR:+...} sem aspas é segura (e vazia quando não há
   # proxy), inclusive no bash 3.2.
-  # Git DENTRO do container: só HTTPS (rede corporativa bloqueia SSH). O HOME
-  # montado traria o ~/.gitconfig do macOS (rewrites/credential-helper) para o
-  # git linux — GIT_CONFIG_GLOBAL=/dev/null isola isso, e as entradas
-  # GIT_CONFIG_* reescrevem URLs ssh do GitHub para https.
+  # Git DENTRO do container usa o ~/.gitconfig do host (HOME montado) — é
+  # nele que vivem proxy/ssl que fazem o git funcionar na rede corporativa.
+  # As entradas GIT_CONFIG_* abaixo entram por cima só como rede de
+  # segurança: URLs ssh do GitHub viram https (rede bloqueia SSH).
   GIT_INSECURE_OPT=""
   if [ "${GIT_INSECURE:-0}" = "1" ]; then
     GIT_INSECURE_OPT="-e GIT_SSL_NO_VERIFY=1"
@@ -271,7 +271,6 @@ container_exec() {
     ${HTTPS_PROXY:+-e HTTPS_PROXY=${HTTPS_PROXY} -e https_proxy=${HTTPS_PROXY}} \
     ${NO_PROXY:+-e NO_PROXY=${NO_PROXY} -e no_proxy=${NO_PROXY}} \
     ${GIT_INSECURE_OPT} \
-    -e GIT_CONFIG_GLOBAL=/dev/null \
     -e GIT_CONFIG_COUNT=2 \
     -e GIT_CONFIG_KEY_0=url.https://github.com/.insteadOf -e GIT_CONFIG_VALUE_0=git@github.com: \
     -e GIT_CONFIG_KEY_1=url.https://github.com/.insteadOf -e GIT_CONFIG_VALUE_1=ssh://git@github.com/ \
