@@ -173,11 +173,34 @@ build_image() {
   else
     log "AVISO: nenhum pip.conf encontrado (PIP_CONFIG_FILE, ~/.config/pip, ~/Library/Application Support/pip, ~/.pip) — em rede com proxy o pip do build pode falhar com erro de SSL"
   fi
-  # SSL do pip atrás de proxy MITM: exportar PIP_TRUSTED_HOST antes de rodar
-  # o setup (ex.: PIP_TRUSTED_HOST="pypi.org files.pythonhosted.org").
+  # SSL do pip atrás de proxy MITM. PIP_TRUSTED_HOST exportado tem prioridade;
+  # sem ele, deriva os hosts do PRÓPRIO pip.conf (index-url/extra-index-url/
+  # trusted-host) — cobre índice interno (Artifactory/Nexus) sem configuração
+  # manual: o host do índice da empresa entra sozinho na lista.
+  if [ -z "${PIP_TRUSTED_HOST:-}" ] && [ -n "${PIP_CONF_SRC}" ]; then
+    PIP_TRUSTED_HOST=$(awk -F'=' '
+      tolower($1) ~ /^[[:space:]]*(extra-)?index-url[[:space:]]*$/ {
+        url=$2; gsub(/^[[:space:]]+|[[:space:]]+$/, "", url)
+        sub(/^https?:\/\//, "", url); sub(/\/.*$/, "", url); sub(/^.*@/, "", url)
+        if (url != "") hosts[url]=1
+      }
+      tolower($1) ~ /^[[:space:]]*trusted-host[[:space:]]*$/ {
+        h=$2; gsub(/^[[:space:]]+|[[:space:]]+$/, "", h)
+        if (h != "") hosts[h]=1
+      }
+      END { sep=""; for (h in hosts) { printf "%s%s", sep, h; sep=" " } }
+    ' "${PIP_CONF_SRC}")
+    if [ -n "${PIP_TRUSTED_HOST}" ]; then
+      log "trusted-host derivado do pip.conf: ${PIP_TRUSTED_HOST}"
+    fi
+  fi
   if [ -n "${PIP_TRUSTED_HOST:-}" ]; then
     set -- "$@" --build-arg "PIP_TRUSTED_HOST=${PIP_TRUSTED_HOST}"
     log "pip com trusted-host: ${PIP_TRUSTED_HOST} (verificação TLS desativada só nesses hosts)"
+  fi
+  # cert= no pip.conf apontando arquivo do HOST não existe dentro do build.
+  if [ -n "${PIP_CONF_SRC}" ] && grep -qiE '^[[:space:]]*cert[[:space:]]*=' "${PIP_CONF_SRC}"; then
+    log "AVISO: seu pip.conf tem 'cert = ...' com caminho do host — esse arquivo não existe dentro do container e pode causar erro de SSL/arquivo; remova a linha ou conte com o trusted-host"
   fi
   DOCKER_BUILDKIT=1 docker build "$@" -t "${IMAGE_NAME}" "${DOCKER_CONTEXT_DIR}" >/dev/null
   log "imagem atualizada: ${IMAGE_NAME}"
