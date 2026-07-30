@@ -173,6 +173,12 @@ build_image() {
   else
     log "AVISO: nenhum pip.conf encontrado (PIP_CONFIG_FILE, ~/.config/pip, ~/Library/Application Support/pip, ~/.pip) — em rede com proxy o pip do build pode falhar com erro de SSL"
   fi
+  # SSL do pip atrás de proxy MITM: exportar PIP_TRUSTED_HOST antes de rodar
+  # o setup (ex.: PIP_TRUSTED_HOST="pypi.org files.pythonhosted.org").
+  if [ -n "${PIP_TRUSTED_HOST:-}" ]; then
+    set -- "$@" --build-arg "PIP_TRUSTED_HOST=${PIP_TRUSTED_HOST}"
+    log "pip com trusted-host: ${PIP_TRUSTED_HOST} (verificação TLS desativada só nesses hosts)"
+  fi
   DOCKER_BUILDKIT=1 docker build "$@" -t "${IMAGE_NAME}" "${DOCKER_CONTEXT_DIR}" >/dev/null
   log "imagem atualizada: ${IMAGE_NAME}"
 }
