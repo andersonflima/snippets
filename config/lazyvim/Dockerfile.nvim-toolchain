@@ -33,6 +33,15 @@ ENV NPM_CONFIG_STRICT_SSL=${NPM_CONFIG_STRICT_SSL}
 ARG PIP_TRUSTED_HOST=""
 ENV PIP_TRUSTED_HOST=${PIP_TRUSTED_HOST}
 
+# apt atrás de proxy corporativo: quando nem via proxy o índice chega íntegro
+# ("repository is not signed"), APT_INSECURE=1 marca as sources Debian como
+# confiáveis e permite repositório sem assinatura — usar SÓ na rede corporativa.
+ARG APT_INSECURE=0
+ENV APT_INSECURE=${APT_INSECURE}
+RUN if [ "$APT_INSECURE" = "1" ]; then \
+      sed -i '/^Types: deb$/a Trusted: yes\nAllow-Insecure: yes' /etc/apt/sources.list.d/debian.sources; \
+    fi
+
 # Camada 1 — toolchains PESADOS e estáveis (mudam raro; ficam no topo para as
 # iterações abaixo não os invalidarem). ForceIPv4 evita os timeouts de IPv6
 # clássicos de proxy corporativo. keep-downloaded-debs: o default da imagem
@@ -41,8 +50,9 @@ RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
     --mount=type=cache,target=/var/lib/apt,sharing=locked \
     rm -f /etc/apt/apt.conf.d/docker-clean \
   && echo 'Binary::apt::APT::Keep-Downloaded-Packages "true";' > /etc/apt/apt.conf.d/keep-debs \
-  && apt-get update -o Acquire::Retries=3 -o Acquire::ForceIPv4=true \
-  && apt-get install -y --no-install-recommends -o Acquire::Retries=3 -o Acquire::ForceIPv4=true \
+  && if [ "$APT_INSECURE" = "1" ]; then APT_OPTS="-o Acquire::AllowInsecureRepositories=true --allow-unauthenticated"; else APT_OPTS=""; fi \
+  && apt-get update -o Acquire::Retries=3 -o Acquire::ForceIPv4=true $APT_OPTS \
+  && apt-get install -y --no-install-recommends -o Acquire::Retries=3 -o Acquire::ForceIPv4=true $APT_OPTS \
     elixir \
     erlang-dev \
     g++ \
@@ -57,8 +67,9 @@ RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
 # barato e o apt-get update reaproveita as listas do cache mount).
 RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
     --mount=type=cache,target=/var/lib/apt,sharing=locked \
-    apt-get update -o Acquire::Retries=3 -o Acquire::ForceIPv4=true \
-  && apt-get install -y --no-install-recommends -o Acquire::Retries=3 -o Acquire::ForceIPv4=true \
+    if [ "$APT_INSECURE" = "1" ]; then APT_OPTS="-o Acquire::AllowInsecureRepositories=true --allow-unauthenticated"; else APT_OPTS=""; fi \
+  && apt-get update -o Acquire::Retries=3 -o Acquire::ForceIPv4=true $APT_OPTS \
+  && apt-get install -y --no-install-recommends -o Acquire::Retries=3 -o Acquire::ForceIPv4=true $APT_OPTS \
     bash \
     ca-certificates \
     curl \
