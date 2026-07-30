@@ -1,3 +1,12 @@
+local docker_wrapper_bin = os.getenv("NVIM_DOCKER_WRAPPER_BIN")
+	or (vim.env.HOME and (vim.env.HOME .. "/.local/share/nvim-docker-toolchain/bin"))
+	or ""
+local using_docker_toolchain = docker_wrapper_bin ~= "" and vim.fn.isdirectory(docker_wrapper_bin) == 1
+
+if using_docker_toolchain then
+	vim.env.PATH = docker_wrapper_bin .. ":" .. vim.env.PATH
+end
+
 return {
 	------------------------------------------------------------------
 	-- MASON
@@ -5,6 +14,10 @@ return {
 	{
 		"mason-org/mason.nvim",
 		opts = function(_, opts)
+			if using_docker_toolchain then
+				opts.ensure_installed = {}
+				return
+			end
 			vim.list_extend(opts.ensure_installed, {
 				"gopls",
 				"pyright",
@@ -94,7 +107,10 @@ return {
 					},
 				},
 
-				elixirls = {
+				elixirls = using_docker_toolchain and {
+					cmd = { "elixir-ls" },
+					filetypes = { "elixir", "eelixir", "heex", "surface" },
+				} or {
 					cmd = { vim.fn.stdpath("data") .. "/mason/bin/elixir-ls" },
 					filetypes = { "elixir", "eelixir", "heex", "surface" },
 				},
@@ -114,7 +130,14 @@ return {
 					},
 				},
 
-				omnisharp = {
+				omnisharp = using_docker_toolchain and {
+					cmd = {
+						"omnisharp",
+						"--languageserver",
+						"--hostPID",
+						tostring(vim.fn.getpid()),
+					},
+				} or {
 					cmd = {
 						vim.fn.stdpath("data") .. "/mason/packages/omnisharp/omnisharp",
 						"--languageserver",
@@ -136,4 +159,3 @@ return {
 		end,
 	},
 }
-
