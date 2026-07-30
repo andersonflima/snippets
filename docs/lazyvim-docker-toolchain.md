@@ -21,15 +21,21 @@ Fluxo para máquina macOS com restrições de rede/permissão, mantendo o `nvim`
 
 ## Imagem base
 
-A imagem usa `debian:trixie-slim` (Debian 13): base mínima, CLI-only, sem
-X11/UI, instalando apenas runtimes e ferramentas via apt com
-`--no-install-recommends` e limpeza de caches em cada camada.
+A imagem usa `node:22-trixie-slim` (imagem oficial do Node sobre Debian 13
+slim): base mínima, CLI-only, sem X11/UI. Node e npm vêm prontos da própria
+imagem (sem `apt install nodejs npm`), o restante entra via apt com
+`--no-install-recommends`, retries e limpeza de caches em cada camada.
+
+Não há compilação Rust no build: `stylua` é instalado pelo pacote npm oficial
+`@johnnymorganz/stylua-bin` (binário pronto) e o lint de Lua fica com
+`luacheck` — isso remove o `cargo install` (etapa lenta e sensível a bloqueio
+de rede corporativa, ex.: crates.io).
 
 Por que Debian slim e não Alpine: o bootstrap usa Mason, que baixa binários
 pré-compilados linkados em **glibc** (`lua-language-server`, `omnisharp`,
 `rust-analyzer`, `elixir-ls`) — em Alpine (musl) esses binários quebram.
-Por que trixie e não bookworm: o LazyVim exige Neovim >= 0.9 e o `gopls`
-atual exige Go recente; o bookworm empacota nvim 0.7 e go 1.19.
+Por que a variante trixie e não bookworm: o LazyVim exige Neovim >= 0.9 e o
+`gopls` atual exige Go recente; o bookworm empacota nvim 0.7 e go 1.19.
 
 ## Como funciona
 
