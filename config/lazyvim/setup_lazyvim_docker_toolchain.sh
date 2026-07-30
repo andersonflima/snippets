@@ -202,6 +202,26 @@ build_image() {
   if [ -n "${PIP_CONF_SRC}" ] && grep -qiE '^[[:space:]]*cert[[:space:]]*=' "${PIP_CONF_SRC}"; then
     log "AVISO: seu pip.conf tem 'cert = ...' com caminho do host — esse arquivo não existe dentro do container e pode causar erro de SSL/arquivo; remova a linha ou conte com o trusted-host"
   fi
+  # Proxy para o apt/curl do build: sem HTTP_PROXY exportado, deriva do
+  # ~/.npmrc (linhas proxy=/https-proxy=) — npm/pip funcionam via configs
+  # próprias, mas o apt vai direto e leva "repository is not signed" quando a
+  # rede força passagem pelo proxy.
+  if [ -z "${HTTP_PROXY:-}" ] && [ -f "${HOME}/.npmrc" ]; then
+    NPMRC_PROXY=$(grep -Ei '^(https-)?proxy[[:space:]]*=' "${HOME}/.npmrc" | head -1 | cut -d= -f2- | tr -d ' \r')
+    if [ -n "${NPMRC_PROXY}" ]; then
+      export HTTP_PROXY="${NPMRC_PROXY}" HTTPS_PROXY="${NPMRC_PROXY}" NO_PROXY="${NO_PROXY:-localhost,127.0.0.1}"
+      log "proxy derivado do ~/.npmrc para o build: ${NPMRC_PROXY}"
+    fi
+  fi
+  if [ -n "${HTTP_PROXY:-}" ]; then
+    set -- "$@" --build-arg "HTTP_PROXY=${HTTP_PROXY}" --build-arg "HTTPS_PROXY=${HTTPS_PROXY:-${HTTP_PROXY}}" --build-arg "NO_PROXY=${NO_PROXY:-localhost,127.0.0.1}"
+  fi
+  # Índice apt corrompido mesmo via proxy: APT_INSECURE=1 libera repo sem
+  # assinatura (só rede corporativa).
+  if [ "${APT_INSECURE:-0}" = "1" ]; then
+    set -- "$@" --build-arg "APT_INSECURE=1"
+    log "apt em modo inseguro (repositório sem assinatura aceito) — use só atrás do proxy corporativo"
+  fi
   # CA corporativa (conserta TLS de go/curl/npm de forma definitiva):
   # exportar CORP_CA_FILE=/caminho/da/ca.pem antes de rodar o setup.
   if [ -n "${CORP_CA_FILE:-}" ] && [ -f "${CORP_CA_FILE}" ]; then
