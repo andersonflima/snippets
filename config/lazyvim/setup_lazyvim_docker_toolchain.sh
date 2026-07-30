@@ -253,7 +253,6 @@ link_wrappers() {
     pyright-langserver
     ruff
     rust-analyzer
-    selene
     shellcheck
     shfmt
     stylua
