@@ -95,7 +95,11 @@ RUN --mount=type=cache,target=/root/.npm \
     vscode-langservers-extracted \
     yaml-language-server
 
+# pip.conf do host (index-url/proxy/CA corporativo) como SECRET, igual ao
+# npmrc: visível só neste RUN em /etc/pip.conf (config global do pip), nunca
+# persiste na imagem. O setup script passa --secret id=pip_conf automaticamente.
 RUN --mount=type=cache,target=/root/.cache/pip \
+    --mount=type=secret,id=pip_conf,target=/etc/pip.conf,required=false \
     python3 -m pip install --break-system-packages black ruff
 
 RUN --mount=type=cache,target=/root/.cache/go-build \
