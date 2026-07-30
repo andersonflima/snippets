@@ -77,6 +77,16 @@ RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
     xz-utils \
     zip
 
+# CA corporativa OPCIONAL (proxy que intercepta TLS): entra como secret e é
+# instalada no trust store do sistema — certificado de CA é material PÚBLICO,
+# pode persistir na imagem. Com ela, go/curl/npm validam TLS normalmente, sem
+# precisar de bypass. O setup script passa --secret id=corp_ca via CORP_CA_FILE.
+RUN --mount=type=secret,id=corp_ca,target=/tmp/corp-ca.crt,required=false \
+    if [ -s /tmp/corp-ca.crt ]; then \
+      cp /tmp/corp-ca.crt /usr/local/share/ca-certificates/corp-ca.crt \
+      && update-ca-certificates; \
+    fi
+
 # npm global com cache persistente: sem `npm cache clean` (o cache mora no
 # mount do builder, não na camada da imagem) e com os mesmos timeouts/retries
 # usados nos outros Dockerfiles node do ecossistema.
@@ -86,6 +96,7 @@ RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
 # em máquinas sem o arquivo. O setup script passa --secret id=npmrc,src=~/.npmrc.
 RUN --mount=type=cache,target=/root/.npm \
     --mount=type=secret,id=npmrc,target=/root/.npmrc,required=false \
+    sh -c 'if [ -s /usr/local/share/ca-certificates/corp-ca.crt ]; then export NODE_EXTRA_CA_CERTS=/usr/local/share/ca-certificates/corp-ca.crt; fi; \
     NPM_CONFIG_FETCH_RETRIES=5 \
     NPM_CONFIG_FETCH_RETRY_MINTIMEOUT=2000 \
     NPM_CONFIG_FETCH_RETRY_MAXTIMEOUT=10000 \
@@ -100,7 +111,7 @@ RUN --mount=type=cache,target=/root/.npm \
     typescript \
     typescript-language-server \
     vscode-langservers-extracted \
-    yaml-language-server
+    yaml-language-server'
 
 # pip.conf do host (index-url/proxy/CA corporativo) como SECRET, igual ao
 # npmrc: visível só neste RUN em /etc/pip.conf (config global do pip), nunca
@@ -109,9 +120,22 @@ RUN --mount=type=cache,target=/root/.cache/pip \
     --mount=type=secret,id=pip_conf,target=/etc/pip.conf,required=false \
     python3 -m pip install --break-system-packages black ruff
 
+# Go atrás de proxy corporativo: GOPROXY pode apontar o proxy Go interno
+# (Artifactory: https://<host>/artifactory/api/go/go). Sem CA e sem proxy
+# interno, GOINSECURE_ALL=1 busca direto pulando TLS/sumdb (equivalente ao
+# trusted-host do pip). Com a CA corporativa instalada acima, nada disso é
+# necessário — TLS valida normal.
+ARG GOPROXY=""
+ARG GOINSECURE_ALL=0
 RUN --mount=type=cache,target=/root/.cache/go-build \
     --mount=type=cache,target=/root/go/pkg/mod \
-    go install golang.org/x/tools/gopls@latest
+    sh -c 'if [ -n "$GOPROXY" ]; then export GOPROXY; fi; \
+    if [ "$GOINSECURE_ALL" = "1" ]; then \
+      export GOPROXY="${GOPROXY:-direct}" GOINSECURE="*" GONOSUMDB="*" GOSUMDB=off GOTOOLCHAIN=local; \
+      go install golang.org/x/tools/gopls@v0.20.0; \
+    else \
+      go install golang.org/x/tools/gopls@latest; \
+    fi'
 
 RUN luarocks install luacheck
 

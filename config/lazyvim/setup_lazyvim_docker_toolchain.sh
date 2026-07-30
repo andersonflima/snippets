@@ -202,6 +202,21 @@ build_image() {
   if [ -n "${PIP_CONF_SRC}" ] && grep -qiE '^[[:space:]]*cert[[:space:]]*=' "${PIP_CONF_SRC}"; then
     log "AVISO: seu pip.conf tem 'cert = ...' com caminho do host — esse arquivo não existe dentro do container e pode causar erro de SSL/arquivo; remova a linha ou conte com o trusted-host"
   fi
+  # CA corporativa (conserta TLS de go/curl/npm de forma definitiva):
+  # exportar CORP_CA_FILE=/caminho/da/ca.pem antes de rodar o setup.
+  if [ -n "${CORP_CA_FILE:-}" ] && [ -f "${CORP_CA_FILE}" ]; then
+    set -- "$@" --secret "id=corp_ca,src=${CORP_CA_FILE}"
+    log "instalando CA corporativa no trust store da imagem: ${CORP_CA_FILE}"
+  fi
+  # Go: proxy interno e/ou bypass de TLS/sumdb quando não há CA disponível.
+  if [ -n "${GOPROXY:-}" ]; then
+    set -- "$@" --build-arg "GOPROXY=${GOPROXY}"
+    log "go com GOPROXY=${GOPROXY}"
+  fi
+  if [ "${GOINSECURE_ALL:-0}" = "1" ]; then
+    set -- "$@" --build-arg "GOINSECURE_ALL=1"
+    log "go em modo inseguro (GOPROXY=direct GOINSECURE=* GOSUMDB=off) — use só atrás do proxy corporativo"
+  fi
   DOCKER_BUILDKIT=1 docker build "$@" -t "${IMAGE_NAME}" "${DOCKER_CONTEXT_DIR}" >/dev/null
   log "imagem atualizada: ${IMAGE_NAME}"
 }
