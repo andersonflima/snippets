@@ -152,16 +152,26 @@ build_image() {
     set -- "$@" --secret "id=npmrc,src=${HOME}/.npmrc"
     log "usando ~/.npmrc do host como secret de build (proxy/registry)"
   fi
-  # pip.conf do host (index/proxy corporativo): XDG primeiro, legado depois.
+  # pip.conf do host (index/proxy corporativo). Ordem: PIP_CONFIG_FILE
+  # explicito > XDG > macOS (Application Support) > legado ~/.pip. Sem o
+  # arquivo, avisa em vez de silenciar: no proxy corporativo o pip do build
+  # quebra com erro de SSL quando builda sem essa config.
   PIP_CONF_SRC=""
-  if [ -f "${XDG_CONFIG_HOME:-${HOME}/.config}/pip/pip.conf" ]; then
-    PIP_CONF_SRC="${XDG_CONFIG_HOME:-${HOME}/.config}/pip/pip.conf"
-  elif [ -f "${HOME}/.pip/pip.conf" ]; then
-    PIP_CONF_SRC="${HOME}/.pip/pip.conf"
-  fi
+  for candidate in \
+    "${PIP_CONFIG_FILE:-}" \
+    "${XDG_CONFIG_HOME:-${HOME}/.config}/pip/pip.conf" \
+    "${HOME}/Library/Application Support/pip/pip.conf" \
+    "${HOME}/.pip/pip.conf"; do
+    if [ -n "${candidate}" ] && [ -f "${candidate}" ]; then
+      PIP_CONF_SRC="${candidate}"
+      break
+    fi
+  done
   if [ -n "${PIP_CONF_SRC}" ]; then
     set -- "$@" --secret "id=pip_conf,src=${PIP_CONF_SRC}"
     log "usando ${PIP_CONF_SRC} como secret de build (pip index/proxy)"
+  else
+    log "AVISO: nenhum pip.conf encontrado (PIP_CONFIG_FILE, ~/.config/pip, ~/Library/Application Support/pip, ~/.pip) — em rede com proxy o pip do build pode falhar com erro de SSL"
   fi
   DOCKER_BUILDKIT=1 docker build "$@" -t "${IMAGE_NAME}" "${DOCKER_CONTEXT_DIR}" >/dev/null
   log "imagem atualizada: ${IMAGE_NAME}"
