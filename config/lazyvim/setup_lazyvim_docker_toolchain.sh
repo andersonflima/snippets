@@ -149,8 +149,19 @@ build_image() {
   # o npm do RUN enxerga o arquivo, mas ele nao persiste na imagem final.
   set -- 
   if [ -f "${HOME}/.npmrc" ]; then
-    set -- --secret "id=npmrc,src=${HOME}/.npmrc"
+    set -- "$@" --secret "id=npmrc,src=${HOME}/.npmrc"
     log "usando ~/.npmrc do host como secret de build (proxy/registry)"
+  fi
+  # pip.conf do host (index/proxy corporativo): XDG primeiro, legado depois.
+  PIP_CONF_SRC=""
+  if [ -f "${XDG_CONFIG_HOME:-${HOME}/.config}/pip/pip.conf" ]; then
+    PIP_CONF_SRC="${XDG_CONFIG_HOME:-${HOME}/.config}/pip/pip.conf"
+  elif [ -f "${HOME}/.pip/pip.conf" ]; then
+    PIP_CONF_SRC="${HOME}/.pip/pip.conf"
+  fi
+  if [ -n "${PIP_CONF_SRC}" ]; then
+    set -- "$@" --secret "id=pip_conf,src=${PIP_CONF_SRC}"
+    log "usando ${PIP_CONF_SRC} como secret de build (pip index/proxy)"
   fi
   DOCKER_BUILDKIT=1 docker build "$@" -t "${IMAGE_NAME}" "${DOCKER_CONTEXT_DIR}" >/dev/null
   log "imagem atualizada: ${IMAGE_NAME}"
