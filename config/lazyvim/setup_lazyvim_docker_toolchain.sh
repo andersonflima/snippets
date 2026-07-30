@@ -366,7 +366,9 @@ bootstrap_container_toolchain() {
     rust-analyzer
   )
   local package_name
-  for package_name in "${EXTRA_MASON_PACKAGES[@]}"; do
+  # Expansão segura de array vazio sob set -u no bash 3.2 do macOS (o
+  # "${arr[@]}" puro estoura "unbound variable" quando o array está vazio).
+  for package_name in ${EXTRA_MASON_PACKAGES[@]+"${EXTRA_MASON_PACKAGES[@]}"}; do
     [ -n "${package_name}" ] || continue
     mason_packages+=("${package_name}")
   done
