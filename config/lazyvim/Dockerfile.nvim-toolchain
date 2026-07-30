@@ -1,4 +1,8 @@
-FROM ubuntu:24.04
+# Toolchain CLI-only para o fluxo LazyVim-com-Docker: base Debian slim (glibc),
+# sem X11/UI, apenas runtimes + LSPs/formatters consumidos via docker exec.
+# trixie (Debian 13) em vez de bookworm porque o LazyVim exige Neovim >= 0.9 e
+# o gopls atual exige Go recente — bookworm empacota nvim 0.7 / go 1.19.
+FROM debian:trixie-slim
 
 ENV DEBIAN_FRONTEND=noninteractive
 ENV NPM_CONFIG_UPDATE_NOTIFIER=false
@@ -18,7 +22,6 @@ RUN apt-get update \
     gcc \
     git \
     golang-go \
-    java-common \
     lua5.1 \
     luarocks \
     make \
@@ -48,13 +51,18 @@ RUN npm install -g \
     typescript \
     typescript-language-server \
     vscode-langservers-extracted \
-    yaml-language-server
+    yaml-language-server \
+  && npm cache clean --force
 
-RUN python3 -m pip install --break-system-packages black ruff
+RUN python3 -m pip install --no-cache-dir --break-system-packages black ruff
 
-RUN go install golang.org/x/tools/gopls@latest
+RUN go install golang.org/x/tools/gopls@latest \
+  && go clean -cache -modcache
 
-RUN cargo install --locked selene stylua
+# --root /usr/local deixa os binarios em /usr/local/bin, no PATH de qualquer
+# docker exec (o ~/.cargo/bin da imagem antiga dependia de shell de login).
+RUN cargo install --locked --root /usr/local selene stylua \
+  && rm -rf /root/.cargo/registry /root/.cargo/git
 
 RUN luarocks install luacheck
 
