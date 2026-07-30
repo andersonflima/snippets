@@ -245,6 +245,15 @@ ensure_container_running() {
 }
 
 container_exec() {
+  # Proxy (para os clones de plugins que o Lazy faz DENTRO do container) e,
+  # opt-in via GIT_INSECURE=1, bypass de TLS do git — atrás de proxy MITM os
+  # clones do GitHub falham na verificação. Valores de proxy não têm espaço,
+  # então a expansão ${VAR:+...} sem aspas é segura (e vazia quando não há
+  # proxy), inclusive no bash 3.2.
+  GIT_INSECURE_OPT=""
+  if [ "${GIT_INSECURE:-0}" = "1" ]; then
+    GIT_INSECURE_OPT="-e GIT_SSL_NO_VERIFY=1"
+  fi
   docker exec \
     -i \
     -w "${PWD}" \
@@ -254,6 +263,10 @@ container_exec() {
     -e XDG_DATA_HOME="${XDG_DATA_HOME}" \
     -e XDG_STATE_HOME="${XDG_STATE_HOME}" \
     -e XDG_CACHE_HOME="${XDG_CACHE_HOME}" \
+    ${HTTP_PROXY:+-e HTTP_PROXY=${HTTP_PROXY} -e http_proxy=${HTTP_PROXY}} \
+    ${HTTPS_PROXY:+-e HTTPS_PROXY=${HTTPS_PROXY} -e https_proxy=${HTTPS_PROXY}} \
+    ${NO_PROXY:+-e NO_PROXY=${NO_PROXY} -e no_proxy=${NO_PROXY}} \
+    ${GIT_INSECURE_OPT} \
     "${CONTAINER_NAME}" \
     "$@"
 }
@@ -354,6 +367,21 @@ link_wrappers() {
   done
 }
 
+ensure_lazy_nvim() {
+  # O +Lazy! sync pressupõe o lazy.nvim já presente; o auto-bootstrap da config
+  # clonaria do GitHub DENTRO do container (TLS barrado pelo proxy corporativo).
+  # Clona pelo HOST — onde o git já funciona — direto no XDG que o container
+  # enxerga.
+  local lazy_dir="${XDG_DATA_HOME}/nvim/lazy/lazy.nvim"
+  if [ -d "${lazy_dir}/.git" ]; then
+    return 0
+  fi
+  log "clonando lazy.nvim (host) em ${lazy_dir}"
+  mkdir -p "$(dirname "${lazy_dir}")"
+  git clone --filter=blob:none --branch=stable https://github.com/folke/lazy.nvim "${lazy_dir}" \
+    || die "clone do lazy.nvim falhou no host; verifique o acesso git a github.com"
+}
+
 bootstrap_container_toolchain() {
   if [ "$SKIP_BOOTSTRAP" = "1" ]; then
     return 0
@@ -397,6 +425,7 @@ copy_config_to_host
 copy_config_to_container_xdg
 build_image
 ensure_container_running
+ensure_lazy_nvim
 write_env_file
 write_wrapper_driver
 link_wrappers
