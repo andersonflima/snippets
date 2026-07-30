@@ -28,6 +28,13 @@ ENV GOBIN=/usr/local/bin
 ARG NPM_CONFIG_STRICT_SSL=true
 ENV NPM_CONFIG_STRICT_SSL=${NPM_CONFIG_STRICT_SSL}
 
+# strict-ssl do pip (mesmo padrão do bff): proxy corporativo que intercepta
+# TLS quebra o pip com CERTIFICATE_VERIFY_FAILED. Buildar com
+# PIP_TRUSTED_HOST="pypi.org files.pythonhosted.org <host-do-indice>" pula a
+# verificação SÓ desses hosts. Vazio por padrão (SSL ligado).
+ARG PIP_TRUSTED_HOST=""
+ENV PIP_TRUSTED_HOST=${PIP_TRUSTED_HOST}
+
 # Camada 1 — toolchains PESADOS e estáveis (mudam raro; ficam no topo para as
 # iterações abaixo não os invalidarem). ForceIPv4 evita os timeouts de IPv6
 # clássicos de proxy corporativo. keep-downloaded-debs: o default da imagem
