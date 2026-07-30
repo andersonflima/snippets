@@ -1,3 +1,4 @@
+# syntax=docker/dockerfile:1.7
 # Toolchain CLI-only para o fluxo LazyVim-com-Docker: base oficial Node em
 # Debian slim (glibc), sem X11/UI, apenas runtimes + LSPs/formatters consumidos
 # via docker exec. Node/npm vêm prontos da imagem (sem apt nodejs/npm) e não há
@@ -5,6 +6,14 @@
 # lint de Lua fica com luacheck — menos pontos de falha de rede corporativa.
 # Variante trixie (Debian 13) porque o LazyVim exige Neovim >= 0.9 e o gopls
 # atual exige Go recente — bookworm empacota nvim 0.7 / go 1.19.
+#
+# Cache de build (BuildKit): apt/npm/pip/go usam --mount=type=cache, então o
+# que já foi baixado sobrevive entre builds MESMO quando a camada invalida
+# (ex.: troca de base ou da lista de pacotes) — em rede corporativa lenta é a
+# diferença entre re-baixar centenas de MB e reaproveitar tudo. Os caches vivem
+# no builder, não na imagem final (o tamanho não muda). Proxy corporativo:
+# HTTP_PROXY/HTTPS_PROXY/NO_PROXY do ambiente são repassados pelo BuildKit
+# automaticamente como build args — não precisam constar aqui.
 FROM node:22-trixie-slim
 
 ENV DEBIAN_FRONTEND=noninteractive
@@ -13,35 +22,62 @@ ENV PIP_DISABLE_PIP_VERSION_CHECK=1
 ENV GO111MODULE=on
 ENV GOBIN=/usr/local/bin
 
-RUN apt-get update -o Acquire::Retries=3 \
-  && apt-get install -y --no-install-recommends -o Acquire::Retries=3 \
-    bash \
-    ca-certificates \
-    curl \
+# strict-ssl do npm, mesmo knob dos demais Dockerfiles do repo: em rede
+# corporativa com CA interna/proxy que quebra TLS, buildar com
+# --build-arg NPM_CONFIG_STRICT_SSL=false. Default true (seguro).
+ARG NPM_CONFIG_STRICT_SSL=true
+ENV NPM_CONFIG_STRICT_SSL=${NPM_CONFIG_STRICT_SSL}
+
+# Camada 1 — toolchains PESADOS e estáveis (mudam raro; ficam no topo para as
+# iterações abaixo não os invalidarem). ForceIPv4 evita os timeouts de IPv6
+# clássicos de proxy corporativo. keep-downloaded-debs: o default da imagem
+# apaga os .deb após instalar; o cache mount só ajuda se eles ficarem.
+RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
+    --mount=type=cache,target=/var/lib/apt,sharing=locked \
+    rm -f /etc/apt/apt.conf.d/docker-clean \
+  && echo 'Binary::apt::APT::Keep-Downloaded-Packages "true";' > /etc/apt/apt.conf.d/keep-debs \
+  && apt-get update -o Acquire::Retries=3 -o Acquire::ForceIPv4=true \
+  && apt-get install -y --no-install-recommends -o Acquire::Retries=3 -o Acquire::ForceIPv4=true \
     elixir \
     erlang-dev \
     g++ \
     gcc \
-    git \
     golang-go \
-    lua5.1 \
-    luarocks \
-    make \
-    neovim \
     openjdk-21-jre-headless \
     python3 \
     python3-pip \
     python3-venv \
+    ruby
+
+# Camada 2 — utilitários LEVES (a parte que mais itera; re-rodar só ela é
+# barato e o apt-get update reaproveita as listas do cache mount).
+RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
+    --mount=type=cache,target=/var/lib/apt,sharing=locked \
+    apt-get update -o Acquire::Retries=3 -o Acquire::ForceIPv4=true \
+  && apt-get install -y --no-install-recommends -o Acquire::Retries=3 -o Acquire::ForceIPv4=true \
+    bash \
+    ca-certificates \
+    curl \
+    git \
+    lua5.1 \
+    luarocks \
+    make \
+    neovim \
     ripgrep \
-    ruby \
     shellcheck \
     shfmt \
     unzip \
     xz-utils \
-    zip \
-  && rm -rf /var/lib/apt/lists/*
+    zip
 
-RUN npm install -g --fetch-retries=5 \
+# npm global com cache persistente: sem `npm cache clean` (o cache mora no
+# mount do builder, não na camada da imagem) e com os mesmos timeouts/retries
+# usados nos outros Dockerfiles node do ecossistema.
+RUN --mount=type=cache,target=/root/.npm \
+    NPM_CONFIG_FETCH_RETRIES=5 \
+    NPM_CONFIG_FETCH_RETRY_MINTIMEOUT=2000 \
+    NPM_CONFIG_FETCH_RETRY_MAXTIMEOUT=10000 \
+    npm install -g --prefer-offline --no-audit --no-fund \
     @fsouza/prettierd \
     @johnnymorganz/stylua-bin \
     @tailwindcss/language-server \
@@ -52,13 +88,14 @@ RUN npm install -g --fetch-retries=5 \
     typescript \
     typescript-language-server \
     vscode-langservers-extracted \
-    yaml-language-server \
-  && npm cache clean --force
+    yaml-language-server
 
-RUN python3 -m pip install --no-cache-dir --break-system-packages black ruff
+RUN --mount=type=cache,target=/root/.cache/pip \
+    python3 -m pip install --break-system-packages black ruff
 
-RUN go install golang.org/x/tools/gopls@latest \
-  && go clean -cache -modcache
+RUN --mount=type=cache,target=/root/.cache/go-build \
+    --mount=type=cache,target=/root/go/pkg/mod \
+    go install golang.org/x/tools/gopls@latest
 
 RUN luarocks install luacheck
 
