@@ -103,6 +103,10 @@ local function reload_plugin()
 end
 
 local function fast_forward_to_main()
+	-- Máquina com toolchain docker (sem git para github): não tentar fetch.
+	if require("config.offline").is_offline() then
+		return
+	end
 	if not path_exists(plugin_dir .. "/.git") then
 		return
 	end

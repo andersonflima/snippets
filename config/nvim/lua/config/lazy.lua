@@ -2,10 +2,11 @@
 -- Calcula lazypath para suportar o restante do fluxo.
 local lazypath = vim.fn.stdpath("data") .. "/lazy/lazy.nvim"
 
--- Toolchain docker ativo (env.sh sourceado) = rede corporativa sem git para
--- github: plugins chegam por ZIP via setup; nenhum git clone/fetch deve
--- acontecer pelo lazy (clone de faltante e checker desligados).
-local offline = vim.env.NVIM_DOCKER_STATE_ROOT ~= nil
+-- Toolchain docker presente = rede corporativa sem git para github: plugins
+-- chegam por ZIP via setup; nenhum git clone/fetch deve acontecer pelo lazy
+-- (clone de faltante e checker desligados). Detecção por filesystem — não
+-- depende de env.sh sourceado no shell que abriu o nvim.
+local offline = require("config.offline").is_offline()
 
 if not vim.loop.fs_stat(lazypath) then
 	if offline then

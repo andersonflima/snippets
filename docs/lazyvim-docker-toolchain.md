@@ -129,10 +129,13 @@ que carrega os plugins; o XDG isolado do toolchain fica só com o Mason/LSPs
 Linux do container. O `Lazy! sync` dentro do container fica desligado
 (opt-in `CONTAINER_SYNC=1`, exige rede liberada).
 
-Com o toolchain ativo (`env.sh` sourceado, `NVIM_DOCKER_STATE_ROOT` no env),
-a config do nvim entra em **modo offline**: o lazy não clona plugin faltante
-nem roda checker de updates — nenhum `git clone`/`git fetch` na abertura do
-editor (era a fonte do `Could not read from remote repository` no startup).
+Com o toolchain presente na máquina (detecção por filesystem —
+`~/.local/share/nvim-docker-toolchain` existe — independe de `env.sh`
+sourceado), a config do nvim entra em **modo offline**: o lazy não clona
+plugin faltante nem roda checker de updates, e o auto-update do pingu não
+faz fetch — nenhum `git clone`/`git fetch` na abertura do editor (era a
+fonte do `Could not read from remote repository` em todos os plugins no
+startup).
 
 Alternativa opt-in: `PLUGINS_FROM_GIT=1` clona pelo git do host.
 
