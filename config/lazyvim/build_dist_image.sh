@@ -13,8 +13,11 @@ set -euo pipefail
 #   --platforms  Default: linux/arm64,linux/amd64 (multi-arch via buildx)
 #   --load       Builda só a arch local e carrega no docker local (sem push);
 #                sem --load o resultado é enviado com push para o registry.
+#   --public     NÃO usa token do gh: repos privados do manifesto (ex.:
+#                pingu) ficam de fora e a imagem pode ser pública no
+#                registry. Default quando o destino é o Docker Hub público.
 #
-# Repos privados do manifesto (ex.: pingu) entram na imagem quando houver
+# Sem --public, repos privados do manifesto entram na imagem quando houver
 # token do gh disponível (gh auth token) — a imagem deve ficar PRIVADA no
 # registry por causa disso.
 
@@ -26,12 +29,14 @@ SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 IMAGE_REF="docker.io/andersonflima/nvim-toolchain:dist"
 PLATFORMS="linux/arm64,linux/amd64"
 LOAD=0
+PUBLIC=0
 
 while [ "$#" -gt 0 ]; do
   case "$1" in
     --image) IMAGE_REF="${2:-}"; shift 2 ;;
     --platforms) PLATFORMS="${2:-}"; shift 2 ;;
     --load) LOAD=1; shift ;;
+    --public) PUBLIC=1; shift ;;
     *) log "parametro invalido: $1"; exit 1 ;;
   esac
 done
@@ -45,7 +50,9 @@ cp "${SCRIPT_DIR}/setup_lazyvim_mason_from_zip.sh" "${CONTEXT_DIR}/setup_lazyvim
 
 # Token do gh para bakear repos privados do manifesto (opcional).
 GH_TOKEN_FILE=""
-if command -v gh >/dev/null 2>&1 && gh auth token >/dev/null 2>&1; then
+if [ "${PUBLIC}" = "1" ]; then
+  log "modo --public: repos privados do manifesto ficam de fora (imagem pode ser pública)"
+elif command -v gh >/dev/null 2>&1 && gh auth token >/dev/null 2>&1; then
   GH_TOKEN_FILE="${CONTEXT_DIR}/.gh_token"
   gh auth token > "${GH_TOKEN_FILE}"
   chmod 600 "${GH_TOKEN_FILE}"

@@ -122,21 +122,23 @@ O foco do toolchain: **toda instalação/update acontece dentro do container**;
 o mac (usuário corporativo com comandos restritos) só consome. A forma mais
 robusta é a imagem **dist**, buildada em rede aberta com tudo dentro:
 
-- plugins do manifesto já clonados em `/opt/nvim-dist/lazy` (inclusive os
-  privados, quando o build teve token do gh);
+- plugins do manifesto já clonados em `/opt/nvim-dist/lazy` (a imagem
+  publicada é **pública e sem os repos privados** — pingu segue manual;
+  `build_dist_image.sh` sem `--public` gera variante com privados, que só
+  pode ir para registry privado);
 - os 4 LSPs que viriam do Mason (`lua-language-server`, `rust-analyzer`,
   `elixir-ls`, `omnisharp`) baixados dos releases oficiais e no PATH.
 
 Build/publicação (máquina com rede aberta):
 
 ```bash
-bash config/lazyvim/build_dist_image.sh            # multi-arch + push
+bash config/lazyvim/build_dist_image.sh --public   # multi-arch + push (Hub público)
 bash config/lazyvim/build_dist_image.sh --load     # build local p/ validar
 ```
 
 No PC corporativo o setup **puxa a dist por padrão**
-(`docker.io/andersonflima/nvim-toolchain:dist` — repositório privado: rode
-`docker login` uma vez) e **semeia os plugins da imagem** para
+(`docker.io/andersonflima/nvim-toolchain:dist`, repositório público — sem
+necessidade de `docker login`) e **semeia os plugins da imagem** para
 `~/.local/share/nvim/lazy` copiando dentro do container via HOME montado —
 zero download de github na rede corporativa. `PREBUILT_IMAGE=<ref>` troca a
 referência; `PREBUILT_IMAGE=""` desliga (volta ao build local + ZIP).
