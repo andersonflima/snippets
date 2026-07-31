@@ -152,6 +152,9 @@ copy_config_to_container_xdg() {
 
 build_image() {
   cp "${SCRIPT_DIR}/Dockerfile.nvim-toolchain" "${DOCKER_CONTEXT_DIR}/Dockerfile"
+  # O Dockerfile faz COPY do script do manifesto (camada de dist); precisa
+  # existir no contexto mesmo no build corporativo (BAKE_PLUGINS=0).
+  cp "${SCRIPT_DIR}/setup_lazyvim_mason_from_zip.sh" "${DOCKER_CONTEXT_DIR}/setup_lazyvim_mason_from_zip.sh"
   # ~/.npmrc do host (proxy/registry corporativo) vai como secret de build:
   # o npm do RUN enxerga o arquivo, mas ele nao persiste na imagem final.
   set -- 
@@ -237,6 +240,36 @@ build_image() {
   fi
   DOCKER_BUILDKIT=1 docker build "$@" -t "${IMAGE_NAME}" "${DOCKER_CONTEXT_DIR}" >/dev/null
   log "imagem atualizada: ${IMAGE_NAME}"
+}
+
+ensure_image() {
+  # Preferência: imagem DIST pré-buildada (plugins + LSPs já dentro), gerada
+  # em rede aberta por build_dist_image.sh — o PC corporativo só puxa.
+  # PREBUILT_IMAGE="" desliga; pull falhando (sem docker login no registry
+  # privado, sem rede), cai para o build local como sempre.
+  local prebuilt="${PREBUILT_IMAGE-docker.io/andersonflima/nvim-toolchain:dist}"
+  if [ -n "${prebuilt}" ]; then
+    log "puxando imagem pré-buildada: ${prebuilt}"
+    if docker pull "${prebuilt}" >/dev/null 2>&1; then
+      docker tag "${prebuilt}" "${IMAGE_NAME}"
+      log "imagem pré-buildada em uso como ${IMAGE_NAME}"
+      return 0
+    fi
+    log "AVISO: pull de ${prebuilt} falhou (docker login? rede?); caindo para build local"
+  fi
+  build_image
+}
+
+seed_plugins_from_image() {
+  # Imagem dist traz /opt/nvim-dist/lazy: copia (DENTRO do container, via
+  # HOME montado) para o data dir do nvim do HOST. Retorna 1 quando a imagem
+  # não é dist — o chamador cai para o fluxo ZIP.
+  if ! container_exec bash -lc "[ -d /opt/nvim-dist/lazy ]" 2>/dev/null; then
+    return 1
+  fi
+  log "semeando plugins da imagem dist para ${HOST_NVIM_DATA_DIR}/lazy"
+  container_exec bash -lc "mkdir -p '${HOST_NVIM_DATA_DIR}/lazy' && cp -a /opt/nvim-dist/lazy/. '${HOST_NVIM_DATA_DIR}/lazy/'"
+  log "plugins instalados no host: $(ls -1 "${HOST_NVIM_DATA_DIR}/lazy" 2>/dev/null | wc -l | tr -d ' ') em ${HOST_NVIM_DATA_DIR}/lazy"
 }
 
 detect_host_git_config() {
@@ -461,7 +494,7 @@ install_plugins_from_zip() {
   # máquina sem essa restrição ou container indisponível.
   log "instalando lazy.nvim + plugins por ZIP da main (dentro do container)"
   local zip_invocation
-  zip_invocation="bash '${SCRIPT_DIR}/setup_lazyvim_mason_from_zip.sh' --plugins-only --data-dir '${HOST_NVIM_DATA_DIR}'"
+  zip_invocation="bash '${SCRIPT_DIR}/setup_lazyvim_mason_from_zip.sh' --plugins-only --force --data-dir '${HOST_NVIM_DATA_DIR}'"
   if [ -n "${GITHUB_BASE:-}" ]; then
     zip_invocation="${zip_invocation} --github-base '${GITHUB_BASE}'"
   fi
@@ -478,6 +511,7 @@ install_plugins_from_zip() {
     log "AVISO: ZIP dentro do container falhou; tentando no host"
     if ! bash "${SCRIPT_DIR}/setup_lazyvim_mason_from_zip.sh" \
       --plugins-only \
+      --force \
       --data-dir "${HOST_NVIM_DATA_DIR}" \
       ${GITHUB_BASE:+--github-base "${GITHUB_BASE}"}; then
       log "AVISO: alguns plugins falharam no ZIP (veja o log acima) — os demais foram instalados"
@@ -534,16 +568,17 @@ bootstrap_container_toolchain() {
 
 copy_config_to_host
 copy_config_to_container_xdg
-build_image
+ensure_image
 ensure_container_running
-# Fluxo ÚNICO de dependências: ZIP da main extraído no data dir do nvim do
-# HOST. O git para github não funciona nesta rede em nenhuma rota (403 no
-# https, ssh bloqueado) — o fluxo git de plugins foi removido de vez;
-# PLUGINS_FROM_GIT/PLUGINS_FROM_ZIP são ignorados (aviso abaixo).
+# Dependências: preferir os plugins JÁ DENTRO da imagem dist (nenhum download
+# na máquina corporativa); sem imagem dist, ZIP da main baixado/extraído
+# dentro do container. O git para github não funciona nesta rede em nenhuma
+# rota — o fluxo git de plugins foi removido de vez; PLUGINS_FROM_GIT/
+# PLUGINS_FROM_ZIP são ignorados (aviso abaixo).
 if [ "${PLUGINS_FROM_GIT:-0}" = "1" ]; then
-  log "AVISO: PLUGINS_FROM_GIT ignorado — plugins vêm SEMPRE por ZIP da main"
+  log "AVISO: PLUGINS_FROM_GIT ignorado — plugins vêm da imagem dist ou por ZIP da main"
 fi
-install_plugins_from_zip
+seed_plugins_from_image || install_plugins_from_zip
 write_env_file
 write_wrapper_driver
 link_wrappers
