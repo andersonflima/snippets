@@ -64,6 +64,8 @@ tar -xzf "${TARBALL}" -C "${TMP}"
 [ -d "${TMP}/package/lazy" ] || die "pacote sem diretorio lazy/"
 
 mkdir -p "${LAZY_DIR}"
+# Remove stubs *.cloning (temporários de clones travados do lazy.nvim).
+rm -rf "${LAZY_DIR}"/*.cloning
 updated=0
 for plugin_path in "${TMP}/package/lazy"/*; do
   plugin_name="$(basename "${plugin_path}")"
