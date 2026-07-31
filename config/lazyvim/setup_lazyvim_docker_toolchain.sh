@@ -260,6 +260,9 @@ ensure_container_running() {
 
   # HOME/USER/GIT_CONFIG_GLOBAL no run: docker exec herda o env do container,
   # então até um "docker exec ... git" manual enxerga a config de git do host.
+  # As entradas GIT_CONFIG_* também entram aqui pelo mesmo motivo — inclusive
+  # http.sslBackend=gnutls: o git da imagem (Debian) só suporta GnuTLS e a
+  # config do host pode forçar openssl ("Unsupported SSL backend 'openssl'").
   docker run -d \
     --name "${CONTAINER_NAME}" \
     -v "${HOME}:${HOME}" \
@@ -267,6 +270,11 @@ ensure_container_running() {
     -e HOME="${HOME}" \
     -e USER="${USER:-user}" \
     ${HOST_GIT_CONFIG:+-e GIT_CONFIG_GLOBAL=${HOST_GIT_CONFIG}} \
+    -e GIT_CONFIG_COUNT=4 \
+    -e GIT_CONFIG_KEY_0=url.https://github.com/.insteadOf -e GIT_CONFIG_VALUE_0=git@github.com: \
+    -e GIT_CONFIG_KEY_1=url.https://github.com/.insteadOf -e GIT_CONFIG_VALUE_1=ssh://git@github.com/ \
+    -e GIT_CONFIG_KEY_2=safe.directory -e GIT_CONFIG_VALUE_2='*' \
+    -e GIT_CONFIG_KEY_3=http.sslBackend -e GIT_CONFIG_VALUE_3=gnutls \
     "${IMAGE_NAME}" >/dev/null
 }
 
@@ -310,10 +318,11 @@ container_exec() {
     ${EXEC_NO_PROXY:+-e NO_PROXY=${EXEC_NO_PROXY} -e no_proxy=${EXEC_NO_PROXY}} \
     ${GIT_INSECURE_OPT} \
     ${HOST_GIT_CONFIG:+-e GIT_CONFIG_GLOBAL=${HOST_GIT_CONFIG}} \
-    -e GIT_CONFIG_COUNT=3 \
+    -e GIT_CONFIG_COUNT=4 \
     -e GIT_CONFIG_KEY_0=url.https://github.com/.insteadOf -e GIT_CONFIG_VALUE_0=git@github.com: \
     -e GIT_CONFIG_KEY_1=url.https://github.com/.insteadOf -e GIT_CONFIG_VALUE_1=ssh://git@github.com/ \
     -e GIT_CONFIG_KEY_2=safe.directory -e GIT_CONFIG_VALUE_2='*' \
+    -e GIT_CONFIG_KEY_3=http.sslBackend -e GIT_CONFIG_VALUE_3=gnutls \
     "${CONTAINER_NAME}" \
     "$@"
 }
@@ -377,10 +386,11 @@ exec docker exec \
   -e XDG_STATE_HOME="${xdg_state_home}" \
   -e XDG_CACHE_HOME="${xdg_cache_home}" \
   ${git_config_global:+-e GIT_CONFIG_GLOBAL=${git_config_global}} \
-  -e GIT_CONFIG_COUNT=3 \
+  -e GIT_CONFIG_COUNT=4 \
   -e GIT_CONFIG_KEY_0=url.https://github.com/.insteadOf -e GIT_CONFIG_VALUE_0=git@github.com: \
   -e GIT_CONFIG_KEY_1=url.https://github.com/.insteadOf -e GIT_CONFIG_VALUE_1=ssh://git@github.com/ \
   -e GIT_CONFIG_KEY_2=safe.directory -e GIT_CONFIG_VALUE_2='*' \
+  -e GIT_CONFIG_KEY_3=http.sslBackend -e GIT_CONFIG_VALUE_3=gnutls \
   "${container_name}" \
   bash -lc '
     set -euo pipefail
