@@ -124,3 +124,4 @@ require("lazy").setup({
 })
 
 require("config.plugins_update")
+require("config.devin")

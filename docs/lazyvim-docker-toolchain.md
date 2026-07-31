@@ -193,6 +193,21 @@ fonte do `Could not read from remote repository` em todos os plugins no
 startup).
 
 
+## Devin CLI e MCP do Tesus (máquina corporativa)
+
+- **Devin como provider do pingu**: com o binário `devin` no PATH, a config
+  do nvim seta `PINGU_AI_PROVIDER=devin` por padrão (respeita valor já
+  exportado). Ajustes: `PINGU_DEVIN_COMMAND`, `PINGU_DEVIN_EXTRA_ARGS`
+  (flags extras antes do prompt), `PINGU_DEVIN_MODEL`,
+  `PINGU_DEVIN_TIMEOUT_MS`.
+- **:Devin no nvim**: sem args abre o CLI num terminal; `:Devin <prompt>`
+  envia o prompt; em modo visual, `:'<,'>Devin` anexa a seleção.
+- **MCP do Tesus em container** (vault local preservado):
+  `bash config/tesus/setup_tesus_mcp_docker.sh` builda a imagem (token npm
+  via secret), sobe o container `tesus-mcp-toolchain` com `~/.brainlink`
+  do host montado e gera o wrapper `tesus-mcp-docker` (stdio). Registro:
+  `claude mcp add tesus -s user -- ~/.local/share/nvim-docker-toolchain/bin/tesus-mcp-docker`.
+
 ## Observações operacionais
 
 - O XDG do container é separado do `~/.local/share/nvim` do host para não misturar Mason Linux com Mason macOS.
