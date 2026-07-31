@@ -143,6 +143,25 @@ necessidade de `docker login`) e **semeia os plugins da imagem** para
 zero download de github na rede corporativa. `PREBUILT_IMAGE=<ref>` troca a
 referência; `PREBUILT_IMAGE=""` desliga (volta ao build local + ZIP).
 
+## Update dos plugins (sem imagem nova, sem github)
+
+O canal de update na máquina corporativa é o **registry npm** (a rota que o
+proxy de lá comprovadamente deixa passar): o pacote privado
+`@andespindola/nvim-plugins-dist` carrega todos os plugins do manifesto
+(inclusive os privados — o pacote é restricted).
+
+- **Publicar versão nova** (máquina com rede aberta):
+  `bash config/lazyvim/publish_nvim_plugins_npm.sh` — clona o manifesto,
+  monta o pacote e publica `--access restricted` (confere `private` no fim).
+- **Atualizar na máquina corporativa**: comando `nvim-plugins-update` (vai
+  para o PATH do toolchain no setup) ou `:PluginsUpdate` dentro do nvim —
+  baixa o `@latest` via npm com um token de LEITURA e substitui os plugins
+  em `~/.local/share/nvim/lazy`. Fora do toolchain, `:PluginsUpdate` vira
+  `Lazy update` normal.
+- **Token (uma vez)**: gravar o token de leitura em
+  `~/.local/share/nvim-docker-toolchain/npm-token` (`chmod 600`). O token é
+  granular (só lê esse pacote); o proxy vem do próprio `~/.npmrc` da máquina.
+
 ## Instalação das dependências (plugins) — fallback ZIP
 
 **Sem imagem dist: ZIP da main.** O setup baixa o ZIP de cada dependência
