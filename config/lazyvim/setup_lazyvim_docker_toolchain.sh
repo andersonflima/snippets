@@ -383,6 +383,22 @@ link_wrappers() {
   done
 }
 
+install_plugins_from_zip() {
+  # Rede que bloqueia git/curl para github: PLUGINS_FROM_ZIP=1 usa o fluxo ZIP
+  # já existente (Python/urllib com proxy, sem curl) para instalar lazy.nvim +
+  # todos os plugins do manifesto direto no XDG que o container enxerga.
+  log "instalando lazy.nvim + plugins por ZIP (fluxo setup_lazyvim_mason_from_zip)"
+  # Falha parcial não aborta: plugin privado/bloqueado (ex.: repo pessoal sem
+  # auth no zip) fica de fora e o restante segue utilizável; instale o faltante
+  # manualmente (zip no browser → extrair em ${XDG_DATA_HOME}/nvim/lazy/<nome>).
+  if ! bash "${SCRIPT_DIR}/setup_lazyvim_mason_from_zip.sh" \
+    --plugins-only \
+    --data-dir "${XDG_DATA_HOME}/nvim" \
+    ${GITHUB_BASE:+--github-base "${GITHUB_BASE}"}; then
+    log "AVISO: alguns plugins falharam no ZIP (veja o log acima) — os demais foram instalados"
+  fi
+}
+
 ensure_lazy_nvim() {
   # O +Lazy! sync pressupõe o lazy.nvim já presente; o auto-bootstrap da config
   # clonaria do GitHub DENTRO do container (TLS barrado pelo proxy corporativo).
@@ -400,6 +416,10 @@ ensure_lazy_nvim() {
 
 bootstrap_container_toolchain() {
   if [ "$SKIP_BOOTSTRAP" = "1" ]; then
+    return 0
+  fi
+  if [ "${PLUGINS_FROM_ZIP:-0}" = "1" ]; then
+    log "plugins instalados por ZIP: pulando Lazy! sync (sem rede no bootstrap)"
     return 0
   fi
 
@@ -441,7 +461,11 @@ copy_config_to_host
 copy_config_to_container_xdg
 build_image
 ensure_container_running
-ensure_lazy_nvim
+if [ "${PLUGINS_FROM_ZIP:-0}" = "1" ]; then
+  install_plugins_from_zip
+else
+  ensure_lazy_nvim
+fi
 write_env_file
 write_wrapper_driver
 link_wrappers
