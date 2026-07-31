@@ -32,8 +32,8 @@ O que o script faz:
   2. sobe um container persistente com o HOME montado;
   3. prepara um XDG isolado em ~/.local/share/nvim-docker-toolchain/xdg-*;
   4. opcionalmente copia a config versionada do Neovim para ~/.config/nvim;
-  5. instala lazy.nvim + plugins por ZIP da main (default; PLUGINS_FROM_GIT=1
-     usa o git do host);
+  5. instala lazy.nvim + plugins baixando o ZIP da main de cada um e
+     extraindo em ~/.local/share/nvim/lazy (fluxo único — sem git);
   6. gera wrappers locais que fazem docker exec nas ferramentas;
   7. opcionalmente (CONTAINER_SYNC=1) roda bootstrap headless do Lazy/Mason
      dentro do container — exige rede liberada.
@@ -447,110 +447,8 @@ link_wrappers() {
   done
 }
 
-host_git_base() {
-  # Deriva do remote origin deste PRÓPRIO repo o formato de URL/transporte que
-  # comprovadamente funciona nesta rede — o git pull do snippets é o canal
-  # provado; os clones de plugin tentam primeiro esse mesmo caminho.
-  local origin
-  origin="$(git -C "${SCRIPT_DIR}" remote get-url origin 2>/dev/null)" || return 0
-  case "${origin}" in
-    *github.com[:/]*)
-      printf '%s' "${origin}" | sed -E 's#(.*github\.com[:/]).*#\1#'
-      ;;
-  esac
-}
-
-host_git_clone() {
-  # Clone pelo git do HOST com diagnóstico. Tenta, em ordem: (1) a URL no
-  # mesmo formato do remote deste repo (transporte provado na rede), (2)
-  # https, (3) ssh na porta 22, (4) ssh over 443 (ssh.github.com) — cobre
-  # proxy que devolve 403 para github ("expected flush after ref listing")
-  # com porta 22 também bloqueada. GIT_INSECURE=1 vale aqui também (proxy
-  # MITM sem CA). GIT_TERMINAL_PROMPT=0 e ssh em BatchMode: num loop de
-  # dezenas de clones, um prompt interativo travaria o setup. O stderr NÃO é
-  # engolido: todas as tentativas ficam em ${STATE_ROOT}/host-git-clone.err
-  # e a linha fatal aparece no log.
-  local repo="$1"
-  local dest="$2"
-  local clone_args="$3"
-  local err_log="${STATE_ROOT}/host-git-clone.err"
-  : > "${err_log}"
-  local base
-  base="$(host_git_base)"
-  local candidates=""
-  if [ -n "${base}" ]; then
-    candidates="${base}${repo}.git"
-  fi
-  candidates="${candidates} https://github.com/${repo} git@github.com:${repo}.git ssh://git@ssh.github.com:443/${repo}.git"
-  local url
-  for url in ${candidates}; do
-    printf '>> tentativa: %s\n' "${url}" >> "${err_log}"
-    if GIT_TERMINAL_PROMPT=0 GIT_SSH_COMMAND="${GIT_SSH_COMMAND:-ssh -oBatchMode=yes -oStrictHostKeyChecking=accept-new}" \
-      git ${GIT_INSECURE_HOST_OPT} clone ${clone_args} "${url}" "${dest}" 2>>"${err_log}"; then
-      return 0
-    fi
-    [ -n "${dest}" ] && rm -rf "${dest}"
-  done
-  return 1
-}
-
-host_clone_last_error() {
-  # Prefere a última linha fatal:/error: do git; senão a última linha crua.
-  local err_log="${STATE_ROOT}/host-git-clone.err"
-  local line=""
-  if [ -f "${err_log}" ]; then
-    line="$(grep -E '^(fatal|error):' "${err_log}" | tail -1)"
-    [ -n "${line}" ] || line="$(tail -1 "${err_log}")"
-  fi
-  printf '%s' "${line}"
-}
-
-# -c http.sslVerify=false para os clones do host quando GIT_INSECURE=1
-# (expansão sem aspas de propósito: vira dois argumentos, -c e o valor).
-GIT_INSECURE_HOST_OPT=""
-if [ "${GIT_INSECURE:-0}" = "1" ]; then
-  GIT_INSECURE_HOST_OPT="-c http.sslVerify=false"
-fi
-
-install_plugins_from_host_git() {
-  # Canal alternativo: o git do HOST (mesmo caminho do git pull deste repo),
-  # com o ~/.gitconfig do usuário — inclusive para repos privados. Clona cada
-  # plugin do manifesto (depth 1) no data dir do nvim do HOST, que é quem
-  # carrega os plugins. Falha por plugin não aborta.
-  local lazy_dir="${HOST_NVIM_DATA_DIR}/lazy"
-  mkdir -p "${lazy_dir}"
-  local failed=""
-  local total=0
-  local ok=0
-  while IFS='|' read -r plugin_name repo branch; do
-    [ -n "${plugin_name}" ] || continue
-    [ -n "${repo}" ] || continue
-    total=$((total + 1))
-    if [ -d "${lazy_dir}/${plugin_name}" ]; then
-      ok=$((ok + 1))
-      continue
-    fi
-    local clone_args="--depth 1"
-    if [ -n "${branch}" ] && [ "${branch}" != "default" ]; then
-      clone_args="${clone_args} --branch ${branch}"
-    fi
-    log "plugin (git host): ${plugin_name} (${repo}@${branch:-default})"
-    if host_git_clone "${repo}" "${lazy_dir}/${plugin_name}" "${clone_args}" >/dev/null; then
-      ok=$((ok + 1))
-    else
-      failed="${failed} ${plugin_name}"
-      log "falha no clone: ${plugin_name} (${repo}) — $(host_clone_last_error)"
-    fi
-  done < <(bash "${SCRIPT_DIR}/setup_lazyvim_mason_from_zip.sh" --print-manifest)
-  if [ -n "${failed}" ]; then
-    log "AVISO: plugins com falha (git host):${failed} — os demais (${ok}/${total}) foram instalados"
-  else
-    log "todos os plugins instalados via git do host (${ok}/${total})"
-  fi
-}
-
 install_plugins_from_zip() {
-  # Fluxo PADRÃO: baixa o ZIP da main (archive/HEAD.zip para branch default,
+  # Fluxo ÚNICO: baixa o ZIP da main (archive/HEAD.zip para branch default,
   # refs/heads/<branch>.zip quando pinado) de cada dependência via Python/
   # urllib com proxy, sem git nem curl — único canal que passa em rede
   # corporativa que 403a as rotas do git e bloqueia SSH. Instala lazy.nvim +
@@ -573,7 +471,7 @@ bootstrap_container_toolchain() {
   if [ "$SKIP_BOOTSTRAP" = "1" ]; then
     return 0
   fi
-  # Plugins chegam pré-instalados (zip da main por padrão, ou git do host):
+  # Plugins chegam pré-instalados (zip da main):
   # o Lazy! sync + MasonInstall dentro do container precisam de rede que a
   # empresa bloqueia. CONTAINER_SYNC=1 força o bootstrap (rede aberta).
   if [ "${CONTAINER_SYNC:-0}" != "1" ]; then
@@ -619,13 +517,14 @@ copy_config_to_host
 copy_config_to_container_xdg
 build_image
 ensure_container_running
-# Default: ZIP da main para todas as dependências (PLUGINS_FROM_ZIP=1 é
-# redundante e continua aceito). PLUGINS_FROM_GIT=1 usa o git do host.
+# Fluxo ÚNICO de dependências: ZIP da main extraído no data dir do nvim do
+# HOST. O git para github não funciona nesta rede em nenhuma rota (403 no
+# https, ssh bloqueado) — o fluxo git de plugins foi removido de vez;
+# PLUGINS_FROM_GIT/PLUGINS_FROM_ZIP são ignorados (aviso abaixo).
 if [ "${PLUGINS_FROM_GIT:-0}" = "1" ]; then
-  install_plugins_from_host_git
-else
-  install_plugins_from_zip
+  log "AVISO: PLUGINS_FROM_GIT ignorado — plugins vêm SEMPRE por ZIP da main"
 fi
+install_plugins_from_zip
 write_env_file
 write_wrapper_driver
 link_wrappers

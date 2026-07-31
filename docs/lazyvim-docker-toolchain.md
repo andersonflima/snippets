@@ -118,7 +118,7 @@ ao exec (opt-in: o proxy do npm devolve 403 para github.com).
 
 ## Instalação das dependências (plugins)
 
-**Default: ZIP da main.** O setup baixa o ZIP de cada dependência
+**Fluxo único: ZIP da main.** O setup baixa o ZIP de cada dependência
 (`archive/HEAD.zip` para branch default — a main —, `refs/heads/<branch>.zip`
 quando pinada) via Python/urllib com proxy, sem git nem curl: é o único canal
 que passa em rede corporativa que devolve 403 para as rotas do git
@@ -127,7 +127,12 @@ remote repository`). Instala lazy.nvim + todos os plugins do manifesto no
 **data dir do nvim do HOST** (`~/.local/share/nvim/lazy`) — é o nvim local
 que carrega os plugins; o XDG isolado do toolchain fica só com o Mason/LSPs
 Linux do container. O `Lazy! sync` dentro do container fica desligado
-(opt-in `CONTAINER_SYNC=1`, exige rede liberada).
+(opt-in `CONTAINER_SYNC=1`, exige rede liberada). `PLUGINS_FROM_GIT`/
+`PLUGINS_FROM_ZIP` são ignorados — não existe mais fluxo git de plugins.
+
+Plugins privados (ex.: `pingu_ai_codding_pair_programming`) falham no ZIP sem
+abortar o setup; instale-os manualmente depois em
+`~/.local/share/nvim/lazy/<nome>`.
 
 Com o toolchain presente na máquina (detecção por filesystem —
 `~/.local/share/nvim-docker-toolchain` existe — independe de `env.sh`
@@ -137,26 +142,6 @@ faz fetch — nenhum `git clone`/`git fetch` na abertura do editor (era a
 fonte do `Could not read from remote repository` em todos os plugins no
 startup).
 
-Alternativa opt-in: `PLUGINS_FROM_GIT=1` clona pelo git do host.
-
-## Clones pelo git do host (PLUGINS_FROM_GIT=1)
-
-Os clones feitos pelo HOST:
-
-- honram `GIT_INSECURE=1` também (`-c http.sslVerify=false` — proxy MITM);
-- tentam as URLs em ordem: primeiro **o mesmo formato do remote origin deste
-  repo** (o transporte do `git pull` do snippets é o canal provado na rede),
-  depois https, ssh na porta 22 e por fim **ssh over 443**
-  (`ssh://git@ssh.github.com:443/...`) — cobre proxy que devolve 403 para
-  github (`expected flush after ref listing`) com porta 22 também bloqueada;
-- plugins privados (ex.: `pingu_ai_codding_pair_programming`) falham sem
-  abortar o setup quando a credencial não está disponível — instale-os
-  manualmente depois em `~/.local/share/nvim/lazy/<nome>`;
-- rodam sem prompt interativo (`GIT_TERMINAL_PROMPT=0`, ssh em BatchMode) —
-  um prompt no meio do loop travaria o setup;
-- não engolem o erro: a linha fatal de cada falha aparece no log e o stderr
-  completo da última tentativa fica em
-  `~/.local/share/nvim-docker-toolchain/host-git-clone.err`.
 
 ## Observações operacionais
 
