@@ -440,27 +440,50 @@ link_wrappers() {
   done
 }
 
+host_git_base() {
+  # Deriva do remote origin deste PRÓPRIO repo o formato de URL/transporte que
+  # comprovadamente funciona nesta rede — o git pull do snippets é o canal
+  # provado; os clones de plugin tentam primeiro esse mesmo caminho.
+  local origin
+  origin="$(git -C "${SCRIPT_DIR}" remote get-url origin 2>/dev/null)" || return 0
+  case "${origin}" in
+    *github.com[:/]*)
+      printf '%s' "${origin}" | sed -E 's#(.*github\.com[:/]).*#\1#'
+      ;;
+  esac
+}
+
 host_git_clone() {
-  # Clone pelo git do HOST com diagnóstico: tenta https e, se falhar, cai para
-  # a URL ssh (cobre host cuja config/rede só funciona num dos transportes).
-  # GIT_INSECURE=1 vale aqui também (proxy MITM sem CA — antes só valia para o
-  # container). O stderr NÃO é engolido: a última falha fica em
-  # ${STATE_ROOT}/host-git-clone.err e a linha fatal aparece no log.
-  # GIT_TERMINAL_PROMPT=0 e ssh em BatchMode: num loop de dezenas de clones,
-  # um prompt interativo (credencial https ou host key ssh) travaria o setup.
+  # Clone pelo git do HOST com diagnóstico. Tenta, em ordem: (1) a URL no
+  # mesmo formato do remote deste repo (transporte provado na rede), (2)
+  # https, (3) ssh na porta 22, (4) ssh over 443 (ssh.github.com) — cobre
+  # proxy que devolve 403 para github ("expected flush after ref listing")
+  # com porta 22 também bloqueada. GIT_INSECURE=1 vale aqui também (proxy
+  # MITM sem CA). GIT_TERMINAL_PROMPT=0 e ssh em BatchMode: num loop de
+  # dezenas de clones, um prompt interativo travaria o setup. O stderr NÃO é
+  # engolido: todas as tentativas ficam em ${STATE_ROOT}/host-git-clone.err
+  # e a linha fatal aparece no log.
   local repo="$1"
   local dest="$2"
   local clone_args="$3"
   local err_log="${STATE_ROOT}/host-git-clone.err"
-  if GIT_TERMINAL_PROMPT=0 git ${GIT_INSECURE_HOST_OPT} clone ${clone_args} "https://github.com/${repo}" "${dest}" 2>"${err_log}"; then
-    return 0
+  : > "${err_log}"
+  local base
+  base="$(host_git_base)"
+  local candidates=""
+  if [ -n "${base}" ]; then
+    candidates="${base}${repo}.git"
   fi
-  [ -n "${dest}" ] && rm -rf "${dest}"
-  if GIT_TERMINAL_PROMPT=0 GIT_SSH_COMMAND="${GIT_SSH_COMMAND:-ssh -oBatchMode=yes -oStrictHostKeyChecking=accept-new}" \
-    git ${GIT_INSECURE_HOST_OPT} clone ${clone_args} "git@github.com:${repo}.git" "${dest}" 2>>"${err_log}"; then
-    return 0
-  fi
-  [ -n "${dest}" ] && rm -rf "${dest}"
+  candidates="${candidates} https://github.com/${repo} git@github.com:${repo}.git ssh://git@ssh.github.com:443/${repo}.git"
+  local url
+  for url in ${candidates}; do
+    printf '>> tentativa: %s\n' "${url}" >> "${err_log}"
+    if GIT_TERMINAL_PROMPT=0 GIT_SSH_COMMAND="${GIT_SSH_COMMAND:-ssh -oBatchMode=yes -oStrictHostKeyChecking=accept-new}" \
+      git ${GIT_INSECURE_HOST_OPT} clone ${clone_args} "${url}" "${dest}" 2>>"${err_log}"; then
+      return 0
+    fi
+    [ -n "${dest}" ] && rm -rf "${dest}"
+  done
   return 1
 }
 
