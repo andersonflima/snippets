@@ -123,3 +123,4 @@ require("lazy").setup({
 	debug = false,
 })
 
+require("config.plugins_update")

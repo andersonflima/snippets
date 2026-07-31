@@ -475,6 +475,9 @@ link_wrappers() {
   )
 
   ln -sf "${WRAPPER_DRIVER}" "${WRAPPER_DIR}/nvim-docker-exec"
+  # Comando de update dos plugins (canal npm) disponível no PATH do toolchain.
+  cp "${SCRIPT_DIR}/update_lazyvim_plugins_from_npm.sh" "${WRAPPER_DIR}/nvim-plugins-update"
+  chmod +x "${WRAPPER_DIR}/nvim-plugins-update"
   for command_name in "${commands[@]}"; do
     ln -sf "${WRAPPER_DRIVER}" "${WRAPPER_DIR}/${command_name}"
   done
