@@ -26,7 +26,8 @@ die() {
 PACKAGE_NAME="@andespindola/nvim-plugins-dist"
 STATE_ROOT="${NVIM_DOCKER_STATE_ROOT:-${HOME}/.local/share/nvim-docker-toolchain}"
 TOKEN_FILE="${STATE_ROOT}/npm-token"
-LAZY_DIR="${HOME}/.local/share/nvim/lazy"
+# Honra XDG_DATA_HOME do host: o nvim lê stdpath("data") = $XDG_DATA_HOME/nvim.
+LAZY_DIR="${XDG_DATA_HOME:-${HOME}/.local/share}/nvim/lazy"
 
 TOKEN="${NPM_PLUGINS_TOKEN:-}"
 if [ -z "${TOKEN}" ] && [ -f "${TOKEN_FILE}" ]; then
