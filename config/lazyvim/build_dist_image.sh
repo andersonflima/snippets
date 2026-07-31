@@ -61,7 +61,7 @@ else
   log "AVISO: sem token do gh — repos privados (ex.: pingu) ficam de fora"
 fi
 
-set -- --build-arg BAKE_PLUGINS=1 -t "${IMAGE_REF}" -f "${CONTEXT_DIR}/Dockerfile"
+set -- --build-arg BAKE_PLUGINS=1 --build-arg "BAKE_PRIVATE=$((1 - PUBLIC))" -t "${IMAGE_REF}" -f "${CONTEXT_DIR}/Dockerfile"
 if [ -n "${GH_TOKEN_FILE}" ]; then
   set -- "$@" --secret "id=gh_token,src=${GH_TOKEN_FILE}"
 fi

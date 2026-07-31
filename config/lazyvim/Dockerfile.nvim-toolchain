@@ -136,17 +136,23 @@ RUN --mount=type=cache,target=/root/.cache/pip \
 # No build corporativo BAKE_PLUGINS=0 e estas camadas são no-op.
 # ---------------------------------------------------------------------------
 ARG BAKE_PLUGINS=0
+# BAKE_PRIVATE precisa ser ARG (não só secret): secret mount NÃO entra na
+# chave de cache do BuildKit — um build "público" reaproveitaria a camada
+# cacheada do build com token e vazaria repo privado em imagem pública.
+# O valor do ARG entra na chave e força camadas distintas por modo.
+ARG BAKE_PRIVATE=1
 ARG TARGETARCH
 
 # Plugins do manifesto clonados para /opt/nvim-dist/lazy (sem .git — o lazy
 # roda em modo offline na máquina corporativa). Repos privados (ex.: pingu)
-# entram quando o secret gh_token existir; sem ele, são pulados.
+# entram quando BAKE_PRIVATE=1 E o secret gh_token existir.
 COPY setup_lazyvim_mason_from_zip.sh /opt/build/setup_lazyvim_mason_from_zip.sh
 RUN --mount=type=secret,id=gh_token,target=/run/secrets/gh_token,required=false \
     if [ "$BAKE_PLUGINS" = "1" ]; then \
       set -e; \
+      echo "bake: private=${BAKE_PRIVATE}"; \
       mkdir -p /opt/nvim-dist/lazy; \
-      if [ -s /run/secrets/gh_token ]; then \
+      if [ "$BAKE_PRIVATE" = "1" ] && [ -s /run/secrets/gh_token ]; then \
         printf 'machine github.com\nlogin x-access-token\npassword %s\n' "$(cat /run/secrets/gh_token)" > /root/.netrc; \
         chmod 600 /root/.netrc; \
       fi; \
