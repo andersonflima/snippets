@@ -440,6 +440,48 @@ link_wrappers() {
   done
 }
 
+host_git_clone() {
+  # Clone pelo git do HOST com diagnóstico: tenta https e, se falhar, cai para
+  # a URL ssh (cobre host cuja config/rede só funciona num dos transportes).
+  # GIT_INSECURE=1 vale aqui também (proxy MITM sem CA — antes só valia para o
+  # container). O stderr NÃO é engolido: a última falha fica em
+  # ${STATE_ROOT}/host-git-clone.err e a linha fatal aparece no log.
+  # GIT_TERMINAL_PROMPT=0 e ssh em BatchMode: num loop de dezenas de clones,
+  # um prompt interativo (credencial https ou host key ssh) travaria o setup.
+  local repo="$1"
+  local dest="$2"
+  local clone_args="$3"
+  local err_log="${STATE_ROOT}/host-git-clone.err"
+  if GIT_TERMINAL_PROMPT=0 git ${GIT_INSECURE_HOST_OPT} clone ${clone_args} "https://github.com/${repo}" "${dest}" 2>"${err_log}"; then
+    return 0
+  fi
+  [ -n "${dest}" ] && rm -rf "${dest}"
+  if GIT_TERMINAL_PROMPT=0 GIT_SSH_COMMAND="${GIT_SSH_COMMAND:-ssh -oBatchMode=yes -oStrictHostKeyChecking=accept-new}" \
+    git ${GIT_INSECURE_HOST_OPT} clone ${clone_args} "git@github.com:${repo}.git" "${dest}" 2>>"${err_log}"; then
+    return 0
+  fi
+  [ -n "${dest}" ] && rm -rf "${dest}"
+  return 1
+}
+
+host_clone_last_error() {
+  # Prefere a última linha fatal:/error: do git; senão a última linha crua.
+  local err_log="${STATE_ROOT}/host-git-clone.err"
+  local line=""
+  if [ -f "${err_log}" ]; then
+    line="$(grep -E '^(fatal|error):' "${err_log}" | tail -1)"
+    [ -n "${line}" ] || line="$(tail -1 "${err_log}")"
+  fi
+  printf '%s' "${line}"
+}
+
+# -c http.sslVerify=false para os clones do host quando GIT_INSECURE=1
+# (expansão sem aspas de propósito: vira dois argumentos, -c e o valor).
+GIT_INSECURE_HOST_OPT=""
+if [ "${GIT_INSECURE:-0}" = "1" ]; then
+  GIT_INSECURE_HOST_OPT="-c http.sslVerify=false"
+fi
+
 install_plugins_from_host_git() {
   # Canal que comprovadamente funciona na rede corporativa: o git do HOST
   # (mesmo caminho do git pull deste repo), com o ~/.gitconfig do usuário —
@@ -463,11 +505,11 @@ install_plugins_from_host_git() {
       clone_args="${clone_args} --branch ${branch}"
     fi
     log "plugin (git host): ${plugin_name} (${repo}@${branch:-default})"
-    if git clone ${clone_args} "https://github.com/${repo}" "${lazy_dir}/${plugin_name}" >/dev/null 2>&1; then
+    if host_git_clone "${repo}" "${lazy_dir}/${plugin_name}" "${clone_args}" >/dev/null; then
       ok=$((ok + 1))
     else
       failed="${failed} ${plugin_name}"
-      log "falha no clone: ${plugin_name} (${repo})"
+      log "falha no clone: ${plugin_name} (${repo}) — $(host_clone_last_error)"
     fi
   done < <(bash "${SCRIPT_DIR}/setup_lazyvim_mason_from_zip.sh" --print-manifest)
   if [ -n "${failed}" ]; then
@@ -504,8 +546,8 @@ ensure_lazy_nvim() {
   fi
   log "clonando lazy.nvim (host) em ${lazy_dir}"
   mkdir -p "$(dirname "${lazy_dir}")"
-  git clone --filter=blob:none --branch=stable https://github.com/folke/lazy.nvim "${lazy_dir}" \
-    || die "clone do lazy.nvim falhou no host; verifique o acesso git a github.com"
+  host_git_clone "folke/lazy.nvim" "${lazy_dir}" "--filter=blob:none --branch=stable" \
+    || die "clone do lazy.nvim falhou no host ($(host_clone_last_error)); verifique o acesso git a github.com"
 }
 
 bootstrap_container_toolchain() {

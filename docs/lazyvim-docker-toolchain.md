@@ -116,6 +116,18 @@ Knobs relacionados: `GIT_INSECURE=1` exporta `GIT_SSL_NO_VERIFY=1` no exec
 (proxy MITM sem CA instalada) e `CONTAINER_PROXY=1` repassa `HTTP(S)_PROXY`
 ao exec (opt-in: o proxy do npm devolve 403 para github.com).
 
+## Clones pelo git do host
+
+Os clones feitos pelo HOST (`PLUGINS_FROM_GIT=1` e o bootstrap do lazy.nvim):
+
+- honram `GIT_INSECURE=1` também (`-c http.sslVerify=false` — proxy MITM);
+- tentam https e, se falhar, caem para a URL ssh do mesmo repo;
+- rodam sem prompt interativo (`GIT_TERMINAL_PROMPT=0`, ssh em BatchMode) —
+  um prompt no meio do loop travaria o setup;
+- não engolem o erro: a linha fatal de cada falha aparece no log e o stderr
+  completo da última tentativa fica em
+  `~/.local/share/nvim-docker-toolchain/host-git-clone.err`.
+
 ## Observações operacionais
 
 - O XDG do container é separado do `~/.local/share/nvim` do host para não misturar Mason Linux com Mason macOS.
