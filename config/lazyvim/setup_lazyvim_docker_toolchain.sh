@@ -32,8 +32,11 @@ O que o script faz:
   2. sobe um container persistente com o HOME montado;
   3. prepara um XDG isolado em ~/.local/share/nvim-docker-toolchain/xdg-*;
   4. opcionalmente copia a config versionada do Neovim para ~/.config/nvim;
-  5. gera wrappers locais que fazem docker exec nas ferramentas;
-  6. roda bootstrap headless do Lazy/LSP/tooling dentro do container.
+  5. instala lazy.nvim + plugins por ZIP da main (default; PLUGINS_FROM_GIT=1
+     usa o git do host);
+  6. gera wrappers locais que fazem docker exec nas ferramentas;
+  7. opcionalmente (CONTAINER_SYNC=1) roda bootstrap headless do Lazy/Mason
+     dentro do container — exige rede liberada.
 USAGE
 }
 
@@ -543,10 +546,12 @@ install_plugins_from_host_git() {
 }
 
 install_plugins_from_zip() {
-  # Rede que bloqueia git/curl para github: PLUGINS_FROM_ZIP=1 usa o fluxo ZIP
-  # já existente (Python/urllib com proxy, sem curl) para instalar lazy.nvim +
+  # Fluxo PADRÃO: baixa o ZIP da main (archive/HEAD.zip para branch default,
+  # refs/heads/<branch>.zip quando pinado) de cada dependência via Python/
+  # urllib com proxy, sem git nem curl — único canal que passa em rede
+  # corporativa que 403a as rotas do git e bloqueia SSH. Instala lazy.nvim +
   # todos os plugins do manifesto direto no XDG que o container enxerga.
-  log "instalando lazy.nvim + plugins por ZIP (fluxo setup_lazyvim_mason_from_zip)"
+  log "instalando lazy.nvim + plugins por ZIP da main (fluxo setup_lazyvim_mason_from_zip)"
   # Falha parcial não aborta: plugin privado/bloqueado (ex.: repo pessoal sem
   # auth no zip) fica de fora e o restante segue utilizável; instale o faltante
   # manualmente (zip no browser → extrair em ${XDG_DATA_HOME}/nvim/lazy/<nome>).
@@ -558,27 +563,15 @@ install_plugins_from_zip() {
   fi
 }
 
-ensure_lazy_nvim() {
-  # O +Lazy! sync pressupõe o lazy.nvim já presente; o auto-bootstrap da config
-  # clonaria do GitHub DENTRO do container (TLS barrado pelo proxy corporativo).
-  # Clona pelo HOST — onde o git já funciona — direto no XDG que o container
-  # enxerga.
-  local lazy_dir="${XDG_DATA_HOME}/nvim/lazy/lazy.nvim"
-  if [ -d "${lazy_dir}/.git" ]; then
-    return 0
-  fi
-  log "clonando lazy.nvim (host) em ${lazy_dir}"
-  mkdir -p "$(dirname "${lazy_dir}")"
-  host_git_clone "folke/lazy.nvim" "${lazy_dir}" "--filter=blob:none --branch=stable" \
-    || die "clone do lazy.nvim falhou no host ($(host_clone_last_error)); verifique o acesso git a github.com"
-}
-
 bootstrap_container_toolchain() {
   if [ "$SKIP_BOOTSTRAP" = "1" ]; then
     return 0
   fi
-  if [ "${PLUGINS_FROM_ZIP:-0}" = "1" ] || [ "${PLUGINS_FROM_GIT:-0}" = "1" ]; then
-    log "plugins pré-instalados (zip/git host): pulando Lazy! sync (sem rede no bootstrap)"
+  # Plugins chegam pré-instalados (zip da main por padrão, ou git do host):
+  # o Lazy! sync + MasonInstall dentro do container precisam de rede que a
+  # empresa bloqueia. CONTAINER_SYNC=1 força o bootstrap (rede aberta).
+  if [ "${CONTAINER_SYNC:-0}" != "1" ]; then
+    log "plugins pré-instalados: pulando Lazy! sync/MasonInstall no container (CONTAINER_SYNC=1 força)"
     return 0
   fi
 
@@ -620,12 +613,12 @@ copy_config_to_host
 copy_config_to_container_xdg
 build_image
 ensure_container_running
+# Default: ZIP da main para todas as dependências (PLUGINS_FROM_ZIP=1 é
+# redundante e continua aceito). PLUGINS_FROM_GIT=1 usa o git do host.
 if [ "${PLUGINS_FROM_GIT:-0}" = "1" ]; then
   install_plugins_from_host_git
-elif [ "${PLUGINS_FROM_ZIP:-0}" = "1" ]; then
-  install_plugins_from_zip
 else
-  ensure_lazy_nvim
+  install_plugins_from_zip
 fi
 write_env_file
 write_wrapper_driver
