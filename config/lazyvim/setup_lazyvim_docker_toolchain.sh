@@ -110,15 +110,20 @@ command -v docker >/dev/null 2>&1 || die "docker nao encontrado"
 [ -n "$WRAPPER_DIR" ] || die "--wrapper-dir vazio"
 [ -d "$CONFIG_SOURCE_DIR" ] || die "config source nao encontrado: $CONFIG_SOURCE_DIR"
 
+# XDG do HOST capturado ANTES do override abaixo: o nvim local lê
+# stdpath("data") = $XDG_DATA_HOME/nvim quando o shell exporta XDG_DATA_HOME
+# — instalar em ~/.local/share/nvim fixo deixaria os plugins invisíveis.
+HOST_XDG_DATA_HOME="${XDG_DATA_HOME:-${HOME}/.local/share}"
+
 XDG_ROOT="${STATE_ROOT}/xdg"
 XDG_CONFIG_HOME="${XDG_ROOT}/config"
 XDG_DATA_HOME="${XDG_ROOT}/data"
 XDG_STATE_HOME="${XDG_ROOT}/state"
 XDG_CACHE_HOME="${XDG_ROOT}/cache"
-# Onde o nvim do HOST lê os plugins (stdpath("data")): é o nvim local que
-# carrega o lazy — os plugins têm que ficar AQUI, não no XDG isolado do
-# container (que serve só para o Mason/LSPs Linux).
-HOST_NVIM_DATA_DIR="${HOME}/.local/share/nvim"
+# Onde o nvim do HOST lê os plugins: é o nvim local que carrega o lazy — os
+# plugins têm que ficar AQUI, não no XDG isolado do container (que serve só
+# para o Mason/LSPs Linux).
+HOST_NVIM_DATA_DIR="${HOST_XDG_DATA_HOME}/nvim"
 CONTAINER_NVIM_CONFIG_DIR="${XDG_CONFIG_HOME}/nvim"
 CONTAINER_NVIM_DATA_DIR="${XDG_DATA_HOME}/nvim"
 ENV_FILE="${STATE_ROOT}/env.sh"
