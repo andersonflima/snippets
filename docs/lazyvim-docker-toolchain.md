@@ -116,9 +116,22 @@ Knobs relacionados: `GIT_INSECURE=1` exporta `GIT_SSL_NO_VERIFY=1` no exec
 (proxy MITM sem CA instalada) e `CONTAINER_PROXY=1` repassa `HTTP(S)_PROXY`
 ao exec (opt-in: o proxy do npm devolve 403 para github.com).
 
-## Clones pelo git do host
+## Instalação das dependências (plugins)
 
-Os clones feitos pelo HOST (`PLUGINS_FROM_GIT=1` e o bootstrap do lazy.nvim):
+**Default: ZIP da main.** O setup baixa o ZIP de cada dependência
+(`archive/HEAD.zip` para branch default — a main —, `refs/heads/<branch>.zip`
+quando pinada) via Python/urllib com proxy, sem git nem curl: é o único canal
+que passa em rede corporativa que devolve 403 para as rotas do git
+(`expected flush after ref listing`) e bloqueia SSH (`could not read from
+remote repository`). Instala lazy.nvim + todos os plugins do manifesto direto
+no XDG que o container enxerga; o `Lazy! sync` dentro do container fica
+desligado (opt-in `CONTAINER_SYNC=1`, exige rede liberada).
+
+Alternativa opt-in: `PLUGINS_FROM_GIT=1` clona pelo git do host.
+
+## Clones pelo git do host (PLUGINS_FROM_GIT=1)
+
+Os clones feitos pelo HOST:
 
 - honram `GIT_INSECURE=1` também (`-c http.sslVerify=false` — proxy MITM);
 - tentam as URLs em ordem: primeiro **o mesmo formato do remote origin deste
