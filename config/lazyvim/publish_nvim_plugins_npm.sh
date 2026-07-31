@@ -38,11 +38,24 @@ STAGE="$(mktemp -d)"
 trap 'rm -rf "${STAGE}"' EXIT
 mkdir -p "${STAGE}/lazy"
 
+# Fora do pacote: copilot.lua vendora o language server do Copilot com
+# node_modules inteiro (~984MB) — estoura o limite de publish do npm
+# (ERR_STRING_TOO_LONG) e, na rede corporativa, o Copilot não opera de
+# qualquer forma (API do github bloqueada). Ele permanece na versão que veio
+# da imagem dist: o update só substitui o que está no pacote.
+EXCLUDED_PLUGINS=" copilot.lua "
+
 total=0
 ok=0
 failed=""
 while IFS='|' read -r name repo branch; do
   [ -n "${name}" ] && [ -n "${repo}" ] || continue
+  case "${EXCLUDED_PLUGINS}" in
+    *" ${name} "*)
+      log "excluído do pacote: ${name}"
+      continue
+      ;;
+  esac
   total=$((total + 1))
   clone_args="--depth 1"
   if [ -n "${branch}" ] && [ "${branch}" != "default" ]; then
@@ -58,6 +71,17 @@ done < <(bash "${SCRIPT_DIR}/setup_lazyvim_mason_from_zip.sh" --print-manifest)
 
 log "plugins empacotados: ${ok}/${total}${failed:+ (falhas:${failed})}"
 [ "${ok}" -gt 0 ] || { log "nenhum plugin clonado; abortando"; exit 1; }
+
+# Guarda de tamanho: o corpo do publish vira string base64 em Node — tarball
+# acima de ~300MB arrisca ERR_STRING_TOO_LONG. Falhar cedo com diagnóstico.
+STAGE_MB="$(du -sm "${STAGE}/lazy" | cut -f1)"
+log "tamanho do stage: ${STAGE_MB}MB (descomprimido)"
+if [ "${STAGE_MB}" -gt 600 ]; then
+  du -sm "${STAGE}/lazy"/* | sort -rn | head -5 >&2
+  die_msg="stage grande demais para publish npm (${STAGE_MB}MB); adicione o(s) vilão(ões) acima a EXCLUDED_PLUGINS"
+  log "erro: ${die_msg}"
+  exit 1
+fi
 
 cat > "${STAGE}/package.json" <<EOF
 {

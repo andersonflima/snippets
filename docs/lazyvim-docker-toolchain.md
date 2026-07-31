@@ -161,6 +161,10 @@ proxy de lá comprovadamente deixa passar): o pacote privado
 - **Token (uma vez)**: gravar o token de leitura em
   `~/.local/share/nvim-docker-toolchain/npm-token` (`chmod 600`). O token é
   granular (só lê esse pacote); o proxy vem do próprio `~/.npmrc` da máquina.
+- **Exceção**: `copilot.lua` não vai no pacote (vendora o language server do
+  Copilot com `node_modules` de ~984MB, acima do limite de publish do npm) —
+  ele permanece na versão vinda da imagem dist; o update só substitui o que
+  está no pacote.
 
 ## Instalação das dependências (plugins) — fallback ZIP
 
