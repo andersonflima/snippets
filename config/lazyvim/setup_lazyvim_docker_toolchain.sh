@@ -245,11 +245,20 @@ ensure_container_running() {
 }
 
 container_exec() {
-  # Proxy (para os clones de plugins que o Lazy faz DENTRO do container) e,
-  # opt-in via GIT_INSECURE=1, bypass de TLS do git — atrás de proxy MITM os
-  # clones do GitHub falham na verificação. Valores de proxy não têm espaço,
-  # então a expansão ${VAR:+...} sem aspas é segura (e vazia quando não há
-  # proxy), inclusive no bash 3.2.
+  # Proxy no exec é OPT-IN (CONTAINER_PROXY=1): proxies corporativos têm
+  # allowlist por destino — o endpoint do npm (derivado do ~/.npmrc) devolve
+  # 403 para github.com, sequestrando a rota do git, que já funciona pela
+  # config do próprio ~/.gitconfig do host (montado). GIT_INSECURE=1 segue
+  # exportando GIT_SSL_NO_VERIFY. Valores sem espaço → ${VAR:+...} sem aspas
+  # é seguro, inclusive no bash 3.2.
+  EXEC_HTTP_PROXY=""
+  EXEC_HTTPS_PROXY=""
+  EXEC_NO_PROXY=""
+  if [ "${CONTAINER_PROXY:-0}" = "1" ]; then
+    EXEC_HTTP_PROXY="${HTTP_PROXY:-}"
+    EXEC_HTTPS_PROXY="${HTTPS_PROXY:-${HTTP_PROXY:-}}"
+    EXEC_NO_PROXY="${NO_PROXY:-localhost,127.0.0.1}"
+  fi
   # Git DENTRO do container usa o ~/.gitconfig do host (HOME montado) — é
   # nele que vivem proxy/ssl que fazem o git funcionar na rede corporativa.
   # As entradas GIT_CONFIG_* abaixo entram por cima só como rede de
@@ -267,9 +276,9 @@ container_exec() {
     -e XDG_DATA_HOME="${XDG_DATA_HOME}" \
     -e XDG_STATE_HOME="${XDG_STATE_HOME}" \
     -e XDG_CACHE_HOME="${XDG_CACHE_HOME}" \
-    ${HTTP_PROXY:+-e HTTP_PROXY=${HTTP_PROXY} -e http_proxy=${HTTP_PROXY}} \
-    ${HTTPS_PROXY:+-e HTTPS_PROXY=${HTTPS_PROXY} -e https_proxy=${HTTPS_PROXY}} \
-    ${NO_PROXY:+-e NO_PROXY=${NO_PROXY} -e no_proxy=${NO_PROXY}} \
+    ${EXEC_HTTP_PROXY:+-e HTTP_PROXY=${EXEC_HTTP_PROXY} -e http_proxy=${EXEC_HTTP_PROXY}} \
+    ${EXEC_HTTPS_PROXY:+-e HTTPS_PROXY=${EXEC_HTTPS_PROXY} -e https_proxy=${EXEC_HTTPS_PROXY}} \
+    ${EXEC_NO_PROXY:+-e NO_PROXY=${EXEC_NO_PROXY} -e no_proxy=${EXEC_NO_PROXY}} \
     ${GIT_INSECURE_OPT} \
     -e GIT_CONFIG_COUNT=2 \
     -e GIT_CONFIG_KEY_0=url.https://github.com/.insteadOf -e GIT_CONFIG_VALUE_0=git@github.com: \
