@@ -18,6 +18,9 @@ Uso:
 Opcoes:
   --force                Sobrescreve instalacao atual (com backup automatico).
   --skip-plugins         Nao instala plugins em ~/.local/share/nvim/lazy.
+  --plugins-only         So instala lazy.nvim + plugins do manifesto por ZIP
+                         (sem Mason/config/fonte/estado) — use com --data-dir
+                         para popular o XDG do toolchain docker.
   --with-homebrew-proxy  Aplica antes o bloco de proxy/Homebrew no shell rc
                          (chama setup_homebrew_proxy.sh --apply).
   --manage-config        Permite alterar ~/.config/nvim (opt-in).
@@ -45,6 +48,7 @@ USAGE
 
 FORCE=0
 SKIP_PLUGINS=0
+PLUGINS_ONLY=0
 WITH_HOMEBREW_PROXY=0
 MANAGE_CONFIG=0
 INSTALL_CROWQUILL=0
@@ -67,6 +71,10 @@ while [ "$#" -gt 0 ]; do
       ;;
     --skip-plugins)
       SKIP_PLUGINS=1
+      shift
+      ;;
+    --plugins-only)
+      PLUGINS_ONLY=1
       shift
       ;;
     --with-homebrew-proxy)
@@ -1153,11 +1161,16 @@ download_and_extract_branch_zip() {
       "$url" "$temp_zip" "$extract_root" "$destination_dir"; then
       resolved_branch="$candidate_branch"
       break
+    else
+      # Dentro do else, $? é o status do download que falhou; fora dele seria o
+      # status do if (0 quando a condição falha sem else) — e um 404 viraria
+      # "sucesso" na chamada.
+      last_status=$?
     fi
-    last_status=$?
   done < <(emit_candidate_branches "$repo" "$branch")
 
   if [ -z "$resolved_branch" ]; then
+    [ "$last_status" -ne 0 ] || last_status=1
     return "$last_status"
   fi
 }
@@ -1723,12 +1736,24 @@ if [ "$WITH_HOMEBREW_PROXY" = "1" ]; then
   bash "$homebrew_proxy_script" --apply
 fi
 
+# plugins-only só toca ${NVIM_DATA_DIR}/lazy — pré-checagens de Mason/config
+# pertencem ao fluxo completo.
 ensure_absent_or_force "${NVIM_DATA_DIR}/lazy"
-ensure_absent_or_force "${NVIM_CACHE_DIR}/mason-registry-main"
-if [ "$MANAGE_CONFIG" = "1" ]; then
-  ensure_absent_or_force "$NVIM_CONFIG_DIR"
+if [ "$PLUGINS_ONLY" != "1" ]; then
+  ensure_absent_or_force "${NVIM_CACHE_DIR}/mason-registry-main"
+  if [ "$MANAGE_CONFIG" = "1" ]; then
+    ensure_absent_or_force "$NVIM_CONFIG_DIR"
+  fi
 fi
 ensure_python_runtime
+
+if [ "$PLUGINS_ONLY" = "1" ]; then
+  log "modo plugins-only: lazy.nvim + plugins do manifesto por ZIP em ${NVIM_DATA_DIR}/lazy"
+  install_plugins_from_manifest
+  log "concluido (plugins-only)"
+  exit 0
+fi
+
 install_http_wrappers
 log "configurando transporte GitHub: ${GITHUB_TRANSPORT}"
 configure_git_transport
