@@ -49,6 +49,7 @@ USAGE
 FORCE=0
 SKIP_PLUGINS=0
 PLUGINS_ONLY=0
+PRINT_MANIFEST=0
 WITH_HOMEBREW_PROXY=0
 MANAGE_CONFIG=0
 INSTALL_CROWQUILL=0
@@ -75,6 +76,10 @@ while [ "$#" -gt 0 ]; do
       ;;
     --plugins-only)
       PLUGINS_ONLY=1
+      shift
+      ;;
+    --print-manifest)
+      PRINT_MANIFEST=1
       shift
       ;;
     --with-homebrew-proxy)
@@ -1734,6 +1739,11 @@ if [ "$WITH_HOMEBREW_PROXY" = "1" ]; then
   [ -f "$homebrew_proxy_script" ] || die "script nao encontrado: $homebrew_proxy_script"
   log "aplicando bloco de proxy/Homebrew no shell rc"
   bash "$homebrew_proxy_script" --apply
+fi
+
+if [ "$PRINT_MANIFEST" = "1" ]; then
+  emit_lazy_plugin_manifest
+  exit 0
 fi
 
 # plugins-only só toca ${NVIM_DATA_DIR}/lazy — pré-checagens de Mason/config
