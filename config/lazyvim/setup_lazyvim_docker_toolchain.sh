@@ -566,6 +566,7 @@ install_plugins_from_zip() {
     ${GITHUB_BASE:+--github-base "${GITHUB_BASE}"}; then
     log "AVISO: alguns plugins falharam no ZIP (veja o log acima) — os demais foram instalados"
   fi
+  log "plugins instalados no host: $(ls -1 "${HOST_NVIM_DATA_DIR}/lazy" 2>/dev/null | wc -l | tr -d ' ') em ${HOST_NVIM_DATA_DIR}/lazy"
 }
 
 bootstrap_container_toolchain() {
