@@ -232,15 +232,41 @@ build_image() {
   log "imagem atualizada: ${IMAGE_NAME}"
 }
 
+detect_host_git_config() {
+  # Config global de git do HOST que o git de dentro do container deve usar.
+  # GIT_CONFIG_GLOBAL exportado tem prioridade; senão ~/.gitconfig; senão o
+  # local XDG do host (~/.config/git/config) — que dentro do container fica
+  # invisível porque o XDG_CONFIG_HOME é sobrescrito para o XDG isolado.
+  if [ -n "${GIT_CONFIG_GLOBAL:-}" ] && [ -f "${GIT_CONFIG_GLOBAL}" ]; then
+    printf '%s' "${GIT_CONFIG_GLOBAL}"
+  elif [ -f "${HOME}/.gitconfig" ]; then
+    printf '%s' "${HOME}/.gitconfig"
+  elif [ -f "${HOME}/.config/git/config" ]; then
+    printf '%s' "${HOME}/.config/git/config"
+  fi
+}
+
+HOST_GIT_CONFIG="$(detect_host_git_config)"
+if [ -n "${HOST_GIT_CONFIG}" ]; then
+  log "git do container usa a config do host: ${HOST_GIT_CONFIG}"
+else
+  log "AVISO: nenhuma config global de git encontrada no host (~/.gitconfig ou ~/.config/git/config) — o git dentro do container roda sem proxy/credenciais suas"
+fi
+
 ensure_container_running() {
   if docker inspect "${CONTAINER_NAME}" >/dev/null 2>&1; then
     docker rm -f "${CONTAINER_NAME}" >/dev/null
   fi
 
+  # HOME/USER/GIT_CONFIG_GLOBAL no run: docker exec herda o env do container,
+  # então até um "docker exec ... git" manual enxerga a config de git do host.
   docker run -d \
     --name "${CONTAINER_NAME}" \
     -v "${HOME}:${HOME}" \
     -w "${HOME}" \
+    -e HOME="${HOME}" \
+    -e USER="${USER:-user}" \
+    ${HOST_GIT_CONFIG:+-e GIT_CONFIG_GLOBAL=${HOST_GIT_CONFIG}} \
     "${IMAGE_NAME}" >/dev/null
 }
 
@@ -259,10 +285,13 @@ container_exec() {
     EXEC_HTTPS_PROXY="${HTTPS_PROXY:-${HTTP_PROXY:-}}"
     EXEC_NO_PROXY="${NO_PROXY:-localhost,127.0.0.1}"
   fi
-  # Git DENTRO do container usa o ~/.gitconfig do host (HOME montado) — é
-  # nele que vivem proxy/ssl que fazem o git funcionar na rede corporativa.
-  # As entradas GIT_CONFIG_* abaixo entram por cima só como rede de
-  # segurança: URLs ssh do GitHub viram https (rede bloqueia SSH).
+  # Git DENTRO do container usa a config global do HOST (GIT_CONFIG_GLOBAL
+  # aponta o arquivo detectado — cobre ~/.gitconfig e o local XDG do host,
+  # que o XDG_CONFIG_HOME isolado esconderia) — é nela que vivem proxy/ssl
+  # que fazem o git funcionar na rede corporativa. As entradas GIT_CONFIG_*
+  # abaixo entram por cima só como rede de segurança: URLs ssh do GitHub
+  # viram https (rede bloqueia SSH) e safe.directory libera o HOME montado
+  # (dono host ≠ root do container dá "dubious ownership").
   GIT_INSECURE_OPT=""
   if [ "${GIT_INSECURE:-0}" = "1" ]; then
     GIT_INSECURE_OPT="-e GIT_SSL_NO_VERIFY=1"
@@ -280,9 +309,11 @@ container_exec() {
     ${EXEC_HTTPS_PROXY:+-e HTTPS_PROXY=${EXEC_HTTPS_PROXY} -e https_proxy=${EXEC_HTTPS_PROXY}} \
     ${EXEC_NO_PROXY:+-e NO_PROXY=${EXEC_NO_PROXY} -e no_proxy=${EXEC_NO_PROXY}} \
     ${GIT_INSECURE_OPT} \
-    -e GIT_CONFIG_COUNT=2 \
+    ${HOST_GIT_CONFIG:+-e GIT_CONFIG_GLOBAL=${HOST_GIT_CONFIG}} \
+    -e GIT_CONFIG_COUNT=3 \
     -e GIT_CONFIG_KEY_0=url.https://github.com/.insteadOf -e GIT_CONFIG_VALUE_0=git@github.com: \
     -e GIT_CONFIG_KEY_1=url.https://github.com/.insteadOf -e GIT_CONFIG_VALUE_1=ssh://git@github.com/ \
+    -e GIT_CONFIG_KEY_2=safe.directory -e GIT_CONFIG_VALUE_2='*' \
     "${CONTAINER_NAME}" \
     "$@"
 }
@@ -325,6 +356,17 @@ if [ "$(docker inspect -f '{{.State.Running}}' "${container_name}")" != "true" ]
   docker start "${container_name}" >/dev/null
 fi
 
+# Config global de git do HOST para o git de dentro do container (o
+# XDG_CONFIG_HOME isolado esconderia ~/.config/git/config do host).
+git_config_global="${GIT_CONFIG_GLOBAL:-}"
+if [ -z "${git_config_global}" ]; then
+  if [ -f "${HOME}/.gitconfig" ]; then
+    git_config_global="${HOME}/.gitconfig"
+  elif [ -f "${HOME}/.config/git/config" ]; then
+    git_config_global="${HOME}/.config/git/config"
+  fi
+fi
+
 exec docker exec \
   -i \
   -w "$PWD" \
@@ -334,6 +376,11 @@ exec docker exec \
   -e XDG_DATA_HOME="${xdg_data_home}" \
   -e XDG_STATE_HOME="${xdg_state_home}" \
   -e XDG_CACHE_HOME="${xdg_cache_home}" \
+  ${git_config_global:+-e GIT_CONFIG_GLOBAL=${git_config_global}} \
+  -e GIT_CONFIG_COUNT=3 \
+  -e GIT_CONFIG_KEY_0=url.https://github.com/.insteadOf -e GIT_CONFIG_VALUE_0=git@github.com: \
+  -e GIT_CONFIG_KEY_1=url.https://github.com/.insteadOf -e GIT_CONFIG_VALUE_1=ssh://git@github.com/ \
+  -e GIT_CONFIG_KEY_2=safe.directory -e GIT_CONFIG_VALUE_2='*' \
   "${container_name}" \
   bash -lc '
     set -euo pipefail
