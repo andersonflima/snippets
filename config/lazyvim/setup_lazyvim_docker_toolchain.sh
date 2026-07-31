@@ -160,6 +160,7 @@ build_image() {
   # O Dockerfile faz COPY do script do manifesto (camada de dist); precisa
   # existir no contexto mesmo no build corporativo (BAKE_PLUGINS=0).
   cp "${SCRIPT_DIR}/setup_lazyvim_mason_from_zip.sh" "${DOCKER_CONTEXT_DIR}/setup_lazyvim_mason_from_zip.sh"
+  cp "${CONFIG_ROOT}/nvim/lazy-lock.json" "${DOCKER_CONTEXT_DIR}/lazy-lock.json"
   # ~/.npmrc do host (proxy/registry corporativo) vai como secret de build:
   # o npm do RUN enxerga o arquivo, mas ele nao persiste na imagem final.
   set -- 
@@ -273,7 +274,17 @@ seed_plugins_from_image() {
     return 1
   fi
   log "semeando plugins da imagem dist para ${HOST_NVIM_DATA_DIR}/lazy"
-  container_exec bash -lc "mkdir -p '${HOST_NVIM_DATA_DIR}/lazy' && cp -a /opt/nvim-dist/lazy/. '${HOST_NVIM_DATA_DIR}/lazy/'"
+  # Substituição POR PLUGIN (rm + cp): cp -a por cima misturaria a árvore
+  # velha com a nova quando arquivos somem entre versões.
+  container_exec bash -lc '
+    dest="$1/lazy"
+    mkdir -p "${dest}"
+    for d in /opt/nvim-dist/lazy/*; do
+      n="$(basename "${d}")"
+      rm -rf "${dest}/${n}"
+      cp -a "${d}" "${dest}/"
+    done
+  ' -- "${HOST_NVIM_DATA_DIR}"
   log "plugins instalados no host: $(ls -1 "${HOST_NVIM_DATA_DIR}/lazy" 2>/dev/null | wc -l | tr -d ' ') em ${HOST_NVIM_DATA_DIR}/lazy"
 }
 
