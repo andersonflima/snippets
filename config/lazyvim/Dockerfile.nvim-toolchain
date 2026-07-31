@@ -147,6 +147,7 @@ ARG TARGETARCH
 # roda em modo offline na máquina corporativa). Repos privados (ex.: pingu)
 # entram quando BAKE_PRIVATE=1 E o secret gh_token existir.
 COPY setup_lazyvim_mason_from_zip.sh /opt/build/setup_lazyvim_mason_from_zip.sh
+COPY lazy-lock.json /opt/build/lazy-lock.json
 RUN --mount=type=secret,id=gh_token,target=/run/secrets/gh_token,required=false \
     if [ "$BAKE_PLUGINS" = "1" ]; then \
       set -e; \
@@ -161,6 +162,12 @@ RUN --mount=type=secret,id=gh_token,target=/run/secrets/gh_token,required=false 
             [ -n "$name" ] && [ -n "$repo" ] || continue; \
             b=""; if [ -n "$branch" ] && [ "$branch" != "default" ]; then b="--branch $branch"; fi; \
             if git clone --depth 1 $b "https://github.com/$repo" "/opt/nvim-dist/lazy/$name" >/dev/null 2>&1; then \
+              commit=$(python3 -c "import json,sys;d=json.load(open('/opt/build/lazy-lock.json'));print(d.get(sys.argv[1],{}).get('commit',''))" "$name" 2>/dev/null || true); \
+              if [ -n "$commit" ]; then \
+                git -C "/opt/nvim-dist/lazy/$name" fetch --depth 1 origin "$commit" >/dev/null 2>&1 \
+                  && git -C "/opt/nvim-dist/lazy/$name" checkout -q "$commit" >/dev/null 2>&1 \
+                  || echo "AVISO: pin do lock falhou: $name@$commit"; \
+              fi; \
               rm -rf "/opt/nvim-dist/lazy/$name/.git"; \
             else \
               echo "AVISO: plugin nao bakeado: $name ($repo)"; \

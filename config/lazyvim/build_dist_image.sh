@@ -47,6 +47,7 @@ CONTEXT_DIR="$(mktemp -d)"
 trap 'rm -rf "${CONTEXT_DIR}"' EXIT
 cp "${SCRIPT_DIR}/Dockerfile.nvim-toolchain" "${CONTEXT_DIR}/Dockerfile"
 cp "${SCRIPT_DIR}/setup_lazyvim_mason_from_zip.sh" "${CONTEXT_DIR}/setup_lazyvim_mason_from_zip.sh"
+cp "${SCRIPT_DIR}/../nvim/lazy-lock.json" "${CONTEXT_DIR}/lazy-lock.json"
 
 # Token do gh para bakear repos privados do manifesto (opcional).
 GH_TOKEN_FILE=""
