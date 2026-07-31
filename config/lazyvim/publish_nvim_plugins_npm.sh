@@ -34,6 +34,12 @@ done
 command -v git >/dev/null 2>&1 || { log "git nao encontrado"; exit 1; }
 command -v npm >/dev/null 2>&1 || { log "npm nao encontrado"; exit 1; }
 
+LOCK_FILE="${SCRIPT_DIR}/../nvim/lazy-lock.json"
+lock_commit() {
+  [ -f "${LOCK_FILE}" ] || return 0
+  python3 -c "import json,sys;d=json.load(open('${LOCK_FILE}'));print(d.get(sys.argv[1],{}).get('commit',''))" "$1" 2>/dev/null || true
+}
+
 STAGE="$(mktemp -d)"
 trap 'rm -rf "${STAGE}"' EXIT
 mkdir -p "${STAGE}/lazy"
@@ -62,6 +68,18 @@ while IFS='|' read -r name repo branch; do
     clone_args="${clone_args} --branch ${branch}"
   fi
   if git clone ${clone_args} "https://github.com/${repo}" "${STAGE}/lazy/${name}" >/dev/null 2>&1; then
+    # Pina no commit do lazy-lock.json: main de hoje de cada plugin diverge do
+    # spec que a config espera (ex.: LazyVim novo exige nvim 0.11.2 e plugins
+    # que nao existem no manifesto -> "cloning" travado na maquina offline).
+    commit="$(lock_commit "${name}")"
+    if [ -n "${commit}" ]; then
+      if git -C "${STAGE}/lazy/${name}" fetch --depth 1 origin "${commit}" >/dev/null 2>&1 \
+        && git -C "${STAGE}/lazy/${name}" checkout -q "${commit}" >/dev/null 2>&1; then
+        :
+      else
+        log "AVISO: pin do lock falhou para ${name}@${commit} (segue na main)"
+      fi
+    fi
     rm -rf "${STAGE}/lazy/${name}/.git"
     ok=$((ok + 1))
   else
