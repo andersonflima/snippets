@@ -115,6 +115,10 @@ XDG_CONFIG_HOME="${XDG_ROOT}/config"
 XDG_DATA_HOME="${XDG_ROOT}/data"
 XDG_STATE_HOME="${XDG_ROOT}/state"
 XDG_CACHE_HOME="${XDG_ROOT}/cache"
+# Onde o nvim do HOST lê os plugins (stdpath("data")): é o nvim local que
+# carrega o lazy — os plugins têm que ficar AQUI, não no XDG isolado do
+# container (que serve só para o Mason/LSPs Linux).
+HOST_NVIM_DATA_DIR="${HOME}/.local/share/nvim"
 CONTAINER_NVIM_CONFIG_DIR="${XDG_CONFIG_HOME}/nvim"
 CONTAINER_NVIM_DATA_DIR="${XDG_DATA_HOME}/nvim"
 ENV_FILE="${STATE_ROOT}/env.sh"
@@ -509,11 +513,11 @@ if [ "${GIT_INSECURE:-0}" = "1" ]; then
 fi
 
 install_plugins_from_host_git() {
-  # Canal que comprovadamente funciona na rede corporativa: o git do HOST
-  # (mesmo caminho do git pull deste repo), com o ~/.gitconfig do usuário —
-  # inclusive para repos privados. Clona cada plugin do manifesto (depth 1)
-  # direto no XDG que o container enxerga. Falha por plugin não aborta.
-  local lazy_dir="${XDG_DATA_HOME}/nvim/lazy"
+  # Canal alternativo: o git do HOST (mesmo caminho do git pull deste repo),
+  # com o ~/.gitconfig do usuário — inclusive para repos privados. Clona cada
+  # plugin do manifesto (depth 1) no data dir do nvim do HOST, que é quem
+  # carrega os plugins. Falha por plugin não aborta.
+  local lazy_dir="${HOST_NVIM_DATA_DIR}/lazy"
   mkdir -p "${lazy_dir}"
   local failed=""
   local total=0
@@ -550,14 +554,15 @@ install_plugins_from_zip() {
   # refs/heads/<branch>.zip quando pinado) de cada dependência via Python/
   # urllib com proxy, sem git nem curl — único canal que passa em rede
   # corporativa que 403a as rotas do git e bloqueia SSH. Instala lazy.nvim +
-  # todos os plugins do manifesto direto no XDG que o container enxerga.
+  # todos os plugins no data dir do nvim do HOST (é o nvim local que carrega
+  # os plugins; o XDG isolado fica só com Mason/LSPs Linux do container).
   log "instalando lazy.nvim + plugins por ZIP da main (fluxo setup_lazyvim_mason_from_zip)"
   # Falha parcial não aborta: plugin privado/bloqueado (ex.: repo pessoal sem
   # auth no zip) fica de fora e o restante segue utilizável; instale o faltante
-  # manualmente (zip no browser → extrair em ${XDG_DATA_HOME}/nvim/lazy/<nome>).
+  # manualmente (zip no browser → extrair em ${HOST_NVIM_DATA_DIR}/lazy/<nome>).
   if ! bash "${SCRIPT_DIR}/setup_lazyvim_mason_from_zip.sh" \
     --plugins-only \
-    --data-dir "${XDG_DATA_HOME}/nvim" \
+    --data-dir "${HOST_NVIM_DATA_DIR}" \
     ${GITHUB_BASE:+--github-base "${GITHUB_BASE}"}; then
     log "AVISO: alguns plugins falharam no ZIP (veja o log acima) — os demais foram instalados"
   fi

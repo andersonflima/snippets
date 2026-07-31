@@ -123,9 +123,16 @@ ao exec (opt-in: o proxy do npm devolve 403 para github.com).
 quando pinada) via Python/urllib com proxy, sem git nem curl: é o único canal
 que passa em rede corporativa que devolve 403 para as rotas do git
 (`expected flush after ref listing`) e bloqueia SSH (`could not read from
-remote repository`). Instala lazy.nvim + todos os plugins do manifesto direto
-no XDG que o container enxerga; o `Lazy! sync` dentro do container fica
-desligado (opt-in `CONTAINER_SYNC=1`, exige rede liberada).
+remote repository`). Instala lazy.nvim + todos os plugins do manifesto no
+**data dir do nvim do HOST** (`~/.local/share/nvim/lazy`) — é o nvim local
+que carrega os plugins; o XDG isolado do toolchain fica só com o Mason/LSPs
+Linux do container. O `Lazy! sync` dentro do container fica desligado
+(opt-in `CONTAINER_SYNC=1`, exige rede liberada).
+
+Com o toolchain ativo (`env.sh` sourceado, `NVIM_DOCKER_STATE_ROOT` no env),
+a config do nvim entra em **modo offline**: o lazy não clona plugin faltante
+nem roda checker de updates — nenhum `git clone`/`git fetch` na abertura do
+editor (era a fonte do `Could not read from remote repository` no startup).
 
 Alternativa opt-in: `PLUGINS_FROM_GIT=1` clona pelo git do host.
 
@@ -141,7 +148,7 @@ Os clones feitos pelo HOST:
   github (`expected flush after ref listing`) com porta 22 também bloqueada;
 - plugins privados (ex.: `pingu_ai_codding_pair_programming`) falham sem
   abortar o setup quando a credencial não está disponível — instale-os
-  manualmente depois em `~/.local/share/nvim-docker-toolchain/xdg/data/nvim/lazy/<nome>`;
+  manualmente depois em `~/.local/share/nvim/lazy/<nome>`;
 - rodam sem prompt interativo (`GIT_TERMINAL_PROMPT=0`, ssh em BatchMode) —
   um prompt no meio do loop travaria o setup;
 - não engolem o erro: a linha fatal de cada falha aparece no log e o stderr

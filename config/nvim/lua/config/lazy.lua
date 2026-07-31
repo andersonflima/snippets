@@ -1,15 +1,28 @@
 -- Documenta lazypath para reduzir ambiguidade neste modulo Lua.
 -- Calcula lazypath para suportar o restante do fluxo.
 local lazypath = vim.fn.stdpath("data") .. "/lazy/lazy.nvim"
+
+-- Toolchain docker ativo (env.sh sourceado) = rede corporativa sem git para
+-- github: plugins chegam por ZIP via setup; nenhum git clone/fetch deve
+-- acontecer pelo lazy (clone de faltante e checker desligados).
+local offline = vim.env.NVIM_DOCKER_STATE_ROOT ~= nil
+
 if not vim.loop.fs_stat(lazypath) then
-	vim.fn.system({
-		"git",
-		"clone",
-		"--filter=blob:none",
-		"https://github.com/folke/lazy.nvim.git",
-		"--branch=stable", -- latest stable release
-		lazypath,
-	})
+	if offline then
+		vim.notify(
+			"lazy.nvim ausente em " .. lazypath .. "; rode o setup do toolchain (instala por ZIP)",
+			vim.log.levels.ERROR
+		)
+	else
+		vim.fn.system({
+			"git",
+			"clone",
+			"--filter=blob:none",
+			"https://github.com/folke/lazy.nvim.git",
+			"--branch=stable", -- latest stable release
+			lazypath,
+		})
+	end
 end
 vim.opt.rtp:prepend(lazypath)
 
@@ -75,7 +88,10 @@ require("lazy").setup({
 	dev = {
 		path = "~/.ghq/github.com",
 	},
-	checker = { enabled = true }, -- automatically check for plugin updates
+	-- Sem toolchain docker: comportamento normal (clona faltantes, checa
+	-- updates). Com toolchain (rede corporativa): tudo por ZIP, sem git.
+	install = { missing = not offline },
+	checker = { enabled = not offline }, -- automatically check for plugin updates
 	performance = {
 		cache = {
 			enabled = true,
