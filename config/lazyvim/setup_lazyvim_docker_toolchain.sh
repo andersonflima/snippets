@@ -383,6 +383,43 @@ link_wrappers() {
   done
 }
 
+install_plugins_from_host_git() {
+  # Canal que comprovadamente funciona na rede corporativa: o git do HOST
+  # (mesmo caminho do git pull deste repo), com o ~/.gitconfig do usuário —
+  # inclusive para repos privados. Clona cada plugin do manifesto (depth 1)
+  # direto no XDG que o container enxerga. Falha por plugin não aborta.
+  local lazy_dir="${XDG_DATA_HOME}/nvim/lazy"
+  mkdir -p "${lazy_dir}"
+  local failed=""
+  local total=0
+  local ok=0
+  while IFS='|' read -r plugin_name repo branch; do
+    [ -n "${plugin_name}" ] || continue
+    [ -n "${repo}" ] || continue
+    total=$((total + 1))
+    if [ -d "${lazy_dir}/${plugin_name}" ]; then
+      ok=$((ok + 1))
+      continue
+    fi
+    local clone_args="--depth 1"
+    if [ -n "${branch}" ] && [ "${branch}" != "default" ]; then
+      clone_args="${clone_args} --branch ${branch}"
+    fi
+    log "plugin (git host): ${plugin_name} (${repo}@${branch:-default})"
+    if git clone ${clone_args} "https://github.com/${repo}" "${lazy_dir}/${plugin_name}" >/dev/null 2>&1; then
+      ok=$((ok + 1))
+    else
+      failed="${failed} ${plugin_name}"
+      log "falha no clone: ${plugin_name} (${repo})"
+    fi
+  done < <(bash "${SCRIPT_DIR}/setup_lazyvim_mason_from_zip.sh" --print-manifest)
+  if [ -n "${failed}" ]; then
+    log "AVISO: plugins com falha (git host):${failed} — os demais (${ok}/${total}) foram instalados"
+  else
+    log "todos os plugins instalados via git do host (${ok}/${total})"
+  fi
+}
+
 install_plugins_from_zip() {
   # Rede que bloqueia git/curl para github: PLUGINS_FROM_ZIP=1 usa o fluxo ZIP
   # já existente (Python/urllib com proxy, sem curl) para instalar lazy.nvim +
@@ -418,8 +455,8 @@ bootstrap_container_toolchain() {
   if [ "$SKIP_BOOTSTRAP" = "1" ]; then
     return 0
   fi
-  if [ "${PLUGINS_FROM_ZIP:-0}" = "1" ]; then
-    log "plugins instalados por ZIP: pulando Lazy! sync (sem rede no bootstrap)"
+  if [ "${PLUGINS_FROM_ZIP:-0}" = "1" ] || [ "${PLUGINS_FROM_GIT:-0}" = "1" ]; then
+    log "plugins pré-instalados (zip/git host): pulando Lazy! sync (sem rede no bootstrap)"
     return 0
   fi
 
@@ -461,7 +498,9 @@ copy_config_to_host
 copy_config_to_container_xdg
 build_image
 ensure_container_running
-if [ "${PLUGINS_FROM_ZIP:-0}" = "1" ]; then
+if [ "${PLUGINS_FROM_GIT:-0}" = "1" ]; then
+  install_plugins_from_host_git
+elif [ "${PLUGINS_FROM_ZIP:-0}" = "1" ]; then
   install_plugins_from_zip
 else
   ensure_lazy_nvim
