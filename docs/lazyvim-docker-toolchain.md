@@ -91,6 +91,27 @@ Isso:
 - recopia a config para o XDG isolado;
 - reescreve os wrappers.
 
+## Git dentro do container
+
+O git de dentro do container usa a **config global de git do host**: o setup
+detecta o arquivo (`GIT_CONFIG_GLOBAL` exportado > `~/.gitconfig` >
+`~/.config/git/config`) e o injeta como `GIT_CONFIG_GLOBAL` no `docker run`,
+no exec do bootstrap e nos wrappers — necessário porque o `XDG_CONFIG_HOME`
+isolado esconderia o local XDG do host, e um `docker exec` manual cairia em
+`HOME=/root`. Assim proxy/SSL/credenciais que fazem o git funcionar na rede
+corporativa valem também lá dentro.
+
+Por cima da config do host entram só duas redes de segurança via env:
+
+- URLs ssh do GitHub são reescritas para https (`url.….insteadOf`) — a rede
+  corporativa bloqueia SSH e o container não tem agente/known_hosts;
+- `safe.directory=*` — o HOME montado tem dono ≠ root do container, o que
+  sem isso dá `detected dubious ownership`.
+
+Knobs relacionados: `GIT_INSECURE=1` exporta `GIT_SSL_NO_VERIFY=1` no exec
+(proxy MITM sem CA instalada) e `CONTAINER_PROXY=1` repassa `HTTP(S)_PROXY`
+ao exec (opt-in: o proxy do npm devolve 403 para github.com).
+
 ## Observações operacionais
 
 - O XDG do container é separado do `~/.local/share/nvim` do host para não misturar Mason Linux com Mason macOS.
