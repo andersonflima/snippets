@@ -129,6 +129,68 @@ RUN --mount=type=cache,target=/root/.cache/pip \
     --mount=type=secret,id=pip_conf,target=/etc/pip.conf,required=false \
     python3 -m pip install --break-system-packages black ruff
 
+# ---------------------------------------------------------------------------
+# Camadas de DIST (BAKE_PLUGINS=1): usadas só no build feito em rede ABERTA
+# (build_dist_image.sh) para gerar a imagem pré-pronta que o PC corporativo
+# apenas puxa (docker pull) — sem nenhum download de github lá.
+# No build corporativo BAKE_PLUGINS=0 e estas camadas são no-op.
+# ---------------------------------------------------------------------------
+ARG BAKE_PLUGINS=0
+ARG TARGETARCH
+
+# Plugins do manifesto clonados para /opt/nvim-dist/lazy (sem .git — o lazy
+# roda em modo offline na máquina corporativa). Repos privados (ex.: pingu)
+# entram quando o secret gh_token existir; sem ele, são pulados.
+COPY setup_lazyvim_mason_from_zip.sh /opt/build/setup_lazyvim_mason_from_zip.sh
+RUN --mount=type=secret,id=gh_token,target=/run/secrets/gh_token,required=false \
+    if [ "$BAKE_PLUGINS" = "1" ]; then \
+      set -e; \
+      mkdir -p /opt/nvim-dist/lazy; \
+      if [ -s /run/secrets/gh_token ]; then \
+        printf 'machine github.com\nlogin x-access-token\npassword %s\n' "$(cat /run/secrets/gh_token)" > /root/.netrc; \
+        chmod 600 /root/.netrc; \
+      fi; \
+      bash /opt/build/setup_lazyvim_mason_from_zip.sh --print-manifest \
+        | while IFS='|' read -r name repo branch; do \
+            [ -n "$name" ] && [ -n "$repo" ] || continue; \
+            b=""; if [ -n "$branch" ] && [ "$branch" != "default" ]; then b="--branch $branch"; fi; \
+            if git clone --depth 1 $b "https://github.com/$repo" "/opt/nvim-dist/lazy/$name" >/dev/null 2>&1; then \
+              rm -rf "/opt/nvim-dist/lazy/$name/.git"; \
+            else \
+              echo "AVISO: plugin nao bakeado: $name ($repo)"; \
+            fi; \
+          done; \
+      rm -f /root/.netrc; \
+      echo "plugins bakeados: $(ls /opt/nvim-dist/lazy | wc -l)"; \
+    fi
+
+# LSPs que antes vinham do Mason, baixados dos releases oficiais por arch e
+# postos no PATH — o wrapper cai no PATH do container quando o binário não
+# está no mason/bin do XDG.
+RUN if [ "$BAKE_PLUGINS" = "1" ]; then \
+      set -e; \
+      case "${TARGETARCH}" in \
+        arm64) LLS_ARCH="linux-arm64"; RA_ARCH="aarch64-unknown-linux-gnu"; OMNI_ARCH="linux-arm64-net6.0" ;; \
+        *)     LLS_ARCH="linux-x64";   RA_ARCH="x86_64-unknown-linux-gnu";  OMNI_ARCH="linux-x64-net6.0" ;; \
+      esac; \
+      resolve_asset() { \
+        python3 -c "import json,sys,urllib.request;repo,frag=sys.argv[1],sys.argv[2];r=json.load(urllib.request.urlopen('https://api.github.com/repos/'+repo+'/releases/latest'));print(next(a['browser_download_url'] for a in r['assets'] if frag in a['name']))" "$1" "$2"; \
+      }; \
+      mkdir -p /opt/lsp/lua-language-server /opt/lsp/elixir-ls /opt/lsp/omnisharp; \
+      curl -fsSL "$(resolve_asset LuaLS/lua-language-server ${LLS_ARCH}.tar.gz)" | tar -xz -C /opt/lsp/lua-language-server; \
+      printf '#!/bin/sh\nexec /opt/lsp/lua-language-server/bin/lua-language-server "$@"\n' > /usr/local/bin/lua-language-server; \
+      chmod +x /usr/local/bin/lua-language-server; \
+      curl -fsSL "$(resolve_asset rust-lang/rust-analyzer ${RA_ARCH}.gz)" | gunzip > /usr/local/bin/rust-analyzer; \
+      chmod +x /usr/local/bin/rust-analyzer; \
+      curl -fsSL -o /tmp/elixir-ls.zip "$(resolve_asset elixir-lsp/elixir-ls .zip)"; \
+      unzip -q /tmp/elixir-ls.zip -d /opt/lsp/elixir-ls && rm /tmp/elixir-ls.zip; \
+      chmod +x /opt/lsp/elixir-ls/*.sh; \
+      ln -sf /opt/lsp/elixir-ls/language_server.sh /usr/local/bin/elixir-ls; \
+      curl -fsSL "$(resolve_asset OmniSharp/omnisharp-roslyn ${OMNI_ARCH}.tar.gz)" | tar -xz -C /opt/lsp/omnisharp; \
+      printf '#!/bin/sh\nexec /opt/lsp/omnisharp/OmniSharp "$@"\n' > /usr/local/bin/omnisharp; \
+      chmod +x /usr/local/bin/omnisharp; \
+    fi
+
 WORKDIR /workspace
 
 CMD ["bash", "-lc", "while true; do sleep 3600; done"]

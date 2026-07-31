@@ -116,9 +116,34 @@ Knobs relacionados: `GIT_INSECURE=1` exporta `GIT_SSL_NO_VERIFY=1` no exec
 (proxy MITM sem CA instalada) e `CONTAINER_PROXY=1` repassa `HTTP(S)_PROXY`
 ao exec (opt-in: o proxy do npm devolve 403 para github.com).
 
-## Instalação das dependências (plugins)
+## Imagem pré-buildada (dist) — caminho preferido
 
-**Fluxo único: ZIP da main.** O setup baixa o ZIP de cada dependência
+O foco do toolchain: **toda instalação/update acontece dentro do container**;
+o mac (usuário corporativo com comandos restritos) só consome. A forma mais
+robusta é a imagem **dist**, buildada em rede aberta com tudo dentro:
+
+- plugins do manifesto já clonados em `/opt/nvim-dist/lazy` (inclusive os
+  privados, quando o build teve token do gh);
+- os 4 LSPs que viriam do Mason (`lua-language-server`, `rust-analyzer`,
+  `elixir-ls`, `omnisharp`) baixados dos releases oficiais e no PATH.
+
+Build/publicação (máquina com rede aberta):
+
+```bash
+bash config/lazyvim/build_dist_image.sh            # multi-arch + push
+bash config/lazyvim/build_dist_image.sh --load     # build local p/ validar
+```
+
+No PC corporativo o setup **puxa a dist por padrão**
+(`docker.io/andersonflima/nvim-toolchain:dist` — repositório privado: rode
+`docker login` uma vez) e **semeia os plugins da imagem** para
+`~/.local/share/nvim/lazy` copiando dentro do container via HOME montado —
+zero download de github na rede corporativa. `PREBUILT_IMAGE=<ref>` troca a
+referência; `PREBUILT_IMAGE=""` desliga (volta ao build local + ZIP).
+
+## Instalação das dependências (plugins) — fallback ZIP
+
+**Sem imagem dist: ZIP da main.** O setup baixa o ZIP de cada dependência
 (`archive/HEAD.zip` para branch default — a main —, `refs/heads/<branch>.zip`
 quando pinada) via Python/urllib com proxy, sem git nem curl: é o único canal
 que passa em rede corporativa que devolve 403 para as rotas do git
