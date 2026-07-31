@@ -454,15 +454,34 @@ install_plugins_from_zip() {
   # corporativa que 403a as rotas do git e bloqueia SSH. Instala lazy.nvim +
   # todos os plugins no data dir do nvim do HOST (é o nvim local que carrega
   # os plugins; o XDG isolado fica só com Mason/LSPs Linux do container).
-  log "instalando lazy.nvim + plugins por ZIP da main (fluxo setup_lazyvim_mason_from_zip)"
+  # Roda DENTRO do container: o usuário corporativo do macOS tem restrição de
+  # comandos no host (python3/venv/unzip podem ser bloqueados) — o download
+  # (python/urllib + proxy) e a extração acontecem no container, escrevendo no
+  # HOME montado (mesmo path) que o nvim do mac lê. Fallback: host, para
+  # máquina sem essa restrição ou container indisponível.
+  log "instalando lazy.nvim + plugins por ZIP da main (dentro do container)"
+  local zip_invocation
+  zip_invocation="bash '${SCRIPT_DIR}/setup_lazyvim_mason_from_zip.sh' --plugins-only --data-dir '${HOST_NVIM_DATA_DIR}'"
+  if [ -n "${GITHUB_BASE:-}" ]; then
+    zip_invocation="${zip_invocation} --github-base '${GITHUB_BASE}'"
+  fi
+  # Proxy derivado (npmrc/env) vai explícito no exec: dentro do container só
+  # existe o proxy que passarmos — sem ele o download vai direto e é barrado.
+  local proxy_prefix=""
+  if [ -n "${HTTP_PROXY:-}" ]; then
+    proxy_prefix="HTTP_PROXY='${HTTP_PROXY}' HTTPS_PROXY='${HTTPS_PROXY:-${HTTP_PROXY}}' NO_PROXY='${NO_PROXY:-localhost,127.0.0.1}' http_proxy='${HTTP_PROXY}' https_proxy='${HTTPS_PROXY:-${HTTP_PROXY}}' no_proxy='${NO_PROXY:-localhost,127.0.0.1}' "
+  fi
   # Falha parcial não aborta: plugin privado/bloqueado (ex.: repo pessoal sem
   # auth no zip) fica de fora e o restante segue utilizável; instale o faltante
   # manualmente (zip no browser → extrair em ${HOST_NVIM_DATA_DIR}/lazy/<nome>).
-  if ! bash "${SCRIPT_DIR}/setup_lazyvim_mason_from_zip.sh" \
-    --plugins-only \
-    --data-dir "${HOST_NVIM_DATA_DIR}" \
-    ${GITHUB_BASE:+--github-base "${GITHUB_BASE}"}; then
-    log "AVISO: alguns plugins falharam no ZIP (veja o log acima) — os demais foram instalados"
+  if ! container_exec bash -lc "${proxy_prefix}${zip_invocation}"; then
+    log "AVISO: ZIP dentro do container falhou; tentando no host"
+    if ! bash "${SCRIPT_DIR}/setup_lazyvim_mason_from_zip.sh" \
+      --plugins-only \
+      --data-dir "${HOST_NVIM_DATA_DIR}" \
+      ${GITHUB_BASE:+--github-base "${GITHUB_BASE}"}; then
+      log "AVISO: alguns plugins falharam no ZIP (veja o log acima) — os demais foram instalados"
+    fi
   fi
   log "plugins instalados no host: $(ls -1 "${HOST_NVIM_DATA_DIR}/lazy" 2>/dev/null | wc -l | tr -d ' ') em ${HOST_NVIM_DATA_DIR}/lazy"
 }
