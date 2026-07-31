@@ -1,0 +1,22 @@
+# syntax=docker/dockerfile:1.7
+# Container do MCP do Tesus para a máquina corporativa: roda o brainlink-mcp
+# (lib @andespindola/brainlink, pacote npm privado) DENTRO do container,
+# mantendo o VAULT LOCAL da máquina — o setup monta ~/.brainlink do host e o
+# MCP conversa por stdio via docker exec (wrapper tesus-mcp-docker).
+FROM node:22-trixie-slim
+
+ENV NPM_CONFIG_UPDATE_NOTIFIER=false
+
+# strict-ssl atrás de proxy corporativo que intercepta TLS.
+ARG NPM_CONFIG_STRICT_SSL=true
+ENV NPM_CONFIG_STRICT_SSL=${NPM_CONFIG_STRICT_SSL}
+
+# Token de LEITURA do pacote privado entra como secret (não persiste em
+# camada). O setup passa --secret id=npm_token,src=<arquivo npm-token>.
+RUN --mount=type=cache,target=/root/.npm \
+    --mount=type=secret,id=npm_token,target=/run/secrets/npm_token,required=true \
+    sh -c 'printf "registry=https://registry.npmjs.org/\n//registry.npmjs.org/:_authToken=%s\n" "$(cat /run/secrets/npm_token)" > /tmp/.npmrc \
+      && NPM_CONFIG_USERCONFIG=/tmp/.npmrc npm install -g --prefer-offline --no-audit --no-fund @andespindola/brainlink@latest \
+      && rm -f /tmp/.npmrc'
+
+CMD ["bash", "-lc", "while true; do sleep 3600; done"]

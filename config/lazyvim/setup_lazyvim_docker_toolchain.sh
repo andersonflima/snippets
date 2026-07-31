@@ -223,7 +223,7 @@ build_image() {
   # próprias, mas o apt vai direto e leva "repository is not signed" quando a
   # rede força passagem pelo proxy.
   if [ -z "${HTTP_PROXY:-}" ] && [ -f "${HOME}/.npmrc" ]; then
-    NPMRC_PROXY=$(grep -Ei '^(https-)?proxy[[:space:]]*=' "${HOME}/.npmrc" | head -1 | cut -d= -f2- | tr -d ' \r')
+    NPMRC_PROXY=$(grep -Ei '^(https-)?proxy[[:space:]]*=' "${HOME}/.npmrc" | head -1 | cut -d= -f2- | tr -d ' \r' || true)
     if [ -n "${NPMRC_PROXY}" ]; then
       export HTTP_PROXY="${NPMRC_PROXY}" HTTPS_PROXY="${NPMRC_PROXY}" NO_PROXY="${NO_PROXY:-localhost,127.0.0.1}"
       log "proxy derivado do ~/.npmrc para o build: ${NPMRC_PROXY}"
