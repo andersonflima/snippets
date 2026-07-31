@@ -101,12 +101,16 @@ isolado esconderia o local XDG do host, e um `docker exec` manual cairia em
 `HOME=/root`. Assim proxy/SSL/credenciais que fazem o git funcionar na rede
 corporativa valem também lá dentro.
 
-Por cima da config do host entram só duas redes de segurança via env:
+Por cima da config do host entram só três redes de segurança via env (no
+`docker run` e nos execs — valem até para `docker exec` manual):
 
 - URLs ssh do GitHub são reescritas para https (`url.….insteadOf`) — a rede
   corporativa bloqueia SSH e o container não tem agente/known_hosts;
 - `safe.directory=*` — o HOME montado tem dono ≠ root do container, o que
-  sem isso dá `detected dubious ownership`.
+  sem isso dá `detected dubious ownership`;
+- `http.sslBackend=gnutls` — o git da imagem (Debian) só suporta GnuTLS; se
+  a config do host força `sslBackend = openssl` (comum com git do Homebrew),
+  qualquer operação https morre com `Unsupported SSL backend 'openssl'`.
 
 Knobs relacionados: `GIT_INSECURE=1` exporta `GIT_SSL_NO_VERIFY=1` no exec
 (proxy MITM sem CA instalada) e `CONTAINER_PROXY=1` repassa `HTTP(S)_PROXY`
