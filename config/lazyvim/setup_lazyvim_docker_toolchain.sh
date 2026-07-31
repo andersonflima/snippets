@@ -279,6 +279,9 @@ seed_plugins_from_image() {
   container_exec bash -lc '
     dest="$1/lazy"
     mkdir -p "${dest}"
+    # Stubs *.cloning: temporários do lazy.nvim de clones que travaram na
+    # rede bloqueada; deixá-los acumula lixo e confunde o estado.
+    rm -rf "${dest}"/*.cloning
     for d in /opt/nvim-dist/lazy/*; do
       n="$(basename "${d}")"
       rm -rf "${dest}/${n}"
